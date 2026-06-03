@@ -23,6 +23,10 @@ pre-commit:
   jobs:
     - name: omakase-example
       run: bash .omakase/gates/example.sh
+post-checkout:
+  jobs:
+    - name: omakase-self-arm
+      run: bash "$(git rev-parse --git-common-dir)/omakase/ensure-present.sh"
 YML
 }
 
@@ -66,6 +70,51 @@ grep -q "COMMITTED team agents" "$REPO/AGENTS.md" && pass "committed AGENTS.md N
 [ -f "$REPO/lefthook-local.yml" ] && pass "lefthook-local.yml placed (additive)" || fail "lefthook-local.yml missing"
 [ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status clean with committed harness present" || { fail "status not clean"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
 OUT=$(cd "$REPO" && echo x > g.txt && git add g.txt 2>/dev/null; git commit -m t 2>&1); echo "$OUT" | grep -q "omakase-example-gate-ran" && pass "personal gate fires alongside committed team config" || { fail "personal gate did not fire"; echo "$OUT" | sed 's/^/      /'; }
+
+# ---------- Scenario C: worktree self-arm ----------
+# A fresh worktree has none of the gitignored harness files. init.sh snapshots the
+# placed files into the shared git dir; the post-checkout job copies the MISSING
+# ones into each worktree, never overwriting a local edit. (.worktreeinclude — the
+# Claude-Code-native copy — can't be exercised from bash; tested live in pixterm.)
+echo "== Scenario C: worktree self-arm =="
+PAY="$TMP/payloadC"; REPO="$TMP/repoC"
+mkpayload "$PAY"; newrepo "$REPO"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+COMMON="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+
+# C1: init wrote the self-arm artifacts + a .worktreeinclude block, all out of git.
+[ -x "$COMMON/omakase/ensure-present.sh" ] && pass "ensure-present.sh written (executable)" || fail "ensure-present.sh missing"
+grep -q '.omakase/gates/example.sh' "$COMMON/omakase/placed.list" 2>/dev/null && pass "placed.list manifest written" || fail "placed.list missing/empty"
+[ -f "$COMMON/omakase/payload-snapshot/.omakase/gates/example.sh" ] && pass "payload snapshot captured the gate" || fail "snapshot missing the gate"
+grep -q "omakase-harness" "$REPO/.worktreeinclude" 2>/dev/null && pass ".worktreeinclude block written" || fail ".worktreeinclude block missing"
+[ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status still clean (self-arm artifacts out of git)" || { fail "status not clean after self-arm wiring"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
+
+# C2: mechanism — a fresh linked worktree, run ensure-present.sh directly -> gate appears.
+WT="$TMP/repoC-wt"
+( cd "$REPO" && git worktree add -q "$WT" -b wtprobe ) 2>/dev/null
+[ ! -e "$WT/.omakase/gates/example.sh" ] && pass "fresh worktree starts WITHOUT the gitignored harness" || fail "harness unexpectedly present in fresh worktree"
+( cd "$WT" && bash "$COMMON/omakase/ensure-present.sh" )
+[ -x "$WT/.omakase/gates/example.sh" ] && pass "ensure-present copied the missing gate into the worktree (executable)" || fail "ensure-present did not arm the worktree"
+
+# C3: never-overwrite — a local edit in the worktree survives a re-run.
+echo 'LOCAL EDIT' > "$WT/.omakase/gates/example.sh"
+( cd "$WT" && bash "$COMMON/omakase/ensure-present.sh" )
+grep -q 'LOCAL EDIT' "$WT/.omakase/gates/example.sh" && pass "ensure-present never overwrites a local edit" || fail "ensure-present clobbered a local edit"
+
+# C4: end-to-end self-heal — in an ARMED worktree (lefthook-local.yml present, as
+# .worktreeinclude would copy it), deleting a gate then checking out restores it
+# via the real lefthook post-checkout job.
+cp "$PAY/lefthook-local.yml" "$WT/lefthook-local.yml"
+rm -f "$WT/.omakase/gates/example.sh"
+( cd "$WT" && git checkout -q -b wtprobe2 ) 2>/dev/null
+[ -f "$WT/.omakase/gates/example.sh" ] && pass "post-checkout self-heal restored a deleted gate in an armed worktree" || fail "post-checkout did not self-heal"
+
+( cd "$REPO" && git worktree remove --force "$WT" ) 2>/dev/null; ( cd "$REPO" && git worktree prune ) 2>/dev/null
+
+# C5: remove tears the self-arm down too.
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
+[ ! -e "$COMMON/omakase" ] && pass "remove deleted the shared snapshot" || fail "remove left the snapshot"
+[ ! -e "$REPO/.worktreeinclude" ] && pass "remove deleted the .worktreeinclude block" || fail "remove left .worktreeinclude"
 
 rm -rf "$TMP"
 echo ""

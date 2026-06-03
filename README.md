@@ -33,6 +33,15 @@ footprint. The harness is additive: to layer instructions over a committed
 Requires the `lefthook` binary on PATH (`brew install lefthook`, `mise use lefthook`, or a
 devDependency).
 
+### Worktrees self-arm
+
+The injected files are gitignored, so a fresh `git worktree` would normally not have them.
+`init.sh` handles this: it snapshots the placed files into the shared git dir and installs a
+`post-checkout` job that copies any **missing** ones into each worktree (ensure-present /
+never-overwrite — it self-heals deleted files and never clobbers a local edit). It also writes
+a `.worktreeinclude` block so Claude Code copies the harness into worktrees it creates. Manual
+`git worktree add` from a never-armed clone is the one gap — re-run `/omakase-init` there.
+
 ## Project structure
 
 - `bin/init.sh` — overlays `payload/` additively, writes `.git/info/exclude`, installs lefthook.
