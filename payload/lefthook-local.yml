@@ -1,0 +1,6 @@
+# Personal hook wiring (gitignored via .git/info/exclude — never committed).
+# Add your gates here; each `run` resolves from the repo root.
+pre-commit:
+  jobs:
+    - name: omakase-example
+      run: bash .omakase/gates/example.sh
