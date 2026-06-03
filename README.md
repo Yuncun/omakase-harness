@@ -1,46 +1,41 @@
-# Omakase Harness
+# Omakase Base Harness
 
-A base harness shared as a Claude Code plugin and customized per project. It solves the
-adoptability question: how do you introduce a harness into an existing project without
-requiring a greenfield repo? Answer: a plugin that **injects** your harness into your
-project and **gitignores the injected files**, so it is personal — it affects only you,
-never the committed repo or your teammates.
+Omakase is a base structure for harnesses that custom harness plugins can be built on. These harnesses are intended to be shared as plugins that injects harness files into the project and enforces gates using git hooks, without committing files to the project. 
+
+This is my proposal to the adoptability question: how do you introduce a harness to a project with existing contributors?
+
 
 The base does only two things:
 
-- Initialize the harness via a script.
+- Initialize the harness via a script, to inject claude rules, agent.mds, etc. into the project.
 - Enforce gates on your git hooks (via [lefthook](https://lefthook.dev)).
 
-The creator drops the gates and tools they want into the base and distributes it to
-adopters. The base itself ships no rule, doc, or gate — only the mechanism.
+What is possible:
+* Precommit hooks to run static analyzers
+* Pre-push hooks to run visual verification
+* I've used this to trigger documentation enforcement using claude rules
+
+
+So far I haven't found an "outer harness" concept that cant be covered by these two steps - gate enforcement and injecting files. Lmk if you find any.
 
 ## Usage
 
-From a Claude Code session in any git repo:
+For creators:
 
+//todo
+
+
+For adopters of your harness:
+
+* Install plugin 
+
+From claude code (probably also gh copilot, but i havent tried yet)
 ```
 /omakase-init     # overlay the payload into this repo (gitignored) + install hooks
 /omakase-remove   # reverse it
 ```
 
-`/omakase-init` copies the plugin's `payload/` tree to real paths in your repo, skips any
-path the repo already tracks (it never overwrites a committed file), records every placed
-path in `.git/info/exclude`, and runs `lefthook install`. Nothing is committed — zero
-footprint. The harness is additive: to layer instructions over a committed
-`AGENTS.md`/`CLAUDE.md`, ship them as `CLAUDE.local.md`; to add rules, drop new files into
-`.claude/rules/`.
 
-Requires the `lefthook` binary on PATH (`brew install lefthook`, `mise use lefthook`, or a
-devDependency).
-
-### Worktrees self-arm
-
-The injected files are gitignored, so a fresh `git worktree` would normally not have them.
-`init.sh` handles this: it snapshots the placed files into the shared git dir and installs a
-`post-checkout` job that copies any **missing** ones into each worktree (ensure-present /
-never-overwrite — it self-heals deleted files and never clobbers a local edit). It also writes
-a `.worktreeinclude` block so Claude Code copies the harness into worktrees it creates. Manual
-`git worktree add` from a never-armed clone is the one gap — re-run `/omakase-init` there.
 
 ## Project structure
 
@@ -53,8 +48,8 @@ a `.worktreeinclude` block so Claude Code copies the harness into worktrees it c
 ## Example payload: a web project's harness
 
 The base ships only the mechanism and one example gate. As a fuller example, here is the
-payload I run for pixterm (a web project) — the kind of tree a creator drops into
-`payload/`:
+payload I run for web (See [pixterm harness](https://github.com/Yuncun/pixterm-harness)).
+
 
 | Piece | Kind | What it does |
 | ----- | ---- | ------------ |
@@ -63,14 +58,7 @@ payload I run for pixterm (a web project) — the kind of tree a creator drops i
 | `deferred-check` + `omakase-record` | deferred-gate scaffold | Enforces a verdict a hook can't compute itself — an LLM judge, a slow flow, a human sign-off. A producer records a pass/fail; the hook confirms a fresh pass for the pushed code. |
 | `visual-verify` | skill | Best-effort visual check: drives the running app, judges screenshots, records a verdict for the deferred gate. Needs a per-project driver. |
 
-The guards are stack-agnostic and dormant until relevant. Your own stack gates (typecheck,
-test, lint, build) are yours to declare — the base ships none.
 
-## Contributing
-
-The base (`bin/`, `commands/`) is mechanism and stays content-free — it hardcodes no rule,
-doc, or gate. Harness content belongs in `payload/`. Run `bash tests/inject.test.sh` before
-sending changes; it must print `ALL PASS`.
 
 ## License
 
