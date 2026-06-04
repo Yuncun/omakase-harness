@@ -23,7 +23,7 @@ while IFS= read -r -d '' f; do
   while [ "$d" != "." ] && [ -d "$ROOT/$d" ] && [ -z "$(ls -A "$ROOT/$d")" ]; do
     rmdir "$ROOT/$d"; d="$(dirname "$d")"
   done
-done < <(find "$PAYLOAD" -type f -print0)
+done < <(find "$PAYLOAD" \( -type f -o -type l \) -print0)  # -type l: also enumerate symlinks init.sh placed
 
 # Remove the auto-created skeleton lefthook.yml if it is untracked and is lefthook's default banner.
 if [ -f "$ROOT/lefthook.yml" ] && ! git -C "$ROOT" ls-files --error-unmatch lefthook.yml >/dev/null 2>&1; then

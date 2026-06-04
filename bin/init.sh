@@ -41,10 +41,10 @@ while IFS= read -r -d '' f; do
     skipped+=("$rel"); echo "omakase: SKIP (already tracked) $rel" >&2; continue
   fi
   mkdir -p "$ROOT/$(dirname "$rel")"
-  cp "$f" "$ROOT/$rel"
-  case "$rel" in *.sh) chmod +x "$ROOT/$rel";; esac
+  cp -P "$f" "$ROOT/$rel"   # -P: carry symlinks as symlinks (e.g. CLAUDE.md -> AGENTS.md)
+  case "$rel" in *.sh) [ -L "$ROOT/$rel" ] || chmod +x "$ROOT/$rel";; esac
   placed+=("$rel")
-done < <(find "$PAYLOAD" -type f -print0)
+done < <(find "$PAYLOAD" \( -type f -o -type l \) -print0)
 
 # Top-level prefixes for the exclude block (small + stable), plus lefthook's
 # auto-created lefthook.yml if the repo does not track one.
@@ -105,7 +105,7 @@ mkdir -p "$OMK/payload-snapshot"
 for rel in "${placed[@]:-}"; do
   [ -z "$rel" ] && continue
   mkdir -p "$OMK/payload-snapshot/$(dirname "$rel")"
-  cp "$ROOT/$rel" "$OMK/payload-snapshot/$rel"
+  cp -P "$ROOT/$rel" "$OMK/payload-snapshot/$rel"
   printf '%s\n' "$rel" >> "$OMK/placed.list"
 done
 
@@ -123,12 +123,12 @@ LIST="$COMMON/omakase/placed.list"
 [ -f "$LIST" ] || exit 0
 while IFS= read -r rel; do
   [ -z "$rel" ] && continue
-  [ -e "$ROOT/$rel" ] && continue                                             # never overwrite
+  [ -e "$ROOT/$rel" ] || [ -L "$ROOT/$rel" ] && continue                      # never overwrite (also catches dangling symlinks)
   git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1 && continue  # never touch tracked
-  [ -f "$SNAP/$rel" ] || continue
+  [ -e "$SNAP/$rel" ] || [ -L "$SNAP/$rel" ] || continue
   mkdir -p "$ROOT/$(dirname "$rel")"
-  cp "$SNAP/$rel" "$ROOT/$rel"
-  case "$rel" in *.sh) chmod +x "$ROOT/$rel";; esac
+  cp -P "$SNAP/$rel" "$ROOT/$rel"
+  case "$rel" in *.sh) [ -L "$ROOT/$rel" ] || chmod +x "$ROOT/$rel";; esac
 done < "$LIST"
 ENSURE
 chmod +x "$OMK/ensure-present.sh"

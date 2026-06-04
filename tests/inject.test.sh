@@ -116,6 +116,27 @@ rm -f "$WT/.omakase/gates/example.sh"
 [ ! -e "$COMMON/omakase" ] && pass "remove deleted the shared snapshot" || fail "remove left the snapshot"
 [ ! -e "$REPO/.worktreeinclude" ] && pass "remove deleted the .worktreeinclude block" || fail "remove left .worktreeinclude"
 
+# ---------- Scenario D: payload symlinks are carried (CLAUDE.md -> AGENTS.md) ----------
+# A payload symlink must land AS a symlink (cp -P), be snapshotted, and self-heal into
+# a worktree. The old `find -type f` + plain `cp` skipped it / dereferenced it.
+echo "== Scenario D: payload symlink carried as a symlink =="
+PAY="$TMP/payloadD"; REPO="$TMP/repoD"
+mkpayload "$PAY"
+printf 'real doctrine\n' > "$PAY/AGENTS.md"
+( cd "$PAY" && ln -s AGENTS.md CLAUDE.md )
+newrepo "$REPO"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+[ -L "$REPO/CLAUDE.md" ] && pass "payload symlink placed AS a symlink" || fail "symlink not carried (skipped or dereferenced)"
+[ "$(readlink "$REPO/CLAUDE.md")" = "AGENTS.md" ] && pass "symlink target preserved" || fail "symlink target wrong"
+COMMON="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+[ -L "$COMMON/omakase/payload-snapshot/CLAUDE.md" ] && pass "snapshot kept it a symlink" || fail "snapshot dereferenced the symlink"
+[ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status clean (symlink gitignored)" || { fail "status not clean (symlink)"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
+WTD="$TMP/repoD-wt"
+( cd "$REPO" && git worktree add -q "$WTD" -b wtdsym ) 2>/dev/null
+( cd "$WTD" && bash "$COMMON/omakase/ensure-present.sh" )
+[ -L "$WTD/CLAUDE.md" ] && pass "ensure-present self-healed the symlink into a worktree" || fail "ensure-present did not carry the symlink"
+( cd "$REPO" && git worktree remove --force "$WTD" ) 2>/dev/null; ( cd "$REPO" && git worktree prune ) 2>/dev/null
+
 rm -rf "$TMP"
 echo ""
 [ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }
