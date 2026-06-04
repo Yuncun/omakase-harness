@@ -5,11 +5,11 @@ pre-commit:
     - name: omakase-example
       run: bash .omakase/gates/example.sh
 
-# Worktree self-arm: on every checkout (including `git worktree add`), copy any
+# Worktree auto-install: on every checkout (including `git worktree add`), copy any
 # MISSING injected file into this worktree from the shared snapshot. Never
 # overwrites a local edit, never touches a tracked path. The script lives in the
 # shared git dir, so it is reachable from any worktree. Written by init.sh.
 post-checkout:
   jobs:
-    - name: omakase-self-arm
+    - name: omakase-ensure-present
       run: bash "$(git rev-parse --git-common-dir)/omakase/ensure-present.sh"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # omakase-harness init — overlay payload/ into this repo additively, exclude every
 # placed path via .git/info/exclude (zero committed footprint), install lefthook,
-# and wire worktree self-arm so new worktrees get the (gitignored) harness too.
+# and set up new worktrees to receive the (gitignored) harness automatically too.
 # Idempotent: re-running re-overlays, rewrites the exclude block, and refreshes
 # the worktree snapshot.
 set -euo pipefail
@@ -30,7 +30,7 @@ END="# <<< omakase-harness <<<"
 EXCLUDE="$ROOT/.git/info/exclude"
 # The shared git dir — identical for the main checkout and every linked worktree,
 # so artifacts placed here are reachable from any worktree (info/exclude and the
-# common dir are shared). This is where the worktree self-arm snapshot lives.
+# common dir are shared). This is where the worktree harness snapshot lives.
 COMMON="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 OMK="$COMMON/omakase"
 
@@ -53,14 +53,14 @@ add_prefix(){ case " ${prefixes[*]:-} " in *" $1 "*) ;; *) prefixes+=("$1");; es
 for rel in "${placed[@]:-}"; do [ -n "$rel" ] && add_prefix "${rel%%/*}"; done
 git -C "$ROOT" ls-files --error-unmatch lefthook.yml >/dev/null 2>&1 || add_prefix "lefthook.yml"
 
-# Worktree self-arm wiring (.worktreeinclude). Only when the repo does not TRACK
+# Worktree auto-install wiring (.worktreeinclude). Only when the repo does not TRACK
 # .worktreeinclude — appending to a tracked file would be a committed footprint,
 # which the additive rule forbids. When skipped, manual `git worktree add` won't
-# auto-arm; new Claude-created worktrees still arm via the snapshot + post-checkout.
+# get it automatically; new Claude-created worktrees still receive it via the snapshot + post-checkout.
 WTINC_TRACKED=0
 if git -C "$ROOT" ls-files --error-unmatch .worktreeinclude >/dev/null 2>&1; then
   WTINC_TRACKED=1
-  echo "omakase: .worktreeinclude is tracked — leaving it untouched (re-run /omakase-init inside a new manual worktree to arm it)." >&2
+  echo "omakase: .worktreeinclude is tracked — leaving it untouched (re-run /omakase-init inside a new manual worktree to install it there)." >&2
 else
   add_prefix ".worktreeinclude"
 fi
@@ -138,4 +138,4 @@ chmod +x "$OMK/ensure-present.sh"
 echo "omakase: placed ${#placed[@]} file(s), skipped ${#skipped[@]} tracked path(s)."
 for p in "${placed[@]:-}"; do [ -n "$p" ] && echo "  + $p"; done
 for s in "${skipped[@]:-}"; do [ -n "$s" ] && echo "  ~ skipped (tracked): $s"; done
-echo "omakase: ignores -> .git/info/exclude; hooks installed; worktree self-arm wired. Nothing to commit."
+echo "omakase: ignores -> .git/info/exclude; hooks installed; new worktrees auto-install the harness. Nothing to commit."

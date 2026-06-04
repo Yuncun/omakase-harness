@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # omakase-harness remove — reverse of init: uninstall hooks, delete exactly the
 # untracked paths init placed, strip the exclude block, and tear down the worktree
-# self-arm snapshot. "Personal" demands easy-off.
+# harness snapshot. "Personal" demands easy-off.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,7 +37,7 @@ if [ -f "$WTINC" ] && ! git -C "$ROOT" ls-files --error-unmatch .worktreeinclude
   [ -s "$WTINC" ] || rm -f "$WTINC"
 fi
 
-# Tear down the worktree self-arm snapshot in the shared git dir.
+# Tear down the worktree harness snapshot in the shared git dir.
 rm -rf "$COMMON/omakase"
 
 # Strip our exclude block.
