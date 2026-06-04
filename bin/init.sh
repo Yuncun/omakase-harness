@@ -10,7 +10,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PAYLOAD="${OMAKASE_PAYLOAD:-$(cd "$SCRIPT_DIR/../payload" && pwd)}"
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "omakase: not inside a git repo" >&2; exit 1; }
 [ -d "$PAYLOAD" ] || { echo "omakase: payload dir not found at $PAYLOAD" >&2; exit 1; }
-command -v lefthook >/dev/null 2>&1 || { echo "omakase: lefthook not found on PATH — install it first (brew install lefthook, mise use lefthook, or add it as a devDependency)." >&2; exit 1; }
+# Resolve a lefthook invocation WITHOUT mutating the user's global environment.
+# Order: an explicit override; lefthook already on PATH (a global brew/mise install);
+# then the repo's own node_modules/.bin (a JS devDependency — the common case). We do
+# NOT auto-install: a global install is irreversible (/omakase-remove can't undo it)
+# and a hook script has no interactive user to ask. When lefthook is genuinely absent
+# we exit with guidance; the /omakase-init command layer is where an interactive
+# "install it for you?" belongs (that's where a user exists to answer). Sets $LEFTHOOK.
+resolve_lefthook() {
+  if [ -n "${LEFTHOOK_BIN:-}" ];                  then LEFTHOOK="$LEFTHOOK_BIN"; return 0; fi
+  if command -v lefthook >/dev/null 2>&1;          then LEFTHOOK="lefthook"; return 0; fi
+  if [ -x "$ROOT/node_modules/.bin/lefthook" ];    then LEFTHOOK="$ROOT/node_modules/.bin/lefthook"; return 0; fi
+  return 1
+}
+resolve_lefthook || { echo "omakase: lefthook not found. Install it (e.g. 'brew install lefthook', 'mise use lefthook', or add it as a devDependency and run your package manager's install), or set LEFTHOOK_BIN=/path/to/lefthook, then re-run." >&2; exit 1; }
 
 BEGIN="# >>> omakase-harness >>>"
 END="# <<< omakase-harness <<<"
@@ -120,7 +133,7 @@ done < "$LIST"
 ENSURE
 chmod +x "$OMK/ensure-present.sh"
 
-( cd "$ROOT" && lefthook install )
+( cd "$ROOT" && $LEFTHOOK install )
 
 echo "omakase: placed ${#placed[@]} file(s), skipped ${#skipped[@]} tracked path(s)."
 for p in "${placed[@]:-}"; do [ -n "$p" ] && echo "  + $p"; done
