@@ -1,9 +1,25 @@
 # Personal hook wiring (gitignored via .git/info/exclude — never committed).
-# Add your gates here; each `run` resolves from the repo root.
+# This one file IS your harness — read it top to bottom to see everything that runs.
+# Gates group by type; add more of a type, don't special-case:
+#   scoped checkers   — fast, staged-file-scoped; run per-commit (pre-commit).
+#   complete checkers — whole-project; run per-push (pre-push).
+# Each `run` resolves from the repo root.
+
 pre-commit:
   jobs:
+    # --- scoped checker (the shipped example: blocks staged merge-conflict markers) ---
     - name: omakase-example
       run: bash .omakase/gates/example.sh
+
+# --- complete checkers go here; uncomment and point at YOUR stack's whole-project
+# --- checks. Left commented so this example harness installs cleanly on any repo.
+# pre-push:
+#   parallel: true
+#   jobs:
+#     - name: tests
+#       run: <your whole-project test command, e.g. npm test | make check | pytest>
+#     - name: typecheck
+#       run: <e.g. npm run typecheck | tsc --noEmit>
 
 # Worktree auto-install: on every checkout (including `git worktree add`), copy any
 # MISSING injected file into this worktree from the shared snapshot. Never

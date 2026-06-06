@@ -3,8 +3,12 @@
 # placed path via .git/info/exclude (zero committed footprint), install lefthook,
 # and set up new worktrees to receive the (gitignored) harness automatically too.
 # Idempotent: re-running re-overlays, rewrites the exclude block, and refreshes
-# the worktree snapshot.
+# the worktree snapshot. Re-run NEVER eats a file you edited (see the overlay loop);
+# pass --force to take the new payload version over your edits.
 set -euo pipefail
+
+FORCE=0
+for a in "$@"; do case "$a" in --force|-f) FORCE=1;; esac; done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PAYLOAD="${OMAKASE_PAYLOAD:-$(cd "$SCRIPT_DIR/../payload" && pwd)}"
@@ -33,17 +37,54 @@ EXCLUDE="$ROOT/.git/info/exclude"
 # common dir are shared). This is where the worktree harness snapshot lives.
 COMMON="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 OMK="$COMMON/omakase"
+SNAP="$OMK/payload-snapshot"   # the PREVIOUS run's snapshot — the three-way-merge base.
 
-placed=(); skipped=()
+# Identical?  Compares symlink targets for symlinks, byte content otherwise.
+same_file() {
+  if [ -L "$1" ] || [ -L "$2" ]; then
+    [ "$(readlink "$1" 2>/dev/null)" = "$(readlink "$2" 2>/dev/null)" ]
+  else
+    cmp -s "$1" "$2"
+  fi
+}
+place_file() {  # $1 = source payload path, $2 = relative dest
+  mkdir -p "$ROOT/$(dirname "$2")"
+  cp -P "$1" "$ROOT/$2"   # -P: carry symlinks as symlinks (e.g. CLAUDE.md -> AGENTS.md)
+  case "$2" in *.sh) [ -L "$ROOT/$2" ] || chmod +x "$ROOT/$2";; esac
+}
+
+placed=(); skipped=(); updated=(); kept=()
 while IFS= read -r -d '' f; do
   rel="${f#"$PAYLOAD"/}"
+  dest="$ROOT/$rel"
+  # Never touch a path the repo tracks (committed file wins).
   if git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
     skipped+=("$rel"); echo "omakase: SKIP (already tracked) $rel" >&2; continue
   fi
-  mkdir -p "$ROOT/$(dirname "$rel")"
-  cp -P "$f" "$ROOT/$rel"   # -P: carry symlinks as symlinks (e.g. CLAUDE.md -> AGENTS.md)
-  case "$rel" in *.sh) [ -L "$ROOT/$rel" ] || chmod +x "$ROOT/$rel";; esac
-  placed+=("$rel")
+  # Fresh placement: nothing there yet.
+  if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
+    place_file "$f" "$rel"; placed+=("$rel"); continue
+  fi
+  # Already current: an untracked copy identical to the payload — leave it.
+  if same_file "$dest" "$f"; then placed+=("$rel"); continue; fi
+  # Differs from the payload. Three-way: if it still matches the last snapshot the
+  # user has NOT edited it since the previous init, so a payload change is a clean
+  # update — take it. Otherwise it is the user's edit (or a pre-existing untracked
+  # file) — keep it unless --force, so re-init never eats a hand-tuned gate.
+  if [ -e "$SNAP/$rel" ] || [ -L "$SNAP/$rel" ]; then
+    if same_file "$dest" "$SNAP/$rel"; then
+      place_file "$f" "$rel"; placed+=("$rel"); updated+=("$rel")
+      echo "omakase: updated $rel (you had not edited it; took the new payload version)" >&2
+      continue
+    fi
+  fi
+  if [ "$FORCE" -eq 1 ]; then
+    place_file "$f" "$rel"; placed+=("$rel"); updated+=("$rel")
+    echo "omakase: --force overwrote your edited $rel" >&2
+  else
+    placed+=("$rel"); kept+=("$rel")   # still managed (excluded + snapshotted), just not overwritten
+    echo "omakase: KEPT your edited $rel (differs from payload; re-run with --force to take the new version)" >&2
+  fi
 done < <(find "$PAYLOAD" \( -type f -o -type l \) -print0)
 
 # Top-level prefixes for the exclude block (small + stable), plus lefthook's
@@ -135,7 +176,10 @@ chmod +x "$OMK/ensure-present.sh"
 
 ( cd "$ROOT" && $LEFTHOOK install )
 
-echo "omakase: placed ${#placed[@]} file(s), skipped ${#skipped[@]} tracked path(s)."
+echo "omakase: placed ${#placed[@]} file(s), updated ${#updated[@]:-0}, kept ${#kept[@]:-0} edited, skipped ${#skipped[@]} tracked path(s)."
 for p in "${placed[@]:-}"; do [ -n "$p" ] && echo "  + $p"; done
+for u in "${updated[@]:-}"; do [ -n "$u" ] && echo "  ^ updated to new payload: $u"; done
+for k in "${kept[@]:-}"; do [ -n "$k" ] && echo "  = kept your edit (use --force to update): $k"; done
 for s in "${skipped[@]:-}"; do [ -n "$s" ] && echo "  ~ skipped (tracked): $s"; done
 echo "omakase: ignores -> .git/info/exclude; hooks installed; new worktrees auto-install the harness. Nothing to commit."
+echo "omakase: see the whole harness any time with  /omakase show"
