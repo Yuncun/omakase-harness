@@ -42,10 +42,12 @@ pre-commit:
       run: pnpm exec prettier --write .
 YML
   # personal / noise that MUST NOT be captured
+  printf 'SECRET=abc123\n' > "$r/.claude/rules/personal.md"   # personal secret INSIDE a declared harness dir
   printf '{ "outputStyle": "x" }\n' > "$r/.claude/settings.local.json"
   mkdir -p "$r/.claude/worktrees/decoy"; printf 'DECOY\n' > "$r/.claude/worktrees/decoy/AGENTS.md"
-  # gitignore personal state; make .omakase + lefthook-local.yml gitignored like a real injected harness
-  printf '.claude/settings.local.json\n.claude/worktrees/\n' > "$r/.gitignore"
+  # gitignore personal state (incl. the secret inside .claude/rules); make .omakase + lefthook-local.yml
+  # gitignored via the OMAKASE OVERLAY (.git/info/exclude) like a real injected harness.
+  printf '.claude/settings.local.json\n.claude/worktrees/\n.claude/rules/personal.md\n' > "$r/.gitignore"
   printf '.omakase/\nlefthook-local.yml\n' >> "$r/.git/info/exclude"
   ( cd "$r" && git add AGENTS.md CLAUDE.md .claude/rules .claude/skills .claude/hooks .claude/settings.json scripts .gitignore && git commit -q -m harness )
 }
@@ -70,6 +72,10 @@ OUT=$( cd "$SRC" && OMAKASE_PAYLOAD="$PAY" bash "$IMPORT" 2>&1 )
 # noise / personal NOT captured
 [ ! -e "$PAY/.claude/settings.local.json" ] && pass "personal settings.local.json NOT captured" || fail "leaked settings.local.json"
 [ ! -e "$PAY/.claude/worktrees" ] && pass "worktree decoy NOT captured" || fail "captured a worktree decoy"
+# BLOCKER regression: a personal secret gitignored INSIDE a declared dir must NOT leak into payload
+[ ! -e "$PAY/.claude/rules/personal.md" ] && pass "gitignored personal file inside .claude/rules NOT captured (no secret leak)" || fail "LEAKED a gitignored personal file into payload"
+grep -rq 'SECRET=abc123' "$PAY" 2>/dev/null && fail "secret value present somewhere in payload" || pass "secret value absent from the entire payload"
+echo "$OUT" | grep -qi 'skipped (personal' && pass "skipped personal file surfaced in the report" || fail "skipped personal file not surfaced"
 # cut-over: tracked files left committed by default, reported (not un-tracked)
 ( cd "$SRC" && git ls-files --error-unmatch AGENTS.md >/dev/null 2>&1 ) && pass "default: committed AGENTS.md left tracked (no surprise un-track)" || fail "default import un-tracked a file"
 echo "$OUT" | grep -qi 'still committed' && pass "report lists the still-committed cut-over set" || fail "report missing cut-over list"
@@ -92,6 +98,14 @@ SCRATCH="$TMP/scratch"; rm -rf "$SCRATCH"; mkdir -p "$SCRATCH"
 [ -x "$SCRATCH/.omakase/gates/g.sh" ] && pass "captured payload injects: gate lands in a fresh repo (executable)" || fail "captured payload did not inject the gate"
 [ -L "$SCRATCH/CLAUDE.md" ] && pass "captured payload injects the symlink" || fail "symlink did not inject"
 [ -z "$(cd "$SCRATCH" && git status --porcelain)" ] && pass "injected captured payload is zero-footprint (git clean)" || { fail "captured payload injection not clean"; (cd "$SCRATCH" && git status --porcelain | sed 's/^/      /'); }
+
+echo "== Scenario GUARD: refuses a payload that overlaps the source =="
+SRCG="$TMP/srcg"; mksource "$SRCG"
+( cd "$SRCG" && OMAKASE_PAYLOAD="$SRCG" bash "$IMPORT" ) >/dev/null 2>&1 && fail "did NOT refuse payload == source" || pass "refused payload == source repo"
+( cd "$SRCG" && OMAKASE_PAYLOAD="$SRCG/inside" bash "$IMPORT" ) >/dev/null 2>&1 && fail "did NOT refuse payload nested in source" || pass "refused payload nested inside source"
+[ ! -e "$SRCG/inside/AGENTS.md" ] && pass "nested-refusal wrote nothing into the source tree" || fail "nested payload contaminated the source tree"
+ln -s "$SRCG" "$TMP/srcg-link"
+( cd "$SRCG" && OMAKASE_PAYLOAD="$TMP/srcg-link" bash "$IMPORT" ) >/dev/null 2>&1 && fail "guard bypassed via a symlinked payload path" || pass "guard resolves symlinks (payload symlink to source refused)"
 
 rm -rf "$TMP"
 echo ""

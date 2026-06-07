@@ -32,8 +32,18 @@ PAYLOAD="${OMAKASE_PAYLOAD:-$(cd "$SCRIPT_DIR/../payload" 2>/dev/null && pwd || 
 # SOURCE repo (where we READ from) — the project you run this inside.
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "omakase: not inside a git repo" >&2; exit 1; }
 mkdir -p "$PAYLOAD"
-PAYLOAD="$(cd "$PAYLOAD" && pwd)"
-[ "$PAYLOAD" = "$ROOT" ] && { echo "omakase: payload destination is the source repo itself — point OMAKASE_PAYLOAD at your harness clone's payload/." >&2; exit 1; }
+# Resolve BOTH physically (-P): git returns ROOT symlink-resolved, so the payload must be too, or the
+# overlap guard below silently misses when paths differ only by a symlink (e.g. /tmp -> /private/tmp on macOS).
+PAYLOAD="$(cd "$PAYLOAD" && pwd -P)"
+ROOT="$(cd "$ROOT" && pwd -P)"
+# import must write to a SEPARATE harness clone — never into the project it is reading. Refuse a
+# destination that equals, contains, or sits inside the source repo (exact-equality alone missed nesting).
+overlaps() { case "$1/" in "$2"/*) return 0;; esac; return 1; }
+if [ "$PAYLOAD" = "$ROOT" ] || overlaps "$PAYLOAD" "$ROOT" || overlaps "$ROOT" "$PAYLOAD"; then
+  echo "omakase: payload destination ($PAYLOAD) overlaps the source repo ($ROOT)." >&2
+  echo "  Point OMAKASE_PAYLOAD at a SEPARATE harness clone's payload/, not inside the project you're capturing." >&2
+  exit 1
+fi
 
 # Declared harness locations (the contract: the path IS the classification).
 LOC_FILES=(AGENTS.md CLAUDE.md lefthook-local.yml lefthook.yml .pre-commit-config.yaml .claude/settings.json)
@@ -46,7 +56,7 @@ copy_into_payload() {  # $1 = relative path under ROOT
   case "$rel" in *.sh) [ -L "$dst" ] || chmod +x "$dst";; esac
 }
 
-is_noise() {  # personal/noise path that lives inside a declared location
+is_noise() {  # structural noise — never harness, regardless of ignore state
   case "$1" in
     */node_modules/*|*/.git/*|*/worktrees/*|.claude/worktrees/*) return 0;;
     */settings.local.json|settings.local.json)                   return 0;;
@@ -54,10 +64,25 @@ is_noise() {  # personal/noise path that lives inside a declared location
   return 1
 }
 
-imported=(); tracked=()
+# A path is PERSONAL (drop + surface, never publish into payload) when git ignores it via a source
+# OTHER than the omakase overlay. The harness's OWN injected files are ignored via .git/info/exclude
+# (the `>>> omakase-harness >>>` block) — those are real harness and MUST be kept (the #1 regression).
+# A file ignored via .gitignore or a global excludesFile is the user's personal state (a secret, scratch
+# notes) that merely lives inside a declared dir — dropping it stops a credential leak into every adopter.
+ignored_personal() {  # $1 = relative path under ROOT
+  local v
+  v="$(git -C "$ROOT" check-ignore -v -- "$1" 2>/dev/null)" || return 1   # not ignored -> not personal
+  case "$v" in
+    .git/info/exclude:*|*/info/exclude:*) return 1;;   # hidden by the omakase overlay -> real harness, keep
+    *) return 0;;                                       # .gitignore / global excludes -> personal, drop
+  esac
+}
+
+imported=(); tracked=(); skipped_personal=()
 consider() {  # $1 = relative path of a real file/symlink under ROOT
   local rel="$1"
   is_noise "$rel" && return 0
+  if ignored_personal "$rel"; then skipped_personal+=("$rel"); return 0; fi
   copy_into_payload "$rel"
   imported+=("$rel")
   if git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then tracked+=("$rel"); fi
@@ -105,6 +130,12 @@ fi
 # ---- report ----
 echo "omakase import: captured ${#imported[@]} harness file(s) into $PAYLOAD"
 for p in "${imported[@]:-}"; do [ -n "$p" ] && echo "  + $p"; done
+
+if [ "${#skipped_personal[@]:-0}" -gt 0 ]; then
+  echo ""
+  echo "omakase import: SKIPPED ${#skipped_personal[@]} gitignored personal file(s) sitting inside harness dirs — NOT published into payload (they are ignored via .gitignore/global, not the omakase overlay):"
+  for s in "${skipped_personal[@]:-}"; do [ -n "$s" ] && echo "  · skipped (personal/gitignored): $s"; done
+fi
 
 if [ "${#tracked[@]:-0}" -gt 0 ]; then
   echo ""
