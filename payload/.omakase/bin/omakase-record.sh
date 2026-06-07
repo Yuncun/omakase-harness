@@ -2,18 +2,28 @@
 # omakase-record — wrap a gate command, append a run record to the harness ledger,
 # and pass the command's exit code through UNCHANGED. Best-effort: a ledger write
 # failure never blocks the gate. Usage:
-#   bash .omakase/bin/omakase-record.sh <gate-name> [--hook <name>] -- <command> [args...]
-# The trigger label may also come from $OMAKASE_HOOK (lefthook exposes no hook name
-# to jobs). The ledger lives in the shared git dir (.git/omakase/ledger.tsv) so the
-# main checkout and every worktree share one run history. Tab-separated columns:
-#   epoch <tab> hook <tab> gate <tab> verdict <tab> duration_ms
+#   bash .omakase/bin/omakase-record.sh <gate-name> -- <command> [args...]
+# The trigger label comes from $OMAKASE_HOOK (lefthook exposes no hook name to jobs;
+# set it per hook in lefthook-local.yml). The ledger lives in the shared git dir
+# (.git/omakase/ledger.tsv) so the main checkout and every worktree share one run
+# history. Tab-separated columns: epoch <tab> hook <tab> gate <tab> verdict <tab> ms.
 # Test hook: OMAKASE_NOW pins "now".
 set -uo pipefail   # NOT -e: we must capture the gate's exit code, not die on it.
 
 gate="${1:-gate}"; shift || true
-hook="${OMAKASE_HOOK:--}"
-if [ "${1:-}" = "--hook" ]; then hook="${2:--}"; shift 2 || true; fi
 [ "${1:-}" = "--" ] && shift
+[ "$#" -eq 0 ] && exit 0     # no command to run -> nothing to record
+
+# Keep ledger columns intact even if a gate/hook name contains a tab or newline.
+gate="${gate//$'\t'/ }"; gate="${gate//$'\n'/ }"
+hook="${OMAKASE_HOOK:--}"; hook="${hook//$'\t'/ }"; hook="${hook//$'\n'/ }"
+
+# Resolve the ledger path BEFORE running the gate: a gate that changes the working
+# directory must not be able to misdirect (or silently drop) its own record. An
+# empty rev-parse result must NOT become `cd ""` (a no-op that would point at cwd
+# and litter a stray omakase/ dir outside any repo).
+gitdir="$(git rev-parse --git-common-dir 2>/dev/null)" || gitdir=""
+common=""; [ -n "$gitdir" ] && common="$(cd "$gitdir" 2>/dev/null && pwd)"
 
 now() { echo "${OMAKASE_NOW:-$(date +%s)}"; }
 start="$(now)"
@@ -21,16 +31,14 @@ start="$(now)"
 rc=$?
 end="$(now)"
 
-# Record. Wrapped so nothing here can change the gate's outcome.
-{
-  common="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd)" || common=""
-  if [ -n "$common" ]; then
+if [ -n "$common" ]; then
+  {
     mkdir -p "$common/omakase"
     verdict=pass; [ "$rc" -ne 0 ] && verdict=fail
     printf '%s\t%s\t%s\t%s\t%s\n' \
       "$end" "$hook" "$gate" "$verdict" "$(( (end - start) * 1000 ))" \
       >> "$common/omakase/ledger.tsv"
-  fi
-} 2>/dev/null || true
+  } 2>/dev/null || true
+fi
 
 exit "$rc"

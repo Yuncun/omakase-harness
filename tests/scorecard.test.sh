@@ -110,6 +110,56 @@ LEDGER="$(ledger_of "$REPO")"
 { [ -f "$LEDGER" ] && has_run "$LEDGER" omakase-example pass; } && pass "a real commit recorded the example gate (verdict=pass)" || { fail "no pass ledger entry after a real commit"; sed 's/^/      /' "$LEDGER" 2>/dev/null; }
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
+# ---------- Scenario V: review hardening (footprint, edge cases, honest labels) ----------
+echo "== Scenario V: hardening from code review =="
+
+# V1/V2: outside any git repo — never litter a stray omakase/ dir, and degrade to ready.
+OUTSIDE="$TMP/notarepo"; rm -rf "$OUTSIDE"; mkdir -p "$OUTSIDE"
+( cd "$OUTSIDE" && bash "$RECORD" g -- true ); rc=$?
+[ "$rc" -eq 0 ] && pass "recorder outside a repo passes exit through" || fail "recorder outside repo exit $rc"
+[ ! -e "$OUTSIDE/omakase" ] && pass "recorder writes NO stray omakase/ outside a repo" || fail "recorder littered a stray omakase/ dir"
+OUT="$( cd "$OUTSIDE" && bash "$SEG" )"
+echo "$OUT" | grep -qi 'ready' && pass "segment outside a repo -> ready" || fail "segment outside repo not ready ($OUT)"
+[ ! -e "$OUTSIDE/omakase" ] && pass "segment writes nothing outside a repo" || fail "segment littered a stray omakase/ dir"
+
+REPO="$TMP/repoV"; newrepo "$REPO"; LEDGER="$(ledger_of "$REPO")"; mkdir -p "$(dirname "$LEDGER")"
+
+# V3: a gate that changes the recorder's own cwd still records (git dir resolved first).
+( cd "$REPO" && bash "$RECORD" cdgate -- cd /tmp ) >/dev/null 2>&1
+has_run "$LEDGER" cdgate pass && pass "records even when the gate changes directory" || fail "cd-in-gate dropped the record"
+
+# V4: empty command after -- records nothing (no phantom pass) and exits 0.
+( cd "$REPO" && bash "$RECORD" emptyg -- ); rc=$?
+[ "$rc" -eq 0 ] && pass "empty command exits 0" || fail "empty command exit $rc"
+has_run "$LEDGER" emptyg pass && fail "empty command logged a phantom pass" || pass "empty command records nothing"
+
+# V8: a tab in the gate name is sanitized so columns don't shift.
+( cd "$REPO" && bash "$RECORD" "$(printf 'tab\tname')" -- true ) >/dev/null 2>&1
+nf=$(tail -1 "$LEDGER" | awk -F'\t' '{print NF}')
+[ "$nf" -eq 5 ] && pass "tab in gate name sanitized (line stays 5 fields)" || fail "tab in gate name shifted columns ($nf fields)"
+
+# V5: readers ignore malformed/blank ledger lines.
+: > "$LEDGER"
+printf 'garbage with no tabs\n\n' >> "$LEDGER"
+printf '%s\tpre-commit\tgoodgate\tpass\t5\n' $((NOW-120)) >> "$LEDGER"
+OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW NO_COLOR=1 bash "$SEG" )"
+echo "$OUT" | grep -q '✓' && pass "segment ignores malformed lines, shows valid verdict" || fail "malformed line broke the segment ($OUT)"
+echo "$OUT" | grep -q '2m' && pass "segment age comes from the valid row" || fail "wrong age with malformed lines ($OUT)"
+
+# V6: a blank-only ledger reads as ready, not a bogus age.
+: > "$LEDGER"; printf '\n\n\n' >> "$LEDGER"
+OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW NO_COLOR=1 bash "$SEG" )"
+echo "$OUT" | grep -qi 'ready' && pass "blank-only ledger -> ready" || fail "blank ledger not ready ($OUT)"
+
+# V7: with mixed verdicts the ✗ label + age come from the FAILING gate, not the newest pass.
+: > "$LEDGER"
+printf '%s\tpre-commit\tlint\tfail\t5\n' $((NOW-600)) >> "$LEDGER"
+printf '%s\tpre-push\ttest\tpass\t5\n'  $((NOW-60))  >> "$LEDGER"
+OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW NO_COLOR=1 bash "$SEG" )"
+echo "$OUT" | grep -q '✗' && pass "mixed verdicts -> red" || fail "mixed verdicts not red ($OUT)"
+echo "$OUT" | grep -q 'pre-commit' && pass "fail label comes from the failing gate" || fail "label not from failing gate ($OUT)"
+echo "$OUT" | grep -q '10m' && pass "fail age comes from the failing gate" || fail "age not from failing gate ($OUT)"
+
 rm -rf "$TMP"
 echo ""
 [ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }
