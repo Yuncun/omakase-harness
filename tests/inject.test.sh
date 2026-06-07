@@ -137,6 +137,52 @@ WTD="$TMP/repoD-wt"
 [ -L "$WTD/CLAUDE.md" ] && pass "ensure-present self-healed the symlink into a worktree" || fail "ensure-present did not carry the symlink"
 ( cd "$REPO" && git worktree remove --force "$WTD" ) 2>/dev/null; ( cd "$REPO" && git worktree prune ) 2>/dev/null
 
+# ---------- Scenario E: re-init never eats your edits; --force takes the update ----------
+echo "== Scenario E: re-init keep / clean-update / --force =="
+# E1 — you edited a placed gate; re-init KEEPS it.
+PAY="$TMP/payloadE1"; REPO="$TMP/repoE1"; mkpayload "$PAY"; newrepo "$REPO"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+echo 'MY EDIT' > "$REPO/.omakase/gates/example.sh"
+OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 )
+grep -q 'MY EDIT' "$REPO/.omakase/gates/example.sh" && pass "re-init KEPT the user's edited gate" || fail "re-init clobbered the user's edit"
+echo "$OUT" | grep -qi 'kept' && pass "re-init reported the kept edit" || fail "re-init did not report a kept edit"
+[ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status still clean after a keep" || { fail "status not clean after keep"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
+# E2 — you did NOT edit; payload changed; re-init takes the new version.
+PAY="$TMP/payloadE2"; REPO="$TMP/repoE2"; mkpayload "$PAY"; newrepo "$REPO"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+printf '#!/usr/bin/env bash\necho NEW-PAYLOAD-V2\nexit 0\n' > "$PAY/.omakase/gates/example.sh"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+grep -q 'NEW-PAYLOAD-V2' "$REPO/.omakase/gates/example.sh" && pass "re-init took the new payload version (no local edit)" || fail "clean update did not apply"
+# E3 — --force overrides a real edit.
+PAY="$TMP/payloadE3"; REPO="$TMP/repoE3"; mkpayload "$PAY"; newrepo "$REPO"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+echo 'EDIT TO BE FORCED OUT' > "$REPO/.omakase/gates/example.sh"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" --force ) >/dev/null 2>&1
+grep -q 'omakase-example-gate-ran' "$REPO/.omakase/gates/example.sh" && pass "--force overwrote the edit with the payload" || fail "--force did not overwrite"
+
+# ---------- Scenario F: /omakase show renders the installed harness ----------
+echo "== Scenario F: show renders the installed-but-invisible harness =="
+SHOW="$HERE/../bin/show.sh"
+PAY="$TMP/payloadF"; REPO="$TMP/repoF"; mkpayload "$PAY"; newrepo "$REPO"
+OUT=$( cd "$REPO" && bash "$SHOW" 2>&1 )
+echo "$OUT" | grep -qi 'No omakase harness' && pass "show reports empty state before init" || fail "show did not report empty state"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+OUT=$( cd "$REPO" && bash "$SHOW" 2>&1 )
+echo "$OUT" | grep -q 'PLACED FILES' && pass "show prints the placed-files map" || fail "show missing PLACED FILES"
+echo "$OUT" | grep -q '.omakase/gates/example.sh' && pass "show lists the gate file" || fail "show did not list the gate"
+echo "$OUT" | grep -q 'HIDDEN VIA' && pass "show lists what is gitignored" || fail "show missing the exclude section"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
+
+# ---------- Scenario G: the SHIPPED example gate blocks merge-conflict markers ----------
+echo "== Scenario G: shipped example gate is real and generic =="
+GATE="$HERE/../payload/.omakase/gates/example.sh"
+REPO="$TMP/repoG"; newrepo "$REPO"
+mkdir -p "$REPO/.omakase/gates"; cp "$GATE" "$REPO/.omakase/gates/example.sh"; chmod +x "$REPO/.omakase/gates/example.sh"
+( cd "$REPO" && printf 'hello\n' > a.txt && git add a.txt )
+( cd "$REPO" && bash .omakase/gates/example.sh ) >/dev/null 2>&1 && pass "example gate passes on clean staged input" || fail "example gate failed on clean input"
+( cd "$REPO" && printf '<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> branch\n' > b.txt && git add b.txt )
+( cd "$REPO" && bash .omakase/gates/example.sh ) >/dev/null 2>&1 && fail "example gate did NOT block a conflict marker" || pass "example gate blocked a staged conflict marker"
+
 rm -rf "$TMP"
 echo ""
 [ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }
