@@ -49,6 +49,28 @@ else
 fi
 echo
 
+echo "RECENT RUNS — most recent verdict per gate"
+LEDGER="$OMK/ledger.tsv"
+if [ -s "$LEDGER" ]; then
+  now="${OMAKASE_NOW:-$(date +%s)}"
+  awk -F'\t' -v now="$now" '
+    { ts=$1+0; if (ts >= seen[$3]) { seen[$3]=ts; verd[$3]=$4; hook[$3]=$2 } }
+    END {
+      for (g in seen) {
+        d=now-seen[g]; if (d < 0) d=0
+        if      (d < 60)    a="<1m"
+        else if (d < 3600)  a=int(d/60)"m"
+        else if (d < 86400) a=int(d/3600)"h"
+        else                a=int(d/86400)"d"
+        h=(hook[g]=="-" ? "" : hook[g]" ")
+        printf "  %s  %-4s  %s%s  (%s ago)\n", (verd[g]=="fail" ? "\342\234\227" : "\342\234\223"), verd[g], h, g, a
+      }
+    }' "$LEDGER" | sort -k3
+else
+  echo "  (no gate runs recorded yet — gates wired through omakase-record.sh log here)"
+fi
+echo
+
 echo "HIDDEN VIA .git/info/exclude"
 if [ -f "$EXCLUDE" ]; then
   awk -v b="$BEGIN" -v e="$END" '$0==b{s=1;next} $0==e{s=0} s&&NF{print "  "$0}' "$EXCLUDE"

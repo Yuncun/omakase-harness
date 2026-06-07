@@ -10,7 +10,7 @@ Dispatch on the argument `$ARGUMENTS` — empty / `show` / `status` → SHOW, `i
 bash "${CLAUDE_PLUGIN_ROOT}/bin/show.sh"
 ```
 
-Renders the installed-but-gitignored harness as one map: every placed file, the git hooks and what each one runs, and what is hidden via `.git/info/exclude`. Read-only — running this never changes anything. If no harness is installed it says so and points to `init`.
+Renders the installed-but-gitignored harness as one map: every placed file, the git hooks and what each one runs, a RECENT RUNS scorecard (most recent verdict per gate, with how long ago — populated by gates wired through `omakase-record.sh`), and what is hidden via `.git/info/exclude`. Read-only — running this never changes anything. If no harness is installed it says so and points to `init`.
 
 ## INIT — argument `init` (optionally `init --force`)
 
