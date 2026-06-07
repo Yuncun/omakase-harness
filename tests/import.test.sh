@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# Proof that import.sh deterministically captures an existing scattered harness into
+# payload/ — including a harness whose own gates are GITIGNORED (the #1 regression:
+# never enumerate from `git ls-files`), while skipping personal/noise files, carrying
+# symlinks, leaving committed files committed by default, and producing an init-able payload.
+set -u
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMPORT="$HERE/../bin/import.sh"
+INIT="$HERE/../bin/init.sh"
+LEFTHOOK="${LEFTHOOK_BIN:-/Users/ericshen/Claude/pixterm-engine/node_modules/.bin/lefthook}"
+TMP="${TMPDIR:-/tmp}/omakase-import-test.$$"
+FAILED=0
+pass(){ echo "  PASS: $1"; }
+fail(){ echo "  FAIL: $1"; FAILED=1; }
+export PATH="$(dirname "$LEFTHOOK"):$PATH"
+
+# Build a realistic scattered-harness SOURCE repo at $1.
+mksource(){
+  local r="$1"; rm -rf "$r"; mkdir -p "$r"
+  ( cd "$r" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
+  # committed doctrine
+  printf 'real doctrine\n' > "$r/AGENTS.md"
+  ( cd "$r" && ln -s AGENTS.md CLAUDE.md )
+  mkdir -p "$r/.claude/rules" "$r/.claude/skills/demo" "$r/.claude/hooks"
+  printf 'a rule\n' > "$r/.claude/rules/style.md"
+  printf 'a skill\n' > "$r/.claude/skills/demo/SKILL.md"
+  printf '#!/usr/bin/env bash\necho hook\n' > "$r/.claude/hooks/sess.sh"
+  printf '{ "hooks": {} }\n' > "$r/.claude/settings.json"
+  # a wired gate that is GITIGNORED (the harness's own injected gate) — the regression case
+  mkdir -p "$r/.omakase/gates"
+  printf '#!/usr/bin/env bash\necho GATE-G-RAN\nexit 0\n' > "$r/.omakase/gates/g.sh"; chmod +x "$r/.omakase/gates/g.sh"
+  # a loose wired gate OUTSIDE a captured location
+  mkdir -p "$r/scripts"; printf '#!/usr/bin/env bash\nexit 0\n' > "$r/scripts/loose.sh"; chmod +x "$r/scripts/loose.sh"
+  cat > "$r/lefthook-local.yml" <<'YML'
+pre-commit:
+  jobs:
+    - name: gate-g
+      run: bash .omakase/gates/g.sh
+    - name: loose
+      run: bash scripts/loose.sh
+    - name: fmt
+      run: pnpm exec prettier --write .
+YML
+  # personal / noise that MUST NOT be captured
+  printf '{ "outputStyle": "x" }\n' > "$r/.claude/settings.local.json"
+  mkdir -p "$r/.claude/worktrees/decoy"; printf 'DECOY\n' > "$r/.claude/worktrees/decoy/AGENTS.md"
+  # gitignore personal state; make .omakase + lefthook-local.yml gitignored like a real injected harness
+  printf '.claude/settings.local.json\n.claude/worktrees/\n' > "$r/.gitignore"
+  printf '.omakase/\nlefthook-local.yml\n' >> "$r/.git/info/exclude"
+  ( cd "$r" && git add AGENTS.md CLAUDE.md .claude/rules .claude/skills .claude/hooks .claude/settings.json scripts .gitignore && git commit -q -m harness )
+}
+
+echo "== Scenario IMPORT: capture a scattered harness (gitignored gates included) =="
+SRC="$TMP/src"; PAY="$TMP/payload"
+mksource "$SRC"
+OUT=$( cd "$SRC" && OMAKASE_PAYLOAD="$PAY" bash "$IMPORT" 2>&1 )
+
+# #1 REGRESSION: a GITIGNORED gate must still be captured (no git-ls-files enumeration).
+[ -f "$PAY/.omakase/gates/g.sh" ] && pass "gitignored gate captured into payload (the #1 regression)" || { fail "gitignored gate DROPPED"; echo "$OUT" | sed 's/^/      /'; }
+[ -x "$PAY/.omakase/gates/g.sh" ] && pass "captured gate stays executable" || fail "gate lost +x"
+# committed doctrine captured by identical path
+[ -f "$PAY/AGENTS.md" ] && pass "committed AGENTS.md captured" || fail "AGENTS.md missing"
+[ -f "$PAY/.claude/rules/style.md" ] && pass "committed rule captured" || fail "rule missing"
+[ -f "$PAY/.claude/skills/demo/SKILL.md" ] && pass "committed skill captured" || fail "skill missing"
+[ -f "$PAY/.claude/settings.json" ] && pass "settings.json captured" || fail "settings.json missing"
+[ -f "$PAY/lefthook-local.yml" ] && pass "gitignored lefthook-local.yml captured" || fail "lefthook-local.yml missing"
+# symlink carried AS a symlink
+[ -L "$PAY/CLAUDE.md" ] && pass "CLAUDE.md captured as a symlink (cp -P)" || fail "CLAUDE.md not a symlink"
+[ "$(readlink "$PAY/CLAUDE.md")" = "AGENTS.md" ] && pass "symlink target preserved" || fail "symlink target wrong"
+# noise / personal NOT captured
+[ ! -e "$PAY/.claude/settings.local.json" ] && pass "personal settings.local.json NOT captured" || fail "leaked settings.local.json"
+[ ! -e "$PAY/.claude/worktrees" ] && pass "worktree decoy NOT captured" || fail "captured a worktree decoy"
+# cut-over: tracked files left committed by default, reported (not un-tracked)
+( cd "$SRC" && git ls-files --error-unmatch AGENTS.md >/dev/null 2>&1 ) && pass "default: committed AGENTS.md left tracked (no surprise un-track)" || fail "default import un-tracked a file"
+echo "$OUT" | grep -qi 'still committed' && pass "report lists the still-committed cut-over set" || fail "report missing cut-over list"
+# leftover detection
+echo "$OUT" | grep -q 'scripts/loose.sh' && pass "loose wired gate reported (not auto-grabbed)" || fail "loose gate not reported"
+[ ! -e "$PAY/scripts/loose.sh" ] && pass "loose gate NOT captured (outside a declared location)" || fail "loose gate wrongly captured"
+echo "$OUT" | grep -qi 'prettier' && pass "stack-coupled hook job flagged for review" || fail "stack job not flagged"
+
+echo "== Scenario ADOPT: --adopt-tracked un-tracks the committed set =="
+SRC2="$TMP/src2"; PAY2="$TMP/payload2"
+mksource "$SRC2"
+( cd "$SRC2" && OMAKASE_PAYLOAD="$PAY2" bash "$IMPORT" --adopt-tracked ) >/dev/null 2>&1
+( cd "$SRC2" && git ls-files --error-unmatch AGENTS.md >/dev/null 2>&1 ) && fail "--adopt-tracked did NOT un-track AGENTS.md" || pass "--adopt-tracked staged git rm --cached on the committed set"
+[ -f "$SRC2/AGENTS.md" ] && pass "--adopt-tracked kept the file on disk (reversible)" || fail "--adopt-tracked deleted the working file"
+
+echo "== Scenario ROUNDTRIP: the captured payload is init-able =="
+SCRATCH="$TMP/scratch"; rm -rf "$SCRATCH"; mkdir -p "$SCRATCH"
+( cd "$SCRATCH" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init )
+( cd "$SCRATCH" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+[ -x "$SCRATCH/.omakase/gates/g.sh" ] && pass "captured payload injects: gate lands in a fresh repo (executable)" || fail "captured payload did not inject the gate"
+[ -L "$SCRATCH/CLAUDE.md" ] && pass "captured payload injects the symlink" || fail "symlink did not inject"
+[ -z "$(cd "$SCRATCH" && git status --porcelain)" ] && pass "injected captured payload is zero-footprint (git clean)" || { fail "captured payload injection not clean"; (cd "$SCRATCH" && git status --porcelain | sed 's/^/      /'); }
+
+rm -rf "$TMP"
+echo ""
+[ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }
