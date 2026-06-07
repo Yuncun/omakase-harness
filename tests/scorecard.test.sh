@@ -160,6 +160,40 @@ echo "$OUT" | grep -q '✗' && pass "mixed verdicts -> red" || fail "mixed verdi
 echo "$OUT" | grep -q 'pre-commit' && pass "fail label comes from the failing gate" || fail "label not from failing gate ($OUT)"
 echo "$OUT" | grep -q '10m' && pass "fail age comes from the failing gate" || fail "age not from failing gate ($OUT)"
 
+# ---------- Scenario W: branding (banner box, status pill, show header) ----------
+echo "== Scenario W: branding =="
+PAY="$HERE/../payload"; REPO="$TMP/repoW"; newrepo "$REPO"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+BAN="$REPO/.omakase/bin/omakase-banner.sh"
+VER="$(cat "$HERE/../payload/.omakase/VERSION")"
+
+# version file matches plugin.json (no drift)
+PJV="$(grep -o '"version"[^,]*' "$HERE/../.claude-plugin/plugin.json" | grep -o '[0-9][0-9.]*')"
+[ "$PJV" = "$VER" ] && pass "payload VERSION matches plugin.json ($PJV)" || fail "VERSION drift: plugin.json=$PJV payload=$VER"
+
+# banner: name + version + hook, swappable icon, honors NO_COLOR
+OUT="$( cd "$REPO" && NO_COLOR=1 bash "$BAN" pre-commit )"
+echo "$OUT" | grep -q 'omakase-harness' && pass "banner shows the plugin name" || fail "banner missing name"
+echo "$OUT" | grep -q "v$VER" && pass "banner shows the version" || fail "banner missing version ($OUT)"
+echo "$OUT" | grep -q 'pre-commit' && pass "banner shows the hook" || fail "banner missing hook"
+printf '%s' "$OUT" | grep -q "$(printf '\033')" && fail "banner ignores NO_COLOR" || pass "banner honors NO_COLOR"
+OUT="$( cd "$REPO" && OMAKASE_ICON='ZZ' NO_COLOR=1 bash "$BAN" )"
+echo "$OUT" | grep -q 'ZZ' && pass "banner icon swappable via OMAKASE_ICON" || fail "icon not swappable ($OUT)"
+
+# status pill: background color by default, flat under NO_COLOR, mark intact
+LEDGER="$(ledger_of "$REPO")"; mkdir -p "$(dirname "$LEDGER")"; : > "$LEDGER"
+printf '%s\tpre-push\ttest\tpass\t5\n' $((NOW-120)) >> "$LEDGER"
+OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW bash "$SEG" )"
+printf '%s' "$OUT" | grep -q "$(printf '\033')\[48" && pass "status pill uses a background color by default" || fail "no background pill ($OUT)"
+OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW NO_COLOR=1 bash "$SEG" )"
+printf '%s' "$OUT" | grep -q "$(printf '\033')" && fail "pill ignores NO_COLOR" || pass "pill flat under NO_COLOR"
+echo "$OUT" | grep -q '✓' && pass "pill keeps the verdict mark" || fail "pill lost the mark"
+
+# show: branded banner header (hyphenated plugin name)
+OUT="$( cd "$REPO" && bash "$SHOW" 2>&1 )"
+echo "$OUT" | grep -q 'omakase-harness' && pass "show prints a branded banner header" || fail "show missing branded header"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
+
 rm -rf "$TMP"
 echo ""
 [ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }

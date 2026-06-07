@@ -15,10 +15,10 @@ gitdir="$(git rev-parse --git-common-dir 2>/dev/null)" || gitdir=""
 common=""; [ -n "$gitdir" ] && common="$(cd "$gitdir" 2>/dev/null && pwd)"
 ledger="${common:+$common/omakase/ledger.tsv}"
 
-esc=$'\033'
-green="${esc}[32m"; red="${esc}[31m"; dim="${esc}[2m"; reset="${esc}[0m"
-[ -n "${NO_COLOR:-}" ] && { green=""; red=""; dim=""; reset=""; }
-ready() { printf '🍣 %sready%s\n' "$dim" "$reset"; exit 0; }
+icon="${OMAKASE_ICON:-🍣}"
+esc=$'\033'; reset="${esc}[0m"; dim="${esc}[2m"
+nocolor=0; [ -n "${NO_COLOR:-}" ] && { nocolor=1; reset=""; dim=""; }
+ready() { printf '%s %sready%s\n' "$icon" "$dim" "$reset"; exit 0; }
 
 [ -z "$ledger" ] || [ ! -s "$ledger" ] && ready
 
@@ -52,6 +52,13 @@ elif [ "$diff" -lt 86400 ]; then ago="$(( diff / 3600 ))h"
 else                              ago="$(( diff / 86400 ))d"
 fi
 
-if [ "$overall" = "fail" ]; then mark="${red}✗${reset}"; else mark="${green}✓${reset}"; fi
 trigger=""; { [ -n "$latest_hook" ] && [ "$latest_hook" != "-" ]; } && trigger=" $latest_hook"
-printf '🍣 %s%s · %s\n' "$mark" "$trigger" "$ago"
+if [ "$overall" = "fail" ]; then m="✗"; else m="✓"; fi
+if [ "$nocolor" -eq 1 ]; then
+  printf '%s %s%s · %s\n' "$icon" "$m" "$trigger" "$ago"
+else
+  # background "pill": green for all-pass, red when a gate's latest run failed.
+  if [ "$overall" = "fail" ]; then bg="${esc}[48;2;74;18;22m"; fg="${esc}[38;2;255;179;173m"
+  else                              bg="${esc}[48;2;15;61;34m"; fg="${esc}[38;2;126;226;160m"; fi
+  printf '%s%s %s %s%s · %s %s\n' "$bg" "$fg" "$icon" "$m" "$trigger" "$ago" "$reset"
+fi

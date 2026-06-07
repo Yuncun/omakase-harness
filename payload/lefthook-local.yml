@@ -5,8 +5,17 @@
 #   complete checkers — whole-project; run per-push (pre-push).
 # Each `run` resolves from the repo root.
 
+# Replace lefthook's own header box with the omakase banner: show ONLY each gate's
+# output plus a mark for any FAILED gate (no lefthook box, no per-job name lines, no
+# success summary). The omakase-banner job below prints the branded box instead.
+# Want lefthook's full frame back? delete this line (or add summary,success).
+output: [execution_out, failure]
+
 pre-commit:
   jobs:
+    # Branded header box (replaces lefthook's). Runs first; its only output is the box.
+    - name: omakase-banner
+      run: bash .omakase/bin/omakase-banner.sh pre-commit
     # --- scoped checker (the shipped example: blocks staged merge-conflict markers) ---
     # Wrapped in omakase-record.sh so the run lands in the scorecard ledger; it passes
     # the gate's exit code straight through. Wrap your own gates the same way to have

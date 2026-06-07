@@ -18,7 +18,9 @@ if [ ! -f "$OMK/placed.list" ]; then
   exit 0
 fi
 
-echo "omakase harness — installed in $ROOT"
+BANNER="$ROOT/.omakase/bin/omakase-banner.sh"
+if [ -f "$BANNER" ]; then bash "$BANNER" 2>/dev/null || true; fi
+echo "installed in $ROOT"
 echo "(every file below is gitignored via .git/info/exclude: invisible to git, never committed)"
 echo
 echo "PLACED FILES"
