@@ -18,7 +18,9 @@ if [ ! -f "$OMK/placed.list" ]; then
   exit 0
 fi
 
-echo "omakase harness — installed in $ROOT"
+BANNER="$ROOT/.omakase/bin/omakase-banner.sh"
+if [ -f "$BANNER" ]; then bash "$BANNER" 2>/dev/null || true; fi
+echo "installed in $ROOT"
 echo "(every file below is gitignored via .git/info/exclude: invisible to git, never committed)"
 echo
 echo "PLACED FILES"
@@ -46,6 +48,29 @@ elif [ -f "$ROOT/lefthook-local.yml" ]; then
   sed 's/^/  /' "$ROOT/lefthook-local.yml"
 else
   echo "  (no hook wiring found)"
+fi
+echo
+
+echo "RECENT RUNS — most recent verdict per gate"
+LEDGER="$OMK/ledger.tsv"
+if [ -s "$LEDGER" ]; then
+  now="${OMAKASE_NOW:-$(date +%s)}"
+  awk -F'\t' -v now="$now" '
+    NF==5 && $1 ~ /^[0-9]+$/ { ts=$1+0; if (ts >= seen[$3]) { seen[$3]=ts; verd[$3]=$4; hook[$3]=$2 } }
+    END {
+      for (g in seen) {
+        d=now-seen[g]; if (d < 0) d=0
+        if      (d < 60)    a="<1m"
+        else if (d < 3600)  a=int(d/60)"m"
+        else if (d < 86400) a=int(d/3600)"h"
+        else                a=int(d/86400)"d"
+        h=(hook[g]=="-" ? "" : hook[g]" ")
+        # leading "<gate><tab>" is a sort key, stripped by cut below
+        printf "%s\t  %s  %-4s  %s%s  (%s ago)\n", g, (verd[g]=="fail" ? "\342\234\227" : "\342\234\223"), verd[g], h, g, a
+      }
+    }' "$LEDGER" | sort | cut -f2-
+else
+  echo "  (no gate runs recorded yet — gates wired through omakase-record.sh log here)"
 fi
 echo
 

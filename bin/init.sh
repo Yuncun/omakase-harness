@@ -183,3 +183,7 @@ for k in "${kept[@]:-}"; do [ -n "$k" ] && echo "  = kept your edit (use --force
 for s in "${skipped[@]:-}"; do [ -n "$s" ] && echo "  ~ skipped (tracked): $s"; done
 echo "omakase: ignores -> .git/info/exclude; hooks installed; new worktrees auto-install the harness. Nothing to commit."
 echo "omakase: see the whole harness any time with  /omakase show"
+echo "omakase: status line — compose the scorecard into your existing bar (it never"
+echo "         takes over the bar). Add this command to your status-line script:"
+echo "           bash $ROOT/.omakase/bin/omakase-statusline.sh"
+echo "         Claude Code: your ~/.claude statusLine script. Copilot CLI: ~/.copilot. tmux: status-right."
