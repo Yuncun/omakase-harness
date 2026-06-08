@@ -3,7 +3,7 @@
 Status snapshot and ordered plan. Top constraint: **fewest controls, least code, no slop.**
 Every new flag, command, or file is a cost paid against simplicity.
 
-## Where we are (2026-06-07)
+## Where we are (2026-06-08)
 
 Four scripts in `bin/`: `init`, `import`, `remove`, `show`. The plugin (`commands/omakase.md`)
 dispatches `init` / `show` / `remove`; `import` is a creator-only script, off the adopter
@@ -12,7 +12,18 @@ surface.
 The flagless surface shipped in PR #4: `init` dropped `--force` and the three-way merge (it now
 matches payload — overwrite-a-divergent-uncommitted-file-and-warn, never touch a committed one),
 and `import` dropped `--adopt-tracked` and no longer mutates the source. The scripts and command
-doc now match the decisions below. Phase 1 is done; Phase 2 (interactive onboarding `init`) is next.
+doc now match the decisions below. Phase 1 is done.
+
+Two Phase-2 surface fixes shipped ahead of the interactive `init` flow:
+- **`/omakase show` re-renders as Markdown.** The command now tells Claude to run `show.sh` and
+  re-present its output as formatted Markdown rather than relay the raw terminal dump (which lands
+  in a collapsed, unformatted tool box). Fixes the "the install is invisible *and* its readout is
+  ugly" complaint with zero script change.
+- **The banner keeps the run summary.** `lefthook-local.yml` now drops only `meta` (lefthook's
+  header box, which the banner replaces) instead of also dropping `summary` — so a multi-job
+  pre-push still prints its per-gate ✓/✗ + timing under the branded box.
+
+Next: Phase 2 proper (interactive onboarding `init` — welcome + preview + confirm).
 
 ## Decisions locked this round (the simplification)
 
@@ -103,14 +114,22 @@ Surfaced 2026-06-08 dogfooding the full pixterm port.
 
 - **`import` silently merges same-named `.omakase/bin/` helpers — must detect the collision.**
   Base and pixterm independently named a helper `omakase-record.sh` for unrelated jobs: base's
-  appends a run row to a ledger the scorecard status line reads; pixterm's writes a commit-keyed
+  appended a run row to a ledger the scorecard status line reads; pixterm's writes a commit-keyed
   pass/fail verdict the deferred-check gate reads (the visual-verify keystone). The capture/refresh
   took pixterm's recorder but refreshed `init.sh`/`show.sh` from base, so the engine advertised a
   scorecard status line and banner the payload never shipped — a dangling wire-up. Blindly copying
-  base's recorder over pixterm's would have broken visual-verify. `import` (and the engine refresh)
-  must flag a same-path helper whose content differs between base and the captured payload rather
-  than silently picking one. Interim guard shipped: `init` only prints the status-line wire-up when
-  the payload actually ships `omakase-statusline.sh`; `show` already guards the banner.
+  base's recorder over pixterm's would have broken visual-verify.
+
+  **Resolved by renaming, not by collision detection:** base's run-ledger writer is now
+  `omakase-ledger.sh` (it writes the ledger) and pixterm keeps `omakase-record.sh` for its
+  deferred verdict. The names no longer collide, so a payload can carry **both** — which is what
+  lets pixterm run the live scorecard *and* the deferred gate side by side. The general lesson
+  still stands and is the next safeguard to build: **`import` must flag a same-path helper whose
+  content differs between base and the captured payload** rather than silently picking one (a
+  payload is free to override a base helper, but the override must be deliberate, not accidental).
+  The interim init/show guards (advertise the status-line wire-up only when `omakase-statusline.sh`
+  is present; guard the banner on its own presence) stay — a payload may still legitimately ship a
+  subset.
 
 ## Open decisions
 

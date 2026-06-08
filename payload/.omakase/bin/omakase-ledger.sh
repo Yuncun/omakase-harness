@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# omakase-record — wrap a gate command, append a run record to the harness ledger,
+# omakase-ledger — wrap a gate command, append a run record to the harness ledger,
 # and pass the command's exit code through UNCHANGED. Best-effort: a ledger write
 # failure never blocks the gate. Usage:
-#   bash .omakase/bin/omakase-record.sh <gate-name> -- <command> [args...]
+#   bash .omakase/bin/omakase-ledger.sh <gate-name> -- <command> [args...]
 # The trigger label comes from $OMAKASE_HOOK (lefthook exposes no hook name to jobs;
 # set it per hook in lefthook-local.yml). The ledger lives in the shared git dir
 # (.git/omakase/ledger.tsv) so the main checkout and every worktree share one run
