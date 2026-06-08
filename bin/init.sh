@@ -169,8 +169,8 @@ for s in "${skipped[@]:-}"; do [ -n "$s" ] && echo "  ~ skipped (committed — g
 echo "omakase: ignores -> .git/info/exclude; hooks installed; new worktrees auto-install the harness. Nothing to commit."
 echo "omakase: see the whole harness any time with  /omakase show"
 # Only advertise the scorecard status line when the payload actually ships it.
-# A payload may omit the scorecard (e.g. it uses omakase-record.sh for a different
-# job), and a dangling wire-up instruction is worse than none.
+# A payload may ship gates but no status-line segment (it forgoes the scorecard
+# surface), and a dangling wire-up instruction is worse than none.
 if [ -f "$ROOT/.omakase/bin/omakase-statusline.sh" ]; then
   echo "omakase: status line — compose the scorecard into your existing bar (it never"
   echo "         takes over the bar). Add this command to your status-line script:"

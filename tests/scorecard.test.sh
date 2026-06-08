@@ -6,7 +6,7 @@
 # (epoch, hook, gate, verdict, duration_ms); assertions use awk, not grep -P (BSD).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RECORD="$HERE/../payload/.omakase/bin/omakase-record.sh"
+RECORD="$HERE/../payload/.omakase/bin/omakase-ledger.sh"
 SEG="$HERE/../payload/.omakase/bin/omakase-statusline.sh"
 SHOW="$HERE/../bin/show.sh"
 INIT="$HERE/../bin/init.sh"
@@ -25,7 +25,7 @@ has_run(){ awk -F'\t' -v g="$2" -v v="$3" '$3==g && $4==v{f=1} END{exit f?0:1}' 
 export PATH="$(dirname "$LEFTHOOK"):$PATH"
 
 # ---------- Scenario R: recorder writes a ledger line and passes exit through ----------
-echo "== Scenario R: omakase-record =="
+echo "== Scenario R: omakase-ledger =="
 REPO="$TMP/repoR"; newrepo "$REPO"
 LEDGER="$(ledger_of "$REPO")"
 

@@ -70,7 +70,7 @@ if [ -s "$LEDGER" ]; then
       }
     }' "$LEDGER" | sort | cut -f2-
 else
-  echo "  (no gate runs recorded yet — gates wired through omakase-record.sh log here)"
+  echo "  (no gate runs recorded yet — gates wired through omakase-ledger.sh log here)"
 fi
 echo
 
