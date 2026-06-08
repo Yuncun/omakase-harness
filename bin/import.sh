@@ -18,13 +18,11 @@
 #      lives outside a captured location is reported, never auto-grabbed.
 #   3. Skip noise: node_modules/, worktrees, .git/, and the personal settings.local.json.
 #   4. Carry symlinks as symlinks (cp -P), e.g. CLAUDE.md -> AGENTS.md. Never dereference.
-#   5. Files you already COMMIT are left committed and listed; --adopt-tracked is the
-#      explicit opt-in that `git rm --cached`es them (you commit the removal).
+#   5. import NEVER mutates the source repo. A file you already COMMIT is captured into
+#      payload but left committed in place, and listed — to let the injected copy take
+#      over, you run `git rm --cached` yourself (then re-init). The cut-over is your call.
 #   6. Anything unresolved goes to a leftover list; import never infers.
 set -euo pipefail
-
-ADOPT_TRACKED=0
-for a in "$@"; do case "$a" in --adopt-tracked) ADOPT_TRACKED=1;; esac; done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # DESTINATION payload (where we WRITE). Same env var init uses, opposite role.
@@ -120,13 +118,6 @@ for cfg in lefthook-local.yml lefthook.yml .pre-commit-config.yaml; do
   done < <(grep -E '^\s*run:' "$ROOT/$cfg" 2>/dev/null | grep -E '(pnpm|npm |npx|yarn|turbo|make |cargo|go run|pytest|ruff|vue-tsc)' | sed -E 's/^\s*run:\s*//' | sort -u)
 done
 
-# Rule 5: the cut-over for files the source still COMMITS.
-adopted=0
-if [ "$ADOPT_TRACKED" -eq 1 ] && [ "${#tracked[@]:-0}" -gt 0 ]; then
-  git -C "$ROOT" rm --cached --quiet -- "${tracked[@]}"
-  adopted=1
-fi
-
 # ---- report ----
 echo "omakase import: captured ${#imported[@]} harness file(s) into $PAYLOAD"
 for p in "${imported[@]:-}"; do [ -n "$p" ] && echo "  + $p"; done
@@ -139,16 +130,12 @@ fi
 
 if [ "${#tracked[@]:-0}" -gt 0 ]; then
   echo ""
-  if [ "$adopted" -eq 1 ]; then
-    echo "omakase import: --adopt-tracked → git rm --cached staged for ${#tracked[@]} committed file(s) in $ROOT."
-    echo "  Commit the removal so the harness (injected) becomes the single source. Files stay on disk."
-    for t in "${tracked[@]:-}"; do [ -n "$t" ] && echo "  - untracked: $t"; done
-  else
-    echo "omakase import: ${#tracked[@]} captured file(s) are still COMMITTED in this repo — left in place."
-    echo "  They were copied into payload/, but git still tracks them here, so injection would skip them."
-    echo "  Re-run with --adopt-tracked to 'git rm --cached' them (reversible: git add undoes it; files stay on disk)."
-    for t in "${tracked[@]:-}"; do [ -n "$t" ] && echo "  = still committed: $t"; done
-  fi
+  echo "omakase import: ${#tracked[@]} captured file(s) are still COMMITTED in the source repo — left in place (import never changes the source)."
+  echo "  They were copied into payload/, but git still tracks them here, so injection would skip them."
+  echo "  To let the injected copies take over, untrack them yourself, then re-init:"
+  echo "    git rm --cached -- <the files listed below>"
+  echo "  (reversible: git add undoes it; the files stay on disk)."
+  for t in "${tracked[@]:-}"; do [ -n "$t" ] && echo "  = still committed: $t"; done
 fi
 
 if [ "${#loose_gates[@]:-0}" -gt 0 ]; then

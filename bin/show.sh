@@ -79,5 +79,5 @@ if [ -f "$EXCLUDE" ]; then
   awk -v b="$BEGIN" -v e="$END" '$0==b{s=1;next} $0==e{s=0} s&&NF{print "  "$0}' "$EXCLUDE"
 fi
 echo
-echo "Update (take new payload over your edits):  /omakase init --force"
-echo "Undo everything:                            /omakase remove"
+echo "Update to the latest harness (overwrites injected files to match):  /omakase init"
+echo "Undo everything:                                                    /omakase remove"

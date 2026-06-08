@@ -79,17 +79,11 @@ echo "$OUT" | grep -qi 'skipped (personal' && pass "skipped personal file surfac
 # cut-over: tracked files left committed by default, reported (not un-tracked)
 ( cd "$SRC" && git ls-files --error-unmatch AGENTS.md >/dev/null 2>&1 ) && pass "default: committed AGENTS.md left tracked (no surprise un-track)" || fail "default import un-tracked a file"
 echo "$OUT" | grep -qi 'still committed' && pass "report lists the still-committed cut-over set" || fail "report missing cut-over list"
+[ -z "$(cd "$SRC" && git status --porcelain)" ] && pass "import did NOT mutate the source repo (working tree unchanged)" || { fail "import changed the source repo"; (cd "$SRC" && git status --porcelain | sed 's/^/      /'); }
 # leftover detection
 echo "$OUT" | grep -q 'scripts/loose.sh' && pass "loose wired gate reported (not auto-grabbed)" || fail "loose gate not reported"
 [ ! -e "$PAY/scripts/loose.sh" ] && pass "loose gate NOT captured (outside a declared location)" || fail "loose gate wrongly captured"
 echo "$OUT" | grep -qi 'prettier' && pass "stack-coupled hook job flagged for review" || fail "stack job not flagged"
-
-echo "== Scenario ADOPT: --adopt-tracked un-tracks the committed set =="
-SRC2="$TMP/src2"; PAY2="$TMP/payload2"
-mksource "$SRC2"
-( cd "$SRC2" && OMAKASE_PAYLOAD="$PAY2" bash "$IMPORT" --adopt-tracked ) >/dev/null 2>&1
-( cd "$SRC2" && git ls-files --error-unmatch AGENTS.md >/dev/null 2>&1 ) && fail "--adopt-tracked did NOT un-track AGENTS.md" || pass "--adopt-tracked staged git rm --cached on the committed set"
-[ -f "$SRC2/AGENTS.md" ] && pass "--adopt-tracked kept the file on disk (reversible)" || fail "--adopt-tracked deleted the working file"
 
 echo "== Scenario ROUNDTRIP: the captured payload is init-able =="
 SCRATCH="$TMP/scratch"; rm -rf "$SCRATCH"; mkdir -p "$SCRATCH"
