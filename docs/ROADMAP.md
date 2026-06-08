@@ -6,11 +6,13 @@ Every new flag, command, or file is a cost paid against simplicity.
 ## Where we are (2026-06-07)
 
 Four scripts in `bin/`: `init`, `import`, `remove`, `show`. The plugin (`commands/omakase.md`)
-dispatches `init` / `show` / `remove` / `import`. `import` shipped in PR #3.
+dispatches `init` / `show` / `remove`; `import` is a creator-only script, off the adopter
+surface.
 
-The scripts and the command doc still reflect the **old** flag set (`init --force`,
-`import --adopt-tracked`, "keeps your edited files"). Phase 1 brings them in line with the
-decisions below.
+The flagless surface shipped in PR #4: `init` dropped `--force` and the three-way merge (it now
+matches payload — overwrite-a-divergent-uncommitted-file-and-warn, never touch a committed one),
+and `import` dropped `--adopt-tracked` and no longer mutates the source. The scripts and command
+doc now match the decisions below. Phase 1 is done; Phase 2 (interactive onboarding `init`) is next.
 
 ## Decisions locked this round (the simplification)
 
@@ -33,7 +35,7 @@ decisions below.
 The model in one line: the harness repo and the plugin are the **same artifact, two faces** —
 clone it to author, install it as a plugin to adopt.
 
-## Phase 1 — Make the code match the decisions (do first, small)
+## Phase 1 — Make the code match the decisions (DONE — PR #4)
 
 - `import.sh`: remove `ADOPT_TRACKED`, the `git rm --cached` block, and the tracked/adopted
   reporting. Keep a plain "these N files are still committed; `git rm --cached` them to inject"
