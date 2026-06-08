@@ -55,7 +55,10 @@ YML
 echo "== Scenario IMPORT: capture a scattered harness (gitignored gates included) =="
 SRC="$TMP/src"; PAY="$TMP/payload"
 mksource "$SRC"
-OUT=$( cd "$SRC" && OMAKASE_PAYLOAD="$PAY" bash "$IMPORT" 2>&1 )
+# Invoked from OUTSIDE the source, naming the repo as a path argument (the creator runs
+# import from their harness clone, not from inside the project being captured).
+OUT=$( OMAKASE_PAYLOAD="$PAY" bash "$IMPORT" "$SRC" 2>&1 )
+echo "$OUT" | grep -qi 'captured' && pass "import ran from OUTSIDE the source, taking the repo as a path argument" || { fail "positional-source import did not run"; echo "$OUT" | sed 's/^/      /'; }
 
 # #1 REGRESSION: a GITIGNORED gate must still be captured (no git-ls-files enumeration).
 [ -f "$PAY/.omakase/gates/g.sh" ] && pass "gitignored gate captured into payload (the #1 regression)" || { fail "gitignored gate DROPPED"; echo "$OUT" | sed 's/^/      /'; }
@@ -95,11 +98,11 @@ SCRATCH="$TMP/scratch"; rm -rf "$SCRATCH"; mkdir -p "$SCRATCH"
 
 echo "== Scenario GUARD: refuses a payload that overlaps the source =="
 SRCG="$TMP/srcg"; mksource "$SRCG"
-( cd "$SRCG" && OMAKASE_PAYLOAD="$SRCG" bash "$IMPORT" ) >/dev/null 2>&1 && fail "did NOT refuse payload == source" || pass "refused payload == source repo"
-( cd "$SRCG" && OMAKASE_PAYLOAD="$SRCG/inside" bash "$IMPORT" ) >/dev/null 2>&1 && fail "did NOT refuse payload nested in source" || pass "refused payload nested inside source"
+( OMAKASE_PAYLOAD="$SRCG" bash "$IMPORT" "$SRCG" ) >/dev/null 2>&1 && fail "did NOT refuse payload == source" || pass "refused payload == source repo"
+( OMAKASE_PAYLOAD="$SRCG/inside" bash "$IMPORT" "$SRCG" ) >/dev/null 2>&1 && fail "did NOT refuse payload nested in source" || pass "refused payload nested inside source"
 [ ! -e "$SRCG/inside/AGENTS.md" ] && pass "nested-refusal wrote nothing into the source tree" || fail "nested payload contaminated the source tree"
 ln -s "$SRCG" "$TMP/srcg-link"
-( cd "$SRCG" && OMAKASE_PAYLOAD="$TMP/srcg-link" bash "$IMPORT" ) >/dev/null 2>&1 && fail "guard bypassed via a symlinked payload path" || pass "guard resolves symlinks (payload symlink to source refused)"
+( OMAKASE_PAYLOAD="$TMP/srcg-link" bash "$IMPORT" "$SRCG" ) >/dev/null 2>&1 && fail "guard bypassed via a symlinked payload path" || pass "guard resolves symlinks (payload symlink to source refused)"
 
 rm -rf "$TMP"
 echo ""

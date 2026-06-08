@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # omakase-harness import — the mirror of init.sh. init reads payload/ and writes it
 # into a repo; import reads an existing repo's scattered harness and writes it INTO
-# payload/, so a creator can capture a setup they already have. Run it from INSIDE the
-# project you want to capture; it writes to your harness clone's payload/ (the same
-# OMAKASE_PAYLOAD init uses, here as the DESTINATION).
+# payload/, so a creator can capture a setup they already have. Run it from your harness
+# clone and name the repo to capture as the argument; it writes to the clone's payload/
+# (override the destination with OMAKASE_PAYLOAD).
 #
-#   cd ~/my-project && bash ~/my-harness/bin/import.sh        # -> ~/my-harness/payload
+#   cd ~/my-harness && bash bin/import.sh ~/my-project        # capture ~/my-project -> ./payload
 #
 # It is fully deterministic — a declared signal (file location, git state, hook config)
 # decides every step; nothing is inferred. The six rules:
@@ -25,10 +25,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# DESTINATION payload (where we WRITE). Same env var init uses, opposite role.
+# SOURCE repo to capture FROM — the first argument, or the current directory if omitted.
+SRC_ARG="${1:-.}"
+[ -d "$SRC_ARG" ] || { echo "omakase: source '$SRC_ARG' is not a directory" >&2; exit 1; }
+ROOT="$(git -C "$SRC_ARG" rev-parse --show-toplevel 2>/dev/null)" || { echo "omakase: '$SRC_ARG' is not inside a git repo" >&2; exit 1; }
+# DESTINATION payload (where we WRITE) — defaults to this harness clone's own payload/.
 PAYLOAD="${OMAKASE_PAYLOAD:-$(cd "$SCRIPT_DIR/../payload" 2>/dev/null && pwd || echo "$SCRIPT_DIR/../payload")}"
-# SOURCE repo (where we READ from) — the project you run this inside.
-ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "omakase: not inside a git repo" >&2; exit 1; }
 mkdir -p "$PAYLOAD"
 # Resolve BOTH physically (-P): git returns ROOT symlink-resolved, so the payload must be too, or the
 # overlap guard below silently misses when paths differ only by a symlink (e.g. /tmp -> /private/tmp on macOS).
