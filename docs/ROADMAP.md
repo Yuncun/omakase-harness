@@ -97,6 +97,21 @@ Mechanism is lefthook's own layering — near-zero new format:
 - `init` therefore treats the toggle file as seed-once/never-overwrite, and `show` becomes
   writable for on/off only (still read-only for everything else).
 
+## Pressure-test findings (pixterm port)
+
+Surfaced 2026-06-08 dogfooding the full pixterm port.
+
+- **`import` silently merges same-named `.omakase/bin/` helpers — must detect the collision.**
+  Base and pixterm independently named a helper `omakase-record.sh` for unrelated jobs: base's
+  appends a run row to a ledger the scorecard status line reads; pixterm's writes a commit-keyed
+  pass/fail verdict the deferred-check gate reads (the visual-verify keystone). The capture/refresh
+  took pixterm's recorder but refreshed `init.sh`/`show.sh` from base, so the engine advertised a
+  scorecard status line and banner the payload never shipped — a dangling wire-up. Blindly copying
+  base's recorder over pixterm's would have broken visual-verify. `import` (and the engine refresh)
+  must flag a same-path helper whose content differs between base and the captured payload rather
+  than silently picking one. Interim guard shipped: `init` only prints the status-line wire-up when
+  the payload actually ships `omakase-statusline.sh`; `show` already guards the banner.
+
 ## Open decisions
 
 | # | Decision | Lean |
