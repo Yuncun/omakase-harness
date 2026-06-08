@@ -55,7 +55,10 @@ YML
 echo "== Scenario IMPORT: capture a scattered harness (gitignored gates included) =="
 SRC="$TMP/src"; PAY="$TMP/payload"
 mksource "$SRC"
-OUT=$( cd "$SRC" && OMAKASE_PAYLOAD="$PAY" bash "$IMPORT" 2>&1 )
+# Invoked from OUTSIDE the source, naming the repo as a path argument (the creator runs
+# import from their harness clone, not from inside the project being captured).
+OUT=$( OMAKASE_PAYLOAD="$PAY" bash "$IMPORT" "$SRC" 2>&1 )
+echo "$OUT" | grep -qi 'captured' && pass "import ran from OUTSIDE the source, taking the repo as a path argument" || { fail "positional-source import did not run"; echo "$OUT" | sed 's/^/      /'; }
 
 # #1 REGRESSION: a GITIGNORED gate must still be captured (no git-ls-files enumeration).
 [ -f "$PAY/.omakase/gates/g.sh" ] && pass "gitignored gate captured into payload (the #1 regression)" || { fail "gitignored gate DROPPED"; echo "$OUT" | sed 's/^/      /'; }
@@ -79,17 +82,11 @@ echo "$OUT" | grep -qi 'skipped (personal' && pass "skipped personal file surfac
 # cut-over: tracked files left committed by default, reported (not un-tracked)
 ( cd "$SRC" && git ls-files --error-unmatch AGENTS.md >/dev/null 2>&1 ) && pass "default: committed AGENTS.md left tracked (no surprise un-track)" || fail "default import un-tracked a file"
 echo "$OUT" | grep -qi 'still committed' && pass "report lists the still-committed cut-over set" || fail "report missing cut-over list"
+[ -z "$(cd "$SRC" && git status --porcelain)" ] && pass "import did NOT mutate the source repo (working tree unchanged)" || { fail "import changed the source repo"; (cd "$SRC" && git status --porcelain | sed 's/^/      /'); }
 # leftover detection
 echo "$OUT" | grep -q 'scripts/loose.sh' && pass "loose wired gate reported (not auto-grabbed)" || fail "loose gate not reported"
 [ ! -e "$PAY/scripts/loose.sh" ] && pass "loose gate NOT captured (outside a declared location)" || fail "loose gate wrongly captured"
 echo "$OUT" | grep -qi 'prettier' && pass "stack-coupled hook job flagged for review" || fail "stack job not flagged"
-
-echo "== Scenario ADOPT: --adopt-tracked un-tracks the committed set =="
-SRC2="$TMP/src2"; PAY2="$TMP/payload2"
-mksource "$SRC2"
-( cd "$SRC2" && OMAKASE_PAYLOAD="$PAY2" bash "$IMPORT" --adopt-tracked ) >/dev/null 2>&1
-( cd "$SRC2" && git ls-files --error-unmatch AGENTS.md >/dev/null 2>&1 ) && fail "--adopt-tracked did NOT un-track AGENTS.md" || pass "--adopt-tracked staged git rm --cached on the committed set"
-[ -f "$SRC2/AGENTS.md" ] && pass "--adopt-tracked kept the file on disk (reversible)" || fail "--adopt-tracked deleted the working file"
 
 echo "== Scenario ROUNDTRIP: the captured payload is init-able =="
 SCRATCH="$TMP/scratch"; rm -rf "$SCRATCH"; mkdir -p "$SCRATCH"
@@ -101,11 +98,11 @@ SCRATCH="$TMP/scratch"; rm -rf "$SCRATCH"; mkdir -p "$SCRATCH"
 
 echo "== Scenario GUARD: refuses a payload that overlaps the source =="
 SRCG="$TMP/srcg"; mksource "$SRCG"
-( cd "$SRCG" && OMAKASE_PAYLOAD="$SRCG" bash "$IMPORT" ) >/dev/null 2>&1 && fail "did NOT refuse payload == source" || pass "refused payload == source repo"
-( cd "$SRCG" && OMAKASE_PAYLOAD="$SRCG/inside" bash "$IMPORT" ) >/dev/null 2>&1 && fail "did NOT refuse payload nested in source" || pass "refused payload nested inside source"
+( OMAKASE_PAYLOAD="$SRCG" bash "$IMPORT" "$SRCG" ) >/dev/null 2>&1 && fail "did NOT refuse payload == source" || pass "refused payload == source repo"
+( OMAKASE_PAYLOAD="$SRCG/inside" bash "$IMPORT" "$SRCG" ) >/dev/null 2>&1 && fail "did NOT refuse payload nested in source" || pass "refused payload nested inside source"
 [ ! -e "$SRCG/inside/AGENTS.md" ] && pass "nested-refusal wrote nothing into the source tree" || fail "nested payload contaminated the source tree"
 ln -s "$SRCG" "$TMP/srcg-link"
-( cd "$SRCG" && OMAKASE_PAYLOAD="$TMP/srcg-link" bash "$IMPORT" ) >/dev/null 2>&1 && fail "guard bypassed via a symlinked payload path" || pass "guard resolves symlinks (payload symlink to source refused)"
+( OMAKASE_PAYLOAD="$TMP/srcg-link" bash "$IMPORT" "$SRCG" ) >/dev/null 2>&1 && fail "guard bypassed via a symlinked payload path" || pass "guard resolves symlinks (payload symlink to source refused)"
 
 rm -rf "$TMP"
 echo ""

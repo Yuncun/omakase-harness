@@ -2,13 +2,12 @@
 # omakase-harness init — overlay payload/ into this repo additively, exclude every
 # placed path via .git/info/exclude (zero committed footprint), install lefthook,
 # and set up new worktrees to receive the (gitignored) harness automatically too.
-# Idempotent: re-running re-overlays, rewrites the exclude block, and refreshes
-# the worktree snapshot. Re-run NEVER eats a file you edited (see the overlay loop);
-# pass --force to take the new payload version over your edits.
+# Idempotent: re-running re-overlays, rewrites the exclude block, and refreshes the
+# worktree snapshot. Rule: the injected harness always matches payload — a re-run
+# overwrites an injected file that differs (and warns that any local edit was replaced),
+# but never touches a COMMITTED file (those are reported; `git rm --cached` them yourself
+# to let the harness copy take over).
 set -euo pipefail
-
-FORCE=0
-for a in "$@"; do case "$a" in --force|-f) FORCE=1;; esac; done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PAYLOAD="${OMAKASE_PAYLOAD:-$(cd "$SCRIPT_DIR/../payload" && pwd)}"
@@ -37,7 +36,6 @@ EXCLUDE="$ROOT/.git/info/exclude"
 # common dir are shared). This is where the worktree harness snapshot lives.
 COMMON="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 OMK="$COMMON/omakase"
-SNAP="$OMK/payload-snapshot"   # the PREVIOUS run's snapshot — the three-way-merge base.
 
 # Identical?  Compares symlink targets for symlinks, byte content otherwise.
 same_file() {
@@ -53,11 +51,12 @@ place_file() {  # $1 = source payload path, $2 = relative dest
   case "$2" in *.sh) [ -L "$ROOT/$2" ] || chmod +x "$ROOT/$2";; esac
 }
 
-placed=(); skipped=(); updated=(); kept=()
+placed=(); skipped=(); overwrote=()
 while IFS= read -r -d '' f; do
   rel="${f#"$PAYLOAD"/}"
   dest="$ROOT/$rel"
-  # Never touch a path the repo tracks (committed file wins).
+  # Never touch a path the repo tracks (committed file wins). Report it so the user can
+  # `git rm --cached` it themselves to let the injected copy take over.
   if git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
     skipped+=("$rel"); echo "omakase: SKIP (already tracked) $rel" >&2; continue
   fi
@@ -67,24 +66,11 @@ while IFS= read -r -d '' f; do
   fi
   # Already current: an untracked copy identical to the payload — leave it.
   if same_file "$dest" "$f"; then placed+=("$rel"); continue; fi
-  # Differs from the payload. Three-way: if it still matches the last snapshot the
-  # user has NOT edited it since the previous init, so a payload change is a clean
-  # update — take it. Otherwise it is the user's edit (or a pre-existing untracked
-  # file) — keep it unless --force, so re-init never eats a hand-tuned gate.
-  if [ -e "$SNAP/$rel" ] || [ -L "$SNAP/$rel" ]; then
-    if same_file "$dest" "$SNAP/$rel"; then
-      place_file "$f" "$rel"; placed+=("$rel"); updated+=("$rel")
-      echo "omakase: updated $rel (you had not edited it; took the new payload version)" >&2
-      continue
-    fi
-  fi
-  if [ "$FORCE" -eq 1 ]; then
-    place_file "$f" "$rel"; placed+=("$rel"); updated+=("$rel")
-    echo "omakase: --force overwrote your edited $rel" >&2
-  else
-    placed+=("$rel"); kept+=("$rel")   # still managed (excluded + snapshotted), just not overwritten
-    echo "omakase: KEPT your edited $rel (differs from payload; re-run with --force to take the new version)" >&2
-  fi
+  # Differs from payload and is NOT committed: the injected harness always matches payload,
+  # so overwrite — and warn, since this replaces whatever was there (an upstream update, or
+  # a local in-place edit; init cannot tell which and does not try).
+  place_file "$f" "$rel"; placed+=("$rel"); overwrote+=("$rel")
+  echo "omakase: overwrote $rel to match payload (any local edit was replaced)" >&2
 done < <(find "$PAYLOAD" \( -type f -o -type l \) -print0)
 
 # Top-level prefixes for the exclude block (small + stable), plus lefthook's
@@ -176,11 +162,10 @@ chmod +x "$OMK/ensure-present.sh"
 
 ( cd "$ROOT" && $LEFTHOOK install )
 
-echo "omakase: placed ${#placed[@]} file(s), updated ${#updated[@]:-0}, kept ${#kept[@]:-0} edited, skipped ${#skipped[@]} tracked path(s)."
+echo "omakase: placed ${#placed[@]} file(s), overwrote ${#overwrote[@]:-0} to match payload, skipped ${#skipped[@]} committed path(s)."
 for p in "${placed[@]:-}"; do [ -n "$p" ] && echo "  + $p"; done
-for u in "${updated[@]:-}"; do [ -n "$u" ] && echo "  ^ updated to new payload: $u"; done
-for k in "${kept[@]:-}"; do [ -n "$k" ] && echo "  = kept your edit (use --force to update): $k"; done
-for s in "${skipped[@]:-}"; do [ -n "$s" ] && echo "  ~ skipped (tracked): $s"; done
+for o in "${overwrote[@]:-}"; do [ -n "$o" ] && echo "  ^ overwrote to match payload (any local edit replaced): $o"; done
+for s in "${skipped[@]:-}"; do [ -n "$s" ] && echo "  ~ skipped (committed — git rm --cached to let the harness take over): $s"; done
 echo "omakase: ignores -> .git/info/exclude; hooks installed; new worktrees auto-install the harness. Nothing to commit."
 echo "omakase: see the whole harness any time with  /omakase show"
 echo "omakase: status line — compose the scorecard into your existing bar (it never"

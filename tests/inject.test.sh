@@ -137,28 +137,23 @@ WTD="$TMP/repoD-wt"
 [ -L "$WTD/CLAUDE.md" ] && pass "ensure-present self-healed the symlink into a worktree" || fail "ensure-present did not carry the symlink"
 ( cd "$REPO" && git worktree remove --force "$WTD" ) 2>/dev/null; ( cd "$REPO" && git worktree prune ) 2>/dev/null
 
-# ---------- Scenario E: re-init never eats your edits; --force takes the update ----------
-echo "== Scenario E: re-init keep / clean-update / --force =="
-# E1 — you edited a placed gate; re-init KEEPS it.
+# ---------- Scenario E: re-init always matches payload — overwrites divergent files + warns ----------
+echo "== Scenario E: re-init overwrites a changed injected file and warns =="
+# E1 — you edited a placed gate in place; re-init OVERWRITES it back to payload and warns.
 PAY="$TMP/payloadE1"; REPO="$TMP/repoE1"; mkpayload "$PAY"; newrepo "$REPO"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 echo 'MY EDIT' > "$REPO/.omakase/gates/example.sh"
 OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 )
-grep -q 'MY EDIT' "$REPO/.omakase/gates/example.sh" && pass "re-init KEPT the user's edited gate" || fail "re-init clobbered the user's edit"
-echo "$OUT" | grep -qi 'kept' && pass "re-init reported the kept edit" || fail "re-init did not report a kept edit"
-[ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status still clean after a keep" || { fail "status not clean after keep"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
-# E2 — you did NOT edit; payload changed; re-init takes the new version.
+grep -q 'omakase-example-gate-ran' "$REPO/.omakase/gates/example.sh" && pass "re-init overwrote the edited gate back to payload" || fail "re-init did not overwrite the edit"
+grep -q 'MY EDIT' "$REPO/.omakase/gates/example.sh" && fail "re-init left the local edit in place" || pass "the local edit was replaced"
+echo "$OUT" | grep -qi 'overwrote' && pass "re-init warned that it overwrote a changed file" || fail "re-init did not warn about the overwrite"
+[ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status still clean after an overwrite" || { fail "status not clean after overwrite"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
+# E2 — payload changed upstream; re-init takes the new version (same overwrite path).
 PAY="$TMP/payloadE2"; REPO="$TMP/repoE2"; mkpayload "$PAY"; newrepo "$REPO"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 printf '#!/usr/bin/env bash\necho NEW-PAYLOAD-V2\nexit 0\n' > "$PAY/.omakase/gates/example.sh"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
-grep -q 'NEW-PAYLOAD-V2' "$REPO/.omakase/gates/example.sh" && pass "re-init took the new payload version (no local edit)" || fail "clean update did not apply"
-# E3 — --force overrides a real edit.
-PAY="$TMP/payloadE3"; REPO="$TMP/repoE3"; mkpayload "$PAY"; newrepo "$REPO"
-( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
-echo 'EDIT TO BE FORCED OUT' > "$REPO/.omakase/gates/example.sh"
-( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" --force ) >/dev/null 2>&1
-grep -q 'omakase-example-gate-ran' "$REPO/.omakase/gates/example.sh" && pass "--force overwrote the edit with the payload" || fail "--force did not overwrite"
+grep -q 'NEW-PAYLOAD-V2' "$REPO/.omakase/gates/example.sh" && pass "re-init took the new payload version (upstream update)" || fail "upstream update did not apply"
 
 # ---------- Scenario F: /omakase show renders the installed harness ----------
 echo "== Scenario F: show renders the installed-but-invisible harness =="
