@@ -1,64 +1,48 @@
-# Omakase Base Harness
+# omakase-harness-framework
 
-Omakase is a base structure for harnesses that custom harness plugins can be built on. These harnesses are intended to be shared as plugins that injects harness files into the project and enforces gates using git hooks, without committing files to the project. 
+Omakase is a framework for packaging a project's [outer harness](https://codagent.beehiiv.com/p/harnesses-explained) in a distributable plugin. This allows a project's harness to be decoupled from its harness files, and for the harness to be selectively enabled/disabled by contributors. 
 
-This is my proposal to the adoptability question: how do you introduce a harness to a project with existing contributors?
+The harness plugin deploys all your harness files (scripts, rules, hooks) into the project, then gitignores them so that they are not checked back into the project. 
 
+## Usage (creating a plugin from existing repo with harness files)
 
-The base does only two things:
+To automatically adopt an existing repository's harness into `payload/`. 
 
-- Initialize the harness via a script, to inject claude rules, agent.mds, etc. into the project.
-- Enforce gates on your git hooks (via [lefthook](https://lefthook.dev)).
+Run `import.sh` 
 
-What is possible:
-* Precommit hooks to run static analyzers
-* Pre-push hooks to run visual verification
-* I've used this to trigger documentation enforcement using claude rules
+    bash bin/import.sh /path/to/source-repo
 
-
-So far I haven't found an "outer harness" concept that cant be covered by these two steps - gate enforcement and injecting files. Lmk if you find any.
-
-## Usage
-
-For creators:
-
-//todo
+todo: Add a skill wrapper to sprinkle more LLM magic on importing harnesses since there may be harness patterns that I haven't captured in the import script.
 
 
-For adopters of your harness:
+## Distribute
 
-* Install plugin 
+- Create plugins: https://code.claude.com/docs/en/plugins
+- Create and distribute a marketplace: https://code.claude.com/docs/en/plugin-marketplaces
 
-From claude code (probably also gh copilot, but i havent tried yet)
-```
-/omakase-init     # overlay the payload into this repo (gitignored) + install hooks
-/omakase-remove   # reverse it
-```
+## Using the plugin
 
+    cd /path/to/target-repo
+    bash /path/to/harness/bin/init.sh     # inject the harness (gitignored) + install hooks
+    bash /path/to/harness/bin/show.sh     # display the installed harness
+    bash /path/to/harness/bin/remove.sh   # reverse init
 
+In Claude Code, install the plugin and use the wrapper command instead:
 
-## Project structure
+    /plugin marketplace add owner/repo
+    /plugin install omakase-harness@your-marketplace
+    /omakase init
 
-- `bin/init.sh` — overlays `payload/` additively, writes `.git/info/exclude`, installs lefthook.
-- `bin/remove.sh` — reverses init.
-- `commands/` — the `/omakase-init` and `/omakase-remove` slash commands.
-- `payload/` — the harness content you ship: `lefthook-local.yml` wiring + `.omakase/gates/`.
-  Replace the example gate with your own. To customize, fork the plugin and edit `payload/`.
+Adoption requires lefthook (`brew install lefthook`, `mise use lefthook`, or a project devDependency); `/omakase init` prompts to install it if absent.
 
-## Example payload: a web project's harness
+## Repository layout
 
-The base ships only the mechanism and one example gate. As a fuller example, here is the
-payload I run for web (See [pixterm harness](https://github.com/Yuncun/pixterm-harness)).
-
-
-| Piece | Kind | What it does |
-| ----- | ---- | ------------ |
-| `worktree-discipline` | pre-commit guard | Blocks a main-checkout commit that would inherit another worktree's uncommitted work. Pure git; dormant unless more than one worktree is active. |
-| `adr-required` | pre-commit guard | Requires a paired decision record when a declared architectural file changes. Dormant until you name the files. |
-| `deferred-check` + `omakase-record` | deferred-gate scaffold | Enforces a verdict a hook can't compute itself — an LLM judge, a slow flow, a human sign-off. A producer records a pass/fail; the hook confirms a fresh pass for the pushed code. |
-| `visual-verify` | skill | Best-effort visual check: drives the running app, judges screenshots, records a verdict for the deferred gate. Needs a per-project driver. |
-
-
+- `bin/import.sh` — capture a repository's harness into `payload/`
+- `bin/init.sh` — inject `payload/` and install hooks
+- `bin/remove.sh` — reverse `init`
+- `bin/show.sh` — render the installed harness
+- `commands/omakase.md` — the `/omakase` command (Claude Code wrapper)
+- `payload/` — the harness content (the only part that varies per harness)
 
 ## License
 
