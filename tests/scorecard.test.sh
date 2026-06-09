@@ -194,6 +194,29 @@ OUT="$( cd "$REPO" && bash "$SHOW" 2>&1 )"
 echo "$OUT" | grep -q 'omakase-harness' && pass "show prints a branded banner header" || fail "show missing branded header"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
+# ---------- Scenario M: --markdown mode (script owns the format; command relays verbatim) ----------
+echo "== Scenario M: show --markdown =="
+PAY="$HERE/../payload"; REPO="$TMP/repoM"; newrepo "$REPO"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+
+OUT="$( cd "$REPO" && bash "$SHOW" --markdown 2>&1 )"
+printf '%s' "$OUT" | grep -q '^## ' && pass "md: starts with a heading" || fail "md: no '## ' heading"
+echo "$OUT" | grep -q '### Placed files' && pass "md: placed-files section" || fail "md: no placed-files section"
+echo "$OUT" | grep -q '```yaml' && pass "md: hook wiring as a yaml fence" || fail "md: no yaml fence"
+echo "$OUT" | grep -q '### Recent runs' && pass "md: recent-runs section" || fail "md: no recent-runs section"
+echo "$OUT" | grep -qi 'No gate runs recorded yet' && pass "md: empty-state before any run" || fail "md: no empty-state line"
+echo "$OUT" | grep -q 'PLACED FILES' && fail "md: leaked the terminal header" || pass "md: no terminal-format leakage"
+printf '%s' "$OUT" | grep -q "$(printf '\033')" && fail "md: contains ANSI (should be plain)" || pass "md: plain (no ANSI)"
+
+LEDGER="$(ledger_of "$REPO")"; mkdir -p "$(dirname "$LEDGER")"
+printf '%s\tpre-commit\ttypecheck\tpass\t11\n' $((NOW-120)) >> "$LEDGER"
+printf '%s\tpre-push\ttest\tfail\t40\n'        $((NOW-60))  >> "$LEDGER"
+OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW bash "$SHOW" --markdown 2>&1 )"
+echo "$OUT" | grep -q '| Gate | Verdict | When |' && pass "md: scorecard renders as a table" || fail "md: no table header"
+echo "$OUT" | grep -qE '\| typecheck \| .* pass \|' && pass "md: a pass row in the table" || fail "md: no pass row"
+echo "$OUT" | grep -qE '\| test \| .* fail \|' && pass "md: a fail row in the table" || fail "md: no fail row"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
+
 rm -rf "$TMP"
 echo ""
 [ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }
