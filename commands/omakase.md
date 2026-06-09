@@ -1,5 +1,6 @@
 ---
 description: Show, install, or remove the personal omakase harness (zero committed footprint)
+argument-hint: "[show | init | remove]"
 ---
 
 Dispatch on the argument `$ARGUMENTS` — empty / `show` / `status` → SHOW, `init` → INIT, `remove` → REMOVE. For INIT and REMOVE, run the matching script and report its output. For SHOW, run the script but **re-render** its output as Markdown (see below). (Authoring a harness — `import` — is a creator script run from a clone of the harness repo, not an adopter command; see the repo's `bin/import.sh`.)
