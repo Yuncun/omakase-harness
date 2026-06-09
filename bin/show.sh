@@ -3,21 +3,109 @@
 # readable map: every placed file, which git hooks run what, and what is hidden via
 # .git/info/exclude. Read-only. This is the cure for "the install is invisible" — it
 # lets you SEE the whole harness at a glance without committing anything.
+#
+# Two output modes:
+#   (default)    terminal — ANSI banner box + indented columns, for a real terminal.
+#   --markdown   Markdown — for the /omakase command to relay VERBATIM into the chat,
+#                so the script owns the formatting and Claude never reformats (no drift,
+#                no editorializing). Renders as a real heading/list/table in the reply.
 set -euo pipefail
+
+FORMAT=term
+case "${1:-}" in --markdown|-m|md) FORMAT=md;; esac
+ICON="${OMAKASE_ICON:-🍣}"
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "omakase: not inside a git repo" >&2; exit 1; }
 COMMON="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 OMK="$COMMON/omakase"
 EXCLUDE="$ROOT/.git/info/exclude"
+LEDGER="$OMK/ledger.tsv"
 BEGIN="# >>> omakase-harness >>>"
 END="# <<< omakase-harness <<<"
 
 if [ ! -f "$OMK/placed.list" ]; then
-  echo "No omakase harness is installed in this repo."
-  echo "Run  /omakase init  to inject one."
+  if [ "$FORMAT" = md ]; then
+    echo "**No omakase harness is installed in this repo.** Run \`/omakase init\` to inject one."
+  else
+    echo "No omakase harness is installed in this repo."
+    echo "Run  /omakase init  to inject one."
+  fi
   exit 0
 fi
 
+# ============================ Markdown mode ============================
+# The script emits the final Markdown; the /omakase command relays it verbatim.
+if [ "$FORMAT" = md ]; then
+  LH=""
+  if [ -n "${LEFTHOOK_BIN:-}" ]; then LH="$LEFTHOOK_BIN"
+  elif command -v lefthook >/dev/null 2>&1; then LH="lefthook"
+  elif [ -x "$ROOT/node_modules/.bin/lefthook" ]; then LH="$ROOT/node_modules/.bin/lefthook"; fi
+  DUMP=""
+  [ -n "$LH" ] && DUMP="$( cd "$ROOT" && "$LH" dump 2>/dev/null || true )"
+
+  echo "## $ICON omakase-harness"
+  echo
+  echo "Installed in \`$ROOT\`. Every file below is gitignored via \`.git/info/exclude\` — invisible to git, never committed."
+  echo
+  echo "### Placed files ($(grep -c . "$OMK/placed.list"))"
+  while IFS= read -r rel; do
+    [ -z "$rel" ] && continue
+    if [ -L "$ROOT/$rel" ]; then
+      echo "- \`$rel\` → \`$(readlink "$ROOT/$rel")\`"
+    elif [ -e "$ROOT/$rel" ]; then
+      echo "- \`$rel\`"
+    else
+      echo "- \`$rel\` — **MISSING** (run \`/omakase init\` to restore)"
+    fi
+  done < "$OMK/placed.list"
+  echo
+  echo "### Git hooks"
+  if [ -n "$DUMP" ]; then
+    echo '```yaml'
+    printf '%s\n' "$DUMP"
+    echo '```'
+  elif [ -f "$ROOT/lefthook-local.yml" ]; then
+    echo "_lefthook not resolved — raw wiring file:_"
+    echo '```yaml'
+    cat "$ROOT/lefthook-local.yml"
+    echo '```'
+  else
+    echo "_(no hook wiring found)_"
+  fi
+  echo
+  echo "### Recent runs"
+  if [ -s "$LEDGER" ]; then
+    echo "| Gate | Verdict | When |"
+    echo "| ---- | ------- | ---- |"
+    now="${OMAKASE_NOW:-$(date +%s)}"
+    awk -F'\t' -v now="$now" '
+      NF==5 && $1 ~ /^[0-9]+$/ { ts=$1+0; if (ts >= seen[$3]) { seen[$3]=ts; verd[$3]=$4 } }
+      END {
+        for (g in seen) {
+          d=now-seen[g]; if (d < 0) d=0
+          if      (d < 60)    a="<1m"
+          else if (d < 3600)  a=int(d/60)"m"
+          else if (d < 86400) a=int(d/3600)"h"
+          else                a=int(d/86400)"d"
+          mark=(verd[g]=="fail" ? "\342\234\227 fail" : "\342\234\223 pass")
+          printf "%s\t| %s | %s | %s ago |\n", g, g, mark, a
+        }
+      }' "$LEDGER" | sort | cut -f2-
+  else
+    echo "_No gate runs recorded yet — gates wired through \`omakase-ledger.sh\` log here._"
+  fi
+  echo
+  echo "### Hidden via \`.git/info/exclude\`"
+  if [ -f "$EXCLUDE" ]; then
+    hidden="$(awk -v b="$BEGIN" -v e="$END" '$0==b{s=1;next} $0==e{s=0} s&&NF{printf "`%s`, ", $0}' "$EXCLUDE")"
+    echo "${hidden%, }"
+  fi
+  echo
+  echo "_Refresh:_ \`/omakase init\`  ·  _Remove:_ \`/omakase remove\`  ·  _read-only; running show changes nothing._"
+  exit 0
+fi
+
+# ============================ Terminal mode (default) ============================
 BANNER="$ROOT/.omakase/bin/omakase-banner.sh"
 if [ -f "$BANNER" ]; then bash "$BANNER" 2>/dev/null || true; fi
 echo "installed in $ROOT"
@@ -52,7 +140,6 @@ fi
 echo
 
 echo "RECENT RUNS — most recent verdict per gate"
-LEDGER="$OMK/ledger.tsv"
 if [ -s "$LEDGER" ]; then
   now="${OMAKASE_NOW:-$(date +%s)}"
   awk -F'\t' -v now="$now" '
