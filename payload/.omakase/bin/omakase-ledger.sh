@@ -6,7 +6,7 @@
 # The trigger label comes from $OMAKASE_HOOK (lefthook exposes no hook name to jobs;
 # set it per hook in lefthook-local.yml). The ledger lives in the shared git dir
 # (.git/omakase/ledger.tsv) so the main checkout and every worktree share one run
-# history. Tab-separated columns: epoch <tab> hook <tab> gate <tab> verdict <tab> ms.
+# history. Tab-separated columns: epoch <tab> hook <tab> gate <tab> verdict <tab> ms <tab> sha.
 # Test hook: OMAKASE_NOW pins "now".
 set -uo pipefail   # NOT -e: we must capture the gate's exit code, not die on it.
 
@@ -25,6 +25,11 @@ hook="${OMAKASE_HOOK:--}"; hook="${hook//$'\t'/ }"; hook="${hook//$'\n'/ }"
 gitdir="$(git rev-parse --git-common-dir 2>/dev/null)" || gitdir=""
 common=""; [ -n "$gitdir" ] && common="$(cd "$gitdir" 2>/dev/null && pwd)"
 
+# Tag each run with the commit it ran on, so a reader can tell which checks have run
+# for the CURRENT code. At pre-push, HEAD is the commit being pushed.
+sha="$(git rev-parse HEAD 2>/dev/null)" || sha=""
+sha="${sha//$'\t'/ }"; sha="${sha//$'\n'/ }"
+
 now() { echo "${OMAKASE_NOW:-$(date +%s)}"; }
 start="$(now)"
 "$@"
@@ -35,8 +40,8 @@ if [ -n "$common" ]; then
   {
     mkdir -p "$common/omakase"
     verdict=pass; [ "$rc" -ne 0 ] && verdict=fail
-    printf '%s\t%s\t%s\t%s\t%s\n' \
-      "$end" "$hook" "$gate" "$verdict" "$(( (end - start) * 1000 ))" \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$end" "$hook" "$gate" "$verdict" "$(( (end - start) * 1000 ))" "$sha" \
       >> "$common/omakase/ledger.tsv"
   } 2>/dev/null || true
 fi
