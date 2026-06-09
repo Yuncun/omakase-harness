@@ -79,7 +79,7 @@ if [ "$FORMAT" = md ]; then
     echo "| ---- | ------- | ---- |"
     now="${OMAKASE_NOW:-$(date +%s)}"
     awk -F'\t' -v now="$now" '
-      NF==5 && $1 ~ /^[0-9]+$/ { ts=$1+0; if (ts >= seen[$3]) { seen[$3]=ts; verd[$3]=$4 } }
+      NF>=5 && $1 ~ /^[0-9]+$/ { ts=$1+0; if (ts >= seen[$3]) { seen[$3]=ts; verd[$3]=$4 } }
       END {
         for (g in seen) {
           d=now-seen[g]; if (d < 0) d=0
@@ -143,7 +143,7 @@ echo "RECENT RUNS — most recent verdict per gate"
 if [ -s "$LEDGER" ]; then
   now="${OMAKASE_NOW:-$(date +%s)}"
   awk -F'\t' -v now="$now" '
-    NF==5 && $1 ~ /^[0-9]+$/ { ts=$1+0; if (ts >= seen[$3]) { seen[$3]=ts; verd[$3]=$4; hook[$3]=$2 } }
+    NF>=5 && $1 ~ /^[0-9]+$/ { ts=$1+0; if (ts >= seen[$3]) { seen[$3]=ts; verd[$3]=$4; hook[$3]=$2 } }
     END {
       for (g in seen) {
         d=now-seen[g]; if (d < 0) d=0
