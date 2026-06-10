@@ -3,8 +3,10 @@
 #   - omakase-ledger.sh      : run-ledger recorder; stamps epoch/hook/gate/verdict/ms/SHA
 #   - omakase-statusline.sh  : the CANARY — "<name> is running" where the harness is
 #                              active, dark elsewhere. No verdict, only the 🍣 icon.
-#   - omakase-stop-notice.sh : the Stop-hook CHECKLIST — the pre-push checks for the
-#                              CURRENT commit in gate order, ✓ passed / ✗ not-completed.
+#   - omakase-stop-notice.sh : the Stop-hook CHECKLIST — pre-push checks in gate order,
+#                              ✓ passed / ✗ not-completed, one per line. Shows the current
+#                              commit when you have unpushed work, else the last pushed run
+#                              (resting state), so a merge does not reset it to all-✗.
 #   - bin/show.sh            : /omakase show RECENT RUNS (+ --markdown)
 # Ledger lines are TAB-separated (epoch, hook, gate, verdict, ms, sha); assertions use
 # awk, not grep -P (BSD).
@@ -99,15 +101,34 @@ OUT="$(notice)"; [ -z "$OUT" ] && pass "no change -> silent (the guard)" || fail
 printf '%s\tpre-push\tgamma\tpass\t0\t%s\n' "$(date +%s)" "$HEAD" >> "$LEDGER"
 printf '%s\tpre-push\tbeta\tfail\t0\t%s\n'  "$(date +%s)" "$HEAD" >> "$LEDGER"
 OUT="$(notice)"
-echo "$OUT" | grep -q 'gamma ✓' && pass "passed check -> ✓" || fail "no ✓ for passed ($OUT)"
-echo "$OUT" | grep -q 'alpha ✗' && pass "not-run check -> ✗" || fail "no ✗ for not-run ($OUT)"
-echo "$OUT" | grep -q 'beta ✗'  && pass "failed check -> ✗ (not ✓)" || fail "failed check not ✗ ($OUT)"
+echo "$OUT" | grep -q '✓ gamma' && pass "passed check -> ✓" || fail "no ✓ for passed ($OUT)"
+echo "$OUT" | grep -q '✗ alpha' && pass "not-run check -> ✗" || fail "no ✗ for not-run ($OUT)"
+echo "$OUT" | grep -q '✗ beta'  && pass "failed check -> ✗ (not ✓)" || fail "failed check not ✗ ($OUT)"
 echo "$OUT" | grep -q 'gamma.*alpha.*beta' && pass "config (gate) order respected over ledger history" || fail "wrong order ($OUT)"
 echo "$OUT" | grep -q 'precommit-gate' && fail "pre-commit gate leaked into the checklist" || pass "pre-commit gate excluded"
 OUT="$(notice)"; [ -z "$OUT" ] && pass "after firing, no change -> silent" || fail "re-fired with no change ($OUT)"
 ( cd "$REPO" && git commit -q --allow-empty -m c2 )
 OUT="$(notice)"
-echo "$OUT" | grep -q 'gamma ✗' && pass "new commit resets the checklist (all ✗)" || fail "checklist did not reset on new HEAD ($OUT)"
+echo "$OUT" | grep -q '✗ gamma' && pass "unpushed new commit shows all ✗ (no upstream -> current commit)" || fail "checklist did not reset on new HEAD ($OUT)"
+
+# resting-green: with an upstream, a merge that moves HEAD onto a gate-less commit keeps the
+# LAST PUSHED run instead of resetting to all-✗. (Last-pushed = newest pre-push epoch, so the
+# seed must out-rank the date+%s rows above — hence date+%s+100, not NOW+100.)
+B="$(cd "$REPO" && git branch --show-current)"
+PUSHED="$(cd "$REPO" && git rev-parse HEAD)"
+T=$(( $(date +%s) + 100 ))
+for g in gamma alpha beta; do printf '%s\tpre-push\t%s\tpass\t0\t%s\n' "$T" "$g" "$PUSHED" >> "$LEDGER"; done
+( cd "$REPO" && git commit -q --allow-empty -m merged \
+  && git update-ref "refs/remotes/origin/$B" HEAD \
+  && git config "branch.$B.remote" origin && git config "branch.$B.merge" "refs/heads/$B" \
+  && git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*' )
+OUT="$(notice)"
+{ echo "$OUT" | grep -q '✓ gamma' && echo "$OUT" | grep -q '✓ alpha' && echo "$OUT" | grep -q '✓ beta'; } \
+  && pass "merge onto a gate-less commit keeps the last green run (no all-✗ reset)" \
+  || fail "resting state reset to ✗ after merge ($OUT)"
+( cd "$REPO" && git commit -q --allow-empty -m unpushed )
+OUT="$(notice)"
+echo "$OUT" | grep -q '✗ gamma' && pass "unpushed work ahead of upstream shows ✗ (verify before push)" || fail "unpushed commit not ✗ ($OUT)"
 
 # ---------- Scenario S: /omakase show tolerates 6-col rows ----------
 echo "== Scenario S: show reads the 6-col ledger =="
