@@ -58,11 +58,14 @@ resolve_lefthook || { echo "omakase: lefthook not found. Install it (e.g. 'brew 
 
 BEGIN="# >>> omakase-harness >>>"
 END="# <<< omakase-harness <<<"
-EXCLUDE="$ROOT/.git/info/exclude"
 # The shared git dir — identical for the main checkout and every linked worktree,
 # so artifacts placed here are reachable from any worktree (info/exclude and the
 # common dir are shared). This is where the worktree harness snapshot lives.
 COMMON="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+# Exclude file via the shared git dir, NOT "$ROOT/.git/info/exclude": in a linked
+# worktree $ROOT/.git is a FILE, so the literal path crashes mkdir; this resolves
+# to the same place in a main checkout and the right place in a worktree.
+EXCLUDE="$COMMON/info/exclude"
 OMK="$COMMON/omakase"
 HOOKS_DIR="$COMMON/hooks"   # hooks live in the shared git dir (we refuse a foreign core.hooksPath below)
 

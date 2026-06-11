@@ -241,6 +241,24 @@ OUT=$( cd "$WT" && git commit -m w2 2>&1 ); rc=$?
 OUT=$( cd "$REPO" && echo c > c.txt && git add c.txt && git commit -m c 2>&1 ); rc=$?
 [ "$rc" -eq 0 ] && pass "after remove: commits flow (fail-closed guard inert)" || fail "remove left a blocking guard ($OUT)"
 
+# ---------- Scenario L: init runs clean from inside a linked worktree ----------
+# $ROOT/.git is a FILE in a linked worktree, so an exclude path literally under
+# "$ROOT/.git/info" crashes mkdir; it must resolve via the shared git dir. (The
+# fail-closed block message recommends /omakase init from exactly this state.)
+echo "== Scenario L: init from inside a linked worktree =="
+PAY="$TMP/payL"; mkpayload "$PAY"
+REPO="$TMP/repoL"; newrepo "$REPO"
+WT="$TMP/repoL-wt"
+( cd "$REPO" && git worktree add -q "$WT" -b wtinit ) 2>/dev/null
+OUT=$( cd "$WT" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] && pass "init inside a linked worktree exits 0" || fail "worktree init crashed ($OUT)"
+[ -x "$WT/.omakase/gates/example.sh" ] && pass "gate placed into the worktree" || fail "gate missing in worktree"
+grep -q 'omakase-harness' "$REPO/.git/info/exclude" 2>/dev/null && pass "exclude block written to the SHARED git dir" || fail "exclude block missing from shared git dir"
+[ -z "$(cd "$WT" && git status --porcelain)" ] && pass "worktree status clean (zero footprint)" || { fail "worktree status not clean"; (cd "$WT" && git status --porcelain | sed 's/^/      /'); }
+OUT=$( cd "$WT" && echo l > l.txt && git add l.txt && git commit -m l 2>&1 ); rc=$?
+{ [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'omakase-example-gate-ran'; } && pass "commit from the worktree fires the gate" || fail "gate did not fire from the worktree ($OUT)"
+( cd "$REPO" && git worktree remove --force "$WT" ) 2>/dev/null; ( cd "$REPO" && git worktree prune ) 2>/dev/null
+
 rm -rf "$TMP"
 echo ""
 [ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }
