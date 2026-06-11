@@ -4,6 +4,7 @@
 #   I. guarded cut-over — --cut-over refuses without OMAKASE_CUTOVER_CONFIRM=1
 #   J. upstream-collision guard — a placed path turning TRACKED warns loudly
 #   K. fail-closed gates — a wiped overlay BLOCKS commits instead of passing silently
+#   L. worktree support — init works where $ROOT/.git is a file (linked worktree)
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
@@ -221,6 +222,16 @@ OUT=$( cd "$REPO" && git commit -m b2 2>&1 ); rc=$?
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 n=$(grep -c 'omakase-harness fail-closed >>>' "$REPO/.git/hooks/pre-commit")
 [ "$n" -eq 1 ] && pass "re-init keeps exactly one guard block" || fail "guard blocks duplicated ($n)"
+
+# K4b: lefthook's npm postinstall runs `lefthook install -f` on every npm/yarn install,
+# regenerating the stubs and stripping the guard; the next checkout re-arms it
+# (ensure-present calls install-guards.sh from the post-checkout job).
+( cd "$REPO" && "$LEFTHOOK" install -f ) >/dev/null 2>&1
+n=$(grep -c 'omakase-harness fail-closed >>>' "$REPO/.git/hooks/pre-commit")
+[ "$n" -eq 0 ] && pass "lefthook install -f strips the guard (the reviewer's repro)" || fail "expected a stripped guard after install -f ($n)"
+( cd "$REPO" && git checkout -q -b rearm ) 2>/dev/null
+n=$(grep -c 'omakase-harness fail-closed >>>' "$REPO/.git/hooks/pre-commit")
+[ "$n" -eq 1 ] && pass "post-checkout re-arms the guard after stub regeneration" || fail "guard not re-armed by checkout ($n)"
 
 # K5: a fresh MANUAL worktree (harness files not yet copied in) fails closed too —
 # before this guard, gates silently did not run there; the block's restore command heals it.

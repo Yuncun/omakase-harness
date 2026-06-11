@@ -29,6 +29,8 @@ For files reported as **skipped (committed)**: the harness copy can take over on
 
 If init prints an **upstream-collision WARNING** (an injected path is now tracked by the repo), relay it verbatim — the user's personal copy was likely overwritten by an upstream commit and a preserved copy path is named in the warning.
 
+The fail-closed overlay check sits above lefthook by design: `LEFTHOOK=0` skips the gates but not the integrity check; the only bypass is git's own `--no-verify`.
+
 ## REMOVE — argument `remove`
 
 ```bash
