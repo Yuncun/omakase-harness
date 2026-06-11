@@ -135,9 +135,10 @@ if [ "${#tracked[@]:-0}" -gt 0 ]; then
   echo "omakase import: ${#tracked[@]} captured file(s) are still COMMITTED in the source repo — left in place (import never changes the source)."
   echo "  They were copied into payload/, but git still tracks them here, so injection would skip them."
   echo "  To let the injected copies take over, run the GUARDED cut-over from the source repo:"
-  echo "    cd \"$ROOT\" && OMAKASE_PAYLOAD=\"$PAYLOAD\" OMAKASE_CUTOVER_CONFIRM=1 bash \"$SCRIPT_DIR/init.sh\" --cut-over"
-  echo "  It prints exactly what it untracks (staged deletions the next commit applies for"
-  echo "  everyone) and refuses without the confirmation env; files stay on disk."
+  echo "    cd \"$ROOT\" && OMAKASE_PAYLOAD=\"$PAYLOAD\" bash \"$SCRIPT_DIR/init.sh\" --cut-over"
+  echo "  It lists exactly what it would untrack (staged deletions the next commit applies"
+  echo "  for everyone) and then REFUSES — that refusal is the review checkpoint. Re-run it"
+  echo "  with OMAKASE_CUTOVER_CONFIRM=1 only after reviewing the list; files stay on disk."
   for t in "${tracked[@]:-}"; do [ -n "$t" ] && echo "  = still committed: $t"; done
 fi
 
