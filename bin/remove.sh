@@ -9,10 +9,21 @@ PAYLOAD="${OMAKASE_PAYLOAD:-$(cd "$SCRIPT_DIR/../payload" && pwd)}"
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "omakase: not inside a git repo" >&2; exit 1; }
 BEGIN="# >>> omakase-harness >>>"
 END="# <<< omakase-harness <<<"
-EXCLUDE="$ROOT/.git/info/exclude"
 COMMON="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+EXCLUDE="$COMMON/info/exclude"   # shared git dir — also correct inside a linked worktree, where $ROOT/.git is a file
 
 if command -v lefthook >/dev/null 2>&1; then ( cd "$ROOT" && lefthook uninstall ) || true; fi
+
+# Strip the fail-closed guard block from any hook stub that survived uninstall (the
+# guard is already inert once $COMMON/omakase is gone, but leave no residue).
+GBEGIN_FC="# >>> omakase-harness fail-closed >>>"
+GEND_FC="# <<< omakase-harness fail-closed <<<"
+for hf in "$COMMON/hooks"/*; do
+  [ -f "$hf" ] || continue
+  grep -qF "$GBEGIN_FC" "$hf" 2>/dev/null || continue
+  awk -v b="$GBEGIN_FC" -v e="$GEND_FC" '$0==b{s=1} !s{print} $0==e{s=0}' "$hf" > "$hf.tmp" && mv "$hf.tmp" "$hf"
+  chmod +x "$hf"
+done
 
 # Delete only paths init would have placed AND that are NOT tracked (never touch tracked files).
 while IFS= read -r -d '' f; do

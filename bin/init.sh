@@ -5,9 +5,37 @@
 # Idempotent: re-running re-overlays, rewrites the exclude block, and refreshes the
 # worktree snapshot. Rule: the injected harness always matches payload — a re-run
 # overwrites an injected file that differs (and warns that any local edit was replaced),
-# but never touches a COMMITTED file (those are reported; `git rm --cached` them yourself
-# to let the harness copy take over).
+# but never touches a COMMITTED file (those are reported; the GUARDED `--cut-over` flag
+# untracks them to let the harness copy take over — see usage).
 set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+usage: init.sh [--cut-over] [--help]
+
+Overlay payload/ into the current repo additively (zero committed footprint) and
+install lefthook hooks. A payload path the repo already COMMITS is never touched:
+it is skipped and reported.
+
+  --cut-over   also untrack (git rm --cached) every payload path the repo currently
+               commits, so the injected copies take over. This STAGES DELETIONS of
+               shared files; the next commit applies them for everyone. It prints
+               exactly what it will untrack and the consequences, then REFUSES
+               unless OMAKASE_CUTOVER_CONFIRM=1 is set. You review and commit the
+               staged deletions yourself.
+  -h, --help   show this help.
+USAGE
+}
+
+CUTOVER=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --cut-over) CUTOVER=1;;
+    -h|--help)  usage; exit 0;;
+    *) echo "omakase: unknown argument '$1'" >&2; usage >&2; exit 2;;
+  esac
+  shift
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PAYLOAD="${OMAKASE_PAYLOAD:-$(cd "$SCRIPT_DIR/../payload" && pwd)}"
@@ -30,12 +58,132 @@ resolve_lefthook || { echo "omakase: lefthook not found. Install it (e.g. 'brew 
 
 BEGIN="# >>> omakase-harness >>>"
 END="# <<< omakase-harness <<<"
-EXCLUDE="$ROOT/.git/info/exclude"
 # The shared git dir — identical for the main checkout and every linked worktree,
 # so artifacts placed here are reachable from any worktree (info/exclude and the
 # common dir are shared). This is where the worktree harness snapshot lives.
 COMMON="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+# Exclude file via the shared git dir, NOT "$ROOT/.git/info/exclude": in a linked
+# worktree $ROOT/.git is a FILE, so the literal path crashes mkdir; this resolves
+# to the same place in a main checkout and the right place in a worktree.
+EXCLUDE="$COMMON/info/exclude"
 OMK="$COMMON/omakase"
+HOOKS_DIR="$COMMON/hooks"   # hooks live in the shared git dir (we refuse a foreign core.hooksPath below)
+
+# ---- incumbent hook-manager guard (runs BEFORE any mutation) ----
+# `lefthook install` DISPLACES an existing hook stub (renames it to .old), silently
+# disabling the project's own gates; a hook-manager "prepare" script (husky,
+# simple-git-hooks) then reinstalls its own hooks on the next npm install, so the
+# live gate set flip-flops. Detect an incumbent manager and refuse with guidance —
+# omakase does not chain hook managers (v1). Exempt: lefthook-managed stubs (incl.
+# our own re-init): lefthook.yml + lefthook-local.yml merging is the supported
+# coexistence path. Exemption principle: omakase's own injected artifacts are always
+# UNTRACKED — so an untracked .husky/ matching a payload that ships one is ours;
+# git-TRACKED .husky content is always the project's own and always refuses.
+incumbent=()
+RESET_HOOKSPATH=0
+hookspath="$(git -C "$ROOT" config --get core.hooksPath 2>/dev/null || true)"
+if [ -n "$hookspath" ]; then
+  # core.hooksPath pointing at the repo's OWN standard hooks dir is harmless (the
+  # live pixterm-engine install does exactly this); only a path that resolves
+  # elsewhere means a foreign manager owns the hooks. Resolve relative values
+  # against $ROOT and compare physically (symlinks resolved).
+  case "$hookspath" in /*) hp_abs="$hookspath";; *) hp_abs="$ROOT/$hookspath";; esac
+  hp_abs="$(cd "$hp_abs" 2>/dev/null && pwd -P || echo "$hp_abs")"
+  std_abs="$(cd "$HOOKS_DIR" 2>/dev/null && pwd -P || echo "$HOOKS_DIR")"
+  if [ "$hp_abs" != "$std_abs" ]; then
+    incumbent+=("core.hooksPath = '$hookspath' (a foreign hook manager owns the hooks dir; husky v9 sets .husky/_)")
+  else
+    # Redundant config: it names the default location explicitly, but lefthook
+    # refuses to install while ANY core.hooksPath is set. Clear it just before
+    # 'lefthook install' (the effective hooks dir is unchanged) — flagged here,
+    # acted on later, so a refusal elsewhere in this guard mutates nothing.
+    RESET_HOOKSPATH=1
+  fi
+fi
+if [ -n "$(git -C "$ROOT" ls-files -- .husky 2>/dev/null)" ]; then
+  incumbent+=(".husky/ content is git-tracked (the project's own husky setup)")
+elif [ -d "$ROOT/.husky" ] && [ ! -d "$PAYLOAD/.husky" ]; then
+  incumbent+=(".husky/ directory (husky)")
+fi
+if [ -f "$ROOT/package.json" ] && grep -Eq '"prepare"[[:space:]]*:[[:space:]]*"[^"]*(husky|simple-git-hooks)' "$ROOT/package.json"; then
+  incumbent+=("package.json \"prepare\" script wires a hook manager (husky / simple-git-hooks) — npm install would overwrite lefthook's hooks")
+fi
+for hf in "$HOOKS_DIR"/*; do
+  [ -f "$hf" ] || continue
+  case "$hf" in *.sample|*.old) continue;; esac
+  if grep -qi 'lefthook' "$hf" 2>/dev/null; then continue; fi
+  if [ -f "$ROOT/.pre-commit-config.yaml" ] && grep -q 'pre-commit\.com\|generated by pre-commit' "$hf" 2>/dev/null; then
+    incumbent+=("$(basename "$hf"): installed pre-commit-framework stub (plus .pre-commit-config.yaml)")
+  else
+    incumbent+=("$(basename "$hf"): existing non-lefthook hook in $HOOKS_DIR")
+  fi
+done
+if [ "${#incumbent[@]:-0}" -gt 0 ]; then
+  echo "omakase: REFUSING to install — an incumbent hook manager is present:" >&2
+  for i in "${incumbent[@]}"; do echo "  - $i" >&2; done
+  echo "  'lefthook install' would displace the project's own hooks (renaming them to .old)," >&2
+  echo "  silently disabling its gates — and a husky prepare script would overwrite lefthook" >&2
+  echo "  back on the next npm install. omakase does not chain hook managers (v1)." >&2
+  echo "  If these are stale leftovers, remove them and re-run. If the project really uses" >&2
+  echo "  them, do not install omakase here. Nothing was changed." >&2
+  exit 1
+fi
+
+# ---- guarded cut-over (--cut-over) ----
+# The old advice was a raw `git rm --cached` for the user to run by hand; an agent
+# reading that output runs it and auto-commits, deleting shared files from the repo
+# for everyone. The guarded form states the consequences and refuses without an
+# explicit confirmation env.
+if [ "$CUTOVER" -eq 1 ]; then
+  cutover=()
+  while IFS= read -r -d '' f; do
+    rel="${f#"$PAYLOAD"/}"
+    git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1 && cutover+=("$rel")
+  done < <(find "$PAYLOAD" \( -type f -o -type l \) -print0)
+  if [ "${#cutover[@]:-0}" -eq 0 ]; then
+    echo "omakase: --cut-over: no payload path is tracked by this repo — nothing to cut over."
+  else
+    echo "omakase: cut-over will run  git rm --cached  on ${#cutover[@]} tracked file(s):"
+    for c in "${cutover[@]}"; do echo "    $c"; done
+    echo "  This STAGES A DELETION of each shared file. The next commit — including an agent"
+    echo "  auto-commit — applies that deletion FOR EVERYONE who pulls it, and upstream changes"
+    echo "  to these files will then produce modify/delete conflicts. The files stay on disk;"
+    echo "  the injected (gitignored) copies take over locally. Undo before committing with"
+    echo "  'git restore --staged <file>'; 'git add <file>' re-tracks later."
+    if [ "${OMAKASE_CUTOVER_CONFIRM:-}" != "1" ]; then
+      echo "omakase: REFUSING cut-over without confirmation. Re-run with OMAKASE_CUTOVER_CONFIRM=1 to proceed. Nothing was changed." >&2
+      exit 1
+    fi
+    ( cd "$ROOT" && git rm --cached -q -- "${cutover[@]}" )
+    echo "omakase: cut-over staged ${#cutover[@]} deletion(s) — review with 'git status' and commit them yourself."
+  fi
+fi
+
+# ---- upstream-collision guard ----
+# git's default --overwrite-ignore behavior SILENTLY overwrites ignored files on
+# checkout/pull. If upstream commits a tracked file at a path the overlay occupies,
+# the personal copy is destroyed without warning and init thereafter skips the path
+# as tracked. Detect the transition: a previously PLACED path (prior run's ledger)
+# that the index now tracks. The last-injected copy is preserved under
+# $OMK/clobbered/ because the snapshot rebuild below would delete it.
+if [ -f "$OMK/placed.list" ]; then
+  while IFS= read -r rel; do
+    [ -z "$rel" ] && continue
+    if git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
+      if [ -e "$OMK/payload-snapshot/$rel" ] || [ -L "$OMK/payload-snapshot/$rel" ]; then
+        mkdir -p "$OMK/clobbered/$(dirname "$rel")"
+        cp -P "$OMK/payload-snapshot/$rel" "$OMK/clobbered/$rel"
+      fi
+      echo "omakase: WARNING — '$rel' was injected (personal, gitignored) but is NOW TRACKED by the repo." >&2
+      echo "  An upstream commit likely landed a file at this path; git silently overwrites ignored" >&2
+      echo "  files on checkout/pull, so your personal copy was likely clobbered. Last-injected copy" >&2
+      echo "  preserved at:" >&2
+      echo "    $OMK/clobbered/$rel" >&2
+      echo "  Diff it against the tracked file and reconcile: drop '$rel' from your payload, or run" >&2
+      echo "  init --cut-over (guarded) to untrack the file and let the injected copy take over." >&2
+    fi
+  done < "$OMK/placed.list"
+fi
 
 # Identical?  Compares symlink targets for symlinks, byte content otherwise.
 same_file() {
@@ -56,7 +204,7 @@ while IFS= read -r -d '' f; do
   rel="${f#"$PAYLOAD"/}"
   dest="$ROOT/$rel"
   # Never touch a path the repo tracks (committed file wins). Report it so the user can
-  # `git rm --cached` it themselves to let the injected copy take over.
+  # cut over deliberately (init --cut-over, guarded) to let the injected copy take over.
   if git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
     skipped+=("$rel"); echo "omakase: SKIP (already tracked) $rel" >&2; continue
   fi
@@ -150,22 +298,115 @@ LIST="$COMMON/omakase/placed.list"
 [ -f "$LIST" ] || exit 0
 while IFS= read -r rel; do
   [ -z "$rel" ] && continue
+  # Never touch tracked — and warn: a placed path turning TRACKED means an upstream
+  # commit landed a file here, and git silently overwrites ignored files on checkout,
+  # so the personal copy was likely clobbered (the upstream-collision guard). This
+  # check must run BEFORE the existence check: a tracked file exists in the working
+  # tree, so existence-first would skip it silently.
+  if git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
+    echo "omakase: WARNING — injected path '$rel' is now TRACKED by the repo; your personal copy was likely clobbered by an upstream commit (git overwrites ignored files on checkout). Last-injected copy: $SNAP/$rel — diff it against the tracked file, then drop the path from your payload or cut over (init --cut-over)." >&2
+    continue
+  fi
   [ -e "$ROOT/$rel" ] || [ -L "$ROOT/$rel" ] && continue                      # never overwrite (also catches dangling symlinks)
-  git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1 && continue  # never touch tracked
   [ -e "$SNAP/$rel" ] || [ -L "$SNAP/$rel" ] || continue
   mkdir -p "$ROOT/$(dirname "$rel")"
   cp -P "$SNAP/$rel" "$ROOT/$rel"
   case "$rel" in *.sh) [ -L "$ROOT/$rel" ] || chmod +x "$ROOT/$rel";; esac
 done < "$LIST"
+# Re-arm the fail-closed guard blocks: lefthook's npm postinstall runs
+# `lefthook install -f` on every npm/yarn install, regenerating the hook stubs and
+# stripping the guard; this post-checkout hook still runs afterwards, so the guard
+# self-heals on the next checkout/pull.
+if [ -f "$COMMON/omakase/install-guards.sh" ]; then sh "$COMMON/omakase/install-guards.sh"; fi
 ENSURE
 chmod +x "$OMK/ensure-present.sh"
 
+# Fail-closed verifier — run by the enforcement hook stubs BEFORE lefthook. If the
+# (gitignored) overlay was wiped (e.g. `git clean -fdx`), the stubs survive in .git
+# but lefthook finds no config and passes silently — gates would fail OPEN. This
+# checks every ledgered path still exists and hard-fails with a restore instruction.
+# Fast (one existence test per placed file, every commit) and dependency-free
+# (POSIX sh + git only). Generated by init.sh; removed with the snapshot by remove.sh.
+cat > "$OMK/verify-overlay.sh" <<'VERIFY'
+#!/bin/sh
+# omakase-harness fail-closed guard. Generated by init.sh.
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+COMMON="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
+LIST="$COMMON/omakase/placed.list"
+[ -f "$LIST" ] || exit 0   # harness not installed -> nothing to verify
+missing=0
+while IFS= read -r rel; do
+  [ -z "$rel" ] && continue
+  [ -e "$ROOT/$rel" ] || [ -L "$ROOT/$rel" ] && continue
+  git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1 && continue  # tracked: upstream owns it (warned at init/checkout)
+  [ "$missing" -eq 0 ] && echo "omakase: BLOCKING — the injected harness is incomplete; its gates would silently not run:" >&2
+  echo "  missing: $rel" >&2
+  missing=1
+done < "$LIST"
+[ "$missing" -eq 0 ] && exit 0
+echo "omakase: restore it with  bash $COMMON/omakase/ensure-present.sh  (or /omakase init), then retry." >&2
+exit 1
+VERIFY
+chmod +x "$OMK/verify-overlay.sh"
+
+# ---- fail-closed gate stubs ----
+# install-guards.sh inserts a guard block into the enforcement stubs (pre-commit,
+# pre-push) that runs verify-overlay.sh before lefthook and blocks when the overlay
+# is gone. It is a SCRIPT in the shared git dir, not inline code, because lefthook's
+# npm package runs `lefthook install -f` in its postinstall on EVERY npm/yarn
+# install, regenerating the stubs and stripping the block; the generated
+# ensure-present.sh calls this on post-checkout, so the guard self-heals on the next
+# checkout/pull. The guard sits ABOVE lefthook on purpose: overlay integrity is not
+# a lefthook check, so LEFTHOOK=0 does not bypass it — the only escape is git's own
+# --no-verify. Inert once the harness is removed ($COMMON/omakase deleted).
+# post-checkout is deliberately NOT guarded: its job (ensure-present) is the
+# self-heal path and must keep running. Marked block, strip-then-insert: idempotent.
+cat > "$OMK/install-guards.sh" <<'GUARDS'
+#!/bin/sh
+# omakase-harness fail-closed guard installer. Generated by init.sh; called by
+# init.sh after `lefthook install` and by ensure-present.sh on every checkout
+# (lefthook's npm postinstall regenerates the stubs, stripping the block — this
+# re-arms it). Idempotent (strip-then-insert).
+COMMON="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" && pwd)" || exit 0
+HOOKS_DIR="$COMMON/hooks"
+GBEGIN="# >>> omakase-harness fail-closed >>>"
+GEND="# <<< omakase-harness fail-closed <<<"
+for h in pre-commit pre-push; do
+  hf="$HOOKS_DIR/$h"
+  [ -f "$hf" ] || continue
+  grep -qi 'lefthook' "$hf" 2>/dev/null || continue   # only instrument lefthook-managed stubs
+  awk -v b="$GBEGIN" -v e="$GEND" '$0==b{s=1} !s{print} $0==e{s=0}' "$hf" > "$hf.tmp"
+  {
+    head -n1 "$hf.tmp"   # the shebang
+    printf '%s\n' "$GBEGIN"
+    cat <<'GUARD'
+# Fail-closed: this runs ABOVE lefthook, so LEFTHOOK=0 does not bypass it;
+# the only escape is git's own --no-verify.
+omakase_verify="$(git rev-parse --git-common-dir)/omakase/verify-overlay.sh"
+if [ -f "$omakase_verify" ]; then
+  sh "$omakase_verify" || exit 1
+fi
+GUARD
+    printf '%s\n' "$GEND"
+    tail -n +2 "$hf.tmp"
+  } > "$hf"
+  rm -f "$hf.tmp"
+  chmod +x "$hf"
+done
+GUARDS
+chmod +x "$OMK/install-guards.sh"
+
+if [ "$RESET_HOOKSPATH" -eq 1 ]; then
+  git -C "$ROOT" config --unset core.hooksPath 2>/dev/null || true
+  echo "omakase: cleared redundant core.hooksPath (it named the repo's own hooks dir; lefthook refuses to install while it is set — the effective hooks dir is unchanged)."
+fi
 ( cd "$ROOT" && $LEFTHOOK install )
+sh "$OMK/install-guards.sh"
 
 echo "omakase: placed ${#placed[@]} file(s), overwrote ${#overwrote[@]:-0} to match payload, skipped ${#skipped[@]} committed path(s)."
 for p in "${placed[@]:-}"; do [ -n "$p" ] && echo "  + $p"; done
 for o in "${overwrote[@]:-}"; do [ -n "$o" ] && echo "  ^ overwrote to match payload (any local edit replaced): $o"; done
-for s in "${skipped[@]:-}"; do [ -n "$s" ] && echo "  ~ skipped (committed — git rm --cached to let the harness take over): $s"; done
+for s in "${skipped[@]:-}"; do [ -n "$s" ] && echo "  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see init.sh --help): $s"; done
 echo "omakase: ignores -> .git/info/exclude; hooks installed; new worktrees auto-install the harness. Nothing to commit."
 echo "omakase: see the whole harness any time with  /omakase show"
 # Only advertise the scorecard status line when the payload actually ships it.

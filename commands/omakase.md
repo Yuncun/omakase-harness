@@ -19,9 +19,17 @@ bash "${CLAUDE_PLUGIN_ROOT}/bin/show.sh" --markdown
 bash "${CLAUDE_PLUGIN_ROOT}/bin/init.sh"
 ```
 
-Overlays the plugin's `payload/` onto the repo root. Rule: **the injected harness matches payload.** It **skips any path the repo already tracks** (never overwrites a committed file — those are reported so the user can `git rm --cached` them to let the harness copy take over) and **overwrites an injected file that differs from payload, warning that any local edit was replaced**. It records every placed path in `.git/info/exclude` and runs `lefthook install`. Nothing is committed. Tell the user which files were placed, overwritten, or skipped, and that `/omakase remove` undoes everything.
+Overlays the plugin's `payload/` onto the repo root. Rule: **the injected harness matches payload.** It **skips any path the repo already tracks** (never overwrites a committed file) and **overwrites an injected file that differs from payload, warning that any local edit was replaced**. It records every placed path in `.git/info/exclude` and runs `lefthook install`. Nothing is committed. Tell the user which files were placed, overwritten, or skipped, and that `/omakase remove` undoes everything.
 
 If the injector exits with "lefthook not found", do NOT install it silently — ask the user how they want lefthook installed (`brew install lefthook`, `mise use lefthook`, or as a project devDependency), run their choice, then re-run. If they already have a lefthook binary elsewhere, re-run with `LEFTHOOK_BIN=/path/to/lefthook`.
+
+If the injector REFUSES because an incumbent hook manager is present (husky, pre-commit, a foreign `core.hooksPath`, or existing non-lefthook hook files), relay the refusal verbatim and STOP. Do not delete the incumbent's files or set config to force the install — that decision belongs to the user.
+
+For files reported as **skipped (committed)**: the harness copy can take over only via the guarded cut-over, `init.sh --cut-over`. NEVER run `git rm --cached` directly and NEVER set `OMAKASE_CUTOVER_CONFIRM=1` on your own — cutting over stages deletions of shared files that the next commit applies for everyone. Surface the skip report to the user; run the confirmed cut-over only when the user explicitly asks for it.
+
+If init prints an **upstream-collision WARNING** (an injected path is now tracked by the repo), relay it verbatim — the user's personal copy was likely overwritten by an upstream commit and a preserved copy path is named in the warning.
+
+The fail-closed overlay check sits above lefthook by design: `LEFTHOOK=0` skips the gates but not the integrity check; the only bypass is git's own `--no-verify`.
 
 ## REMOVE — argument `remove`
 

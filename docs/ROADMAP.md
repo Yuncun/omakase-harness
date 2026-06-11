@@ -31,8 +31,9 @@ Next: Phase 2 proper (interactive onboarding `init` — welcome + preview + conf
    writes them into a `payload/` you point at. Read-only on the donor. (Cut `--adopt-tracked`.)
 2. **`import` is a creator script, not an adopter command.** It runs from a clone/fork of the
    harness repo, where the payload you're building lives. The plugin surface is adoption only.
-3. **The cut-over is the user's own `git rm --cached`,** not a tool flag. To stop committing a
-   file so the injected copy wins, the user runs that one native command, then `init` injects it.
+3. ~~**The cut-over is the user's own `git rm --cached`,** not a tool flag.~~ Superseded 2026-06-11:
+   agents run printed advice verbatim and auto-commit, so the raw command was a hazard. Now
+   `init.sh --cut-over` — lists what it would untrack, refuses without `OMAKASE_CUTOVER_CONFIRM=1`.
 4. **`init` drops `--force` and the three-way merge.** Rule: *the injected harness matches payload.*
    No keep-vs-update logic, no snapshot-as-merge-base. (The snapshot itself stays — worktree
    self-heal still needs it.)

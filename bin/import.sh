@@ -20,7 +20,7 @@
 #   4. Carry symlinks as symlinks (cp -P), e.g. CLAUDE.md -> AGENTS.md. Never dereference.
 #   5. import NEVER mutates the source repo. A file you already COMMIT is captured into
 #      payload but left committed in place, and listed — to let the injected copy take
-#      over, you run `git rm --cached` yourself (then re-init). The cut-over is your call.
+#      over, run the GUARDED cut-over (init.sh --cut-over). The cut-over is your call.
 #   6. Anything unresolved goes to a leftover list; import never infers.
 set -euo pipefail
 
@@ -134,9 +134,11 @@ if [ "${#tracked[@]:-0}" -gt 0 ]; then
   echo ""
   echo "omakase import: ${#tracked[@]} captured file(s) are still COMMITTED in the source repo — left in place (import never changes the source)."
   echo "  They were copied into payload/, but git still tracks them here, so injection would skip them."
-  echo "  To let the injected copies take over, untrack them yourself, then re-init:"
-  echo "    git rm --cached -- <the files listed below>"
-  echo "  (reversible: git add undoes it; the files stay on disk)."
+  echo "  To let the injected copies take over, run the GUARDED cut-over from the source repo:"
+  echo "    cd \"$ROOT\" && OMAKASE_PAYLOAD=\"$PAYLOAD\" bash \"$SCRIPT_DIR/init.sh\" --cut-over"
+  echo "  It lists exactly what it would untrack (staged deletions the next commit applies"
+  echo "  for everyone) and then REFUSES — that refusal is the review checkpoint. Re-run it"
+  echo "  with OMAKASE_CUTOVER_CONFIRM=1 only after reviewing the list; files stay on disk."
   for t in "${tracked[@]:-}"; do [ -n "$t" ] && echo "  = still committed: $t"; done
 fi
 

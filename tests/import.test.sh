@@ -83,6 +83,14 @@ echo "$OUT" | grep -qi 'skipped (personal' && pass "skipped personal file surfac
 ( cd "$SRC" && git ls-files --error-unmatch AGENTS.md >/dev/null 2>&1 ) && pass "default: committed AGENTS.md left tracked (no surprise un-track)" || fail "default import un-tracked a file"
 echo "$OUT" | grep -qi 'still committed' && pass "report lists the still-committed cut-over set" || fail "report missing cut-over list"
 [ -z "$(cd "$SRC" && git status --porcelain)" ] && pass "import did NOT mutate the source repo (working tree unchanged)" || { fail "import changed the source repo"; (cd "$SRC" && git status --porcelain | sed 's/^/      /'); }
+# the printed cut-over command is GUARDED: no pre-baked confirmation; run VERBATIM it
+# refuses and stages nothing. Import is agent-driven — an unattended copy/paste of the
+# report's command must hit the review checkpoint, not stage shared-file deletions.
+CUTCMD="$(echo "$OUT" | grep -- '--cut-over' | grep 'init.sh' | head -1 | sed 's/^[[:space:]]*//')"
+[ -n "$CUTCMD" ] && pass "report prints a runnable cut-over command" || fail "no cut-over command printed"
+echo "$CUTCMD" | grep -q 'OMAKASE_CUTOVER_CONFIRM' && fail "printed command pre-bakes OMAKASE_CUTOVER_CONFIRM (unattended hazard)" || pass "printed command does NOT pre-confirm"
+( eval "$CUTCMD" ) >/dev/null 2>&1 && fail "printed command run verbatim PROCEEDED (unattended cut-over)" || pass "printed command run verbatim refused (the review checkpoint)"
+[ -z "$(cd "$SRC" && git status --porcelain)" ] && pass "verbatim run staged nothing in the source repo" || { fail "verbatim run mutated the source repo"; (cd "$SRC" && git status --porcelain | sed 's/^/      /'); }
 # leftover detection
 echo "$OUT" | grep -q 'scripts/loose.sh' && pass "loose wired gate reported (not auto-grabbed)" || fail "loose gate not reported"
 [ ! -e "$PAY/scripts/loose.sh" ] && pass "loose gate NOT captured (outside a declared location)" || fail "loose gate wrongly captured"
