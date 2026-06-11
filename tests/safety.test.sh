@@ -123,6 +123,38 @@ OUT=$( cd "$REPO2" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" --cut-over 2>&1 ); rc=
 OUT=$( bash "$INIT" --help 2>&1 ); rc=$?
 { [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'cut-over' && echo "$OUT" | grep -q 'OMAKASE_CUTOVER_CONFIRM'; } && pass "--help documents --cut-over + the confirmation env" || fail "--help missing cut-over docs ($OUT)"
 
+# ---------- Scenario J: upstream-collision guard ----------
+echo "== Scenario J: a placed path turning TRACKED warns loudly =="
+PAY="$TMP/payJ"; mkpayload "$PAY"
+REPO="$TMP/repoJ"; newrepo "$REPO"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+COMMON="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+# Simulate an upstream commit landing a tracked file at a placed path (same end state
+# as a pull: the index tracks the path, the working copy is upstream's content).
+( cd "$REPO" && printf 'UPSTREAM CONTENT\n' > .omakase/gates/example.sh && git add -f .omakase/gates/example.sh && LEFTHOOK=0 git commit -q -m upstream )
+
+# J1: the post-checkout self-heal warns (the timely surface) and never touches the tracked file
+ERR=$( cd "$REPO" && bash "$COMMON/omakase/ensure-present.sh" 2>&1 )
+echo "$ERR" | grep -qi 'WARNING' && pass "ensure-present warns on the tracked collision" || fail "ensure-present silent on collision ($ERR)"
+echo "$ERR" | grep -q '.omakase/gates/example.sh' && pass "ensure-present warning names the file" || fail "warning does not name the file ($ERR)"
+echo "$ERR" | grep -qi 'clobber' && pass "warning says the personal copy was likely clobbered" || fail "warning missing the clobber explanation ($ERR)"
+grep -q 'UPSTREAM CONTENT' "$REPO/.omakase/gates/example.sh" && pass "tracked file left untouched" || fail "self-heal touched a tracked file"
+
+# J2: re-init warns too and preserves the last-injected copy before rebuilding the snapshot
+OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] && pass "re-init still completes (warn, not block)" || fail "re-init failed on collision ($OUT)"
+echo "$OUT" | grep -qi 'WARNING' && pass "init warns on the placed->tracked path" || fail "init silent on collision ($OUT)"
+echo "$OUT" | grep -q '.omakase/gates/example.sh' && pass "init warning names the file" || fail "init warning does not name the file ($OUT)"
+echo "$OUT" | grep -qi 'clobber' && pass "init warning explains the likely clobber" || fail "init warning missing clobber explanation ($OUT)"
+echo "$OUT" | grep -q 'clobbered/' && pass "init warning points at the preserved copy" || fail "init warning missing the preserved-copy path ($OUT)"
+grep -q 'omakase-example-gate-ran' "$COMMON/omakase/clobbered/.omakase/gates/example.sh" 2>/dev/null && pass "last-injected copy preserved under clobbered/" || fail "preserved copy missing or wrong"
+
+# J3: no false warning on a clean re-init
+REPO2="$TMP/repoJ2"; newrepo "$REPO2"
+( cd "$REPO2" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+OUT=$( cd "$REPO2" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 )
+echo "$OUT" | grep -qi 'NOW TRACKED' && fail "false collision warning on a clean re-init ($OUT)" || pass "no false warning on a clean re-init"
+
 rm -rf "$TMP"
 echo ""
 [ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }

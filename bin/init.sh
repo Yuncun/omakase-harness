@@ -134,6 +134,32 @@ if [ "$CUTOVER" -eq 1 ]; then
   fi
 fi
 
+# ---- upstream-collision guard ----
+# git's default --overwrite-ignore behavior SILENTLY overwrites ignored files on
+# checkout/pull. If upstream commits a tracked file at a path the overlay occupies,
+# the personal copy is destroyed without warning and init thereafter skips the path
+# as tracked. Detect the transition: a previously PLACED path (prior run's ledger)
+# that the index now tracks. The last-injected copy is preserved under
+# $OMK/clobbered/ because the snapshot rebuild below would delete it.
+if [ -f "$OMK/placed.list" ]; then
+  while IFS= read -r rel; do
+    [ -z "$rel" ] && continue
+    if git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
+      if [ -e "$OMK/payload-snapshot/$rel" ] || [ -L "$OMK/payload-snapshot/$rel" ]; then
+        mkdir -p "$OMK/clobbered/$(dirname "$rel")"
+        cp -P "$OMK/payload-snapshot/$rel" "$OMK/clobbered/$rel"
+      fi
+      echo "omakase: WARNING — '$rel' was injected (personal, gitignored) but is NOW TRACKED by the repo." >&2
+      echo "  An upstream commit likely landed a file at this path; git silently overwrites ignored" >&2
+      echo "  files on checkout/pull, so your personal copy was likely clobbered. Last-injected copy" >&2
+      echo "  preserved at:" >&2
+      echo "    $OMK/clobbered/$rel" >&2
+      echo "  Diff it against the tracked file and reconcile: drop '$rel' from your payload, or run" >&2
+      echo "  init --cut-over (guarded) to untrack the file and let the injected copy take over." >&2
+    fi
+  done < "$OMK/placed.list"
+fi
+
 # Identical?  Compares symlink targets for symlinks, byte content otherwise.
 same_file() {
   if [ -L "$1" ] || [ -L "$2" ]; then
@@ -247,8 +273,16 @@ LIST="$COMMON/omakase/placed.list"
 [ -f "$LIST" ] || exit 0
 while IFS= read -r rel; do
   [ -z "$rel" ] && continue
+  # Never touch tracked — and warn: a placed path turning TRACKED means an upstream
+  # commit landed a file here, and git silently overwrites ignored files on checkout,
+  # so the personal copy was likely clobbered (the upstream-collision guard). This
+  # check must run BEFORE the existence check: a tracked file exists in the working
+  # tree, so existence-first would skip it silently.
+  if git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
+    echo "omakase: WARNING — injected path '$rel' is now TRACKED by the repo; your personal copy was likely clobbered by an upstream commit (git overwrites ignored files on checkout). Last-injected copy: $SNAP/$rel — diff it against the tracked file, then drop the path from your payload or cut over (init --cut-over)." >&2
+    continue
+  fi
   [ -e "$ROOT/$rel" ] || [ -L "$ROOT/$rel" ] && continue                      # never overwrite (also catches dangling symlinks)
-  git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1 && continue  # never touch tracked
   [ -e "$SNAP/$rel" ] || [ -L "$SNAP/$rel" ] || continue
   mkdir -p "$ROOT/$(dirname "$rel")"
   cp -P "$SNAP/$rel" "$ROOT/$rel"

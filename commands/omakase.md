@@ -27,6 +27,8 @@ If the injector REFUSES because an incumbent hook manager is present (husky, pre
 
 For files reported as **skipped (committed)**: the harness copy can take over only via the guarded cut-over, `init.sh --cut-over`. NEVER run `git rm --cached` directly and NEVER set `OMAKASE_CUTOVER_CONFIRM=1` on your own — cutting over stages deletions of shared files that the next commit applies for everyone. Surface the skip report to the user; run the confirmed cut-over only when the user explicitly asks for it.
 
+If init prints an **upstream-collision WARNING** (an injected path is now tracked by the repo), relay it verbatim — the user's personal copy was likely overwritten by an upstream commit and a preserved copy path is named in the warning.
+
 ## REMOVE — argument `remove`
 
 ```bash
