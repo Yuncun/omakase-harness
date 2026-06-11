@@ -5,9 +5,37 @@
 # Idempotent: re-running re-overlays, rewrites the exclude block, and refreshes the
 # worktree snapshot. Rule: the injected harness always matches payload — a re-run
 # overwrites an injected file that differs (and warns that any local edit was replaced),
-# but never touches a COMMITTED file (those are reported; `git rm --cached` them yourself
-# to let the harness copy take over).
+# but never touches a COMMITTED file (those are reported; the GUARDED `--cut-over` flag
+# untracks them to let the harness copy take over — see usage).
 set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+usage: init.sh [--cut-over] [--help]
+
+Overlay payload/ into the current repo additively (zero committed footprint) and
+install lefthook hooks. A payload path the repo already COMMITS is never touched:
+it is skipped and reported.
+
+  --cut-over   also untrack (git rm --cached) every payload path the repo currently
+               commits, so the injected copies take over. This STAGES DELETIONS of
+               shared files; the next commit applies them for everyone. It prints
+               exactly what it will untrack and the consequences, then REFUSES
+               unless OMAKASE_CUTOVER_CONFIRM=1 is set. You review and commit the
+               staged deletions yourself.
+  -h, --help   show this help.
+USAGE
+}
+
+CUTOVER=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --cut-over) CUTOVER=1;;
+    -h|--help)  usage; exit 0;;
+    *) echo "omakase: unknown argument '$1'" >&2; usage >&2; exit 2;;
+  esac
+  shift
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PAYLOAD="${OMAKASE_PAYLOAD:-$(cd "$SCRIPT_DIR/../payload" && pwd)}"
@@ -76,6 +104,36 @@ if [ "${#incumbent[@]:-0}" -gt 0 ]; then
   exit 1
 fi
 
+# ---- guarded cut-over (--cut-over) ----
+# The old advice was a raw `git rm --cached` for the user to run by hand; an agent
+# reading that output runs it and auto-commits, deleting shared files from the repo
+# for everyone. The guarded form states the consequences and refuses without an
+# explicit confirmation env.
+if [ "$CUTOVER" -eq 1 ]; then
+  cutover=()
+  while IFS= read -r -d '' f; do
+    rel="${f#"$PAYLOAD"/}"
+    git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1 && cutover+=("$rel")
+  done < <(find "$PAYLOAD" \( -type f -o -type l \) -print0)
+  if [ "${#cutover[@]:-0}" -eq 0 ]; then
+    echo "omakase: --cut-over: no payload path is tracked by this repo — nothing to cut over."
+  else
+    echo "omakase: cut-over will run  git rm --cached  on ${#cutover[@]} tracked file(s):"
+    for c in "${cutover[@]}"; do echo "    $c"; done
+    echo "  This STAGES A DELETION of each shared file. The next commit — including an agent"
+    echo "  auto-commit — applies that deletion FOR EVERYONE who pulls it, and upstream changes"
+    echo "  to these files will then produce modify/delete conflicts. The files stay on disk;"
+    echo "  the injected (gitignored) copies take over locally. Undo before committing with"
+    echo "  'git restore --staged <file>'; 'git add <file>' re-tracks later."
+    if [ "${OMAKASE_CUTOVER_CONFIRM:-}" != "1" ]; then
+      echo "omakase: REFUSING cut-over without confirmation. Re-run with OMAKASE_CUTOVER_CONFIRM=1 to proceed. Nothing was changed." >&2
+      exit 1
+    fi
+    ( cd "$ROOT" && git rm --cached -q -- "${cutover[@]}" )
+    echo "omakase: cut-over staged ${#cutover[@]} deletion(s) — review with 'git status' and commit them yourself."
+  fi
+fi
+
 # Identical?  Compares symlink targets for symlinks, byte content otherwise.
 same_file() {
   if [ -L "$1" ] || [ -L "$2" ]; then
@@ -95,7 +153,7 @@ while IFS= read -r -d '' f; do
   rel="${f#"$PAYLOAD"/}"
   dest="$ROOT/$rel"
   # Never touch a path the repo tracks (committed file wins). Report it so the user can
-  # `git rm --cached` it themselves to let the injected copy take over.
+  # cut over deliberately (init --cut-over, guarded) to let the injected copy take over.
   if git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
     skipped+=("$rel"); echo "omakase: SKIP (already tracked) $rel" >&2; continue
   fi
@@ -204,7 +262,7 @@ chmod +x "$OMK/ensure-present.sh"
 echo "omakase: placed ${#placed[@]} file(s), overwrote ${#overwrote[@]:-0} to match payload, skipped ${#skipped[@]} committed path(s)."
 for p in "${placed[@]:-}"; do [ -n "$p" ] && echo "  + $p"; done
 for o in "${overwrote[@]:-}"; do [ -n "$o" ] && echo "  ^ overwrote to match payload (any local edit replaced): $o"; done
-for s in "${skipped[@]:-}"; do [ -n "$s" ] && echo "  ~ skipped (committed — git rm --cached to let the harness take over): $s"; done
+for s in "${skipped[@]:-}"; do [ -n "$s" ] && echo "  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see init.sh --help): $s"; done
 echo "omakase: ignores -> .git/info/exclude; hooks installed; new worktrees auto-install the harness. Nothing to commit."
 echo "omakase: see the whole harness any time with  /omakase show"
 # Only advertise the scorecard status line when the payload actually ships it.

@@ -86,6 +86,43 @@ OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
 [ "$rc" -eq 0 ] && pass "re-init does not trip over lefthook's own stubs" || fail "re-init refused its own stubs ($OUT)"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
+# ---------- Scenario I: guarded cut-over ----------
+echo "== Scenario I: guarded cut-over =="
+PAY="$TMP/payI"; mkpayload "$PAY"; printf 'payload agents\n' > "$PAY/AGENTS.md"
+REPO="$TMP/repoI"; newrepo "$REPO"
+( cd "$REPO" && printf 'COMMITTED agents\n' > AGENTS.md && git add AGENTS.md && git commit -q -m team )
+
+# I1: plain init skips the committed file and advises the GUARDED form, not the raw command
+OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 )
+echo "$OUT" | grep -q 'cut-over' && pass "skip advice points at the guarded cut-over" || fail "skip advice does not mention cut-over ($OUT)"
+echo "$OUT" | grep -q 'git rm --cached' && fail "raw 'git rm --cached' still advised by plain init" || pass "raw git rm --cached no longer advised by plain init"
+
+# I2: --cut-over without confirmation refuses and mutates nothing
+OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" --cut-over 2>&1 ); rc=$?
+[ "$rc" -ne 0 ] && pass "cut-over refused without OMAKASE_CUTOVER_CONFIRM (exit $rc)" || fail "cut-over proceeded without confirmation"
+echo "$OUT" | grep -q 'AGENTS.md' && pass "refusal names the file it would untrack" || fail "refusal does not name the file ($OUT)"
+echo "$OUT" | grep -qi 'EVERYONE' && pass "refusal states the shared consequence" || fail "no shared-consequence statement ($OUT)"
+( cd "$REPO" && git ls-files --error-unmatch AGENTS.md >/dev/null 2>&1 ) && pass "AGENTS.md still tracked after refusal" || fail "refusal still untracked the file"
+[ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "nothing staged after refusal" || fail "refusal left staged changes"
+grep -q 'COMMITTED agents' "$REPO/AGENTS.md" && pass "committed content untouched after refusal" || fail "refusal touched the committed file"
+
+# I3: with confirmation — untracks, stages the deletion, injected copy takes over on disk
+OUT=$( cd "$REPO" && OMAKASE_CUTOVER_CONFIRM=1 OMAKASE_PAYLOAD="$PAY" bash "$INIT" --cut-over 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] && pass "confirmed cut-over proceeds (exit 0)" || fail "confirmed cut-over failed ($OUT)"
+( cd "$REPO" && git ls-files --error-unmatch AGENTS.md >/dev/null 2>&1 ) && fail "AGENTS.md still tracked after confirmed cut-over" || pass "AGENTS.md untracked"
+( cd "$REPO" && git status --porcelain ) | grep -q '^D  AGENTS.md' && pass "deletion STAGED for the user to review + commit" || fail "no staged deletion in git status"
+[ -f "$REPO/AGENTS.md" ] && pass "file stays on disk" || fail "file deleted from disk"
+grep -q 'payload agents' "$REPO/AGENTS.md" && pass "injected copy took over the path" || fail "injected copy did not take over"
+
+# I4: --cut-over with nothing tracked is a no-op that still inits
+REPO2="$TMP/repoI2"; newrepo "$REPO2"
+OUT=$( cd "$REPO2" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" --cut-over 2>&1 ); rc=$?
+{ [ "$rc" -eq 0 ] && echo "$OUT" | grep -qi 'nothing to cut over'; } && pass "cut-over with nothing tracked: no-op, init proceeds" || fail "empty cut-over mishandled ($OUT)"
+
+# I5: --help documents the escape hatch
+OUT=$( bash "$INIT" --help 2>&1 ); rc=$?
+{ [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'cut-over' && echo "$OUT" | grep -q 'OMAKASE_CUTOVER_CONFIRM'; } && pass "--help documents --cut-over + the confirmation env" || fail "--help missing cut-over docs ($OUT)"
+
 rm -rf "$TMP"
 echo ""
 [ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }
