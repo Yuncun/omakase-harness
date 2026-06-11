@@ -155,6 +155,55 @@ REPO2="$TMP/repoJ2"; newrepo "$REPO2"
 OUT=$( cd "$REPO2" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 )
 echo "$OUT" | grep -qi 'NOW TRACKED' && fail "false collision warning on a clean re-init ($OUT)" || pass "no false warning on a clean re-init"
 
+# ---------- Scenario K: gates fail closed when the overlay is wiped ----------
+echo "== Scenario K: fail-closed gates =="
+PAY="$TMP/payK"; mkpayload "$PAY"
+REPO="$TMP/repoK"; newrepo "$REPO"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+COMMON="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+grep -q 'omakase-harness fail-closed' "$REPO/.git/hooks/pre-commit" && pass "guard block inserted into the pre-commit stub" || fail "no guard block in the pre-commit stub"
+[ -x "$COMMON/omakase/verify-overlay.sh" ] && pass "verify-overlay.sh written (executable)" || fail "verify-overlay.sh missing"
+
+# K1: intact overlay — commit passes and the gate fires
+OUT=$( cd "$REPO" && echo a > a.txt && git add a.txt && git commit -m a 2>&1 ); rc=$?
+{ [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'omakase-example-gate-ran'; } && pass "intact overlay: commit passes, gate fires" || fail "intact overlay broken ($OUT)"
+
+# K2: wiped overlay (git clean -fdx) — commit BLOCKED with a restore instruction
+( cd "$REPO" && git clean -fdx ) >/dev/null 2>&1
+OUT=$( cd "$REPO" && echo b > b.txt && git add b.txt && git commit -m b 2>&1 ); rc=$?
+[ "$rc" -ne 0 ] && pass "wiped overlay: commit BLOCKED (exit $rc) — no silent pass" || fail "wiped overlay: commit passed (gates fail OPEN) ($OUT)"
+echo "$OUT" | grep -qi 'restore' && pass "block message carries a restore instruction" || fail "no restore instruction ($OUT)"
+echo "$OUT" | grep -q 'missing:' && pass "block message names the missing file(s)" || fail "missing files not named ($OUT)"
+
+# K3: the advertised restore unblocks; the gate fires again
+( cd "$REPO" && bash "$COMMON/omakase/ensure-present.sh" )
+OUT=$( cd "$REPO" && git commit -m b2 2>&1 ); rc=$?
+{ [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'omakase-example-gate-ran'; } && pass "after ensure-present restore: commit passes, gate fires" || fail "restore did not unblock ($OUT)"
+
+# K4: re-init keeps exactly one guard block (idempotent strip-then-insert)
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+n=$(grep -c 'omakase-harness fail-closed >>>' "$REPO/.git/hooks/pre-commit")
+[ "$n" -eq 1 ] && pass "re-init keeps exactly one guard block" || fail "guard blocks duplicated ($n)"
+
+# K5: a fresh MANUAL worktree (harness files not yet copied in) fails closed too —
+# before this guard, gates silently did not run there; the block's restore command heals it.
+REPO2="$TMP/repoK2"; newrepo "$REPO2"
+( cd "$REPO2" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+COMMON2="$(cd "$REPO2" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+WT="$TMP/repoK2-wt"
+( cd "$REPO2" && git worktree add -q "$WT" -b wtsafety ) 2>/dev/null
+OUT=$( cd "$WT" && echo w > w.txt && git add w.txt && git commit -m w 2>&1 ); rc=$?
+[ "$rc" -ne 0 ] && pass "fresh manual worktree: commit BLOCKED instead of gates silently not running" || fail "fresh worktree committed without gates ($OUT)"
+( cd "$WT" && bash "$COMMON2/omakase/ensure-present.sh" )
+OUT=$( cd "$WT" && git commit -m w2 2>&1 ); rc=$?
+{ [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'omakase-example-gate-ran'; } && pass "ensure-present heals the worktree; commit passes with the gate firing" || fail "worktree heal did not unblock ($OUT)"
+( cd "$REPO2" && git worktree remove --force "$WT" ) 2>/dev/null; ( cd "$REPO2" && git worktree prune ) 2>/dev/null
+
+# K6: after remove, commits are not blocked (guard gone or inert)
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
+OUT=$( cd "$REPO" && echo c > c.txt && git add c.txt && git commit -m c 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] && pass "after remove: commits flow (fail-closed guard inert)" || fail "remove left a blocking guard ($OUT)"
+
 rm -rf "$TMP"
 echo ""
 [ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }
