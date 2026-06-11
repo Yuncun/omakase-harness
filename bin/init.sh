@@ -68,20 +68,42 @@ HOOKS_DIR="$COMMON/hooks"   # hooks live in the shared git dir (we refuse a fore
 
 # ---- incumbent hook-manager guard (runs BEFORE any mutation) ----
 # `lefthook install` DISPLACES an existing hook stub (renames it to .old), silently
-# disabling the project's own gates; husky's "prepare" script then reinstalls husky on
-# the next npm install, so the live gate set flip-flops. Detect an incumbent manager
-# and refuse with guidance — omakase does not chain hook managers (v1). Exempt:
-# lefthook-managed stubs (incl. our own re-init): lefthook.yml + lefthook-local.yml
-# merging is the supported coexistence path. A payload that itself ships .husky/ is
-# the harness's own content, not an incumbent.
+# disabling the project's own gates; a hook-manager "prepare" script (husky,
+# simple-git-hooks) then reinstalls its own hooks on the next npm install, so the
+# live gate set flip-flops. Detect an incumbent manager and refuse with guidance —
+# omakase does not chain hook managers (v1). Exempt: lefthook-managed stubs (incl.
+# our own re-init): lefthook.yml + lefthook-local.yml merging is the supported
+# coexistence path. Exemption principle: omakase's own injected artifacts are always
+# UNTRACKED — so an untracked .husky/ matching a payload that ships one is ours;
+# git-TRACKED .husky content is always the project's own and always refuses.
 incumbent=()
+RESET_HOOKSPATH=0
 hookspath="$(git -C "$ROOT" config --get core.hooksPath 2>/dev/null || true)"
-[ -n "$hookspath" ] && incumbent+=("core.hooksPath = '$hookspath' (a foreign hook manager owns the hooks dir; husky v9 sets .husky/_)")
-if [ -d "$ROOT/.husky" ] && [ ! -d "$PAYLOAD/.husky" ]; then
+if [ -n "$hookspath" ]; then
+  # core.hooksPath pointing at the repo's OWN standard hooks dir is harmless (the
+  # live pixterm-engine install does exactly this); only a path that resolves
+  # elsewhere means a foreign manager owns the hooks. Resolve relative values
+  # against $ROOT and compare physically (symlinks resolved).
+  case "$hookspath" in /*) hp_abs="$hookspath";; *) hp_abs="$ROOT/$hookspath";; esac
+  hp_abs="$(cd "$hp_abs" 2>/dev/null && pwd -P || echo "$hp_abs")"
+  std_abs="$(cd "$HOOKS_DIR" 2>/dev/null && pwd -P || echo "$HOOKS_DIR")"
+  if [ "$hp_abs" != "$std_abs" ]; then
+    incumbent+=("core.hooksPath = '$hookspath' (a foreign hook manager owns the hooks dir; husky v9 sets .husky/_)")
+  else
+    # Redundant config: it names the default location explicitly, but lefthook
+    # refuses to install while ANY core.hooksPath is set. Clear it just before
+    # 'lefthook install' (the effective hooks dir is unchanged) — flagged here,
+    # acted on later, so a refusal elsewhere in this guard mutates nothing.
+    RESET_HOOKSPATH=1
+  fi
+fi
+if [ -n "$(git -C "$ROOT" ls-files -- .husky 2>/dev/null)" ]; then
+  incumbent+=(".husky/ content is git-tracked (the project's own husky setup)")
+elif [ -d "$ROOT/.husky" ] && [ ! -d "$PAYLOAD/.husky" ]; then
   incumbent+=(".husky/ directory (husky)")
 fi
-if [ -f "$ROOT/package.json" ] && grep -Eq '"prepare"[[:space:]]*:[[:space:]]*"[^"]*husky' "$ROOT/package.json"; then
-  incumbent+=("package.json \"prepare\" script runs husky (npm install would reinstall husky's hooks over lefthook's)")
+if [ -f "$ROOT/package.json" ] && grep -Eq '"prepare"[[:space:]]*:[[:space:]]*"[^"]*(husky|simple-git-hooks)' "$ROOT/package.json"; then
+  incumbent+=("package.json \"prepare\" script wires a hook manager (husky / simple-git-hooks) — npm install would overwrite lefthook's hooks")
 fi
 for hf in "$HOOKS_DIR"/*; do
   [ -f "$hf" ] || continue
@@ -319,6 +341,10 @@ exit 1
 VERIFY
 chmod +x "$OMK/verify-overlay.sh"
 
+if [ "$RESET_HOOKSPATH" -eq 1 ]; then
+  git -C "$ROOT" config --unset core.hooksPath 2>/dev/null || true
+  echo "omakase: cleared redundant core.hooksPath (it named the repo's own hooks dir; lefthook refuses to install while it is set — the effective hooks dir is unchanged)."
+fi
 ( cd "$ROOT" && $LEFTHOOK install )
 
 # ---- fail-closed gate stubs ----

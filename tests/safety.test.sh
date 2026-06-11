@@ -86,6 +86,43 @@ OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
 [ "$rc" -eq 0 ] && pass "re-init does not trip over lefthook's own stubs" || fail "re-init refused its own stubs ($OUT)"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
+# H7: core.hooksPath pointing at the repo's OWN hooks dir is NOT an incumbent (the live
+# pixterm-engine state). lefthook refuses to install while ANY core.hooksPath is set, so
+# init clears the redundant entry (with a notice) and succeeds. Foreign stays refused (H3).
+REPO="$TMP/repoH7"; newrepo "$REPO"
+( cd "$REPO" && git config core.hooksPath .git/hooks )
+OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] && pass "own .git/hooks hooksPath (relative): init succeeds" || fail "false positive on own hooks dir ($OUT)"
+echo "$OUT" | grep -q 'redundant core.hooksPath' && pass "notice printed about clearing the redundant entry" || fail "no clearing notice ($OUT)"
+( cd "$REPO" && git config --get core.hooksPath >/dev/null 2>&1 ) && fail "core.hooksPath left set" || pass "redundant core.hooksPath cleared"
+OUT=$( cd "$REPO" && echo h7 > h7.txt && git add h7.txt && git commit -m h7 2>&1 ); rc=$?
+{ [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'omakase-example-gate-ran'; } && pass "hooks live after the cleared-hooksPath init" || fail "hooks dead after init ($OUT)"
+REPO="$TMP/repoH7b"; newrepo "$REPO"
+( cd "$REPO" && git config core.hooksPath "$REPO/.git/hooks" )
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && pass "own .git/hooks hooksPath (absolute): init succeeds" || fail "false positive on absolute own hooks dir"
+
+# H8: "prepare": "simple-git-hooks" — same flip-flop as husky (its npm install
+# overwrites .git/hooks directly, no .old)
+REPO="$TMP/repoH8"; newrepo "$REPO"
+printf '{ "scripts": { "prepare": "simple-git-hooks" } }\n' > "$REPO/package.json"
+OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
+{ [ "$rc" -ne 0 ] && echo "$OUT" | grep -qi 'simple-git-hooks'; } && pass "refused on prepare:simple-git-hooks" || fail "simple-git-hooks slipped through ($OUT)"
+
+# H9: .husky exemption principle — omakase's injected artifacts are always UNTRACKED.
+# A git-TRACKED .husky is the project's own and refuses even when the payload ships
+# .husky; an untracked .husky matching the payload is ours and stays exempt.
+PAYH="$TMP/payH9"; mkpayload "$PAYH"; mkdir -p "$PAYH/.husky"; printf '#!/bin/sh\ntrue\n' > "$PAYH/.husky/pre-commit"
+REPO="$TMP/repoH9"; newrepo "$REPO"
+mkdir -p "$REPO/.husky"; printf '#!/bin/sh\nnpx jest\n' > "$REPO/.husky/pre-commit"
+( cd "$REPO" && git add .husky && git commit -q -m husky )
+OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAYH" bash "$INIT" 2>&1 ); rc=$?
+{ [ "$rc" -ne 0 ] && echo "$OUT" | grep -qi 'git-tracked'; } && pass "tracked .husky refused even though the payload ships .husky" || fail "tracked .husky slipped through via the payload exemption ($OUT)"
+REPO="$TMP/repoH9b"; newrepo "$REPO"
+mkdir -p "$REPO/.husky"; printf '#!/bin/sh\ntrue\n' > "$REPO/.husky/pre-commit"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAYH" bash "$INIT" ) >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && pass "untracked .husky matching the payload stays exempt (roundtrip)" || fail "untracked payload .husky wrongly refused"
+
 # ---------- Scenario I: guarded cut-over ----------
 echo "== Scenario I: guarded cut-over =="
 PAY="$TMP/payI"; mkpayload "$PAY"; printf 'payload agents\n' > "$PAY/AGENTS.md"
