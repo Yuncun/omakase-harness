@@ -118,7 +118,7 @@ for hf in "$HOOKS_DIR"/*; do
     incumbent+=("$(basename "$hf"): existing non-lefthook hook in $HOOKS_DIR")
   fi
 done
-if [ "${#incumbent[@]:-0}" -gt 0 ]; then
+if [ "${#incumbent[@]}" -gt 0 ]; then
   echo "omakase: REFUSING to install — an incumbent hook manager is present:" >&2
   for i in "${incumbent[@]}"; do echo "  - $i" >&2; done
   echo "  'lefthook install' would displace the project's own hooks (renaming them to .old)," >&2
@@ -140,7 +140,7 @@ if [ "$CUTOVER" -eq 1 ]; then
     rel="${f#"$PAYLOAD"/}"
     git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1 && cutover+=("$rel")
   done < <(find "$PAYLOAD" \( -type f -o -type l \) -print0)
-  if [ "${#cutover[@]:-0}" -eq 0 ]; then
+  if [ "${#cutover[@]}" -eq 0 ]; then
     echo "omakase: --cut-over: no payload path is tracked by this repo — nothing to cut over."
   else
     echo "omakase: cut-over will run  git rm --cached  on ${#cutover[@]} tracked file(s):"
@@ -287,7 +287,7 @@ awk -v b="$BEGIN" -v e="$END" '$0==b{s=1} !s{print} $0==e{s=0}' "$EXCLUDE" > "$E
 # Write the .worktreeinclude block (Claude Code copies gitignored files matching
 # these patterns into worktrees it creates). Marked block so re-runs stay idempotent
 # and /omakase-remove can strip exactly what we added.
-if [ "$WTINC_TRACKED" -eq 0 ] && [ "${#placed[@]:-0}" -gt 0 ]; then
+if [ "$WTINC_TRACKED" -eq 0 ] && [ "${#placed[@]}" -gt 0 ]; then
   WTINC="$ROOT/.worktreeinclude"
   touch "$WTINC"
   awk -v b="$BEGIN" -v e="$END" '$0==b{s=1} !s{print} $0==e{s=0}' "$WTINC" > "$WTINC.tmp" && mv "$WTINC.tmp" "$WTINC"
@@ -451,7 +451,7 @@ fi
 ( cd "$ROOT" && $LEFTHOOK install )
 sh "$OMK/install-guards.sh"
 
-echo "omakase: placed ${#placed[@]} file(s), overwrote ${#overwrote[@]:-0} to match payload, skipped ${#skipped[@]} committed path(s)."
+echo "omakase: placed ${#placed[@]} file(s), overwrote ${#overwrote[@]} to match payload, skipped ${#skipped[@]} committed path(s)."
 for p in "${placed[@]:-}"; do [ -n "$p" ] && echo "  + $p"; done
 for o in "${overwrote[@]:-}"; do [ -n "$o" ] && echo "  ^ overwrote to match payload (any local edit replaced): $o"; done
 for s in "${skipped[@]:-}"; do [ -n "$s" ] && echo "  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see init.sh --help): $s"; done
