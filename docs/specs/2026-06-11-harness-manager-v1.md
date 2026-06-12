@@ -46,6 +46,8 @@ Import scrapes skills, commands, and rules (file-level) in addition to gates, an
 
 New engine components (ledger, inventory, import parsing) are written in Go — single static binary, no runtime dependency, the same choice lefthook and direnv made. Distribution via GitHub release binaries fetched at init; checksums recorded. Bash remains only in the thin hook-stub layer that must execute inside git hooks with zero dependencies. Existing bash scripts migrate onto the Go engine incrementally as each is touched; no big-bang rewrite.
 
+Amendment (2026-06-11): the provenance ledger is plain TSV (`.git/omakase/placed.tsv`: path, kind, source, sha256, enabled) written by bash at init, so the hook-time readers (ensure-present, verify-overlay) parse it under POSIX sh without the binary; Go debuts at the inventory step. It is a separate file from the gate-run ledger (`.git/omakase/ledger.tsv`), which records run history and must survive re-init.
+
 ## Phase 2 (recorded, not built)
 
 - Decline surface: per-artifact off switches driven from the inventory, written to the host's own override keys in `settings.local.json`; declined items are reported loudly in show, never hidden.
