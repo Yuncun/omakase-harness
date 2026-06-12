@@ -16,6 +16,8 @@ A source is a git repo containing a payload tree (gate definitions, gate scripts
 
 Amendment (2026-06-12, as shipped in 0.12.0): the manifest is a flat `omakase.manifest` (`name:` required, `version:` optional). The surface is `init.sh --source <git-url-or-path>`; payload precedence is `--source` > `OMAKASE_PAYLOAD` > the remembered source (`$COMMON/omakase/source`) > the plugin payload. The cache self-recovers (a failed refresh discards and re-clones). Re-init also gained an orphan sweep — a change to the injection mechanism itself: prior-ledger paths absent from the new payload are deleted when untracked and hash-pristine, kept with a warning when locally edited.
 
+Amendment (2026-06-12, later): pixterm-harness is dual-distributed — its repo carries an `omakase.manifest` and installs from its GitHub URL (proven end-to-end), while its plugin continues as the bootstrap and the live pixterm-engine install stays on the plugin payload. Fully retiring the plugin payload path remains an open decision.
+
 ### 2. Provenance ledger
 
 `placed.list` becomes a per-artifact record: source, kind (gate / script / skill / rule / command), path, content hash, enabled state. Consumed by init, import, remove, self-heal, and show. This is the load-bearing change; inventory and per-source operations key off it.
