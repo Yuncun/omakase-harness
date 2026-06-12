@@ -11,7 +11,7 @@ Dispatch on the argument `$ARGUMENTS` — empty / `show` / `status` → SHOW, `i
 bash "${CLAUDE_PLUGIN_ROOT}/bin/show.sh" --markdown
 ```
 
-`--markdown` makes the script emit the harness map as finished Markdown: a heading, the placed-files list, the hook wiring as a YAML block, the recent-runs scorecard table, and the hidden paths. **Relay it verbatim** — output exactly what the script printed, unchanged. Do NOT reformat, re-order, summarize, annotate, or add commentary; the script owns the format so the render stays deterministic and faithful (the previous "you reformat it" design let editorial drift creep in). Read-only — running this never changes anything. If no harness is installed the script says so; relay that.
+`--markdown` makes the script emit the harness map as finished Markdown: a heading, the three-group inventory (committed / injected / personal), the hook wiring as a YAML block, the recent-runs scorecard table, and the hidden paths. **Relay it verbatim** — output exactly what the script printed, unchanged. Do NOT reformat, re-order, summarize, annotate, or add commentary; the script owns the format so the render stays deterministic and faithful (the previous "you reformat it" design let editorial drift creep in). Read-only — running this never changes anything. If no harness is installed the script says so; relay that.
 
 ## INIT — argument `init`
 
@@ -19,7 +19,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/bin/show.sh" --markdown
 bash "${CLAUDE_PLUGIN_ROOT}/bin/init.sh"
 ```
 
-Overlays the plugin's `payload/` onto the repo root. Rule: **the injected harness matches payload.** It **skips any path the repo already tracks** (never overwrites a committed file) and **overwrites an injected file that differs from payload, warning that any local edit was replaced**. It records every placed path in `.git/info/exclude` and runs `lefthook install`. Nothing is committed. Tell the user which files were placed, overwritten, or skipped, and that `/omakase remove` undoes everything.
+Overlays the plugin's `payload/` onto the repo root. Rule: **the injected harness matches payload.** It **skips any path the repo already tracks** (never overwrites a committed file), **overwrites an injected file that differs from payload, warning that any local edit was replaced**, and **removes a previously injected file the payload no longer ships** (only when untouched; a locally edited one is kept, with a warning). It records every placed path in `.git/info/exclude` and runs `lefthook install`. Nothing is committed. Tell the user which files were placed, overwritten, skipped, or removed, and that `/omakase remove` undoes everything.
 
 With a source — `/omakase init <git-url-or-local-path>`:
 

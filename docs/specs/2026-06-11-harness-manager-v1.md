@@ -14,6 +14,8 @@ Two audiences, one engine: people who want a working harness in one command, and
 
 A source is a git repo containing a payload tree (gate definitions, gate scripts, skills, rules, commands) plus a manifest. Omakase pulls a source into a local cache and materializes its payload through the existing injection mechanism. `pixterm-harness` converts to the first source once the mechanism is proven; until then it continues as-is. The Claude Code plugin remains in the marketplace as the discovery and bootstrap channel; harness content moves to sources (dual distribution).
 
+Amendment (2026-06-12, as shipped in 0.12.0): the manifest is a flat `omakase.manifest` (`name:` required, `version:` optional). The surface is `init.sh --source <git-url-or-path>`; payload precedence is `--source` > `OMAKASE_PAYLOAD` > the remembered source (`$COMMON/omakase/source`) > the plugin payload. The cache self-recovers (a failed refresh discards and re-clones). Re-init also gained an orphan sweep — a change to the injection mechanism itself: prior-ledger paths absent from the new payload are deleted when untracked and hash-pristine, kept with a warning when locally edited.
+
 ### 2. Provenance ledger
 
 `placed.list` becomes a per-artifact record: source, kind (gate / script / skill / rule / command), path, content hash, enabled state. Consumed by init, import, remove, self-heal, and show. This is the load-bearing change; inventory and per-source operations key off it.
@@ -49,6 +51,8 @@ New engine components (ledger, inventory, import parsing) are written in Go — 
 Amendment (2026-06-11): the provenance ledger is plain TSV (`.git/omakase/placed.tsv`: path, kind, source, sha256, enabled) written by bash at init, so the hook-time readers (ensure-present, verify-overlay) parse it under POSIX sh without the binary; Go debuts at the inventory step. It is a separate file from the gate-run ledger (`.git/omakase/ledger.tsv`), which records run history and must survive re-init.
 
 Amendment (2026-06-12): with token estimates cut from the inventory, the inventory is ledger rendering plus a committed-path scan and may remain bash; Go's trigger moves to the step that genuinely needs it — structural YAML parsing for import widening and the sources mechanism.
+
+Amendment (2026-06-12, later): the inventory AND sources both shipped in bash (the manifest is deliberately flat key:value, read with sed — no YAML parser). Go's remaining trigger is import widening (§5) alone; if that also proves tractable without structural YAML parsing, Go has no trigger left in this spec.
 
 ## Phase 2 (recorded, not built)
 
