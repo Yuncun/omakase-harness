@@ -1,9 +1,9 @@
 ---
 description: Show, install, or remove the personal omakase harness (zero committed footprint)
-argument-hint: "[show | init | remove]"
+argument-hint: "[show | init [<source-url-or-path>] | remove]"
 ---
 
-Dispatch on the argument `$ARGUMENTS` — empty / `show` / `status` → SHOW, `init` → INIT, `remove` → REMOVE. For INIT and REMOVE, run the matching script and report its output. For SHOW, run the script (it emits Markdown) and relay that output verbatim (see below). (Authoring a harness — `import` — is a creator script run from a clone of the harness repo, not an adopter command; see the repo's `bin/import.sh`.)
+Dispatch on the argument `$ARGUMENTS` — empty / `show` / `status` → SHOW, `init` (optionally followed by a git URL or local path) → INIT, `remove` → REMOVE. For INIT and REMOVE, run the matching script and report its output. For SHOW, run the script (it emits Markdown) and relay that output verbatim (see below). (Authoring a harness — `import` — is a creator script run from a clone of the harness repo, not an adopter command; see the repo's `bin/import.sh`.)
 
 ## SHOW — the default (empty argument, `show`, or `status`)
 
@@ -20,6 +20,14 @@ bash "${CLAUDE_PLUGIN_ROOT}/bin/init.sh"
 ```
 
 Overlays the plugin's `payload/` onto the repo root. Rule: **the injected harness matches payload.** It **skips any path the repo already tracks** (never overwrites a committed file) and **overwrites an injected file that differs from payload, warning that any local edit was replaced**. It records every placed path in `.git/info/exclude` and runs `lefthook install`. Nothing is committed. Tell the user which files were placed, overwritten, or skipped, and that `/omakase remove` undoes everything.
+
+With a source — `/omakase init <git-url-or-local-path>`:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/bin/init.sh" --source "<git-url-or-local-path>"
+```
+
+`--source` pulls a harness SOURCE (a git repo with a `payload/` tree plus an `omakase.manifest`) into a local cache and injects its payload instead of the plugin's. The source is remembered: a later bare `/omakase init` refreshes and re-injects it. If the script refuses the source (no `payload/`, no `omakase.manifest`), relay the error verbatim — nothing was changed.
 
 If the injector exits with "lefthook not found", do NOT install it silently — ask the user how they want lefthook installed (`brew install lefthook`, `mise use lefthook`, or as a project devDependency), run their choice, then re-run. If they already have a lefthook binary elsewhere, re-run with `LEFTHOOK_BIN=/path/to/lefthook`.
 

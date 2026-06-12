@@ -32,6 +32,7 @@ In Claude Code, install the plugin and use the wrapper command instead:
     /plugin marketplace add owner/repo
     /plugin install omakase-harness@your-marketplace
     /omakase init
+    /omakase init https://github.com/you/your-harness   # install from a harness source repo
 
 Adoption requires lefthook (`brew install lefthook`, `mise use lefthook`, or a project devDependency); `/omakase init` prompts to install it if absent.
 

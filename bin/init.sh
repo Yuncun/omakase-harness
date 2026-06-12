@@ -11,12 +11,18 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-usage: init.sh [--cut-over] [--help]
+usage: init.sh [--source <git-url|path>] [--cut-over] [--help]
 
 Overlay payload/ into the current repo additively (zero committed footprint) and
 install lefthook hooks. A payload path the repo already COMMITS is never touched:
 it is skipped and reported.
 
+  --source <git-url|path>
+               pull a harness SOURCE — a git repo carrying a payload/ tree plus an
+               omakase.manifest (flat key: value; name required, version optional) —
+               into a local cache (${XDG_CACHE_HOME:-~/.cache}/omakase/sources) and
+               inject its payload. The source is remembered; a later bare init.sh
+               refreshes and re-injects the same source.
   --cut-over   also untrack (git rm --cached) every payload path the repo currently
                commits, so the injected copies take over. This STAGES DELETIONS of
                shared files; the next commit applies them for everyone. It prints
@@ -28,9 +34,11 @@ USAGE
 }
 
 CUTOVER=0
+SOURCE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --cut-over) CUTOVER=1;;
+    --source)   shift; [ $# -gt 0 ] || { echo "omakase: --source needs a git URL or local path" >&2; exit 2; }; SOURCE="$1";;
     -h|--help)  usage; exit 0;;
     *) echo "omakase: unknown argument '$1'" >&2; usage >&2; exit 2;;
   esac
@@ -38,8 +46,69 @@ while [ $# -gt 0 ]; do
 done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PAYLOAD="${OMAKASE_PAYLOAD:-$(cd "$SCRIPT_DIR/../payload" && pwd)}"
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "omakase: not inside a git repo" >&2; exit 1; }
+# The shared git dir — identical for the main checkout and every linked worktree,
+# so artifacts placed here are reachable from any worktree (info/exclude and the
+# common dir are shared). This is where the worktree harness snapshot lives.
+COMMON="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+OMK="$COMMON/omakase"
+
+# sha256 — detect the digest tool once (shasum on macOS, sha256sum elsewhere).
+# Used for the provenance ledger below and the source-cache slug here. For a
+# symlink, hash the link TARGET STRING, not the dereferenced content, so a
+# payload symlink (CLAUDE.md -> AGENTS.md) round-trips.
+if command -v shasum >/dev/null 2>&1; then SHA256=(shasum -a 256)
+elif command -v sha256sum >/dev/null 2>&1; then SHA256=(sha256sum)
+else echo "omakase: need shasum or sha256sum for the provenance ledger" >&2; exit 1; fi
+
+# ---- source mechanism (spec §1) ----
+# A SOURCE is a git repo carrying the harness: a payload/ tree plus an
+# omakase.manifest at its root (flat "key: value" lines — a YAML subset read with
+# sed, NOT a YAML parser; name required, version optional). It is cloned into a
+# disposable local cache and injected through the normal flow below. Payload
+# precedence: --source flag > OMAKASE_PAYLOAD env > remembered source
+# ($OMK/source, written on every source install so a bare re-run refreshes the
+# same source) > the repo-relative ../payload default.
+SOURCE_LABEL=payload   # ledger source column: the user's source string verbatim, else 'payload'
+fetch_source() {  # $1 = git URL or local path; sets PAYLOAD to the cached payload/
+  local src="$1" urlhash base slug cache def name ver
+  # Cache slug: filesystem-safe basename + a short content hash of the URL string,
+  # so distinct sources never collide and the same source always maps to one dir.
+  urlhash="$(printf '%s' "$src" | "${SHA256[@]}" | awk '{print $1}')"
+  base="$(printf '%s' "$src" | sed 's,/*$,,; s,.*/,,; s,\.git$,,' | tr -c 'A-Za-z0-9._-' '-')"
+  [ -n "$base" ] || base=source
+  slug="$base-$(printf '%.8s' "$urlhash")"
+  cache="${XDG_CACHE_HOME:-$HOME/.cache}/omakase/sources/$slug"
+  if [ -d "$cache/.git" ]; then
+    # The cache is disposable: refresh = fetch + hard reset to the remote default
+    # branch. Never merge — local state in the cache has no standing.
+    git -C "$cache" fetch -q origin || { echo "omakase: could not refresh source '$src' (git fetch failed in $cache)" >&2; exit 1; }
+    git -C "$cache" remote set-head origin -a >/dev/null 2>&1 || true
+    def="$(git -C "$cache" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+    [ -n "$def" ] || { echo "omakase: could not resolve the default branch of source '$src' (cache: $cache)" >&2; exit 1; }
+    git -C "$cache" reset -q --hard "$def" || { echo "omakase: could not reset the source cache to $def (cache: $cache)" >&2; exit 1; }
+  else
+    rm -rf "$cache"; mkdir -p "${cache%/*}"
+    git clone -q "$src" "$cache" || { echo "omakase: could not clone source '$src'" >&2; exit 1; }
+  fi
+  # Validate fail-closed BEFORE anything is placed.
+  [ -f "$cache/omakase.manifest" ] || { echo "omakase: source '$src' has no omakase.manifest at its root — not an omakase source" >&2; exit 1; }
+  name="$(sed -n 's/^name:[[:space:]]*//p' "$cache/omakase.manifest" | head -n1)"
+  [ -n "$name" ] || { echo "omakase: source '$src' manifest is missing the required 'name:' line" >&2; exit 1; }
+  { [ -d "$cache/payload" ] && [ -n "$(ls -A "$cache/payload" 2>/dev/null)" ]; } || { echo "omakase: source '$src' has no non-empty payload/ tree — nothing to inject" >&2; exit 1; }
+  ver="$(sed -n 's/^version:[[:space:]]*//p' "$cache/omakase.manifest" | head -n1)"
+  echo "omakase: source '$src' (name: $name${ver:+, version: $ver}) cached at $cache"
+  PAYLOAD="$cache/payload"
+}
+if [ -z "$SOURCE" ] && [ -z "${OMAKASE_PAYLOAD:-}" ] && [ -s "$OMK/source" ]; then
+  SOURCE="$(head -n1 "$OMK/source")"
+fi
+if [ -n "$SOURCE" ]; then
+  fetch_source "$SOURCE"
+  SOURCE_LABEL="$SOURCE"
+else
+  PAYLOAD="${OMAKASE_PAYLOAD:-$(cd "$SCRIPT_DIR/../payload" && pwd)}"
+fi
 [ -d "$PAYLOAD" ] || { echo "omakase: payload dir not found at $PAYLOAD" >&2; exit 1; }
 # Resolve a lefthook invocation WITHOUT mutating the user's global environment.
 # Order: an explicit override; lefthook already on PATH (a global brew/mise install);
@@ -58,15 +127,10 @@ resolve_lefthook || { echo "omakase: lefthook not found. Install it (e.g. 'brew 
 
 BEGIN="# >>> omakase-harness >>>"
 END="# <<< omakase-harness <<<"
-# The shared git dir — identical for the main checkout and every linked worktree,
-# so artifacts placed here are reachable from any worktree (info/exclude and the
-# common dir are shared). This is where the worktree harness snapshot lives.
-COMMON="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 # Exclude file via the shared git dir, NOT "$ROOT/.git/info/exclude": in a linked
 # worktree $ROOT/.git is a FILE, so the literal path crashes mkdir; this resolves
 # to the same place in a main checkout and the right place in a worktree.
 EXCLUDE="$COMMON/info/exclude"
-OMK="$COMMON/omakase"
 HOOKS_DIR="$COMMON/hooks"   # hooks live in the shared git dir (we refuse a foreign core.hooksPath below)
 
 # ---- incumbent hook-manager guard (runs BEFORE any mutation) ----
@@ -207,12 +271,7 @@ kind_of() {
     *)                                                echo other;;
   esac
 }
-# sha256 of placed content — detect the digest tool once (shasum on macOS,
-# sha256sum elsewhere). For a symlink, hash the link TARGET STRING, not the
-# dereferenced content, so a payload symlink (CLAUDE.md -> AGENTS.md) round-trips.
-if command -v shasum >/dev/null 2>&1; then SHA256=(shasum -a 256)
-elif command -v sha256sum >/dev/null 2>&1; then SHA256=(sha256sum)
-else echo "omakase: need shasum or sha256sum for the provenance ledger" >&2; exit 1; fi
+# sha256 of placed content — the SHA256 tool was detected once, up top.
 hash_of() {
   if [ -L "$1" ]; then printf '%s' "$(readlink "$1")" | "${SHA256[@]}" | awk '{print $1}'
   else "${SHA256[@]}" < "$1" | awk '{print $1}'; fi
@@ -316,6 +375,10 @@ fi
 # (omakase-ledger.sh), which must survive re-init.
 rm -rf "$OMK/payload-snapshot"
 mkdir -p "$OMK/payload-snapshot"
+# Remember a source install ($OMK/source, one line) so a bare re-run refreshes the
+# same source. A plain payload install leaves any remembered source in place — the
+# precedence above (flag > env > remembered) already decides who wins.
+if [ -n "$SOURCE" ]; then printf '%s\n' "$SOURCE" > "$OMK/source"; fi
 # TODO(when: anything writes enabled=0): merge prior enabled values instead of
 # hardcoding 1 — wholesale regeneration silently re-enables declined artifacts.
 : > "$OMK/placed.tsv"
@@ -323,7 +386,7 @@ for rel in "${placed[@]:-}"; do
   [ -z "$rel" ] && continue
   mkdir -p "$OMK/payload-snapshot/$(dirname "$rel")"
   cp -P "$ROOT/$rel" "$OMK/payload-snapshot/$rel"
-  printf '%s\t%s\t%s\t%s\t%s\n' "$rel" "$(kind_of "$rel")" payload "$(hash_of "$ROOT/$rel")" 1 >> "$OMK/placed.tsv"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$rel" "$(kind_of "$rel")" "$SOURCE_LABEL" "$(hash_of "$ROOT/$rel")" 1 >> "$OMK/placed.tsv"
 done
 rm -f "$OMK/placed.list"   # pre-0.10 record — superseded by the ledger
 
