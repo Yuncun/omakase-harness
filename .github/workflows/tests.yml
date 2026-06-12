@@ -1,0 +1,26 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm install -g lefthook
+      - name: Run test suites
+        run: |
+          export LEFTHOOK_BIN="$(command -v lefthook)"
+          rc=0
+          for t in tests/*.test.sh; do
+            echo "=== $t ==="
+            bash "$t" || rc=1
+          done
+          exit $rc

@@ -124,13 +124,13 @@ done
 echo "omakase import: captured ${#imported[@]} harness file(s) into $PAYLOAD"
 for p in "${imported[@]:-}"; do [ -n "$p" ] && echo "  + $p"; done
 
-if [ "${#skipped_personal[@]:-0}" -gt 0 ]; then
+if [ "${#skipped_personal[@]}" -gt 0 ]; then
   echo ""
   echo "omakase import: SKIPPED ${#skipped_personal[@]} gitignored personal file(s) sitting inside harness dirs — NOT published into payload (they are ignored via .gitignore/global, not the omakase overlay):"
   for s in "${skipped_personal[@]:-}"; do [ -n "$s" ] && echo "  · skipped (personal/gitignored): $s"; done
 fi
 
-if [ "${#tracked[@]:-0}" -gt 0 ]; then
+if [ "${#tracked[@]}" -gt 0 ]; then
   echo ""
   echo "omakase import: ${#tracked[@]} captured file(s) are still COMMITTED in the source repo — left in place (import never changes the source)."
   echo "  They were copied into payload/, but git still tracks them here, so injection would skip them."
@@ -142,13 +142,13 @@ if [ "${#tracked[@]:-0}" -gt 0 ]; then
   for t in "${tracked[@]:-}"; do [ -n "$t" ] && echo "  = still committed: $t"; done
 fi
 
-if [ "${#loose_gates[@]:-0}" -gt 0 ]; then
+if [ "${#loose_gates[@]}" -gt 0 ]; then
   echo ""
   echo "omakase import: these scripts are wired into a hook but live OUTSIDE a captured location:"
   for g in "${loose_gates[@]:-}"; do [ -n "$g" ] && echo "  ? wired gate not captured: $g  (move it under .omakase/gates/ and re-import to ship it)"; done
 fi
 
-if [ "${#stack_jobs[@]:-0}" -gt 0 ]; then
+if [ "${#stack_jobs[@]}" -gt 0 ]; then
   echo ""
   echo "omakase import: these hook jobs are coupled to this project's toolchain — review them for the repos you'll inject into:"
   for j in "${stack_jobs[@]:-}"; do [ -n "$j" ] && echo "  ~ $j"; done
