@@ -4,7 +4,7 @@ Status: draft for review, 2026-06-11. Reframes the product surface; the existing
 
 ## Product statement
 
-Omakase installs, shows, and manages coding-agent harnesses: ready-made harness content pulled from sources, a full inventory of every harness artifact in a repo (with token cost), and per-piece control — all with zero committed footprint.
+Omakase installs, shows, and manages coding-agent harnesses: ready-made harness content pulled from sources, a full inventory of every harness artifact in a repo, and per-piece control — all with zero committed footprint.
 
 Two audiences, one engine: people who want a working harness in one command, and people who want to see and control what a repo feeds their agent. Both are served by the same source → ledger → materialize → show pipeline.
 
@@ -20,7 +20,7 @@ A source is a git repo containing a payload tree (gate definitions, gate scripts
 
 ### 3. Inventory
 
-One verb: `/omakase show` gains an inventory section alongside the existing gate checklist. It lists every harness artifact in the repo grouped by origin — committed by the project, injected from a source, personal — with token estimates for instruction-type artifacts. No new commands; the minimal-controls principle holds.
+One verb: `/omakase show` gains an inventory section alongside the existing gate checklist. It lists every harness artifact in the repo grouped by origin — committed by the project, injected from a source, personal — with kind and enabled state from the ledger. No token estimates: the host owns context-cost ground truth (`/context`, `/skills` token sort, the plugin cost pane); re-deriving it duplicates vendor surfaces and risks disagreeing with them. Cut 2026-06-12. No new commands; the minimal-controls principle holds.
 
 ### 4. Safety fixes (preconditions for running on arbitrary repos)
 
@@ -47,6 +47,8 @@ Import scrapes skills, commands, and rules (file-level) in addition to gates, an
 New engine components (ledger, inventory, import parsing) are written in Go — single static binary, no runtime dependency, the same choice lefthook and direnv made. Distribution via GitHub release binaries fetched at init; checksums recorded. Bash remains only in the thin hook-stub layer that must execute inside git hooks with zero dependencies. Existing bash scripts migrate onto the Go engine incrementally as each is touched; no big-bang rewrite.
 
 Amendment (2026-06-11): the provenance ledger is plain TSV (`.git/omakase/placed.tsv`: path, kind, source, sha256, enabled) written by bash at init, so the hook-time readers (ensure-present, verify-overlay) parse it under POSIX sh without the binary; Go debuts at the inventory step. It is a separate file from the gate-run ledger (`.git/omakase/ledger.tsv`), which records run history and must survive re-init.
+
+Amendment (2026-06-12): with token estimates cut from the inventory, the inventory is ledger rendering plus a committed-path scan and may remain bash; Go's trigger moves to the step that genuinely needs it — structural YAML parsing for import widening and the sources mechanism.
 
 ## Phase 2 (recorded, not built)
 
