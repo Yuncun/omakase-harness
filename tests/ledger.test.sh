@@ -10,6 +10,7 @@
 #   P. enabled=0 honored — fix 5: not restored, not blocking, still removed
 #   Q. upstream-collision warning keys off ledger paths
 #   T. pre-0.10 migration — placed.list regenerates into placed.tsv and is deleted
+#   U. pre-0.10 remove — no ledger: payload-enumeration fallback tears down
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
@@ -177,6 +178,23 @@ OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
 { echo "$OUT" | grep -qi 'WARNING' && echo "$OUT" | grep -q '.claude/rules/style.md'; } && pass "collision warning still fires from the stale placed.list (one-time fallback)" || fail "upgrade run lost the collision warning ($OUT)"
 [ -f "$COMMON/omakase/placed.tsv" ] && pass "ledger regenerated" || fail "no ledger after upgrade init"
 [ ! -e "$COMMON/omakase/placed.list" ] && pass "stale placed.list deleted" || fail "placed.list left behind"
+
+# ---------- Scenario U: pre-0.10 remove (no ledger) falls back to payload enumeration ----------
+echo "== Scenario U: remove without a ledger tears down via the payload fallback =="
+PAY="$TMP/payU"; REPO="$TMP/repoU"
+mkpayload "$PAY"; newrepo "$REPO"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+COMMON="$(common_of "$REPO")"
+# simulate the pre-0.10 on-disk state: a path-only placed.list, no placed.tsv
+cut -f1 "$COMMON/omakase/placed.tsv" > "$COMMON/omakase/placed.list"
+rm -f "$COMMON/omakase/placed.tsv"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
+[ ! -e "$REPO/.omakase" ] && pass "fallback remove deleted the placed tree" || fail "fallback remove left placed files"
+[ ! -e "$REPO/.claude/rules/my rule.md" ] && pass "fallback remove deleted the spaced path" || fail "fallback remove left the spaced path"
+[ ! -e "$REPO/CLAUDE.md" ] && pass "fallback remove deleted the placed symlink" || fail "fallback remove left the symlink"
+[ ! -d "$REPO/.claude" ] && pass "fallback remove pruned emptied directories" || fail "fallback remove left empty dirs"
+[ ! -e "$COMMON/omakase" ] && pass "fallback remove tore down the snapshot (stale placed.list included)" || fail "fallback remove left the snapshot"
+grep -q "omakase-harness" "$COMMON/info/exclude" 2>/dev/null && fail "fallback remove left the exclude block" || pass "fallback remove stripped the exclude block"
 
 rm -rf "$TMP"
 echo ""
