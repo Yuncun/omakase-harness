@@ -163,10 +163,16 @@ fi
 # git's default --overwrite-ignore behavior SILENTLY overwrites ignored files on
 # checkout/pull. If upstream commits a tracked file at a path the overlay occupies,
 # the personal copy is destroyed without warning and init thereafter skips the path
-# as tracked. Detect the transition: a previously PLACED path (prior run's ledger)
-# that the index now tracks. The last-injected copy is preserved under
-# $OMK/clobbered/ because the snapshot rebuild below would delete it.
-if [ -f "$OMK/placed.list" ]; then
+# as tracked. Detect the transition: a previously PLACED path (prior run's
+# provenance ledger) that the index now tracks. The last-injected copy is preserved
+# under $OMK/clobbered/ because the snapshot rebuild below would delete it.
+# Pre-0.10 fallback: a stale placed.list (paths only) feeds the guard one last time;
+# the ledger rebuild below deletes it.
+prior_paths=""
+if [ -f "$OMK/placed.tsv" ]; then prior_paths="$(cut -f1 "$OMK/placed.tsv")"
+elif [ -f "$OMK/placed.list" ]; then prior_paths="$(cat "$OMK/placed.list")"
+fi
+if [ -n "$prior_paths" ]; then
   while IFS= read -r rel; do
     [ -z "$rel" ] && continue
     if git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
@@ -182,8 +188,34 @@ if [ -f "$OMK/placed.list" ]; then
       echo "  Diff it against the tracked file and reconcile: drop '$rel' from your payload, or run" >&2
       echo "  init --cut-over (guarded) to untrack the file and let the injected copy take over." >&2
     fi
-  done < "$OMK/placed.list"
+  done <<< "$prior_paths"
 fi
+
+# ---- provenance-ledger helpers ----
+# kind: classify a placed path by location (the path IS the classification).
+kind_of() {
+  case "$1" in
+    .claude/rules/*)                                  echo rule;;
+    .claude/skills/*)                                 echo skill;;
+    .claude/commands/*)                               echo command;;
+    lefthook-local.yml|lefthook.yml|.omakase/gates/*) echo gate;;
+    .claude/settings.json|.claude/settings.*.json)    echo config;;
+    AGENTS.md|CLAUDE.md)                              echo doc;;
+    */*)                                              echo other;;  # nested, none of the above
+    *.md)                                             echo doc;;    # remaining root-level *.md
+    *)                                                echo other;;
+  esac
+}
+# sha256 of placed content — detect the digest tool once (shasum on macOS,
+# sha256sum elsewhere). For a symlink, hash the link TARGET STRING, not the
+# dereferenced content, so a payload symlink (CLAUDE.md -> AGENTS.md) round-trips.
+if command -v shasum >/dev/null 2>&1; then SHA256=(shasum -a 256)
+elif command -v sha256sum >/dev/null 2>&1; then SHA256=(sha256sum)
+else echo "omakase: need shasum or sha256sum for the provenance ledger" >&2; exit 1; fi
+hash_of() {
+  if [ -L "$1" ]; then printf '%s' "$(readlink "$1")" | "${SHA256[@]}" | awk '{print $1}'
+  else "${SHA256[@]}" < "$1" | awk '{print $1}'; fi
+}
 
 # Identical?  Compares symlink targets for symlinks, byte content otherwise.
 same_file() {
@@ -270,19 +302,29 @@ if [ "$WTINC_TRACKED" -eq 0 ] && [ "${#placed[@]:-0}" -gt 0 ]; then
   } >> "$WTINC"
 fi
 
-# Snapshot the placed files into the shared git dir, plus a manifest and a
-# self-heal script. A fresh worktree has none of the (gitignored) harness files;
+# Snapshot the placed files into the shared git dir, plus the provenance ledger and
+# a self-heal script. A fresh worktree has none of the (gitignored) harness files;
 # the post-checkout job runs ensure-present.sh, which copies only the MISSING ones
 # from this snapshot — never overwriting a local edit, never touching a tracked path.
+# The ledger (placed.tsv) is one row per placed artifact, TAB-separated:
+#   path  kind  source  sha256  enabled
+# Plain TSV on purpose: the hook-time readers (ensure-present, verify-overlay) are
+# dependency-free POSIX sh. Regenerated wholesale each init; paths may not contain
+# tabs. enabled is written 1 here — nothing writes 0 yet, but every reader honors it
+# (spec §2 + safety fix 5). NOT $OMK/ledger.tsv: that is the gate-RUN ledger
+# (omakase-ledger.sh), which must survive re-init.
 rm -rf "$OMK/payload-snapshot"
 mkdir -p "$OMK/payload-snapshot"
-: > "$OMK/placed.list"
+# TODO(when: anything writes enabled=0): merge prior enabled values instead of
+# hardcoding 1 — wholesale regeneration silently re-enables declined artifacts.
+: > "$OMK/placed.tsv"
 for rel in "${placed[@]:-}"; do
   [ -z "$rel" ] && continue
   mkdir -p "$OMK/payload-snapshot/$(dirname "$rel")"
   cp -P "$ROOT/$rel" "$OMK/payload-snapshot/$rel"
-  printf '%s\n' "$rel" >> "$OMK/placed.list"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$rel" "$(kind_of "$rel")" payload "$(hash_of "$ROOT/$rel")" 1 >> "$OMK/placed.tsv"
 done
+rm -f "$OMK/placed.list"   # pre-0.10 record — superseded by the ledger
 
 cat > "$OMK/ensure-present.sh" <<'ENSURE'
 #!/usr/bin/env bash
@@ -294,10 +336,14 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 COMMON="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
 SNAP="$COMMON/omakase/payload-snapshot"
-LIST="$COMMON/omakase/placed.list"
-[ -f "$LIST" ] || exit 0
-while IFS= read -r rel; do
+LEDGER="$COMMON/omakase/placed.tsv"   # provenance ledger: path,kind,source,sha256,enabled
+[ -f "$LEDGER" ] || exit 0
+TAB="$(printf '\t')"
+while IFS="$TAB" read -r rel kind src hash enabled; do
   [ -z "$rel" ] && continue
+  # Self-heal respects intent (safety fix 5): enabled=0 is a deliberate off switch,
+  # so a missing disabled artifact is not "missing" — never resurrect it.
+  [ "$enabled" = "1" ] || continue
   # Never touch tracked — and warn: a placed path turning TRACKED means an upstream
   # commit landed a file here, and git silently overwrites ignored files on checkout,
   # so the personal copy was likely clobbered (the upstream-collision guard). This
@@ -312,7 +358,7 @@ while IFS= read -r rel; do
   mkdir -p "$ROOT/$(dirname "$rel")"
   cp -P "$SNAP/$rel" "$ROOT/$rel"
   case "$rel" in *.sh) [ -L "$ROOT/$rel" ] || chmod +x "$ROOT/$rel";; esac
-done < "$LIST"
+done < "$LEDGER"
 # Re-arm the fail-closed guard blocks: lefthook's npm postinstall runs
 # `lefthook install -f` on every npm/yarn install, regenerating the hook stubs and
 # stripping the guard; this post-checkout hook still runs afterwards, so the guard
@@ -332,17 +378,19 @@ cat > "$OMK/verify-overlay.sh" <<'VERIFY'
 # omakase-harness fail-closed guard. Generated by init.sh.
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 COMMON="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
-LIST="$COMMON/omakase/placed.list"
-[ -f "$LIST" ] || exit 0   # harness not installed -> nothing to verify
+LEDGER="$COMMON/omakase/placed.tsv"   # provenance ledger: path,kind,source,sha256,enabled
+[ -f "$LEDGER" ] || exit 0   # harness not installed -> nothing to verify
+TAB="$(printf '\t')"
 missing=0
-while IFS= read -r rel; do
+while IFS="$TAB" read -r rel kind src hash enabled; do
   [ -z "$rel" ] && continue
+  [ "$enabled" = "1" ] || continue   # disabled artifacts are deliberately absent — never block on them
   [ -e "$ROOT/$rel" ] || [ -L "$ROOT/$rel" ] && continue
   git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1 && continue  # tracked: upstream owns it (warned at init/checkout)
   [ "$missing" -eq 0 ] && echo "omakase: BLOCKING — the injected harness is incomplete; its gates would silently not run:" >&2
   echo "  missing: $rel" >&2
   missing=1
-done < "$LIST"
+done < "$LEDGER"
 [ "$missing" -eq 0 ] && exit 0
 echo "omakase: restore it with  bash $COMMON/omakase/ensure-present.sh  (or /omakase init), then retry." >&2
 exit 1

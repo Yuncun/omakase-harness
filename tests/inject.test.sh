@@ -84,7 +84,7 @@ COMMON="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 
 # C1: init wrote the harness snapshot artifacts + a .worktreeinclude block, all out of git.
 [ -x "$COMMON/omakase/ensure-present.sh" ] && pass "ensure-present.sh written (executable)" || fail "ensure-present.sh missing"
-grep -q '.omakase/gates/example.sh' "$COMMON/omakase/placed.list" 2>/dev/null && pass "placed.list manifest written" || fail "placed.list missing/empty"
+grep -q '.omakase/gates/example.sh' "$COMMON/omakase/placed.tsv" 2>/dev/null && pass "placed.tsv provenance ledger written" || fail "placed.tsv missing/empty"
 [ -f "$COMMON/omakase/payload-snapshot/.omakase/gates/example.sh" ] && pass "payload snapshot captured the gate" || fail "snapshot missing the gate"
 grep -q "omakase-harness" "$REPO/.worktreeinclude" 2>/dev/null && pass ".worktreeinclude block written" || fail ".worktreeinclude block missing"
 [ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status still clean (harness artifacts out of git)" || { fail "status not clean after harness wiring"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }

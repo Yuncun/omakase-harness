@@ -74,7 +74,7 @@ Make `init` an onboarding flow, reusing `show` as the renderer:
 5. **One confirm**, then apply. No per-file options (take-it-or-leave-it).
 
 Required refactor: **`show` gains a preview mode** — render what *would* be installed from a
-payload, not only what *is* installed (today it requires `placed.list` and bails pre-install).
+payload, not only what *is* installed (today it requires `placed.tsv` and bails pre-install).
 Factor `show` into a renderer callable in both modes; `init` calls it for step 2 and step 4.
 
 Interactivity = **Claude conducts the Q&A** (the command is a skill that renders `show`, asks,
