@@ -51,7 +51,9 @@ kind_of() {
 # A placed (injected) file is by definition untracked, so no path can appear
 # in both the Committed and Injected groups.
 committed_list() {
-  git -C "$ROOT" ls-files -- \
+  # core.quotePath=false: git's default quotes non-ASCII paths, and a leading
+  # quote would defeat the kind_of patterns and render the path escaped.
+  git -C "$ROOT" -c core.quotePath=false ls-files -- \
     'AGENTS.md' 'CLAUDE.md' 'CLAUDE.local.md' '.claude' \
     'lefthook.yml' 'lefthook-local.yml' '.lefthook' '.omakase' \
     '.github/copilot-instructions.md' '.github/instructions' 2>/dev/null || true

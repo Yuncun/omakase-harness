@@ -193,6 +193,7 @@ fi
 
 # ---- provenance-ledger helpers ----
 # kind: classify a placed path by location (the path IS the classification).
+# DUPLICATED in bin/show.sh kind_of() — keep the two case blocks in sync.
 kind_of() {
   case "$1" in
     .claude/rules/*)                                  echo rule;;
