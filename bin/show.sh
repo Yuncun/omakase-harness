@@ -25,6 +25,19 @@ BEGIN="# >>> omakase-harness >>>"
 END="# <<< omakase-harness <<<"
 
 if [ ! -f "$PLACED" ]; then
+  # pre-0.10 installs recorded placements in placed.list; the harness IS installed —
+  # never report a false negative about an enforcement system.
+  if [ -f "$OMK/placed.list" ]; then
+    if [ "$FORMAT" = md ]; then
+      echo "**Pre-0.10 omakase install detected** (record: \`placed.list\`). Run \`/omakase init\` to migrate to the provenance ledger. Placed files:"
+      sed 's/^/- `/; s/$/`/' "$OMK/placed.list"
+    else
+      echo "Pre-0.10 omakase install detected (record: placed.list)."
+      echo "Run  /omakase init  to migrate to the provenance ledger. Placed files:"
+      sed 's/^/  /' "$OMK/placed.list"
+    fi
+    exit 0
+  fi
   if [ "$FORMAT" = md ]; then
     echo "**No omakase harness is installed in this repo.** Run \`/omakase init\` to inject one."
   else

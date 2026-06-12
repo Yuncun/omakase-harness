@@ -164,6 +164,12 @@ COMMON="$(common_of "$REPO")"
 # simulate the pre-0.10 on-disk state: a path-only placed.list, no placed.tsv
 cut -f1 "$COMMON/omakase/placed.tsv" > "$COMMON/omakase/placed.list"
 rm -f "$COMMON/omakase/placed.tsv"
+# show must NOT report "not installed" against this state (the harness IS running)
+OUT=$( cd "$REPO" && bash "$SHOW" 2>&1 )
+echo "$OUT" | grep -qi 'No omakase harness' && fail "show false-negatives on a pre-0.10 install" || pass "show does not report 'not installed' on a pre-0.10 install"
+{ echo "$OUT" | grep -qi 'pre-0.10' && echo "$OUT" | grep -q 'AGENTS.md'; } && pass "show names the pre-0.10 state and lists placed files" || fail "show pre-0.10 notice wrong ($OUT)"
+OUT=$( cd "$REPO" && bash "$SHOW" --markdown 2>&1 )
+echo "$OUT" | grep -qi 'pre-0.10' && pass "markdown mode carries the pre-0.10 notice" || fail "markdown mode missing pre-0.10 notice"
 # an upstream collision arriving exactly across the upgrade must still warn
 ( cd "$REPO" && printf 'UPSTREAM CONTENT\n' > .claude/rules/style.md && git add -f .claude/rules/style.md && LEFTHOOK=0 git commit -q -m upstream )
 OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?

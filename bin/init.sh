@@ -315,6 +315,8 @@ fi
 # (omakase-ledger.sh), which must survive re-init.
 rm -rf "$OMK/payload-snapshot"
 mkdir -p "$OMK/payload-snapshot"
+# TODO(when: anything writes enabled=0): merge prior enabled values instead of
+# hardcoding 1 — wholesale regeneration silently re-enables declined artifacts.
 : > "$OMK/placed.tsv"
 for rel in "${placed[@]:-}"; do
   [ -z "$rel" ] && continue
