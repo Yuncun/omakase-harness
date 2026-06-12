@@ -62,6 +62,7 @@ newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config us
 echo "== Scenario S1: --source <abs-path> clones, validates, injects =="
 SRC="$TMP/src-harness"; REPO="$TMP/repoS1"
 mksource "$SRC"; newrepo "$REPO"
+SRC="$(cd "$SRC" && pwd)"   # normalized, as init absolutizes local dir sources (macOS TMPDIR carries a trailing slash)
 ( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$SRC" ) >/dev/null 2>&1
 COMMON="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 LEDGER="$COMMON/omakase/placed.tsv"
@@ -90,6 +91,50 @@ printf '#!/usr/bin/env bash\necho NEW-PAYLOAD-V2\nexit 0\n' > "$SRC/payload/.oma
 ( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" ) >/dev/null 2>&1
 grep -q 'NEW-PAYLOAD-V2' "$REPO/.omakase/gates/example.sh" && pass "bare init pulled the new payload version from the remembered source" || fail "update did not apply"
 awk -F'\t' -v s="$SRC" '$3!=s{bad=1} END{exit bad?1:0}' "$LEDGER" 2>/dev/null && pass "ledger still records the source string after refresh" || fail "ledger source column lost on refresh"
+
+# ---------- Scenario S3b: orphan sweep — a dropped payload file is cleaned up ----------
+echo "== Scenario S3b: a file the source drops between versions is swept =="
+( cd "$SRC" && git rm -q payload/.claude/rules/style.md && git commit -q -m v3 )
+( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" ) >/dev/null 2>&1
+[ ! -e "$REPO/.claude/rules/style.md" ] && pass "dropped payload file deleted from the repo" || fail "dropped file left behind (silent residue)"
+[ ! -d "$REPO/.claude" ] && pass "emptied directories pruned" || fail ".claude dir left behind"
+grep -q 'style.md' "$LEDGER" && fail "ledger still lists the dropped file" || pass "ledger no longer lists the dropped file"
+[ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status clean after the sweep" || { fail "status not clean after sweep"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
+# a LOCALLY EDITED dropped file is kept, with a warning
+mkdir -p "$SRC/payload/.claude/rules"
+printf 'extra rule\n' > "$SRC/payload/.claude/rules/extra.md"
+( cd "$SRC" && git add payload/.claude/rules/extra.md && git commit -q -m v4 )
+( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" ) >/dev/null 2>&1
+[ -f "$REPO/.claude/rules/extra.md" ] && pass "v4 extra rule placed" || fail "v4 extra rule not placed"
+echo 'LOCAL EDIT' >> "$REPO/.claude/rules/extra.md"
+( cd "$SRC" && git rm -q payload/.claude/rules/extra.md && git commit -q -m v5 )
+OUT=$( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" 2>&1 )
+{ [ -f "$REPO/.claude/rules/extra.md" ] && grep -q 'LOCAL EDIT' "$REPO/.claude/rules/extra.md"; } && pass "locally edited dropped file kept" || fail "edited dropped file destroyed"
+echo "$OUT" | grep -i 'WARNING' | grep -q 'extra.md' && pass "kept file warned about, named" || fail "no warning for the kept file ($OUT)"
+rm -rf "$REPO/.claude"   # the user disposes of the kept file; keep later scenarios tidy
+
+# ---------- Scenario S3c: OMAKASE_PAYLOAD env beats the remembered source ----------
+echo "== Scenario S3c: precedence — env payload over remembered source =="
+PAYENV="$TMP/payload-env"; mkdir -p "$PAYENV"
+printf 'env marker\n' > "$PAYENV/ENVMARK.md"
+( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" OMAKASE_PAYLOAD="$PAYENV" bash "$INIT" ) >/dev/null 2>&1
+[ -f "$REPO/ENVMARK.md" ] && pass "env payload placed (env beat the remembered source)" || fail "env payload not placed"
+awk -F'\t' '$3!="payload"{bad=1} END{exit bad?1:0}' "$LEDGER" 2>/dev/null && pass "env install records 'payload' in the source column" || fail "env install source column wrong"
+[ "$(head -n1 "$COMMON/omakase/source" 2>/dev/null)" = "$SRC" ] && pass "remembered source untouched by the env install" || fail "remembered source clobbered"
+( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" ) >/dev/null 2>&1
+awk -F'\t' -v s="$SRC" '$3!=s{bad=1} END{exit bad?1:0}' "$LEDGER" 2>/dev/null && pass "bare re-run returned to the remembered source" || fail "bare re-run ignored the remembered source"
+[ ! -e "$REPO/ENVMARK.md" ] && pass "pristine env marker swept on the return to the source payload" || fail "env marker left behind"
+
+# ---------- Scenario S3d: corrupt cache self-recovers via a fresh clone ----------
+echo "== Scenario S3d: corrupt cache is discarded and re-cloned =="
+printf '#!/usr/bin/env bash\necho PAYLOAD-V6\nexit 0\n' > "$SRC/payload/.omakase/gates/example.sh"
+( cd "$SRC" && git add -A && git commit -q -m v6 )
+echo garbage > "$CACHE_DIR/.git/HEAD"
+OUT=$( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] && pass "init recovered from a corrupt cache" || fail "init failed on a corrupt cache ($OUT)"
+echo "$OUT" | grep -qi 're-cloning' && pass "recovery announced (discard + re-clone)" || fail "no recovery notice in output"
+grep -q 'PAYLOAD-V6' "$REPO/.omakase/gates/example.sh" && pass "fresh clone delivered the latest payload" || fail "stale payload after recovery"
+( cd "$CACHE_DIR" && git rev-parse --git-dir ) >/dev/null 2>&1 && pass "cache healthy again" || fail "cache still corrupt"
 
 # ---------- Scenario S4: refusals — fail closed, place nothing ----------
 echo "== Scenario S4: invalid sources are refused with nothing placed =="
