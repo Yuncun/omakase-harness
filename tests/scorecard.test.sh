@@ -172,6 +172,60 @@ has_run "$LEDGER" cdgate pass && pass "records even when the gate changes direct
 nf=$(tail -1 "$LEDGER" | awk -F'\t' '{print NF}')
 [ "$nf" -eq 6 ] && pass "tab in gate name sanitized (line stays 6 fields)" || fail "tab in gate name shifted columns ($nf)"
 
+# ---------- Scenario I: the inventory — every harness artifact, grouped by origin ----------
+# spec §3: show gains an inventory (Committed / Injected / Personal), both modes,
+# no token counts, audit view works even on an uninstalled repo.
+echo "== Scenario I: show inventory groups harness artifacts by origin =="
+REPO="$TMP/repoI"; newrepo "$REPO"
+HOMEI="$TMP/homeI"; mkdir -p "$HOMEI/.claude/rules" "$HOMEI/.claude/skills/myskill"
+printf 'global doctrine\n' > "$HOMEI/.claude/CLAUDE.md"
+printf 'personal rule\n'   > "$HOMEI/.claude/rules/personal.md"
+printf 'skill body\n'      > "$HOMEI/.claude/skills/myskill/SKILL.md"
+mkdir -p "$REPO/.claude/rules" "$REPO/src"
+printf 'team rule\n' > "$REPO/.claude/rules/team.md"
+printf 'app\n'       > "$REPO/src/app.js"
+( cd "$REPO" && git add .claude/rules/team.md src/app.js && git commit -qm files )
+
+# not installed yet — the audit view still works
+OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" 2>&1 )"
+echo "$OUT" | grep -qi 'No omakase harness' && pass "not-installed message kept" || fail "not-installed message gone ($OUT)"
+echo "$OUT" | grep -qiF 'Committed (this repo)' && pass "Committed group prints on an uninstalled repo" || fail "no Committed group when not installed"
+echo "$OUT" | grep '\.claude/rules/team\.md' | grep -q 'rule' && pass "tracked harness file listed with kind rule" || fail "tracked rule missing or unkinded ($OUT)"
+echo "$OUT" | grep -q 'src/app.js' && fail "non-harness tracked file leaked into the inventory" || pass "non-harness tracked file excluded"
+echo "$OUT" | grep -qiF 'Personal (~/.claude)' && pass "Personal group prints on an uninstalled repo" || fail "no Personal group when not installed"
+echo "$OUT" | grep 'rules/personal\.md' | grep -q 'rule' && pass "personal rule listed from \$HOME" || fail "personal rule missing ($OUT)"
+echo "$OUT" | grep 'CLAUDE\.md' | grep -q 'doc' && pass "personal CLAUDE.md listed as doc" || fail "personal CLAUDE.md missing"
+[ "$(echo "$OUT" | grep -c 'skills/myskill')" -eq 1 ] && pass "personal skill dir is ONE row (not its files)" || fail "skill dir rows != 1"
+echo "$OUT" | grep 'skills/myskill' | grep -q 'skill' && pass "personal skill dir carries kind skill" || fail "skill dir unkinded"
+OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --markdown 2>&1 )"
+{ echo "$OUT" | grep -qi 'No omakase harness' && echo "$OUT" | grep -qiF 'Committed (this repo)'; } \
+  && pass "markdown not-installed keeps the message and the Committed group" || fail "markdown not-installed inventory wrong ($OUT)"
+
+# installed — injected rows come from the provenance ledger with source + kind
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+PLACEDTSV="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)/omakase/placed.tsv"
+awk -F'\t' -v OFS='\t' '$1==".omakase/gates/example.sh"{$5=0} 1' "$PLACEDTSV" > "$PLACEDTSV.tmp" && mv "$PLACEDTSV.tmp" "$PLACEDTSV"
+OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" 2>&1 )"
+echo "$OUT" | grep -qiF 'Injected (omakase)' && pass "Injected group prints when installed" || fail "no Injected group ($OUT)"
+echo "$OUT" | grep 'lefthook-local\.yml' | grep 'gate' | grep -q 'payload' && pass "injected row carries kind + source value" || fail "injected row missing kind/source ($OUT)"
+echo "$OUT" | grep '\.omakase/gates/example\.sh' | grep -qi 'disabled' && pass "hand-disabled row carries the disabled marker" || fail "disabled marker missing ($OUT)"
+echo "$OUT" | grep '\.claude/rules/team\.md' | grep -qi 'payload' && fail "committed file leaked into the Injected group" || pass "committed file stays out of Injected"
+echo "$OUT" | grep -qi 'token' && fail "output mentions tokens (explicitly cut from the spec)" || pass "no token counts anywhere (terminal)"
+
+# markdown mode carries the same three groups
+OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --markdown 2>&1 )"
+echo "$OUT" | grep -qiF 'Committed (this repo)' && pass "markdown: Committed group" || fail "markdown missing Committed group"
+echo "$OUT" | grep -qiF 'Injected (omakase)' && pass "markdown: Injected group" || fail "markdown missing Injected group"
+echo "$OUT" | grep -qiF 'Personal (~/.claude)' && pass "markdown: Personal group" || fail "markdown missing Personal group"
+echo "$OUT" | grep '\.omakase/gates/example\.sh' | grep -qi 'disabled' && pass "markdown: disabled marker carried" || fail "markdown lost the disabled marker"
+echo "$OUT" | grep -qi 'token' && fail "markdown mentions tokens" || pass "no token counts anywhere (markdown)"
+
+# an empty Personal group prints (none)
+HOMEE="$TMP/homeEmpty"; mkdir -p "$HOMEE"
+OUT="$( cd "$REPO" && HOME="$HOMEE" bash "$SHOW" 2>&1 )"
+echo "$OUT" | grep -i -A1 'Personal (~/.claude)' | grep -q '(none)' && pass "empty Personal group shows (none)" || fail "empty Personal group not (none) ($OUT)"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
+
 # ---------- Scenario W: branding (banner + version, no drift) ----------
 echo "== Scenario W: branding =="
 REPO="$TMP/repoW"; newrepo "$REPO"

@@ -163,7 +163,7 @@ OUT=$( cd "$REPO" && bash "$SHOW" 2>&1 )
 echo "$OUT" | grep -qi 'No omakase harness' && pass "show reports empty state before init" || fail "show did not report empty state"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 OUT=$( cd "$REPO" && bash "$SHOW" 2>&1 )
-echo "$OUT" | grep -q 'PLACED FILES' && pass "show prints the placed-files map" || fail "show missing PLACED FILES"
+echo "$OUT" | grep -q 'INJECTED (omakase)' && pass "show prints the placed files as the Injected group" || fail "show missing INJECTED group"
 echo "$OUT" | grep -q '.omakase/gates/example.sh' && pass "show lists the gate file" || fail "show did not list the gate"
 echo "$OUT" | grep -q 'HIDDEN VIA' && pass "show lists what is gitignored" || fail "show missing the exclude section"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1

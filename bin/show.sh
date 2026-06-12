@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # omakase-harness show — render the installed (gitignored, invisible) harness as ONE
-# readable map: every placed file, which git hooks run what, and what is hidden via
+# readable map: an inventory of every harness artifact grouped by origin (committed /
+# injected / personal), which git hooks run what, and what is hidden via
 # .git/info/exclude. Read-only. This is the cure for "the install is invisible" — it
 # lets you SEE the whole harness at a glance without committing anything.
 #
@@ -24,6 +25,136 @@ PLACED="$OMK/placed.tsv"    # provenance ledger (init.sh): path,kind,source,sha2
 BEGIN="# >>> omakase-harness >>>"
 END="# <<< omakase-harness <<<"
 
+# ============================ Inventory (spec §3) ============================
+# Every harness artifact in this repo, grouped by origin: committed by the
+# project, injected from a source (the provenance ledger), personal (~/.claude).
+# No token counts — the host owns context-cost ground truth.
+
+# kind: classify a harness path by location (the path IS the classification).
+# DUPLICATED from kind_of() in bin/init.sh — the bin/ scripts stay standalone;
+# keep the two case blocks in sync.
+kind_of() {
+  case "$1" in
+    .claude/rules/*)                                  echo rule;;
+    .claude/skills/*)                                 echo skill;;
+    .claude/commands/*)                               echo command;;
+    lefthook-local.yml|lefthook.yml|.omakase/gates/*) echo gate;;
+    .claude/settings.json|.claude/settings.*.json)    echo config;;
+    AGENTS.md|CLAUDE.md)                              echo doc;;
+    */*)                                              echo other;;  # nested, none of the above
+    *.md)                                             echo doc;;    # remaining root-level *.md
+    *)                                                echo other;;
+  esac
+}
+
+# git-TRACKED harness artifacts: the project's own committed harness surface.
+# A placed (injected) file is by definition untracked, so no path can appear
+# in both the Committed and Injected groups.
+committed_list() {
+  git -C "$ROOT" ls-files -- \
+    'AGENTS.md' 'CLAUDE.md' 'CLAUDE.local.md' '.claude' \
+    'lefthook.yml' 'lefthook-local.yml' '.lefthook' '.omakase' \
+    '.github/copilot-instructions.md' '.github/instructions' 2>/dev/null || true
+}
+
+# Presence-only listing of the global harness in $HOME/.claude — never reads
+# file contents. Emits "path<TAB>kind", paths relative to ~/.claude; a skill
+# directory is ONE row.
+personal_list() {
+  pd="${HOME:-}/.claude"
+  [ -d "$pd" ] || return 0
+  [ -e "$pd/CLAUDE.md" ]     && printf 'CLAUDE.md\t%s\n' "$(kind_of CLAUDE.md)"
+  [ -e "$pd/settings.json" ] && printf 'settings.json\t%s\n' "$(kind_of .claude/settings.json)"
+  for f in "$pd"/rules/*.md;    do [ -e "$f" ] || continue; b="${f##*/}"; printf 'rules/%s\t%s\n'    "$b" "$(kind_of ".claude/rules/$b")"; done
+  for f in "$pd"/commands/*.md; do [ -e "$f" ] || continue; b="${f##*/}"; printf 'commands/%s\t%s\n' "$b" "$(kind_of ".claude/commands/$b")"; done
+  for f in "$pd"/agents/*.md;   do [ -e "$f" ] || continue; b="${f##*/}"; printf 'agents/%s\t%s\n'   "$b" "$(kind_of ".claude/agents/$b")"; done
+  for d in "$pd"/skills/*/;     do [ -d "$d" ] || continue; d="${d%/}"; b="${d##*/}"; printf 'skills/%s/\t%s\n' "$b" "$(kind_of ".claude/skills/$b/")"; done
+  return 0
+}
+
+render_inventory() {
+  comm="$(committed_list)"
+  pers="$(personal_list)"
+  if [ "$FORMAT" = md ]; then
+    echo "### Inventory"
+    echo
+    echo "**Committed (this repo)** — tracked harness files"
+    if [ -n "$comm" ]; then
+      printf '%s\n' "$comm" | while IFS= read -r rel; do
+        [ -z "$rel" ] && continue
+        echo "- \`$rel\` — $(kind_of "$rel")"
+      done
+    else
+      echo "- _(none)_"
+    fi
+    echo
+    echo "**Injected (omakase)** — placed by \`/omakase init\`, gitignored"
+    if [ -f "$PLACED" ] && [ -s "$PLACED" ]; then
+      while IFS=$'\t' read -r rel kind src hash enabled; do
+        [ -z "$rel" ] && continue
+        if [ "$enabled" = "0" ]; then
+          echo "- \`$rel\` — $kind, from $src — disabled (not restored, not verified)"
+        elif [ -L "$ROOT/$rel" ]; then
+          echo "- \`$rel\` → \`$(readlink "$ROOT/$rel")\` — $kind, from $src"
+        elif [ -e "$ROOT/$rel" ]; then
+          echo "- \`$rel\` — $kind, from $src"
+        else
+          echo "- \`$rel\` — $kind, from $src — **MISSING** (run \`/omakase init\` to restore)"
+        fi
+      done < "$PLACED"
+    else
+      echo "- _(none)_"
+    fi
+    echo
+    echo "**Personal (~/.claude)** — global, applies to every repo"
+    if [ -n "$pers" ]; then
+      printf '%s\n' "$pers" | while IFS=$'\t' read -r rel kind; do
+        [ -z "$rel" ] && continue
+        echo "- \`$rel\` — $kind"
+      done
+    else
+      echo "- _(none)_"
+    fi
+  else
+    echo "INVENTORY — every harness artifact in this repo, by origin"
+    echo "  COMMITTED (this repo) — tracked harness files"
+    if [ -n "$comm" ]; then
+      printf '%s\n' "$comm" | while IFS= read -r rel; do
+        [ -z "$rel" ] && continue
+        echo "    + $rel   ($(kind_of "$rel"))"
+      done
+    else
+      echo "    (none)"
+    fi
+    echo "  INJECTED (omakase) — placed by /omakase init, gitignored"
+    if [ -f "$PLACED" ] && [ -s "$PLACED" ]; then
+      while IFS=$'\t' read -r rel kind src hash enabled; do
+        [ -z "$rel" ] && continue
+        if [ "$enabled" = "0" ]; then
+          echo "    - $rel   ($kind, from $src; disabled — not restored, not verified)"
+        elif [ -L "$ROOT/$rel" ]; then
+          echo "    + $rel -> $(readlink "$ROOT/$rel")   ($kind, from $src)"
+        elif [ -e "$ROOT/$rel" ]; then
+          echo "    + $rel   ($kind, from $src)"
+        else
+          echo "    ! $rel   ($kind, from $src; MISSING — run /omakase init to restore)"
+        fi
+      done < "$PLACED"
+    else
+      echo "    (none)"
+    fi
+    echo "  PERSONAL (~/.claude) — global, applies to every repo"
+    if [ -n "$pers" ]; then
+      printf '%s\n' "$pers" | while IFS=$'\t' read -r rel kind; do
+        [ -z "$rel" ] && continue
+        echo "    + $rel   ($kind)"
+      done
+    else
+      echo "    (none)"
+    fi
+  fi
+}
+
 if [ ! -f "$PLACED" ]; then
   # pre-0.10 installs recorded placements in placed.list; the harness IS installed —
   # never report a false negative about an enforcement system.
@@ -38,12 +169,17 @@ if [ ! -f "$PLACED" ]; then
     fi
     exit 0
   fi
+  # Not installed — say so, then still render the inventory: the audit view
+  # (what does this repo feed your agent?) works on an uninstalled repo.
   if [ "$FORMAT" = md ]; then
     echo "**No omakase harness is installed in this repo.** Run \`/omakase init\` to inject one."
+    echo
   else
     echo "No omakase harness is installed in this repo."
     echo "Run  /omakase init  to inject one."
+    echo
   fi
+  render_inventory
   exit 0
 fi
 
@@ -59,21 +195,9 @@ if [ "$FORMAT" = md ]; then
 
   echo "## $ICON omakase-harness"
   echo
-  echo "Installed in \`$ROOT\`. Every file below is gitignored via \`.git/info/exclude\` — invisible to git, never committed."
+  echo "Installed in \`$ROOT\`. Injected files are gitignored via \`.git/info/exclude\` — invisible to git, never committed."
   echo
-  echo "### Placed files ($(grep -c . "$PLACED"))"
-  while IFS=$'\t' read -r rel kind src hash enabled; do
-    [ -z "$rel" ] && continue
-    if [ "$enabled" = "0" ]; then
-      echo "- \`$rel\` — disabled (not restored, not verified)"
-    elif [ -L "$ROOT/$rel" ]; then
-      echo "- \`$rel\` → \`$(readlink "$ROOT/$rel")\`"
-    elif [ -e "$ROOT/$rel" ]; then
-      echo "- \`$rel\`"
-    else
-      echo "- \`$rel\` — **MISSING** (run \`/omakase init\` to restore)"
-    fi
-  done < "$PLACED"
+  render_inventory
   echo
   echo "### Git hooks"
   if [ -n "$DUMP" ]; then
@@ -125,19 +249,9 @@ fi
 BANNER="$ROOT/.omakase/bin/omakase-banner.sh"
 if [ -f "$BANNER" ]; then bash "$BANNER" 2>/dev/null || true; fi
 echo "installed in $ROOT"
-echo "(every file below is gitignored via .git/info/exclude: invisible to git, never committed)"
+echo "(injected files are gitignored via .git/info/exclude: invisible to git, never committed)"
 echo
-echo "PLACED FILES"
-while IFS=$'\t' read -r rel kind src hash enabled; do
-  [ -z "$rel" ] && continue
-  if [ "$enabled" = "0" ]; then
-    echo "  - $rel   (disabled — not restored, not verified)"
-  elif [ -e "$ROOT/$rel" ] || [ -L "$ROOT/$rel" ]; then
-    if [ -L "$ROOT/$rel" ]; then echo "  + $rel -> $(readlink "$ROOT/$rel")"; else echo "  + $rel"; fi
-  else
-    echo "  ! $rel   (MISSING — run /omakase init to restore)"
-  fi
-done < "$PLACED"
+render_inventory
 echo
 
 echo "GIT HOOKS — what runs, and when"
