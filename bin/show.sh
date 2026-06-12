@@ -19,11 +19,12 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "omakase: not insi
 COMMON="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 OMK="$COMMON/omakase"
 EXCLUDE="$COMMON/info/exclude"   # shared git dir — also correct inside a linked worktree, where $ROOT/.git is a file
-LEDGER="$OMK/ledger.tsv"
+RUNS="$OMK/ledger.tsv"      # gate-RUN ledger (omakase-ledger.sh): epoch,hook,gate,verdict,ms,sha
+PLACED="$OMK/placed.tsv"    # provenance ledger (init.sh): path,kind,source,sha256,enabled
 BEGIN="# >>> omakase-harness >>>"
 END="# <<< omakase-harness <<<"
 
-if [ ! -f "$OMK/placed.list" ]; then
+if [ ! -f "$PLACED" ]; then
   if [ "$FORMAT" = md ]; then
     echo "**No omakase harness is installed in this repo.** Run \`/omakase init\` to inject one."
   else
@@ -47,17 +48,19 @@ if [ "$FORMAT" = md ]; then
   echo
   echo "Installed in \`$ROOT\`. Every file below is gitignored via \`.git/info/exclude\` — invisible to git, never committed."
   echo
-  echo "### Placed files ($(grep -c . "$OMK/placed.list"))"
-  while IFS= read -r rel; do
+  echo "### Placed files ($(grep -c . "$PLACED"))"
+  while IFS=$'\t' read -r rel kind src hash enabled; do
     [ -z "$rel" ] && continue
-    if [ -L "$ROOT/$rel" ]; then
+    if [ "$enabled" = "0" ]; then
+      echo "- \`$rel\` — disabled (not restored, not verified)"
+    elif [ -L "$ROOT/$rel" ]; then
       echo "- \`$rel\` → \`$(readlink "$ROOT/$rel")\`"
     elif [ -e "$ROOT/$rel" ]; then
       echo "- \`$rel\`"
     else
       echo "- \`$rel\` — **MISSING** (run \`/omakase init\` to restore)"
     fi
-  done < "$OMK/placed.list"
+  done < "$PLACED"
   echo
   echo "### Git hooks"
   if [ -n "$DUMP" ]; then
@@ -74,7 +77,7 @@ if [ "$FORMAT" = md ]; then
   fi
   echo
   echo "### Recent runs"
-  if [ -s "$LEDGER" ]; then
+  if [ -s "$RUNS" ]; then
     echo "| Gate | Verdict | When |"
     echo "| ---- | ------- | ---- |"
     now="${OMAKASE_NOW:-$(date +%s)}"
@@ -90,7 +93,7 @@ if [ "$FORMAT" = md ]; then
           mark=(verd[g]=="fail" ? "\342\234\227 fail" : "\342\234\223 pass")
           printf "%s\t| %s | %s | %s ago |\n", g, g, mark, a
         }
-      }' "$LEDGER" | sort | cut -f2-
+      }' "$RUNS" | sort | cut -f2-
   else
     echo "_No gate runs recorded yet — gates wired through \`omakase-ledger.sh\` log here._"
   fi
@@ -112,14 +115,16 @@ echo "installed in $ROOT"
 echo "(every file below is gitignored via .git/info/exclude: invisible to git, never committed)"
 echo
 echo "PLACED FILES"
-while IFS= read -r rel; do
+while IFS=$'\t' read -r rel kind src hash enabled; do
   [ -z "$rel" ] && continue
-  if [ -e "$ROOT/$rel" ] || [ -L "$ROOT/$rel" ]; then
+  if [ "$enabled" = "0" ]; then
+    echo "  - $rel   (disabled — not restored, not verified)"
+  elif [ -e "$ROOT/$rel" ] || [ -L "$ROOT/$rel" ]; then
     if [ -L "$ROOT/$rel" ]; then echo "  + $rel -> $(readlink "$ROOT/$rel")"; else echo "  + $rel"; fi
   else
     echo "  ! $rel   (MISSING — run /omakase init to restore)"
   fi
-done < "$OMK/placed.list"
+done < "$PLACED"
 echo
 
 echo "GIT HOOKS — what runs, and when"
@@ -140,7 +145,7 @@ fi
 echo
 
 echo "RECENT RUNS — most recent verdict per gate"
-if [ -s "$LEDGER" ]; then
+if [ -s "$RUNS" ]; then
   now="${OMAKASE_NOW:-$(date +%s)}"
   awk -F'\t' -v now="$now" '
     NF>=5 && $1 ~ /^[0-9]+$/ { ts=$1+0; if (ts >= seen[$3]) { seen[$3]=ts; verd[$3]=$4; hook[$3]=$2 } }
@@ -155,7 +160,7 @@ if [ -s "$LEDGER" ]; then
         # leading "<gate><tab>" is a sort key, stripped by cut below
         printf "%s\t  %s  %-4s  %s%s  (%s ago)\n", g, (verd[g]=="fail" ? "\342\234\227" : "\342\234\223"), verd[g], h, g, a
       }
-    }' "$LEDGER" | sort | cut -f2-
+    }' "$RUNS" | sort | cut -f2-
 else
   echo "  (no gate runs recorded yet — gates wired through omakase-ledger.sh log here)"
 fi

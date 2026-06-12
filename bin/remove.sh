@@ -25,16 +25,31 @@ for hf in "$COMMON/hooks"/*; do
   chmod +x "$hf"
 done
 
-# Delete only paths init would have placed AND that are NOT tracked (never touch tracked files).
-while IFS= read -r -d '' f; do
-  rel="${f#"$PAYLOAD"/}"
-  git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1 && continue
-  rm -f "$ROOT/$rel"
-  d="$(dirname "$rel")"
+# Delete the placed paths — never a tracked file. The provenance ledger
+# (placed.tsv: path,kind,source,sha256,enabled) records exactly what init placed,
+# so it is the authority when present: ALL its rows are deleted, enabled or not
+# (remove is a total teardown; the enabled flag is an off switch, not an uninstall).
+# Without a ledger (pre-0.10 install, or no install at all) fall back to
+# enumerating the payload — the old behavior.
+delete_placed() {  # $1 = repo-relative path
+  git -C "$ROOT" ls-files --error-unmatch "$1" >/dev/null 2>&1 && return 0
+  rm -f "$ROOT/$1"
+  local d; d="$(dirname "$1")"
   while [ "$d" != "." ] && [ -d "$ROOT/$d" ] && [ -z "$(ls -A "$ROOT/$d")" ]; do
     rmdir "$ROOT/$d"; d="$(dirname "$d")"
   done
-done < <(find "$PAYLOAD" \( -type f -o -type l \) -print0)  # -type l: also enumerate symlinks init.sh placed
+}
+LEDGER="$COMMON/omakase/placed.tsv"
+if [ -f "$LEDGER" ]; then
+  while IFS=$'\t' read -r rel kind src hash enabled; do
+    [ -z "$rel" ] && continue
+    delete_placed "$rel"
+  done < "$LEDGER"
+else
+  while IFS= read -r -d '' f; do
+    delete_placed "${f#"$PAYLOAD"/}"
+  done < <(find "$PAYLOAD" \( -type f -o -type l \) -print0)  # -type l: also enumerate symlinks init.sh placed
+fi
 
 # Remove the auto-created skeleton lefthook.yml if it is untracked and is lefthook's default banner.
 if [ -f "$ROOT/lefthook.yml" ] && ! git -C "$ROOT" ls-files --error-unmatch lefthook.yml >/dev/null 2>&1; then
