@@ -34,7 +34,7 @@ In Claude Code, install the plugin and use the wrapper command instead:
     /omakase init
     /omakase init https://github.com/you/your-harness   # install from a harness source repo
 
-Adoption requires lefthook (`brew install lefthook`, `mise use lefthook`, or a project devDependency); `/omakase init` prompts to install it if absent.
+`init` provisions lefthook: if it isn't on PATH / `LEFTHOOK_BIN` / `node_modules`, it downloads a pinned, checksum-verified binary into `${XDG_CACHE_HOME:-~/.cache}/omakase/lefthook/`. To use your own instead: `brew install lefthook`, `mise use lefthook`, a project devDependency, or `LEFTHOOK_BIN=/path/to/lefthook`.
 
 ## Repository layout
 

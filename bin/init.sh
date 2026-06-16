@@ -123,19 +123,17 @@ else
 fi
 [ -d "$PAYLOAD" ] || { echo "omakase: payload dir not found at $PAYLOAD" >&2; exit 1; }
 # Resolve a lefthook invocation WITHOUT mutating the user's global environment.
-# Order: an explicit override; lefthook already on PATH (a global brew/mise install);
-# then the repo's own node_modules/.bin (a JS devDependency — the common case). We do
-# NOT auto-install: a global install is irreversible (/omakase-remove can't undo it)
-# and a hook script has no interactive user to ask. When lefthook is genuinely absent
-# we exit with guidance; the /omakase-init command layer is where an interactive
-# "install it for you?" belongs (that's where a user exists to answer). Sets $LEFTHOOK.
-resolve_lefthook() {
-  if [ -n "${LEFTHOOK_BIN:-}" ];                  then LEFTHOOK="$LEFTHOOK_BIN"; return 0; fi
-  if command -v lefthook >/dev/null 2>&1;          then LEFTHOOK="lefthook"; return 0; fi
-  if [ -x "$ROOT/node_modules/.bin/lefthook" ];    then LEFTHOOK="$ROOT/node_modules/.bin/lefthook"; return 0; fi
-  return 1
-}
-resolve_lefthook || { echo "omakase: lefthook not found. Install it (e.g. 'brew install lefthook', 'mise use lefthook', or add it as a devDependency and run your package manager's install), or set LEFTHOOK_BIN=/path/to/lefthook, then re-run." >&2; exit 1; }
+# Order (shared with remove.sh via lib-lefthook.sh): an explicit override; lefthook
+# already on PATH (a global brew/mise install); then the repo's own node_modules/.bin
+# (a JS devDependency); then a pinned, checksum-verified binary in a per-machine cache,
+# FETCHED here if absent (the 'fetch' argument). We still do NOT touch the user's global
+# environment: the cache is per-machine and disposable, so it is reversible in a way a
+# global brew install is not. On any fetch failure (unknown platform, no curl/wget, no
+# network, checksum mismatch) we fall back to the original guidance + non-zero — never
+# worse than before. Resolution runs BEFORE any placement, so a failure exits clean.
+# Sets $LEFTHOOK.
+. "$SCRIPT_DIR/lib-lefthook.sh"
+resolve_lefthook fetch || { lefthook_install_guidance; exit 1; }
 
 BEGIN="# >>> omakase-harness >>>"
 END="# <<< omakase-harness <<<"

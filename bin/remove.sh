@@ -12,7 +12,13 @@ END="# <<< omakase-harness <<<"
 COMMON="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 EXCLUDE="$COMMON/info/exclude"   # shared git dir — also correct inside a linked worktree, where $ROOT/.git is a file
 
-if command -v lefthook >/dev/null 2>&1; then ( cd "$ROOT" && lefthook uninstall ) || true; fi
+# Resolve lefthook by the same order init.sh uses (lib-lefthook.sh), but NEVER
+# fetch — remove must stay offline. This still finds a binary that lives only in
+# the omakase cache, so `lefthook uninstall` works when init self-provisioned it.
+# If nothing resolves, skip uninstall: the $COMMON/omakase teardown below already
+# neutralizes the fail-closed guard, and the hook stubs are reversed regardless.
+. "$SCRIPT_DIR/lib-lefthook.sh"
+if resolve_lefthook; then ( cd "$ROOT" && "$LEFTHOOK" uninstall ) || true; fi
 
 # Strip the fail-closed guard block from any hook stub that survived uninstall (the
 # guard is already inert once $COMMON/omakase is gone, but leave no residue).
