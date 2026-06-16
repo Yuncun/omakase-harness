@@ -25,27 +25,15 @@ PLACED="$OMK/placed.tsv"    # provenance ledger (init.sh): path,kind,source,sha2
 BEGIN="# >>> omakase-harness >>>"
 END="# <<< omakase-harness <<<"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib-harness-paths.sh"   # kind_of() + committed-scan globs (shared with init/import)
+
 # ============================ Inventory (spec §3) ============================
 # Every harness artifact in this repo, grouped by origin: committed by the
-# project, injected from a source (the provenance ledger), personal (~/.claude).
+# project, injected from a source (the provenance ledger), personal (~/.claude + ~/.copilot).
 # No token counts — the host owns context-cost ground truth.
 
-# kind: classify a harness path by location (the path IS the classification).
-# DUPLICATED from kind_of() in bin/init.sh — the bin/ scripts stay standalone;
-# keep the two case blocks in sync.
-kind_of() {
-  case "$1" in
-    .claude/rules/*)                                  echo rule;;
-    .claude/skills/*)                                 echo skill;;
-    .claude/commands/*)                               echo command;;
-    lefthook-local.yml|lefthook.yml|.omakase/gates/*) echo gate;;
-    .claude/settings.json|.claude/settings.*.json)    echo config;;
-    AGENTS.md|CLAUDE.md)                              echo doc;;
-    */*)                                              echo other;;  # nested, none of the above
-    *.md)                                             echo doc;;    # remaining root-level *.md
-    *)                                                echo other;;
-  esac
-}
+# kind_of() comes from lib-harness-paths.sh (sourced above) — shared with init.sh + import.sh.
 
 # git-TRACKED harness artifacts: the project's own committed harness surface.
 # A placed (injected) file is by definition untracked, so no path can appear
@@ -54,23 +42,29 @@ committed_list() {
   # core.quotePath=false: git's default quotes non-ASCII paths, and a leading
   # quote would defeat the kind_of patterns and render the path escaped.
   git -C "$ROOT" -c core.quotePath=false ls-files -- \
-    'AGENTS.md' 'CLAUDE.md' 'CLAUDE.local.md' '.claude' \
-    'lefthook.yml' 'lefthook-local.yml' '.lefthook' '.omakase' \
-    '.github/copilot-instructions.md' '.github/instructions' 2>/dev/null || true
+    "${HARNESS_COMMITTED_GLOBS[@]}" 2>/dev/null || true
 }
 
-# Presence-only listing of the global harness in $HOME/.claude — never reads
-# file contents. Emits "path<TAB>kind", paths relative to ~/.claude; a skill
-# directory is ONE row.
+# Presence-only listing of the user's GLOBAL harness — agent config in $HOME that applies to
+# every repo. Claude Code keeps it under ~/.claude; Copilot CLI keeps personal skills under
+# ~/.copilot/skills (https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills).
+# Rows are root-qualified (~/.claude/…, ~/.copilot/…) so origin is unambiguous; never reads
+# file contents. A skill directory is ONE row. Add a host = add its block here.
 personal_list() {
-  pd="${HOME:-}/.claude"
-  [ -d "$pd" ] || return 0
-  [ -e "$pd/CLAUDE.md" ]     && printf 'CLAUDE.md\t%s\n' "$(kind_of CLAUDE.md)"
-  [ -e "$pd/settings.json" ] && printf 'settings.json\t%s\n' "$(kind_of .claude/settings.json)"
-  for f in "$pd"/rules/*.md;    do [ -e "$f" ] || continue; b="${f##*/}"; printf 'rules/%s\t%s\n'    "$b" "$(kind_of ".claude/rules/$b")"; done
-  for f in "$pd"/commands/*.md; do [ -e "$f" ] || continue; b="${f##*/}"; printf 'commands/%s\t%s\n' "$b" "$(kind_of ".claude/commands/$b")"; done
-  for f in "$pd"/agents/*.md;   do [ -e "$f" ] || continue; b="${f##*/}"; printf 'agents/%s\t%s\n'   "$b" "$(kind_of ".claude/agents/$b")"; done
-  for d in "$pd"/skills/*/;     do [ -d "$d" ] || continue; d="${d%/}"; b="${d##*/}"; printf 'skills/%s/\t%s\n' "$b" "$(kind_of ".claude/skills/$b/")"; done
+  ch="${HOME:-}/.claude"
+  if [ -d "$ch" ]; then
+    [ -e "$ch/CLAUDE.md" ]     && printf '~/.claude/CLAUDE.md\t%s\n'     "$(kind_of CLAUDE.md)"
+    [ -e "$ch/settings.json" ] && printf '~/.claude/settings.json\t%s\n' "$(kind_of .claude/settings.json)"
+    for f in "$ch"/rules/*.md;    do [ -e "$f" ] || continue; b="${f##*/}"; printf '~/.claude/rules/%s\t%s\n'    "$b" "$(kind_of ".claude/rules/$b")"; done
+    for f in "$ch"/commands/*.md; do [ -e "$f" ] || continue; b="${f##*/}"; printf '~/.claude/commands/%s\t%s\n' "$b" "$(kind_of ".claude/commands/$b")"; done
+    for f in "$ch"/agents/*.md;   do [ -e "$f" ] || continue; b="${f##*/}"; printf '~/.claude/agents/%s\t%s\n'   "$b" "$(kind_of ".claude/agents/$b")"; done
+    for d in "$ch"/skills/*/;     do [ -d "$d" ] || continue; d="${d%/}"; b="${d##*/}"; printf '~/.claude/skills/%s/\t%s\n' "$b" "$(kind_of ".claude/skills/$b/")"; done
+  fi
+  # Copilot CLI personal skills: ~/.copilot/skills/<name>/SKILL.md (classified like a .github skill).
+  co="${HOME:-}/.copilot"
+  if [ -d "$co" ]; then
+    for d in "$co"/skills/*/; do [ -d "$d" ] || continue; d="${d%/}"; b="${d##*/}"; printf '~/.copilot/skills/%s/\t%s\n' "$b" "$(kind_of ".github/skills/$b/")"; done
+  fi
   return 0
 }
 
@@ -108,7 +102,7 @@ render_inventory() {
       echo "- _(none)_"
     fi
     echo
-    echo "**Personal (~/.claude)** — global, applies to every repo"
+    echo "**Personal (global)** — Claude ~/.claude + Copilot ~/.copilot, applies to every repo"
     if [ -n "$pers" ]; then
       printf '%s\n' "$pers" | while IFS=$'\t' read -r rel kind; do
         [ -z "$rel" ] && continue
@@ -145,7 +139,7 @@ render_inventory() {
     else
       echo "    (none)"
     fi
-    echo "  PERSONAL (~/.claude) — global, applies to every repo"
+    echo "  PERSONAL (global) — Claude ~/.claude + Copilot ~/.copilot, applies to every repo"
     if [ -n "$pers" ]; then
       printf '%s\n' "$pers" | while IFS=$'\t' read -r rel kind; do
         [ -z "$rel" ] && continue

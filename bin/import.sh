@@ -9,9 +9,11 @@
 #
 # It is fully deterministic — a declared signal (file location, git state, hook config)
 # decides every step; nothing is inferred. The six rules:
-#   1. Mirror DECLARED harness locations (.claude/{rules,skills,commands,hooks},
-#      .claude/settings.json, .omakase/, AGENTS.md/CLAUDE.md, lefthook*.yml, .husky/,
-#      .pre-commit-config.yaml, .githooks/) to the identical path in payload/.
+#   1. Mirror DECLARED harness locations to the identical path in payload/. The declared
+#      set is HARNESS_LOC_FILES + HARNESS_LOC_DIRS in lib-harness-paths.sh (the one source of
+#      truth, shared with init/show) — Claude's .claude/*, Copilot's .github/{skills,
+#      instructions,copilot-instructions.md}, plus the host-agnostic .omakase/, lefthook*.yml,
+#      .husky/, .githooks/, AGENTS.md/CLAUDE.md.
 #      Walk locations ON DISK — NOT `git ls-files`: a harness's own gates are gitignored
 #      by design, so a tracked-file scan would silently drop them.
 #   2. Gates are whatever a hook config names — read it, don't guess. A wired script that
@@ -45,9 +47,9 @@ if [ "$PAYLOAD" = "$ROOT" ] || overlaps "$PAYLOAD" "$ROOT" || overlaps "$ROOT" "
   exit 1
 fi
 
-# Declared harness locations (the contract: the path IS the classification).
-LOC_FILES=(AGENTS.md CLAUDE.md lefthook-local.yml lefthook.yml .pre-commit-config.yaml .claude/settings.json)
-LOC_DIRS=(.claude/rules .claude/skills .claude/commands .claude/hooks .omakase .husky .githooks)
+# Declared harness locations (the contract: the path IS the classification). The capture
+# lists live in lib-harness-paths.sh — the one table shared with init.sh and show.sh.
+. "$SCRIPT_DIR/lib-harness-paths.sh"
 
 copy_into_payload() {  # $1 = relative path under ROOT
   local rel="$1" src="$ROOT/$1" dst="$PAYLOAD/$1"
@@ -90,11 +92,11 @@ consider() {  # $1 = relative path of a real file/symlink under ROOT
 }
 
 # Rule 1 + 3 + 4: walk declared locations on disk, copy survivors by identical path.
-for f in "${LOC_FILES[@]}"; do
+for f in "${HARNESS_LOC_FILES[@]}"; do
   [ -e "$ROOT/$f" ] || [ -L "$ROOT/$f" ] || continue
   consider "$f"
 done
-for d in "${LOC_DIRS[@]}"; do
+for d in "${HARNESS_LOC_DIRS[@]}"; do
   [ -d "$ROOT/$d" ] || continue
   while IFS= read -r -d '' abs; do
     consider "${abs#"$ROOT"/}"

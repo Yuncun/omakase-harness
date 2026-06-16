@@ -20,19 +20,25 @@ todo: Add a skill wrapper to sprinkle more LLM magic on importing harnesses sinc
 - Create plugins: https://code.claude.com/docs/en/plugins
 - Create and distribute a marketplace: https://code.claude.com/docs/en/plugin-marketplaces
 
-## Using the plugin
+## Using it
+
+Three scripts drive the harness — **host-agnostic**, run them anywhere (Copilot CLI, Claude Code, or a bare shell):
 
     cd /path/to/target-repo
     bash /path/to/harness/bin/init.sh     # inject the harness (gitignored) + install hooks
     bash /path/to/harness/bin/show.sh     # display the installed harness
     bash /path/to/harness/bin/remove.sh   # reverse init
 
-In Claude Code, install the plugin and use the wrapper command instead:
+Enforcement runs on your **git hooks** (via lefthook), so a gate fires on every commit/push no matter which agent — or no agent — made it. Injected files are gitignored via `.git/info/exclude`: nothing is committed, and an injected `.github/skills/` tree is read live from disk by Copilot CLI (and `.claude/` by Claude Code).
+
+**Claude Code** adds a one-command wrapper:
 
     /plugin marketplace add owner/repo
     /plugin install omakase-harness@your-marketplace
     /omakase init
     /omakase init https://github.com/you/your-harness   # install from a harness source repo
+
+**GitHub Copilot CLI** has no plugin step — run the `bin/` scripts above directly (e.g. `bash bin/init.sh`).
 
 `init` provisions lefthook: if it isn't on PATH / `LEFTHOOK_BIN` / `node_modules`, it downloads a pinned, checksum-verified binary into `${XDG_CACHE_HOME:-~/.cache}/omakase/lefthook/`. To use your own instead: `brew install lefthook`, `mise use lefthook`, a project devDependency, or `LEFTHOOK_BIN=/path/to/lefthook`.
 
