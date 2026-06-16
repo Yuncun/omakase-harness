@@ -38,6 +38,8 @@ One verb: `/omakase show` gains an inventory section alongside the existing gate
 
 Import scrapes skills, commands, and rules (file-level) in addition to gates, and parses hook configs structurally (real YAML parsing) instead of pattern-matching script names.
 
+Amendment (2026-06-15): the file-level scraping (skills/commands/rules alongside gates) shipped. The structural hook-config parsing is **cut**. Its only beneficiary is someone packaging a hand-rolled lefthook harness whose gate scripts sit outside the standard `.omakase/gates/` location — not an omakase adopter — and the existing token grep already covers the common case. Dropping it leaves import's gate cross-check as-is (grep over the raw config). This was the last open v1 build item; with it cut, v1 scope is complete.
+
 ## Non-goals (v1)
 
 - No git-layer masking of committed files (sparse-checkout / skip-worktree rejected; git's own documentation warns both off).
@@ -55,6 +57,8 @@ Amendment (2026-06-11): the provenance ledger is plain TSV (`.git/omakase/placed
 Amendment (2026-06-12): with token estimates cut from the inventory, the inventory is ledger rendering plus a committed-path scan and may remain bash; Go's trigger moves to the step that genuinely needs it — structural YAML parsing for import widening and the sources mechanism.
 
 Amendment (2026-06-12, later): the inventory AND sources both shipped in bash (the manifest is deliberately flat key:value, read with sed — no YAML parser). Go's remaining trigger is import widening (§5) alone; if that also proves tractable without structural YAML parsing, Go has no trigger left in this spec.
+
+Amendment (2026-06-15): structural hook-config parsing is cut (see §5), which was Go's last remaining trigger. **Go is dropped from v1 entirely** — every shipped component is bash, and nothing in the spec now justifies the binary, the GitHub-release distribution, or the checksum machinery. Revisit only if a future feature genuinely needs structural parsing or speed bash can't deliver.
 
 ## Phase 2 (recorded, not built)
 
