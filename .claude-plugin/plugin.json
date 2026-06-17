@@ -1,6 +1,6 @@
 {
   "name": "omakase-harness",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "Inject a personal harness into any existing repo: overlay a file tree (rules, docs, gates), keep it out of git, and run gates on your git hooks. Zero committed footprint.",
   "commands": "./commands"
 }
