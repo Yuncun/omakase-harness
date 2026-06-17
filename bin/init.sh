@@ -135,6 +135,10 @@ fi
 . "$SCRIPT_DIR/lib-lefthook.sh"
 resolve_lefthook fetch || { lefthook_install_guidance; exit 1; }
 
+# Shared harness-path table — kind_of() + capture/scan lists, the single source of truth
+# for which paths are agent artifacts (shared with show.sh and import.sh).
+. "$SCRIPT_DIR/lib-harness-paths.sh"
+
 BEGIN="# >>> omakase-harness >>>"
 END="# <<< omakase-harness <<<"
 # Exclude file via the shared git dir, NOT "$ROOT/.git/info/exclude": in a linked
@@ -266,21 +270,8 @@ if [ -n "$prior_paths" ]; then
 fi
 
 # ---- provenance-ledger helpers ----
-# kind: classify a placed path by location (the path IS the classification).
-# DUPLICATED in bin/show.sh kind_of() — keep the two case blocks in sync.
-kind_of() {
-  case "$1" in
-    .claude/rules/*)                                  echo rule;;
-    .claude/skills/*)                                 echo skill;;
-    .claude/commands/*)                               echo command;;
-    lefthook-local.yml|lefthook.yml|.omakase/gates/*) echo gate;;
-    .claude/settings.json|.claude/settings.*.json)    echo config;;
-    AGENTS.md|CLAUDE.md)                              echo doc;;
-    */*)                                              echo other;;  # nested, none of the above
-    *.md)                                             echo doc;;    # remaining root-level *.md
-    *)                                                echo other;;
-  esac
-}
+# kind_of() (classify a placed path by location) is provided by lib-harness-paths.sh,
+# sourced above — the one table shared with show.sh and import.sh.
 # sha256 of placed content (the SHA256 tool was detected once, up top). For a
 # symlink, hash the link TARGET STRING, not the dereferenced content, so a
 # payload symlink (CLAUDE.md -> AGENTS.md) round-trips.
@@ -357,7 +348,15 @@ fi
 # auto-created lefthook.yml if the repo does not track one.
 prefixes=()
 add_prefix(){ case " ${prefixes[*]:-} " in *" $1 "*) ;; *) prefixes+=("$1");; esac; }
-for rel in "${placed[@]:-}"; do [ -n "$rel" ] && add_prefix "${rel%%/*}"; done
+# Exclude granularity: an omakase-OWNED top dir (.omakase, .claude, …) is excluded wholesale
+# (small + stable). A top dir omakase SHARES with the project (.github — see
+# HARNESS_SHARED_TOPDIRS in lib-harness-paths.sh) is excluded file-by-file instead, so we
+# never hide the project's OWN untracked files under it.
+is_shared_topdir(){ local d; for d in "${HARNESS_SHARED_TOPDIRS[@]}"; do [ "$1" = "$d" ] && return 0; done; return 1; }
+for rel in "${placed[@]:-}"; do
+  [ -n "$rel" ] || continue
+  if is_shared_topdir "${rel%%/*}"; then add_prefix "$rel"; else add_prefix "${rel%%/*}"; fi
+done
 git -C "$ROOT" ls-files --error-unmatch lefthook.yml >/dev/null 2>&1 || add_prefix "lefthook.yml"
 
 # Worktree auto-install wiring (.worktreeinclude). Only when the repo does not TRACK
