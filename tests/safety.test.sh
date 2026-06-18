@@ -233,15 +233,19 @@ n=$(grep -c 'omakase-harness fail-closed >>>' "$REPO/.git/hooks/pre-commit")
 n=$(grep -c 'omakase-harness fail-closed >>>' "$REPO/.git/hooks/pre-commit")
 [ "$n" -eq 1 ] && pass "post-checkout re-arms the guard after stub regeneration" || fail "guard not re-armed by checkout ($n)"
 
-# K5: a fresh MANUAL worktree (harness files not yet copied in) fails closed too —
-# before this guard, gates silently did not run there; the block's restore command heals it.
+# K5: the fail-closed guard blocks a commit when the overlay is WIPED (e.g. `git clean
+# -fdx`) — before this guard, gates silently did not run; the block's restore command
+# heals it. (A fresh `git worktree add` now AUTO-heals via the worktree-bootstrap block,
+# so we wipe the overlay explicitly here to exercise the guard's real backstop role.)
 REPO2="$TMP/repoK2"; newrepo "$REPO2"
 ( cd "$REPO2" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 COMMON2="$(cd "$REPO2" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 WT="$TMP/repoK2-wt"
-( cd "$REPO2" && git worktree add -q "$WT" -b wtsafety ) 2>/dev/null
+( cd "$REPO2" && git worktree add -q "$WT" -b wtsafety ) >/dev/null 2>&1
+[ -x "$WT/.omakase/gates/example.sh" ] && pass "fresh worktree auto-healed on add (worktree-bootstrap)" || fail "fresh worktree did not auto-heal"
+rm -rf "$WT/.omakase" "$WT/lefthook-local.yml"   # simulate `git clean -fdx` wiping the gitignored overlay
 OUT=$( cd "$WT" && echo w > w.txt && git add w.txt && git commit -m w 2>&1 ); rc=$?
-[ "$rc" -ne 0 ] && pass "fresh manual worktree: commit BLOCKED instead of gates silently not running" || fail "fresh worktree committed without gates ($OUT)"
+[ "$rc" -ne 0 ] && pass "wiped overlay: commit BLOCKED instead of gates silently not running" || fail "wiped-overlay worktree committed without gates ($OUT)"
 ( cd "$WT" && bash "$COMMON2/omakase/ensure-present.sh" )
 OUT=$( cd "$WT" && git commit -m w2 2>&1 ); rc=$?
 { [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'omakase-example-gate-ran'; } && pass "ensure-present heals the worktree; commit passes with the gate firing" || fail "worktree heal did not unblock ($OUT)"

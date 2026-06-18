@@ -89,12 +89,14 @@ grep -q '.omakase/gates/example.sh' "$COMMON/omakase/placed.tsv" 2>/dev/null && 
 grep -q "omakase-harness" "$REPO/.worktreeinclude" 2>/dev/null && pass ".worktreeinclude block written" || fail ".worktreeinclude block missing"
 [ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status still clean (harness artifacts out of git)" || { fail "status not clean after harness wiring"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
 
-# C2: mechanism — a fresh linked worktree, run ensure-present.sh directly -> gate appears.
+# C2: mechanism — a fresh linked worktree now AUTO-self-heals on `git worktree add` (the
+# worktree-bootstrap block runs ensure-present.sh from the shared post-checkout stub), so
+# the gate is present immediately; a manual re-run of ensure-present is idempotent.
 WT="$TMP/repoC-wt"
-( cd "$REPO" && git worktree add -q "$WT" -b wtprobe ) 2>/dev/null
-[ ! -e "$WT/.omakase/gates/example.sh" ] && pass "fresh worktree starts WITHOUT the gitignored harness" || fail "harness unexpectedly present in fresh worktree"
+( cd "$REPO" && git worktree add -q "$WT" -b wtprobe ) >/dev/null 2>&1
+[ -x "$WT/.omakase/gates/example.sh" ] && pass "fresh worktree auto-self-healed the gate on add (worktree-bootstrap)" || fail "fresh worktree did not auto-self-heal the gate"
 ( cd "$WT" && bash "$COMMON/omakase/ensure-present.sh" )
-[ -x "$WT/.omakase/gates/example.sh" ] && pass "ensure-present copied the missing gate into the worktree (executable)" || fail "ensure-present did not install the harness into the worktree"
+[ -x "$WT/.omakase/gates/example.sh" ] && pass "ensure-present re-run is idempotent (gate still present, executable)" || fail "ensure-present disturbed an already-present gate"
 
 # C3: never-overwrite — a local edit in the worktree survives a re-run.
 echo 'LOCAL EDIT' > "$WT/.omakase/gates/example.sh"
@@ -111,10 +113,25 @@ rm -f "$WT/.omakase/gates/example.sh"
 
 ( cd "$REPO" && git worktree remove --force "$WT" ) 2>/dev/null; ( cd "$REPO" && git worktree prune ) 2>/dev/null
 
+# C4b: REGRESSION — a bare `git worktree add` self-heals with NO hand-holding (no manual
+# ensure-present, no pre-seeded lefthook-local.yml). This is the worktree-bootstrap fix:
+# a fresh worktree has no gitignored lefthook config, so lefthook's post-checkout job
+# no-ops; the harness only materializes because install-guards.sh injected a
+# worktree-bootstrap block into the SHARED post-checkout stub that runs ensure-present.sh
+# directly. Pre-fix this gate would be ABSENT after the add (the "harness incomplete" bug).
+PCHOOK="$COMMON/hooks/post-checkout"
+grep -qF "omakase-harness worktree-bootstrap" "$PCHOOK" 2>/dev/null && pass "worktree-bootstrap block injected into the shared post-checkout stub" || fail "post-checkout stub missing the worktree-bootstrap block"
+WTB="$TMP/repoC-wtbare"
+( cd "$REPO" && git worktree add -q "$WTB" -b wtbare ) >/dev/null 2>&1
+[ -x "$WTB/.omakase/gates/example.sh" ] && pass "bare 'git worktree add' self-healed the gate (no manual ensure-present)" || fail "bare worktree did NOT self-heal — harness incomplete"
+[ -f "$WTB/lefthook-local.yml" ] && pass "bare worktree self-healed the lefthook config too" || fail "bare worktree missing lefthook-local.yml after self-heal"
+( cd "$REPO" && git worktree remove --force "$WTB" ) 2>/dev/null; ( cd "$REPO" && git worktree prune ) 2>/dev/null
+
 # C5: remove tears the harness snapshot down too.
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 [ ! -e "$COMMON/omakase" ] && pass "remove deleted the shared snapshot" || fail "remove left the snapshot"
 [ ! -e "$REPO/.worktreeinclude" ] && pass "remove deleted the .worktreeinclude block" || fail "remove left .worktreeinclude"
+grep -qF "omakase-harness worktree-bootstrap" "$COMMON/hooks/post-checkout" 2>/dev/null && fail "remove left the worktree-bootstrap block in post-checkout" || pass "remove stripped the worktree-bootstrap block from post-checkout"
 
 # ---------- Scenario D: payload symlinks are carried (CLAUDE.md -> AGENTS.md) ----------
 # A payload symlink must land AS a symlink (cp -P), be snapshotted, and self-heal into

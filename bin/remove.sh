@@ -20,15 +20,19 @@ EXCLUDE="$COMMON/info/exclude"   # shared git dir — also correct inside a link
 . "$SCRIPT_DIR/lib-lefthook.sh"
 if resolve_lefthook; then ( cd "$ROOT" && "$LEFTHOOK" uninstall ) || true; fi
 
-# Strip the fail-closed guard block from any hook stub that survived uninstall (the
-# guard is already inert once $COMMON/omakase is gone, but leave no residue).
-GBEGIN_FC="# >>> omakase-harness fail-closed >>>"
-GEND_FC="# <<< omakase-harness fail-closed <<<"
+# Strip our injected blocks from any hook stub that survived uninstall (they are
+# already inert once $COMMON/omakase is gone, but leave no residue): the fail-closed
+# verify (pre-commit/pre-push) and the worktree-bootstrap self-heal (post-checkout).
 for hf in "$COMMON/hooks"/*; do
   [ -f "$hf" ] || continue
-  grep -qF "$GBEGIN_FC" "$hf" 2>/dev/null || continue
-  awk -v b="$GBEGIN_FC" -v e="$GEND_FC" '$0==b{s=1} !s{print} $0==e{s=0}' "$hf" > "$hf.tmp" && mv "$hf.tmp" "$hf"
-  chmod +x "$hf"
+  changed=0
+  for pair in "omakase-harness fail-closed" "omakase-harness worktree-bootstrap"; do
+    gb="# >>> $pair >>>"; ge="# <<< $pair <<<"
+    grep -qF "$gb" "$hf" 2>/dev/null || continue
+    awk -v b="$gb" -v e="$ge" '$0==b{s=1} !s{print} $0==e{s=0}' "$hf" > "$hf.tmp" && mv "$hf.tmp" "$hf"
+    changed=1
+  done
+  [ "$changed" = 1 ] && chmod +x "$hf"
 done
 
 # Delete the placed paths — never a tracked file. The provenance ledger
