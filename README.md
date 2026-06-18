@@ -5,11 +5,9 @@ rules, agent instructions) into any target repo as a gitignored overlay. The har
 runs from the target's working tree but never enters its git history. One repo defines
 a harness; any number of repos install it.
 
-## Why
-
 A project's enforcement layer usually lives committed inside the repo it guards. That
-couples the checks to one project and forces them on every contributor. It also copies
-the same checks into every repo that wants them. Omakase keeps a harness in its own repo.
+couples it to one project, forces it on every contributor, and copies the same checks
+into every repo that wants them. Omakase keeps a harness in its own repo.
 Installing registers each placed file in `.git/info/exclude`, so git never tracks it and
 it never reaches a pull request. Removing deletes exactly what was placed.
 
@@ -46,7 +44,7 @@ are never staged or committed, and `remove` reverses every step.
 ## Documentation
 
 - [Concepts](docs/concepts.md) — the overlay model, gates and producers, owned and shared paths
-- [Authoring](docs/authoring.md) — build or customize a harness, and the rules that bite
+- [Authoring](docs/authoring.md) — build or customize a harness, and the common pitfalls
 - [Reference](docs/reference.md) — commands, flags, environment variables, path classification
 
 ## License

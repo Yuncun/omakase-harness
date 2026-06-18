@@ -13,7 +13,7 @@ security-relevant behavior:
 
 - **Hook installation.** `init` installs git hooks through lefthook and refuses to run
   when another hook manager already owns the hooks (husky, pre-commit, a foreign
-  `core.hooksPath`). It does not override an incumbent manager.
+  `core.hooksPath`).
 - **lefthook fetch.** When no lefthook binary is available, `init` downloads a pinned
   version and verifies it against a recorded checksum before use. A checksum mismatch
   aborts the install.
