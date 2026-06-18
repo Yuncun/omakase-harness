@@ -28,6 +28,26 @@ END="# <<< omakase-harness <<<"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib-harness-paths.sh"   # kind_of() + committed-scan globs (shared with init/import)
 
+# Drift detection (read-only) — does a placed file still match the hash recorded at init?
+# Mirrors init.sh hash_of() + ensure-present.sh EXACTLY (symlink -> readlink target string;
+# file -> bytes verbatim; same digest tool) so the audit view never disagrees with the
+# post-checkout warning. No digest tool -> never reports drift (degrades to silence).
+if command -v shasum >/dev/null 2>&1; then _omk_sha() { shasum -a 256; }
+elif command -v sha256sum >/dev/null 2>&1; then _omk_sha() { sha256sum; }
+else _omk_sha() { return 1; }; fi
+omakase_hash_of() {  # $1 = path; echoes the hex digest, or nothing if no digest tool
+  command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1 || return 0
+  if [ -L "$1" ]; then printf '%s' "$(readlink "$1" 2>/dev/null)" | _omk_sha | awk '{print $1}'
+  else [ -r "$1" ] && _omk_sha < "$1" | awk '{print $1}'; fi   # unreadable -> empty -> no drift, no stderr leak
+}
+is_drifted() {  # $1 rel, $2 ledger-hash, $3 enabled -> 0 (true) if present & content-changed
+  [ "$3" = "1" ] || return 1                                            # disabled: not managed, never "drifted"
+  { [ -e "$ROOT/$1" ] || [ -L "$ROOT/$1" ]; } || return 1              # missing is its own state, not drift
+  git -C "$ROOT" ls-files --error-unmatch "$1" >/dev/null 2>&1 && return 1   # tracked: upstream owns it
+  local a; a="$(omakase_hash_of "$ROOT/$1")" || a=""
+  [ -n "$2" ] && [ -n "$a" ] && [ "$a" != "$2" ]
+}
+
 # ============================ Inventory (spec §3) ============================
 # Every harness artifact in this repo, grouped by origin: committed by the
 # project, injected from a source (the provenance ledger), personal (~/.claude + ~/.copilot).
@@ -88,12 +108,13 @@ render_inventory() {
     if [ -f "$PLACED" ] && [ -s "$PLACED" ]; then
       while IFS=$'\t' read -r rel kind src hash enabled; do
         [ -z "$rel" ] && continue
+        dz=""; if is_drifted "$rel" "$hash" "$enabled"; then dz=" — **DRIFTED** (differs from canonical; \`/omakase init\` to re-sync, or it may be an intentional local edit)"; fi
         if [ "$enabled" = "0" ]; then
           echo "- \`$rel\` — $kind, from $src — disabled (not restored, not verified)"
         elif [ -L "$ROOT/$rel" ]; then
-          echo "- \`$rel\` → \`$(readlink "$ROOT/$rel")\` — $kind, from $src"
+          echo "- \`$rel\` → \`$(readlink "$ROOT/$rel")\` — $kind, from $src$dz"
         elif [ -e "$ROOT/$rel" ]; then
-          echo "- \`$rel\` — $kind, from $src"
+          echo "- \`$rel\` — $kind, from $src$dz"
         else
           echo "- \`$rel\` — $kind, from $src — **MISSING** (run \`/omakase init\` to restore)"
         fi
@@ -126,12 +147,13 @@ render_inventory() {
     if [ -f "$PLACED" ] && [ -s "$PLACED" ]; then
       while IFS=$'\t' read -r rel kind src hash enabled; do
         [ -z "$rel" ] && continue
+        dz=""; mk="+"; if is_drifted "$rel" "$hash" "$enabled"; then dz="; DRIFTED — differs from canonical, run /omakase init to re-sync"; mk="~"; fi
         if [ "$enabled" = "0" ]; then
           echo "    - $rel   ($kind, from $src; disabled — not restored, not verified)"
         elif [ -L "$ROOT/$rel" ]; then
-          echo "    + $rel -> $(readlink "$ROOT/$rel")   ($kind, from $src)"
+          echo "    $mk $rel -> $(readlink "$ROOT/$rel")   ($kind, from $src$dz)"
         elif [ -e "$ROOT/$rel" ]; then
-          echo "    + $rel   ($kind, from $src)"
+          echo "    $mk $rel   ($kind, from $src$dz)"
         else
           echo "    ! $rel   ($kind, from $src; MISSING — run /omakase init to restore)"
         fi
