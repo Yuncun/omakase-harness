@@ -1,56 +1,54 @@
-# omakase-harness-framework
+# omakase
 
-Omakase is a framework for packaging a project's [outer harness](https://codagent.beehiiv.com/p/harnesses-explained) in a distributable plugin. This allows a project's harness to be decoupled from its harness files, and for the harness to be selectively enabled/disabled by contributors. 
+Omakase installs a repository's local development harness (git hooks, gates, lint
+rules, agent instructions) into any target repo as a gitignored overlay. The harness
+runs from the target's working tree but never enters its git history. One repo defines
+a harness; any number of repos install it.
 
-The harness plugin deploys all your harness files (scripts, rules, hooks) into the project, then gitignores them so that they are not checked back into the project. 
+## Why
 
-## Usage (creating a plugin from existing repo with harness files)
+A project's enforcement layer usually lives committed inside the repo it guards. That
+couples the checks to one project and forces them on every contributor. It also copies
+the same checks into every repo that wants them. Omakase keeps a harness in its own repo.
+Installing registers each placed file in `.git/info/exclude`, so git never tracks it and
+it never reaches a pull request. Removing deletes exactly what was placed.
 
-To automatically adopt an existing repository's harness into `payload/`. 
+## Install
 
-Run `import.sh` 
+Claude Code:
 
-    bash bin/import.sh /path/to/source-repo
+    /plugin marketplace add owner/marketplace
+    /plugin install omakase-harness@marketplace
+    /omakase init
 
-todo: Add a skill wrapper to sprinkle more LLM magic on importing harnesses since there may be harness patterns that I haven't captured in the import script.
-
-
-## Distribute
-
-- Create plugins: https://code.claude.com/docs/en/plugins
-- Create and distribute a marketplace: https://code.claude.com/docs/en/plugin-marketplaces
-
-## Using it
-
-Three scripts drive the harness — **host-agnostic**, run them anywhere (Copilot CLI, Claude Code, or a bare shell):
+Any other environment, including GitHub Copilot CLI and a plain shell:
 
     cd /path/to/target-repo
-    bash /path/to/harness/bin/init.sh     # inject the harness (gitignored) + install hooks
-    bash /path/to/harness/bin/show.sh     # display the installed harness
-    bash /path/to/harness/bin/remove.sh   # reverse init
+    bash /path/to/omakase/bin/init.sh
 
-Enforcement runs on your **git hooks** (via lefthook), so a gate fires on every commit/push no matter which agent — or no agent — made it. Injected files are gitignored via `.git/info/exclude`: nothing is committed, and an injected `.github/skills/` tree is read live from disk by Copilot CLI (and `.claude/` by Claude Code).
+The Claude Code plugin wraps the same `bin/` scripts behind a `/omakase` command.
 
-**Claude Code** adds a one-command wrapper:
+## Commands
 
-    /plugin marketplace add owner/repo
-    /plugin install omakase-harness@your-marketplace
-    /omakase init
-    /omakase init https://github.com/you/your-harness   # install from a harness source repo
+    init.sh [--source <url>]   overlay the harness, exclude it from git, install hooks
+    show.sh [--markdown]       print what is installed and what runs when
+    remove.sh                  delete the placed files, uninstall hooks, restore the repo
 
-**GitHub Copilot CLI** has no plugin step — run the `bin/` scripts above directly (e.g. `bash bin/init.sh`).
+`init` installs lefthook if absent, fetching a pinned, checksum-verified binary into a
+per-machine cache. Flags and environment variables are in the [reference](docs/reference.md).
 
-`init` provisions lefthook: if it isn't on PATH / `LEFTHOOK_BIN` / `node_modules`, it downloads a pinned, checksum-verified binary into `${XDG_CACHE_HOME:-~/.cache}/omakase/lefthook/`. To use your own instead: `brew install lefthook`, `mise use lefthook`, a project devDependency, or `LEFTHOOK_BIN=/path/to/lefthook`.
+## How it works
 
-## Repository layout
+Gates run through git hooks, installed via lefthook, so they fire on commit and push
+whatever produced the change: an agent, an IDE, or a plain `git` command. Installed files
+are never staged or committed, and `remove` reverses every step.
 
-- `bin/import.sh` — capture a repository's harness into `payload/`
-- `bin/init.sh` — inject `payload/` and install hooks
-- `bin/remove.sh` — reverse `init`
-- `bin/show.sh` — render the installed harness
-- `commands/omakase.md` — the `/omakase` command (Claude Code wrapper)
-- `payload/` — the harness content (the only part that varies per harness)
+## Documentation
+
+- [Concepts](docs/concepts.md) — the overlay model, gates and producers, owned and shared paths
+- [Authoring](docs/authoring.md) — build or customize a harness, and the rules that bite
+- [Reference](docs/reference.md) — commands, flags, environment variables, path classification
 
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [LICENSE](LICENSE).
