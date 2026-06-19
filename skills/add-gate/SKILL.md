@@ -1,6 +1,6 @@
 ---
 name: add-gate
-description: Wire a tool, skill, or check to run on a git hook as an omakase gate. Use when asked to "add a gate", "attach/wire a tool or skill to a hook", "run X on pre-commit/pre-push", "gate on a linter/test/reviewer", or "make sure X runs before commit/push". Covers picking the gate type, the pre-flight checks that decide whether a third-party tool can even be gated, and the wiring. Run from a harness clone (it edits payload/), not an adopter repo.
+description: Wire a tool, skill, or check to run on a git hook as an omakase gate. Use when asked to "add a gate", "attach/wire a tool or skill to a hook", "run X on pre-commit/pre-push", "gate on a linter/test/reviewer", or "make sure X runs before commit/push". Covers picking the gate shape, the pre-flight checks that decide whether a third-party tool can even be gated, and the wiring. Run from a harness clone (it edits payload/), not an adopter repo.
 ---
 
 # /add-gate — attach a tool to a git hook
@@ -106,7 +106,7 @@ Two pieces:
 > harness's payload. **omakase-android is the reference** — copy both from
 > `omakase/payload/.omakase/{gates/deferred-check.sh,bin/omakase-record.sh}` if your harness
 > doesn't ship them yet. (The base omakase-harness payload currently ships only a live-gate
-> example; see authoring.md.)
+> example.)
 
 ## Step 4 — prove it fires
 
@@ -122,8 +122,9 @@ OMAKASE_PAYLOAD=<your>/payload bash <engine>/bin/init.sh
 OMAKASE_PAYLOAD=<your>/payload bash <engine>/bin/remove.sh    # reset
 ```
 
-Then update the harness's guard table (README / docs) and, for `--source` harnesses, leave
-`omakase.manifest` alone unless the gate needs a new `recommends:`.
+Then, if the harness lists its gates in a guard table (README / docs), add the new one there;
+and for `--source` harnesses, leave `omakase.manifest` alone unless the gate needs a new
+`recommends:`.
 
 ## See also
 
