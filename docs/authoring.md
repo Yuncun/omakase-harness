@@ -11,6 +11,10 @@ that project's harness files into `payload/` and leaves the project untouched.
 
 ## Adding a gate
 
+The `add-gate` skill walks an agent through this end-to-end — picking the gate shape,
+pre-flighting whether a third-party tool can even be gated, and wiring it. This section is the
+conceptual reference behind it.
+
 A gate has two parts (see [Concepts](concepts.md#gates-and-producers)):
 
 1. A producer that runs the check and records a verdict for the commit. For a pure check
