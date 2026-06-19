@@ -7,7 +7,7 @@
 #                              ✓ passed / ✗ not-completed, one per line. Shows the current
 #                              commit when you have unpushed work, else the last pushed run
 #                              (resting state), so a merge does not reset it to all-✗.
-#   - bin/show.sh            : /omakase show RECENT RUNS (+ --markdown)
+#   - bin/show.sh            : /omakase show GUARDS chart (+ --markdown)
 # Ledger lines are TAB-separated (epoch, hook, gate, verdict, ms, sha); assertions use
 # awk, not grep -P (BSD).
 set -u
@@ -130,20 +130,24 @@ OUT="$(notice)"
 OUT="$(notice)"
 echo "$OUT" | grep -q '✗ gamma' && pass "unpushed work ahead of upstream shows ✗ (verify before push)" || fail "unpushed commit not ✗ ($OUT)"
 
-# ---------- Scenario S: /omakase show tolerates 6-col rows ----------
-echo "== Scenario S: show reads the 6-col ledger =="
+# ---------- Scenario S: /omakase show surfaces a 6-col ledger verdict on the guards chart ----------
+# Since #23 `show` lists gates from the lefthook WIRING, joined to the latest ledger verdict
+# (the old ledger-only "recent runs" table now only appears in the lefthook-unresolved
+# fallback). So a 6-col row for the base payload's WIRED gate (omakase-example) must surface
+# with its verdict in both modes. Asserts on gate-name + verdict, not the exact header, so it
+# holds whether the chart or the fallback renders.
+echo "== Scenario S: show surfaces a 6-col verdict on the guards chart =="
 REPO="$TMP/repoS"; newrepo "$REPO"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 LEDGER="$(ledger_of "$REPO")"; mkdir -p "$(dirname "$LEDGER")"
 HEAD="$(cd "$REPO" && git rev-parse HEAD)"
-printf '%s\tpre-commit\ttypecheck\tpass\t11\t%s\n' $((NOW-120)) "$HEAD" >> "$LEDGER"
-printf '%s\tpre-push\ttest\tfail\t40\t%s\n' $((NOW-60)) "$HEAD" >> "$LEDGER"
+printf '%s\tpre-commit\tomakase-example\tfail\t40\t%s\n' $((NOW-60)) "$HEAD" >> "$LEDGER"
 OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW bash "$SHOW" 2>&1 )"
-echo "$OUT" | grep -q 'typecheck' && pass "show lists a recorded gate (6-col)" || fail "show missed 6-col gate"
+echo "$OUT" | grep -q 'omakase-example' && pass "show lists the wired gate (6-col)" || fail "show missed 6-col gate"
 echo "$OUT" | grep -q 'fail' && pass "show shows a fail verdict" || fail "show missing fail verdict"
 OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW bash "$SHOW" --markdown 2>&1 )"
-echo "$OUT" | grep -q '| Gate | Verdict | When |' && pass "markdown table renders" || fail "no markdown table"
-echo "$OUT" | grep -qE '\| test \| .* fail \|' && pass "markdown fail row (6-col)" || fail "no fail row in markdown"
+echo "$OUT" | grep -qE '^\| *-+ *\|' && pass "markdown table renders" || fail "no markdown table"
+echo "$OUT" | grep -E 'omakase-example' | grep -q 'fail' && pass "markdown fail row (6-col)" || fail "no fail row in markdown"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
 # ---------- Scenario U: a real commit records a 6-col row through the wiring ----------
