@@ -28,6 +28,19 @@ a thin producer that runs it, maps its output to pass or fail, and records the v
 You own the threshold for what counts as failing; the upstream skill stays unmodified. Do
 not copy it into `payload/`. Depend on it and invoke it.
 
+## A behavioral payload (no gate)
+
+A payload need not enforce anything. It can ship **agent guidance** — a rule or
+instruction the AI assistant reads at session start, with no hook behind it. Place it
+where the agent looks: `payload/.claude/rules/<name>.md` for Claude Code, or
+`payload/.github/instructions/<name>.instructions.md` (with `applyTo:`) for Copilot.
+omakase injects it like any other file; nothing is committed, and `remove` deletes it.
+
+This is the opt-in alternative to a personal `~/.claude/CLAUDE.md` rule: a harness
+payload is **shareable**, so anyone who wants the same guidance installs it and everyone
+else is untouched. See [`examples/pr-discipline`](../examples/pr-discipline) for a
+worked example.
+
 ## Pitfalls
 
 **Edit the source, not the installed copy.** An edit to an installed file in a target
