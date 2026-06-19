@@ -37,7 +37,7 @@ blocks if the verdict is missing or failing. It does not perform the check.
 The split exists for slow or non-deterministic checks, such as an emulator render or an
 LLM review, where running inside the push hook would be slow and unrepeatable.
 
-A pure check, such as a linter or a type check, needs no producer. It runs directly in
+A live check, such as a linter or a type check, needs no producer. It runs directly in
 the hook against files already in the tree.
 
 ## State

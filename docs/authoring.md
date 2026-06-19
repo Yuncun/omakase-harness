@@ -11,9 +11,13 @@ that project's harness files into `payload/` and leaves the project untouched.
 
 ## Adding a gate
 
+The `add-gate` skill walks an agent through this end-to-end — picking the gate shape,
+pre-flighting whether a third-party tool can even be gated, and wiring it. This section is the
+conceptual reference behind it.
+
 A gate has two parts (see [Concepts](concepts.md#gates-and-producers)):
 
-1. A producer that runs the check and records a verdict for the commit. For a pure check
+1. A producer that runs the check and records a verdict for the commit. For a live check
    such as a linter, the hook command is the producer.
 2. A hook entry in `payload/lefthook-local.yml` that runs the producer on commit, and the
    gate that reads the recorded verdict on push.
