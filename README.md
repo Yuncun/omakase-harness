@@ -1,3 +1,7 @@
+<!-- AGENTS / maintainers: keep this README sparse — intro, install, commands, a short
+     "how it works", and the links to docs/. Deeper detail belongs in docs/ (concepts,
+     authoring, reference), NOT here. This README is a doorway, not a manual. -->
+
 # omakase
 
 Omakase installs a repository's local development harness (git hooks, gates, lint
