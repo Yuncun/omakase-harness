@@ -7,8 +7,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ### Added
 - `add-gate` skill: an agent-facing walkthrough for wiring a tool, skill, or check to a git
-  hook as a gate — picks the gate shape (pure / deferred / ran-only), pre-flights whether a
-  third-party tool can be gated at all, and shows the wiring.
+  hook as a gate — picks the gate shape (live / deferred must-pass / deferred must-run),
+  pre-flights whether a third-party tool can be gated at all, and shows the wiring.
 
 ## [0.13.0] — 2026-06-17
 
