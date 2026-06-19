@@ -11,29 +11,39 @@
 # layout, and it encodes them all at once — there is no per-host mode. Supporting another
 # agent (Cursor, Gemini, …) = add its rows below; nothing else in the engine changes.
 #
-#   Claude Code        : .claude/{rules,skills,commands,hooks}, .claude/settings*.json, CLAUDE.md, AGENTS.md
-#   GitHub Copilot CLI : .github/skills/<name>/SKILL.md, .github/instructions/, .github/copilot-instructions.md
+#   Claude Code        : .claude/{rules,skills,commands,agents,hooks}, .claude/settings*.json, CLAUDE.md, AGENTS.md
+#   GitHub Copilot CLI : .github/{skills,instructions,prompts,chatmodes,hooks}, .github/copilot-instructions.md
 #       (Copilot CLI loads project skills from .github/skills live from disk — see
-#        https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills)
+#        https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills.
+#        .github/hooks holds Copilot's lifecycle hooks — preToolUse/sessionStart gates — and
+#        .github/{prompts,chatmodes} hold reusable prompt + persona assets.)
 #
 # bash-3.2 safe (macOS ships 3.2): plain indexed arrays only — no associative arrays.
 
 # kind_of: classify a harness path by its location — the path IS the classification.
 # Order matters only between the specific patterns and the catch-alls (*/*, *.md, *): every
 # specific pattern below is mutually disjoint, so their order RELATIVE TO EACH OTHER is free.
+# Valid kinds: rule skill command agent prompt config doc gate other.
+# INVARIANT: every dir named in HARNESS_LOC_DIRS (except .omakase, omakase's own mixed
+# plumbing dir) must classify to a kind other than 'other' — harness-paths.test.sh enforces it.
 kind_of() {
   case "$1" in
     # --- Claude Code ---
     .claude/rules/*)                                  echo rule;;
     .claude/skills/*)                                 echo skill;;
     .claude/commands/*)                               echo command;;
+    .claude/agents/*)                                 echo agent;;
+    .claude/hooks/*)                                  echo gate;;
     .claude/settings.json|.claude/settings.*.json)    echo config;;
     # --- GitHub Copilot ---
     .github/skills/*)                                 echo skill;;
     .github/instructions/*)                           echo rule;;
+    .github/prompts/*|.github/chatmodes/*)            echo prompt;;
+    .github/hooks/*)                                  echo gate;;
     .github/copilot-instructions.md)                  echo doc;;
     # --- host-agnostic ---
     lefthook-local.yml|lefthook.yml|.omakase/gates/*) echo gate;;
+    .husky/*|.githooks/*)                             echo gate;;
     AGENTS.md|CLAUDE.md)                              echo doc;;
     */*)                                              echo other;;  # nested, none of the above
     *.md)                                             echo doc;;    # remaining root-level *.md
@@ -44,11 +54,11 @@ kind_of() {
 # import.sh capture locations — single files and whole dirs it walks ON DISK to mirror an
 # existing harness into payload/ (see import.sh rule 1). Keep in step with kind_of above.
 HARNESS_LOC_FILES=(AGENTS.md CLAUDE.md .github/copilot-instructions.md lefthook-local.yml lefthook.yml .pre-commit-config.yaml .claude/settings.json)
-HARNESS_LOC_DIRS=(.claude/rules .claude/skills .claude/commands .claude/hooks .github/skills .github/instructions .omakase .husky .githooks)
+HARNESS_LOC_DIRS=(.claude/rules .claude/skills .claude/commands .claude/agents .claude/hooks .github/skills .github/instructions .github/prompts .github/chatmodes .github/hooks .omakase .husky .githooks)
 
 # show.sh committed-surface scan — the tracked pathspecs it audits as the project's OWN
 # committed harness:  git ls-files -- "${HARNESS_COMMITTED_GLOBS[@]}"
-HARNESS_COMMITTED_GLOBS=(AGENTS.md CLAUDE.md CLAUDE.local.md .claude lefthook.yml lefthook-local.yml .lefthook .omakase .github/copilot-instructions.md .github/instructions .github/skills)
+HARNESS_COMMITTED_GLOBS=(AGENTS.md CLAUDE.md CLAUDE.local.md .claude lefthook.yml lefthook-local.yml .lefthook .omakase .husky .githooks .github/copilot-instructions.md .github/instructions .github/skills .github/prompts .github/chatmodes .github/hooks)
 
 # Top-level dirs omakase SHARES with the project rather than owning outright. An injected
 # path under one of these is excluded from git file-by-file in .git/info/exclude — never the
