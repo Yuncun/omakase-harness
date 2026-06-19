@@ -38,8 +38,7 @@ omakase injects it like any other file; nothing is committed, and `remove` delet
 
 This is the opt-in alternative to a personal `~/.claude/CLAUDE.md` rule: a harness
 payload is **shareable**, so anyone who wants the same guidance installs it and everyone
-else is untouched. See [`examples/pr-discipline`](../examples/pr-discipline) for a
-worked example.
+else is untouched.
 
 ## Pitfalls
 
