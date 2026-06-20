@@ -5,10 +5,26 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-06-19
+
 ### Added
 - `add-gate` skill: an agent-facing walkthrough for wiring a tool, skill, or check to a git
   hook as a gate — picks the gate shape (live / deferred must-pass / deferred must-run),
-  pre-flights whether a third-party tool can be gated at all, and shows the wiring.
+  pre-flights whether a third-party tool can be gated at all, and shows the wiring (#24).
+
+### Changed
+- `show` renders one GUARDS chart with a "run when" column, replacing the separate
+  per-hook listings (#23).
+- Path classification recognizes Copilot lifecycle hooks (`.github/hooks/`), reusable
+  prompt and persona assets (`.github/prompts/`, `.github/chatmodes/`), and Claude agents
+  and hooks (`.claude/agents/`, `.claude/hooks/`); an invariant test asserts every known
+  harness directory classifies to a concrete kind.
+
+## [0.13.1] — 2026-06-18
+
+### Fixed
+- The harness self-heals on a bare `git worktree add`: a new linked worktree re-arms its
+  injected files instead of running without them.
 
 ## [0.13.0] — 2026-06-17
 
