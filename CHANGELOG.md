@@ -5,6 +5,21 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added
+- Base payload ships the deferred-gate machinery: `omakase-record.sh` (a job records a
+  per-commit result) and `deferred-check.sh` (the push gate that blocks unless a fresh
+  passing record exists for the commit). Wired as a commented example in `lefthook-local.yml`
+  and surfaced in `show`'s GUARDS chart + scorecard; covered end-to-end by
+  `tests/deferred-gate.test.sh`. A fork inherits it instead of copying from another harness.
+
+### Changed
+- Gate model collapses to two terms: a **gate** (runs in the hook) and a **deferred gate**
+  (checks a job ran for the commit). The earlier `live` / `deferred must-pass` /
+  `deferred must-run` split and the `producer` term are retired — a deferred gate's
+  block-on-failure vs proof-it-ran behavior is now the job's recording policy, not a gate
+  type. Reconciled `concepts.md`, `authoring.md`, `README.md`, and the `add-gate` skill,
+  which now interviews the user one question at a time to settle the shape.
+
 ## [0.14.0] — 2026-06-19
 
 ### Added

@@ -15,20 +15,21 @@ The `add-gate` skill walks an agent through this end-to-end — picking the gate
 pre-flighting whether a third-party tool can even be gated, and wiring it. This section is the
 conceptual reference behind it.
 
-A gate has two parts (see [Concepts](concepts.md#gates-and-producers)):
+omakase has two kinds of gate (see [Concepts](concepts.md#gates-and-deferred-gates)):
 
-1. A producer that runs the check and records a verdict for the commit. For a live check
-   such as a linter, the hook command is the producer.
-2. A hook entry in `payload/lefthook-local.yml` that runs the producer on commit, and the
-   gate that reads the recorded verdict on push.
+- A **gate** runs in the hook. The hook command is the whole gate — for a linter or a
+  test, lefthook runs it and a non-zero exit blocks.
+- A **deferred gate** is two pieces: a job that runs the check in-session and records a
+  result keyed to the commit, and a hook entry in `payload/lefthook-local.yml` that reads
+  that record on push and blocks unless the job recorded success for the commit.
 
-The deferred-gate scripts under `.omakase/` (the verdict recorder and the push gate) are
-reusable. A new gate supplies its own producer and points the gate at its verdict by name.
+The deferred-gate scripts under `.omakase/` (the recorder and the push gate) are reusable.
+A new deferred gate supplies its own job and points the gate at its record by name.
 
 ## Wrapping a third-party check
 
 To gate on a review or test skill you do not own: install it as a dependency, then write
-a thin producer that runs it, maps its output to pass or fail, and records the verdict.
+a thin job that runs it, maps its output to success or failure, and records the result.
 You own the threshold for what counts as failing; the upstream skill stays unmodified. Do
 not copy it into `payload/`. Depend on it and invoke it.
 
@@ -57,7 +58,7 @@ repo, edit `payload/`, and install from the clone. `placed.tsv` and `show.sh` re
 source of each installed file, so the active source is always inspectable. Do not install
 from both the plugin and a clone into one repo.
 
-**Owned directories are gitignored wholesale.** A file a gate or producer writes under
+**Owned directories are gitignored wholesale.** A file a gate or its job writes under
 `.omakase/` or `.claude/` is invisible to git and never reaches a teammate. That is
 correct for machinery and per-machine state. Content the team must share — test specs,
 fixtures, recorded flows — belongs in the project's own committed tree, with the gate's

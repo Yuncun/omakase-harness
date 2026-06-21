@@ -47,7 +47,7 @@ are never staged or committed, and `remove` reverses every step.
 
 ## Documentation
 
-- [Concepts](docs/concepts.md) — the overlay model, gates and producers, owned and shared paths
+- [Concepts](docs/concepts.md) — the overlay model, gates and deferred gates, owned and shared paths
 - [Authoring](docs/authoring.md) — build or customize a harness, and the common pitfalls
 - [Reference](docs/reference.md) — commands, flags, environment variables, path classification
 

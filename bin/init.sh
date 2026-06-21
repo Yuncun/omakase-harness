@@ -154,7 +154,7 @@ HOOKS_DIR="$COMMON/hooks"   # hooks live in the shared git dir (we refuse a fore
 # `lefthook install` DISPLACES an existing hook stub (renames it to .old), silently
 # disabling the project's own gates; a hook-manager "prepare" script (husky,
 # simple-git-hooks) then reinstalls its own hooks on the next npm install, so the
-# live gate set flip-flops. Detect an incumbent manager and refuse with guidance —
+# active gate set flip-flops. Detect an incumbent manager and refuse with guidance —
 # omakase does not chain hook managers (v1). Exempt: lefthook-managed stubs (incl.
 # our own re-init): lefthook.yml + lefthook-local.yml merging is the supported
 # coexistence path. Exemption principle: omakase's own injected artifacts are always
