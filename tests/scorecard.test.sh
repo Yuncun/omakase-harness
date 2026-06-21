@@ -3,10 +3,10 @@
 #   - omakase-ledger.sh      : run-ledger recorder; stamps epoch/hook/gate/verdict/ms/SHA
 #   - omakase-statusline.sh  : the CANARY — "<name> is running" where the harness is
 #                              active, dark elsewhere. No verdict, only the 🍣 icon.
-#   - omakase-stop-notice.sh : the Stop-hook CHECKLIST — pre-push checks in gate order,
-#                              ✓ passed / ✗ not-completed, one per line. Shows the current
-#                              commit when you have unpushed work, else the last pushed run
-#                              (resting state), so a merge does not reset it to all-✗.
+#   - omakase-stop-notice.sh : the Stop-hook ONE-LINER — "<name> enabled ✓" at rest,
+#                              "<name> ✓/✗ — Last run: <Hook> · <clock> · summary" right
+#                              after a run, "<name> disabled" when gates aren't armed, and a
+#                              "files missing · /omakase init" nudge. Detail -> /omakase show.
 #   - bin/show.sh            : /omakase show GUARDS chart (+ --markdown)
 # Ledger lines are TAB-separated (epoch, hook, gate, verdict, ms, sha); assertions use
 # awk, not grep -P (BSD).
@@ -70,65 +70,73 @@ OUTSIDE="$TMP/notarepo"; rm -rf "$OUTSIDE"; mkdir -p "$OUTSIDE"
 OUT="$( cd "$OUTSIDE" && bash "$CANARY" )"
 [ -z "$OUT" ] && pass "dark outside any git repo" || fail "canary lit outside a repo ($OUT)"
 
-# ---------- Scenario K: the Stop-hook checklist ----------
-echo "== Scenario K: omakase-stop-notice checklist =="
+# ---------- Scenario K: the Stop-hook one-liner ----------
+echo "== Scenario K: omakase-stop-notice one-liner =="
 REPO="$TMP/repoK"; newrepo "$REPO"; LEDGER="$(ledger_of "$REPO")"; mkdir -p "$(dirname "$LEDGER")"
+mkdir -p "$REPO/.omakase"                                   # active (overlay present)
+arm(){ mkdir -p "$REPO/.git/hooks"; printf '#!/bin/sh\nlefthook run %s\n' "$1" > "$REPO/.git/hooks/$1"; chmod +x "$REPO/.git/hooks/$1"; }
+arm pre-commit                                             # gates armed (a lefthook stub)
 HEAD="$(cd "$REPO" && git rev-parse HEAD)"
-# config: pre-push order gamma, alpha, beta + a pre-commit gate that MUST be excluded
-cat > "$REPO/lefthook-local.yml" <<YML
-pre-commit:
-  jobs:
-    - run: bash .omakase/bin/omakase-ledger.sh precommit-gate -- true
-pre-push:
-  jobs:
-    - name: checks
-      group:
-        jobs:
-          - run: bash .omakase/bin/omakase-ledger.sh gamma -- true
-          - run: bash .omakase/bin/omakase-ledger.sh alpha -- true
-          - run: bash .omakase/bin/omakase-ledger.sh beta -- true
-post-checkout:
-  jobs:
-    - run: true
-YML
-SIN='{"cwd":"'"$REPO"'"}'
-notice(){ printf '%s' "$SIN" | bash "$NOTICE"; }
-# baseline row (old sha, not HEAD) so the ledger exists and history order != config order
-printf '%s\tpre-push\tbeta\tpass\t0\tdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n' 1700000000 >> "$LEDGER"
-OUT="$(notice)"; [ -z "$OUT" ] && pass "first run is silent (inits marker)" || fail "first run not silent ($OUT)"
-OUT="$(notice)"; [ -z "$OUT" ] && pass "no change -> silent (the guard)" || fail "fired with no change ($OUT)"
-# gamma passes, beta fails, alpha never runs — for THIS commit
-printf '%s\tpre-push\tgamma\tpass\t0\t%s\n' "$(date +%s)" "$HEAD" >> "$LEDGER"
-printf '%s\tpre-push\tbeta\tfail\t0\t%s\n'  "$(date +%s)" "$HEAD" >> "$LEDGER"
-OUT="$(notice)"
-echo "$OUT" | grep -q '✓ gamma' && pass "passed check -> ✓" || fail "no ✓ for passed ($OUT)"
-echo "$OUT" | grep -q '✗ alpha' && pass "not-run check -> ✗" || fail "no ✗ for not-run ($OUT)"
-echo "$OUT" | grep -q '✗ beta'  && pass "failed check -> ✗ (not ✓)" || fail "failed check not ✗ ($OUT)"
-echo "$OUT" | grep -q 'gamma.*alpha.*beta' && pass "config (gate) order respected over ledger history" || fail "wrong order ($OUT)"
-echo "$OUT" | grep -q 'precommit-gate' && fail "pre-commit gate leaked into the checklist" || pass "pre-commit gate excluded"
-OUT="$(notice)"; [ -z "$OUT" ] && pass "after firing, no change -> silent" || fail "re-fired with no change ($OUT)"
-( cd "$REPO" && git commit -q --allow-empty -m c2 )
-OUT="$(notice)"
-echo "$OUT" | grep -q '✗ gamma' && pass "unpushed new commit shows all ✗ (no upstream -> current commit)" || fail "checklist did not reset on new HEAD ($OUT)"
+SA=sess-aaa; SB=sess-bbb
+notice(){ printf '{"cwd":"%s","session_id":"%s"}' "$REPO" "$1" | bash "$NOTICE"; }
 
-# resting-green: with an upstream, a merge that moves HEAD onto a gate-less commit keeps the
-# LAST PUSHED run instead of resetting to all-✗. (Last-pushed = newest pre-push epoch, so the
-# seed must out-rank the date+%s rows above — hence date+%s+100, not NOW+100.)
-B="$(cd "$REPO" && git branch --show-current)"
-PUSHED="$(cd "$REPO" && git rev-parse HEAD)"
-T=$(( $(date +%s) + 100 ))
-for g in gamma alpha beta; do printf '%s\tpre-push\t%s\tpass\t0\t%s\n' "$T" "$g" "$PUSHED" >> "$LEDGER"; done
-( cd "$REPO" && git commit -q --allow-empty -m merged \
-  && git update-ref "refs/remotes/origin/$B" HEAD \
-  && git config "branch.$B.remote" origin && git config "branch.$B.merge" "refs/heads/$B" \
-  && git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*' )
-OUT="$(notice)"
-{ echo "$OUT" | grep -q '✓ gamma' && echo "$OUT" | grep -q '✓ alpha' && echo "$OUT" | grep -q '✓ beta'; } \
-  && pass "merge onto a gate-less commit keeps the last green run (no all-✗ reset)" \
-  || fail "resting state reset to ✗ after merge ($OUT)"
-( cd "$REPO" && git commit -q --allow-empty -m unpushed )
-OUT="$(notice)"
-echo "$OUT" | grep -q '✗ gamma' && pass "unpushed work ahead of upstream shows ✗ (verify before push)" || fail "unpushed commit not ✗ ($OUT)"
+OUT="$(notice "$SA")"
+echo "$OUT" | grep -q 'omakase enabled ✓' && pass "armed + no runs -> 'enabled ✓'" || fail "no enabled baseline ($OUT)"
+OUT="$(notice "$SA")"; [ -z "$OUT" ] && pass "same session, no change -> silent" || fail "fired with no change ($OUT)"
+OUT="$(notice "$SB")"; echo "$OUT" | grep -q 'enabled ✓' && pass "a new session re-announces the resting state" || fail "no reshow on new session ($OUT)"
+
+# a pre-push run, all three gates pass on HEAD
+T=$(date +%s)
+for g in gamma alpha beta; do printf '%s\tpre-push\t%s\tpass\t1000\t%s\n' "$T" "$g" "$HEAD" >> "$LEDGER"; done
+OUT="$(notice "$SB")"
+echo "$OUT" | grep -q 'Last run: Pre-push Gate' && pass "a run names the hook (Pre-push Gate)" || fail "no hook name ($OUT)"
+echo "$OUT" | grep -q '3/3 checks run' && pass "all-pass -> 'N/N checks run'" || fail "no N/N run summary ($OUT)"
+echo "$OUT" | grep -qE '[0-9]+:[0-9][0-9] [AP]M' && pass "shows a clock time" || fail "no clock time ($OUT)"
+echo "$OUT" | grep -q '✓' && pass "all-pass carries ✓" || fail "no ✓ on a clean run ($OUT)"
+OUT="$(notice "$SB")"; [ -z "$OUT" ] && pass "after a run, no new run -> silent" || fail "re-fired after a run ($OUT)"
+
+# a later run with a failure: beta fails (gamma/alpha still pass)
+T2=$((T + 5))
+for g in gamma alpha; do printf '%s\tpre-push\t%s\tpass\t1000\t%s\n' "$T2" "$g" "$HEAD" >> "$LEDGER"; done
+printf '%s\tpre-push\tbeta\tfail\t1000\t%s\n' "$T2" "$HEAD" >> "$LEDGER"
+OUT="$(notice "$SB")"
+echo "$OUT" | grep -q '✗' && pass "a failure carries ✗" || fail "no ✗ on failure ($OUT)"
+echo "$OUT" | grep -q '1 checks failed' && pass "failure -> count failed (not a fraction)" || fail "no failure count ($OUT)"
+echo "$OUT" | grep -q 'checks run' && fail "failure line should not say 'checks run'" || pass "failure line drops the run fraction"
+
+# fail-then-fixed on the SAME commit: beta passes again -> back to all green (latest verdict wins)
+T3=$((T2 + 5))
+printf '%s\tpre-push\tbeta\tpass\t1000\t%s\n' "$T3" "$HEAD" >> "$LEDGER"
+OUT="$(notice "$SB")"
+echo "$OUT" | grep -q '3/3 checks run' && pass "fail-then-fixed counts as passed (latest verdict per gate)" || fail "fixed gate not re-counted ($OUT)"
+
+# an empty-sha row (omakase-ledger writes one when HEAD is unborn — e.g. the first commit's
+# pre-commit) must NOT become "the last run" and mask a later real run
+T4=$((T3 + 5))
+printf '%s\tpre-commit\tprecommit-gate\tpass\t1000\t\n' "$T4" >> "$LEDGER"   # 6 cols, empty sha
+OUT="$(notice "$SB")"; [ -z "$OUT" ] && pass "empty-sha row alone -> silent (not a run)" || fail "empty-sha row spoke ($OUT)"
+T5=$((T4 + 5))
+for g in gamma alpha beta; do printf '%s\tpre-push\t%s\tpass\t1000\t%s\n' "$T5" "$g" "$HEAD" >> "$LEDGER"; done
+OUT="$(notice "$SB")"
+echo "$OUT" | grep -q '3/3 checks run' && pass "a real run after an empty-sha row still announces" || fail "real run masked by empty-sha row ($OUT)"
+
+# gates no longer armed -> 'disabled'
+rm -f "$REPO/.git/hooks/pre-commit"
+OUT="$(notice "$SB")"
+echo "$OUT" | grep -q 'omakase disabled' && pass "no armed hook -> 'disabled'" || fail "not disabled with hooks gone ($OUT)"
+printf '%s' "$OUT" | grep -q '✓' && fail "disabled should carry no ✓" || pass "disabled has no glyph"
+
+# re-armed, but an enabled placed file is missing -> re-init nudge
+arm pre-commit
+printf '.omakase/gone.sh\tgate\tpayload\tdeadbeef\t1\n' > "$(dirname "$LEDGER")/placed.tsv"
+OUT="$(notice "$SB")"
+echo "$OUT" | grep -q '/omakase init to update' && pass "a missing placed file -> re-init nudge" || fail "no nudge for a missing file ($OUT)"
+echo "$OUT" | grep -q 'files missing' && pass "the nudge names the reason" || fail "nudge missing its reason ($OUT)"
+
+# a repo without the overlay stays silent (the global Stop hook must not chatter elsewhere)
+REPO2="$TMP/repoK2"; newrepo "$REPO2"
+OUT="$(printf '{"cwd":"%s","session_id":"x"}' "$REPO2" | bash "$NOTICE")"
+[ -z "$OUT" ] && pass "no overlay -> silent (not an omakase repo)" || fail "fired in a non-omakase repo ($OUT)"
 
 # ---------- Scenario S: /omakase show surfaces a 6-col ledger verdict on the guards chart ----------
 # Since #23 `show` lists gates from the lefthook WIRING, joined to the latest ledger verdict
