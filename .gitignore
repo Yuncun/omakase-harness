@@ -1,2 +1,6 @@
 *.bak
 .DS_Store
+
+# Local scratch — never ship to origin
+docs/notes/
+docs/specs/
