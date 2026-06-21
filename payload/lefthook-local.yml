@@ -34,7 +34,7 @@ pre-commit:
 #   jobs:
 #     # complete checker — your whole-project checks run IN the hook; non-zero blocks.
 #     - name: tests
-#       run: bash .omakase/bin/omakase-ledger.sh tests -- <your test command, e.g. npm test>
+#       run: bash .omakase/bin/omakase-ledger.sh tests -- <your check, e.g. make check | npm test | pytest | cargo test>
 #       env: { OMAKASE_HOOK: pre-push }
 #     # deferred gate — for a slow / non-deterministic check (a render, an LLM review)
 #     # that can't run in a hook. A job records the result in-session with:
