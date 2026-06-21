@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-06-21
+
 ### Added
 - Base payload ships the deferred-gate machinery: `omakase-record.sh` (a job records a
   per-commit result) and `deferred-check.sh` (the push gate that blocks unless a fresh
