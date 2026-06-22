@@ -120,7 +120,7 @@ for cfg in lefthook-local.yml lefthook.yml .pre-commit-config.yaml; do
   # stack-coupled run: bodies (won't run off this project's toolchain)
   while IFS= read -r line; do
     stack_jobs+=("${cfg}: ${line}")
-  done < <(grep -E '^\s*run:' "$ROOT/$cfg" 2>/dev/null | grep -E '(pnpm|npm |npx|yarn|turbo|make |cargo|go run|pytest|ruff|vue-tsc)' | sed -E 's/^\s*run:\s*//' | sort -u)
+  done < <(grep -E '^[[:space:]]*run:' "$ROOT/$cfg" 2>/dev/null | grep -E '(pnpm|npm |npx|yarn|turbo|make |cargo|go run|pytest|ruff|vue-tsc)' | sed -E 's/^[[:space:]]*run:[[:space:]]*//' | sort -u)
 done
 
 # ---- report ----

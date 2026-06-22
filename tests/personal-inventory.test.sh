@@ -33,6 +33,13 @@ OUT2="$( cd "$REPO" && HOME="$H2" bash "$SHOW" --markdown 2>&1 )"; rc2=$?
 [ "$rc2" -eq 0 ] && pass "show exits clean with Copilot-only HOME" || fail "Copilot-only non-zero exit ($rc2): $OUT2"
 printf '%s\n' "$OUT2" | grep -q '~/.copilot/skills/solo/' && pass "Copilot skill listed when ~/.claude is absent" || fail "Copilot skill missing without ~/.claude"
 
+# --- Claude-only HOME (no ~/.copilot): the mirror of the Copilot-only case ---
+H3="$TMP/home-claude-only"
+mkskill "$H3/.claude/skills/solo"
+OUT3="$( cd "$REPO" && HOME="$H3" bash "$SHOW" --markdown 2>&1 )"; rc3=$?
+[ "$rc3" -eq 0 ] && pass "show exits clean with Claude-only HOME" || fail "Claude-only non-zero exit ($rc3): $OUT3"
+printf '%s\n' "$OUT3" | grep -q '~/.claude/skills/solo/' && pass "Claude skill listed when ~/.copilot is absent" || fail "Claude skill missing without ~/.copilot"
+
 [ "$FAILED" -eq 0 ] && echo "personal-inventory.test.sh: ALL PASS" || echo "personal-inventory.test.sh: FAILURES"
 rm -rf "$TMP"
 exit "$FAILED"
