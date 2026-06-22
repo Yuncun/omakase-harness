@@ -66,6 +66,11 @@ OUT="$( dcheck OMAKASE_CHECK=bad )"; RC=$?
 OUT="$( dcheck OMAKASE_CHECK=wv )"; RC=$?
 { [ "$RC" -eq 0 ] && echo "$OUT" | grep -q 'WAIVED' && echo "$OUT" | grep -q 'ship for the demo'; } && pass "waiver allows the push and surfaces the override reason" || fail "waiver not honored/surfaced ($RC: $OUT)"
 
+# 7b. a plain PASS carrying an informational --reason (no judged fail) is NOT a waiver -> no WAIVED banner.
+( cd "$REPO" && bash "$RECORD" --check note --verdict pass --reason "ran nightly suite" ) >/dev/null
+OUT="$( dcheck OMAKASE_CHECK=note )"; RC=$?
+{ [ "$RC" -eq 0 ] && ! echo "$OUT" | grep -q 'WAIVED'; } && pass "a pass with an informational reason is not branded WAIVED" || fail "plain pass+reason mislabeled WAIVED ($RC: $OUT)"
+
 # 8. corrupt record -> BLOCK (fail closed on an unparseable record).
 printf 'not json at all\n' > "$DEFDIR/cr.json"
 OUT="$( dcheck OMAKASE_CHECK=cr )"; RC=$?

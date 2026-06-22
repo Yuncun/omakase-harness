@@ -59,7 +59,8 @@ BAD="$TMP/stack-bad"
 mkdir -p "$BAD/payload"
 printf 'pre-commit:\n  jobs:\n    - name: x\n      run: bash .omakase/gates/nonexistent.sh\n' > "$BAD/payload/lefthook-local.yml"
 BADOUT="$TMP/badout"
-bash "$BUILD" --out "$BADOUT" --stack "$BAD" >/dev/null 2>&1 && fail "build should reject missing wiring ref" || pass "build fails when wiring references a missing script"
+BADERR="$(bash "$BUILD" --out "$BADOUT" --stack "$BAD" 2>&1)" && fail "build should reject missing wiring ref" || pass "build fails when wiring references a missing script"
+echo "$BADERR" | grep -q 'nonexistent.sh' && pass "build error names the offending script (not an unrelated failure)" || fail "build error did not name the missing script ($BADERR)"
 [ ! -e "$BADOUT" ] && pass "no partial bundle left at --out on failure" || fail "partial bundle left behind"
 
 # ---------- atomic: a dangling symlink fails without clobbering --out ----------

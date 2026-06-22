@@ -89,7 +89,8 @@ echo "$OUT" | grep -qi 'still committed' && pass "report lists the still-committ
 CUTCMD="$(echo "$OUT" | grep -- '--cut-over' | grep 'init.sh' | head -1 | sed 's/^[[:space:]]*//')"
 [ -n "$CUTCMD" ] && pass "report prints a runnable cut-over command" || fail "no cut-over command printed"
 echo "$CUTCMD" | grep -q 'OMAKASE_CUTOVER_CONFIRM' && fail "printed command pre-bakes OMAKASE_CUTOVER_CONFIRM (unattended hazard)" || pass "printed command does NOT pre-confirm"
-( eval "$CUTCMD" ) >/dev/null 2>&1 && fail "printed command run verbatim PROCEEDED (unattended cut-over)" || pass "printed command run verbatim refused (the review checkpoint)"
+CUTERR="$( eval "$CUTCMD" 2>&1 )" && fail "printed command run verbatim PROCEEDED (unattended cut-over)" || pass "printed command run verbatim refused (the review checkpoint)"
+echo "$CUTERR" | grep -q 'OMAKASE_CUTOVER_CONFIRM' && pass "refusal names the confirmation guard (not an unrelated failure)" || fail "refusal did not name the confirmation guard ($CUTERR)"
 [ -z "$(cd "$SRC" && git status --porcelain)" ] && pass "verbatim run staged nothing in the source repo" || { fail "verbatim run mutated the source repo"; (cd "$SRC" && git status --porcelain | sed 's/^/      /'); }
 # leftover detection
 echo "$OUT" | grep -q 'scripts/loose.sh' && pass "loose wired gate reported (not auto-grabbed)" || fail "loose gate not reported"

@@ -128,18 +128,21 @@ rec_field() { sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" 
 REC_KEY="$(rec_field key)"
 REC_VERDICT="$(rec_field verdict)"
 REC_REASON="$(rec_field reason)"
+REC_ORIGINAL="$(rec_field original_verdict)"   # "fail" only for a true waiver; null/empty otherwise
 
 [[ -n "$REC_KEY" && -n "$REC_VERDICT" ]] || block "record is corrupt or incomplete - re-run"
 [[ "$REC_KEY" == "$KEY" ]] || \
   block "record is stale (covers ${REC_KEY:0:8}, pushing ${KEY:0:8}) - re-run after your latest commit"
 [[ "$REC_VERDICT" == "pass" ]] || block "last run verdict was '$REC_VERDICT'"
 
-# A waiver is a PASS that carries an override reason. Surface it loudly so the
-# human always sees what was overridden - the waiver is never silent.
-if [[ -n "$REC_REASON" ]]; then
+# A waiver is a PASS recorded OVER a judged FAIL (original_verdict=fail) - omakase-record
+# requires a reason for exactly that case. Surface it loudly so the human always sees what
+# was overridden. A plain PASS that merely carries an informational --reason is NOT a waiver
+# and must not be branded as an override.
+if [[ "$REC_ORIGINAL" == "fail" ]]; then
   {
     echo ""
-    echo "WAIVED: deferred gate '$CHECK' passed with an override -"
+    echo "WAIVED: deferred gate '$CHECK' passed over a recorded FAIL -"
     echo "  reason: $REC_REASON"
     echo ""
   } >&2

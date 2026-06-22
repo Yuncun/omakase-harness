@@ -50,7 +50,8 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$(cd "$SCRIPT_DIR/.." && pwd)"   # the single source of truth (this repo)
 
-[ -d "$SRC/bin" ] && [ -d "$SRC/payload" ] || { echo "build: source missing bin/ or payload/ ($SRC)" >&2; exit 1; }
+[ -d "$SRC/bin" ] && [ -d "$SRC/payload" ] && [ -d "$SRC/commands" ] && [ -f "$SRC/.claude-plugin/plugin.json" ] \
+  || { echo "build: source missing bin/, payload/, commands/, or .claude-plugin/plugin.json ($SRC)" >&2; exit 1; }
 if [ -n "$STACK" ]; then
   [ -d "$STACK" ]         || { echo "build: --stack dir not found: $STACK" >&2; exit 1; }
   [ -d "$STACK/payload" ] || { echo "build: stack has no payload/: $STACK" >&2; exit 1; }

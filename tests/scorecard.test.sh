@@ -123,6 +123,14 @@ for g in gamma alpha beta; do printf '%s\tpre-push\t%s\tpass\t1000\t%s\n' "$T5" 
 OUT="$(notice "$SB")"
 echo "$OUT" | grep -q '3/3 checks at' && pass "a real run after an empty-sha row still announces" || fail "real run masked by empty-sha row ($OUT)"
 
+# a fresh run with TWO failures -> plural "N checks failed" (the singular path is not hardcoded)
+T6=$((T5 + 5))
+printf '%s\tpre-push\tgamma\tpass\t1000\t%s\n' "$T6" "$HEAD" >> "$LEDGER"
+for g in alpha beta; do printf '%s\tpre-push\t%s\tfail\t1000\t%s\n' "$T6" "$g" "$HEAD" >> "$LEDGER"; done
+OUT="$(notice "$SB")"
+echo "$OUT" | grep -q '2 checks failed' && pass "two failures -> plural 'N checks failed'" || fail "no plural failure count ($OUT)"
+echo "$OUT" | grep -qE '[0-9]+/[0-9]+' && fail "plural failure line should not show a fraction" || pass "plural failure line drops the fraction"
+
 # gates no longer armed -> 'is not active'
 rm -f "$REPO/.git/hooks/pre-commit"
 OUT="$(notice "$SB")"
@@ -155,7 +163,7 @@ HEAD="$(cd "$REPO" && git rev-parse HEAD)"
 printf '%s\tpre-commit\tomakase-example\tfail\t40\t%s\n' $((NOW-60)) "$HEAD" >> "$LEDGER"
 OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW bash "$SHOW" 2>&1 )"
 echo "$OUT" | grep -q 'omakase-example' && pass "show lists the wired gate (6-col)" || fail "show missed 6-col gate"
-echo "$OUT" | grep -q 'fail' && pass "show shows a fail verdict" || fail "show missing fail verdict"
+echo "$OUT" | grep 'omakase-example' | grep -q 'fail' && pass "show shows a fail verdict on the gate row" || fail "show missing fail verdict on the gate row"
 OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW bash "$SHOW" --markdown 2>&1 )"
 echo "$OUT" | grep -qE '^\| *-+ *\|' && pass "markdown table renders" || fail "no markdown table"
 echo "$OUT" | grep -E 'omakase-example' | grep -q 'fail' && pass "markdown fail row (6-col)" || fail "no fail row in markdown"

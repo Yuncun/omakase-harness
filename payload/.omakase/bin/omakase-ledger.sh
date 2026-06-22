@@ -40,8 +40,12 @@ if [ -n "$common" ]; then
   {
     mkdir -p "$common/omakase"
     verdict=pass; [ "$rc" -ne 0 ] && verdict=fail
+    # Guard the duration math: a non-numeric epoch (only reachable via the OMAKASE_NOW
+    # test hook) would otherwise make the arithmetic fail under set -u and both abort the
+    # write AND replace the gate's real exit code. Degrade to 0 so rc passes through.
+    dur=0; case "$start$end" in *[!0-9]*) :;; *) dur=$(( (end - start) * 1000 ));; esac
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$end" "$hook" "$gate" "$verdict" "$(( (end - start) * 1000 ))" "$sha" \
+      "$end" "$hook" "$gate" "$verdict" "$dur" "$sha" \
       >> "$common/omakase/ledger.tsv"
   } 2>/dev/null || true
 fi
