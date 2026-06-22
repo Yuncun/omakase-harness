@@ -54,6 +54,7 @@ fi
 copy_into_payload() {  # $1 = relative path under ROOT
   local rel="$1" src="$ROOT/$1" dst="$PAYLOAD/$1"
   mkdir -p "$(dirname "$dst")"
+  [ -d "$dst" ] || rm -f "$dst"   # don't let `cp -P` follow/write-through an existing dest symlink
   cp -P "$src" "$dst"                                   # -P: carry symlinks as symlinks
   case "$rel" in *.sh) [ -L "$dst" ] || chmod +x "$dst";; esac
 }
