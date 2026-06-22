@@ -81,6 +81,19 @@ OUT="$( dcheck OMAKASE_CHECK=st )"; RC=$?
 OUT="$( cd "$REPO" && env OMAKASE_GLOB='src/*' OMAKASE_CHECK=fo bash "$DEFERRED" 2>&1 )"; RC=$?
 { [ "$RC" -eq 0 ] && echo "$OUT" | grep -q 'no resolvable base'; } && pass "fails open when no base ref resolves" || fail "did not fail open without a base ($RC: $OUT)"
 
+# 11. config error: OMAKASE_CHECK set but OMAKASE_GLOB unset -> FAIL CLOSED (was a silent skip).
+OUT="$( cd "$REPO" && env OMAKASE_BASE="$C0" OMAKASE_CHECK=eg bash "$DEFERRED" 2>&1 )"; RC=$?
+{ [ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'OMAKASE_GLOB is not set'; } && pass "fails closed when OMAKASE_GLOB is unset (no silent skip)" || fail "did not fail closed on an empty glob ($RC: $OUT)"
+
+# 12. no merge base: an unrelated-history base makes a three-dot diff FATAL; the two-dot
+#     fallback still finds the in-scope change, so the gate BLOCKS rather than silently skipping.
+REPONB="$TMP/repoNB"; newrepo "$REPONB"; MBNB="$( cd "$REPONB" && git branch --show-current )"
+( cd "$REPONB" && mkdir -p src && printf 'a\n' > src/app.txt && git add src/app.txt && git commit -q -m c1 )
+ORPHANNB="$( cd "$REPONB" && git checkout -q --orphan ob && git rm -rfq --cached . 2>/dev/null; rm -rf src && printf 'x\n' > u.txt && git add u.txt && git commit -q -m orphan && git rev-parse HEAD )"
+( cd "$REPONB" && git checkout -qf "$MBNB" )
+OUT="$( cd "$REPONB" && env OMAKASE_BASE="$ORPHANNB" OMAKASE_GLOB='src/*' OMAKASE_CHECK=nb bash "$DEFERRED" 2>&1 )"; RC=$?
+{ [ "$RC" -ne 0 ] && echo "$OUT" | grep -q 'no record'; } && pass "no-merge-base range falls back to two-dot and still blocks an in-scope push" || fail "no-merge-base fell open ($RC: $OUT)"
+
 # ============================================================================
 # Recorder argument validation (omakase-record.sh).
 # ============================================================================

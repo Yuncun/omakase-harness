@@ -195,6 +195,9 @@ mkdir -p "$REPO/.omakase/gates"; cp "$GATE" "$REPO/.omakase/gates/example.sh"; c
 ( cd "$REPO" && bash .omakase/gates/example.sh ) >/dev/null 2>&1 && pass "example gate passes on clean staged input" || fail "example gate failed on clean input"
 ( cd "$REPO" && printf '<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> branch\n' > b.txt && git add b.txt )
 ( cd "$REPO" && bash .omakase/gates/example.sh ) >/dev/null 2>&1 && fail "example gate did NOT block a conflict marker" || pass "example gate blocked a staged conflict marker"
+# a lone ======= line is a Markdown/RST heading underline, NOT a conflict — must not block
+( cd "$REPO" && git rm -q --cached b.txt && rm -f b.txt && printf 'My Title\n=======\n\nbody\n' > c.md && git add c.md )
+( cd "$REPO" && bash .omakase/gates/example.sh ) >/dev/null 2>&1 && pass "example gate does not false-block a ======= heading underline" || fail "example gate false-blocked a Markdown heading underline"
 
 rm -rf "$TMP"
 echo ""

@@ -207,6 +207,7 @@ render_guards() {
   # cell carries the multibyte check/cross and is always last, so alignment stays exact).
   awk -v runsfile="$RUNS_FILE" -v now="$now" -v fmt="$FORMAT" '
     BEGIN { FS="\t"; wH=length("RUN WHEN"); wG=length("GUARD"); wE=length("ENFORCES") }
+    function mdcell(s){ gsub(/\|/,"\\|",s); gsub(/\n/," ",s); return s }   # a literal | in a cell breaks the md table
     FILENAME==runsfile {
       if (NF>=5 && $1 ~ /^[0-9]+$/) { ts=$1+0; if (ts>=seen[$3]) { seen[$3]=ts; verd[$3]=$4 } }
       next
@@ -257,7 +258,7 @@ render_guards() {
         else {
           print "| Run when | Guard | Enforces | Last verdict |"
           print "| --- | --- | --- | --- |"
-          for (i=1;i<=n;i++) printf "| `%s` | %s | %s | %s |\n", H[i], G[i], E[i], V[i]
+          for (i=1;i<=n;i++) printf "| `%s` | %s | %s | %s |\n", H[i], mdcell(G[i]), mdcell(E[i]), V[i]
         }
       } else {
         if (n==0) { print "  (no guards wired)"; }
