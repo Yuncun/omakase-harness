@@ -5,6 +5,30 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-06-22
+
+### Changed
+- `/omakase show` no longer lists omakase's own machinery under `.omakase/` in the Injected
+  group, and the "Inventory" umbrella heading is dropped — Committed / Injected / Personal are
+  now peer sections. Active gates still appear under Guards; `.omakase/` is still disclosed in
+  the Hidden-via-exclude section.
+- The end-of-turn Stop-hook notice tracks deployment ("<name> is active" / "is not active")
+  rather than the last run's result; a failed run keeps the active header and reports the
+  failure in words, with no X glyph.
+
+### Fixed
+- **Data loss (high):** `remove` no longer deletes the user's own untracked files in a repo
+  that never installed omakase — the no-ledger fallback is now gated on a proof-of-install
+  sentinel. `init`/`import` no longer write payload content *through* an existing destination
+  symlink (clobbering an out-of-tree file); a dangling dest symlink no longer aborts the install.
+- The generated fail-closed `verify-overlay` guard no longer fails open on a truncated ledger.
+- Deferred gates fail closed (not silently skip) when `OMAKASE_GLOB` is unset or when the diff
+  range has no merge base (two-dot fallback). The example gate no longer false-blocks a lone
+  `=======` Markdown heading underline.
+- `/omakase show`'s Markdown Guards table survives a `|` in a gate command. `build` no longer
+  ships `.gitignore`'d junk (`.DS_Store`, `*.bak`) into the dist. Plus BSD/GNU portability and
+  ledger exit-code fixes, and broader test coverage.
+
 ## [0.15.0] — 2026-06-21
 
 ### Added
