@@ -30,6 +30,4 @@ format.
 
 ## Pull requests
 
-- One change per pull request.
-- Add an entry to `CHANGELOG.md` under `Unreleased`.
-- Update the relevant page under `docs/` when behavior changes.
+- Do not include AI generated docs
