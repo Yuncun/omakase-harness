@@ -9,7 +9,7 @@ INIT="$HERE/../bin/init.sh"
 SHOW="$HERE/../bin/show.sh"
 RECORD="$HERE/../payload/.omakase/bin/omakase-record.sh"
 DEFERRED="$HERE/../payload/.omakase/gates/deferred-check.sh"
-LEFTHOOK="${LEFTHOOK_BIN:-/Users/ericshen/Claude/pixterm-engine/node_modules/.bin/lefthook}"
+LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 TMP="${TMPDIR:-/tmp}/omakase-deferred-gate-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
