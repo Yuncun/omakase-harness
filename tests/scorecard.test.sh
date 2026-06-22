@@ -71,8 +71,8 @@ OUTSIDE="$TMP/notarepo"; rm -rf "$OUTSIDE"; mkdir -p "$OUTSIDE"
 OUT="$( cd "$OUTSIDE" && bash "$CANARY" )"
 [ -z "$OUT" ] && pass "dark outside any git repo" || fail "canary lit outside a repo ($OUT)"
 
-# ---------- Scenario K: the Stop-hook one-liner ----------
-echo "== Scenario K: omakase-stop-notice one-liner =="
+# ---------- Scenario K: the Stop-hook status notice ----------
+echo "== Scenario K: omakase-stop-notice status notice =="
 REPO="$TMP/repoK"; newrepo "$REPO"; LEDGER="$(ledger_of "$REPO")"; mkdir -p "$(dirname "$LEDGER")"
 mkdir -p "$REPO/.omakase"                                   # active (overlay present)
 arm(){ mkdir -p "$REPO/.git/hooks"; printf '#!/bin/sh\nlefthook run %s\n' "$1" > "$REPO/.git/hooks/$1"; chmod +x "$REPO/.git/hooks/$1"; }
@@ -123,7 +123,7 @@ for g in gamma alpha beta; do printf '%s\tpre-push\t%s\tpass\t1000\t%s\n' "$T5" 
 OUT="$(notice "$SB")"
 echo "$OUT" | grep -q '3/3 checks at' && pass "a real run after an empty-sha row still announces" || fail "real run masked by empty-sha row ($OUT)"
 
-# gates no longer armed -> 'disabled'
+# gates no longer armed -> 'is not active'
 rm -f "$REPO/.git/hooks/pre-commit"
 OUT="$(notice "$SB")"
 echo "$OUT" | grep -q 'omakase is not active' && pass "no armed hook -> 'is not active'" || fail "not 'is not active' with hooks gone ($OUT)"
