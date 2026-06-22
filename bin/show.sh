@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # omakase-harness show — render the installed (gitignored, invisible) harness as ONE
-# readable map: an inventory of every harness artifact grouped by origin (committed /
-# injected / personal), which git hooks run what, and what is hidden via
-# .git/info/exclude. Read-only. This is the cure for "the install is invisible" — it
-# lets you SEE the whole harness at a glance without committing anything.
+# readable map: the harness files grouped by origin (committed / injected / personal;
+# omakase's own .omakase/ engine is disclosed under Hidden, not listed), which git
+# hooks run what, and what is hidden via .git/info/exclude. Read-only. This is the cure
+# for "the install is invisible" — it lets you SEE the whole harness at a glance without
+# committing anything.
 #
 # Two output modes:
 #   (default)    terminal — ANSI banner box + indented columns, for a real terminal.
@@ -49,8 +50,9 @@ is_drifted() {  # $1 rel, $2 ledger-hash, $3 enabled -> 0 (true) if present & co
 }
 
 # ============================ Inventory (spec §3) ============================
-# Every harness artifact in this repo, grouped by origin: committed by the
-# project, injected from a source (the provenance ledger), personal (~/.claude + ~/.copilot).
+# The harness files grouped by origin: committed by the project, injected from a
+# source (the provenance ledger; omakase's own .omakase/ engine is disclosed under
+# Hidden, not listed), personal (~/.claude + ~/.copilot).
 # No token counts — the host owns context-cost ground truth.
 
 # kind_of() comes from lib-harness-paths.sh (sourced above) — shared with init.sh + import.sh.
