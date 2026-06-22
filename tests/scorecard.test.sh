@@ -219,11 +219,15 @@ OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --markdown 2>&1 )"
 # installed — injected rows come from the provenance ledger with source + kind
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 PLACEDTSV="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)/omakase/placed.tsv"
-awk -F'\t' -v OFS='\t' '$1==".omakase/gates/example.sh"{$5=0} 1' "$PLACEDTSV" > "$PLACEDTSV.tmp" && mv "$PLACEDTSV.tmp" "$PLACEDTSV"
+awk -F'\t' -v OFS='\t' '$1==".claude/settings.json"{$5=0} 1' "$PLACEDTSV" > "$PLACEDTSV.tmp" && mv "$PLACEDTSV.tmp" "$PLACEDTSV"
 OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" 2>&1 )"
 echo "$OUT" | grep -qiF 'Injected (omakase)' && pass "Injected group prints when installed" || fail "no Injected group ($OUT)"
 echo "$OUT" | grep 'lefthook-local\.yml' | grep 'gate' | grep -q 'payload' && pass "injected row carries kind + source value" || fail "injected row missing kind/source ($OUT)"
-echo "$OUT" | grep '\.omakase/gates/example\.sh' | grep -qi 'disabled' && pass "hand-disabled row carries the disabled marker" || fail "disabled marker missing ($OUT)"
+echo "$OUT" | grep '\.claude/settings\.json' | grep -qi 'disabled' && pass "hand-disabled row carries the disabled marker" || fail "disabled marker missing ($OUT)"
+# omakase's own machinery (.omakase/) is not itemised in Injected; scope the absence check
+# to that section (Guards may legitimately name an .omakase/ gate path in the ENFORCES cell).
+INJ="$(echo "$OUT" | awk '/^INJECTED \(omakase\)/{f=1;next} /^PERSONAL \(global\)/{f=0} f')"
+echo "$INJ" | grep -q '\.omakase/' && fail "engine files under .omakase/ leaked into the Injected list" || pass ".omakase/ engine files excluded from the Injected list"
 echo "$OUT" | grep '\.claude/rules/team\.md' | grep -qi 'payload' && fail "committed file leaked into the Injected group" || pass "committed file stays out of Injected"
 echo "$OUT" | grep -qi 'token' && fail "output mentions tokens (explicitly cut from the spec)" || pass "no token counts anywhere (terminal)"
 
@@ -232,7 +236,9 @@ OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --markdown 2>&1 )"
 echo "$OUT" | grep -qiF 'Committed (this repo)' && pass "markdown: Committed group" || fail "markdown missing Committed group"
 echo "$OUT" | grep -qiF 'Injected (omakase)' && pass "markdown: Injected group" || fail "markdown missing Injected group"
 echo "$OUT" | grep -qiF 'Personal (global)' && pass "markdown: Personal group" || fail "markdown missing Personal group"
-echo "$OUT" | grep '\.omakase/gates/example\.sh' | grep -qi 'disabled' && pass "markdown: disabled marker carried" || fail "markdown lost the disabled marker"
+echo "$OUT" | grep '\.claude/settings\.json' | grep -qi 'disabled' && pass "markdown: disabled marker carried" || fail "markdown lost the disabled marker"
+INJ="$(echo "$OUT" | awk '/^### Injected/{f=1;next} /^### /{f=0} f')"
+echo "$INJ" | grep -q '\.omakase/' && fail "markdown: engine files under .omakase/ leaked into the Injected list" || pass "markdown: .omakase/ engine files excluded from the Injected list"
 echo "$OUT" | grep -qi 'token' && fail "markdown mentions tokens" || pass "no token counts anywhere (markdown)"
 
 # an empty Personal group prints (none)

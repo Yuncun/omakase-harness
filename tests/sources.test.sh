@@ -82,7 +82,7 @@ OUT=$(cd "$REPO" && echo x > f.txt && git add f.txt 2>/dev/null; git commit -m t
 # ---------- Scenario S2: show renders the source string ----------
 echo "== Scenario S2: show's Injected group carries the source string =="
 OUT=$( cd "$REPO" && HOME="$FAKEHOME" bash "$SHOW" 2>&1 )
-echo "$OUT" | grep '.omakase/gates/example.sh' | grep -qF "from $SRC" && pass "show renders 'from <source>' on an injected row" || fail "show row missing the source string"
+echo "$OUT" | grep 'rules/style.md' | grep -qF "from $SRC" && pass "show renders 'from <source>' on an injected row" || fail "show row missing the source string"
 
 # ---------- Scenario S3: bare re-run refreshes the remembered source ----------
 echo "== Scenario S3: source commits an update; bare init refreshes it =="
