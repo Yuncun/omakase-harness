@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# omakase-stop-notice — a one-line, end-of-turn status for the developer driving the
-# session. Wired per-repo as a Claude Code Stop hook (.claude/settings.json). Reads the
-# Stop-hook JSON on stdin. Deterministic — no LLM, no API tokens. Never blocks the turn.
+# omakase-stop-notice — a short, end-of-turn status for the developer driving the session.
+# Wired per-repo as a Claude Code Stop hook (.claude/settings.json). Reads the Stop-hook
+# JSON on stdin. Deterministic — no LLM, no API tokens. Never blocks the turn.
 #
 # The states it can show (always the harness's name, no 🍣; detail lives in /omakase show):
-#   <name> enabled ✓                                          harness on, nothing notable
-#   <name> ✓ — Last run: <Hook> · <clock> · 8/8 checks run    a run just finished, all passed
-#   <name> ✗ — Last run: <Hook> · <clock> · 2 checks failed   a run just finished, some failed
-#   <name> disabled                                           overlay present but gates not armed
+#   <name> is active ✓                                        harness deployed and gates armed
+#   <name> is active ✓ / Last run: <Hook> 8/8 checks at <clk> a run just finished, all passed
+#   <name> is active ✓ / Last run: <Hook> 2 checks failed …   a run failed — header stays "active"
+#                                                             (it tracks the harness, not the run)
+#   <name> is not active                                      overlay present but gates not armed
 #   <name> — files missing · /omakase init to update          overlay incomplete in this worktree
 #
 # "Last run" = the most recent hook run (pre-commit OR pre-push), summarised from the
@@ -16,7 +17,7 @@
 # printed, so a relative time would go stale.
 #
 # Stays SILENT unless the state changed: a run finished this turn, the enabled/missing
-# state changed, or it's a new Claude session (so the resting "enabled ✓" shows once per
+# state changed, or it's a new Claude session (so the resting "is active ✓" shows once per
 # session, not every turn). A per-worktree marker (keyed by worktree path) remembers it.
 set -uo pipefail
 
@@ -90,10 +91,10 @@ EOF
   fi
 fi
 
-hookname() { case "$1" in pre-commit) printf 'Pre-commit Gate';; pre-push) printf 'Pre-push Gate';; *) printf '%s' "$1";; esac; }
-clock() { # epoch -> "3:42 PM" (BSD `date -r`, GNU `date -d @`); drop a leading zero hour
-  local e="$1" t; t="$(date -r "$e" '+%I:%M %p' 2>/dev/null)"
-  [ -n "$t" ] || t="$(date -d "@$e" '+%I:%M %p' 2>/dev/null)"; printf '%s' "${t#0}"
+hookname() { case "$1" in pre-commit) printf 'Pre-commit gate';; pre-push) printf 'Pre-push gate';; *) printf '%s' "$1";; esac; }
+clock() { # epoch -> "3:42PM" (BSD `date -r`, GNU `date -d @`); drop a leading zero hour
+  local e="$1" t; t="$(date -r "$e" '+%I:%M%p' 2>/dev/null)"
+  [ -n "$t" ] || t="$(date -d "@$e" '+%I:%M%p' 2>/dev/null)"; printf '%s' "${t#0}"
 }
 
 # marker (per worktree): session, last-seen max epoch, and a status signature that captures
@@ -120,18 +121,24 @@ speak=0
 printf '%s\t%s\t%s\n' "$session" "$maxepoch" "$statusig" > "$marker" 2>/dev/null || true
 [ "$speak" -eq 1 ] || exit 0
 
-# render
+# render — line 1 is the harness's own status: "is active ✓" when gates are armed (deployed),
+# "is not active" when they aren't. It does NOT change on a failed run — a run's result lives
+# only on the "Last run:" line below. The check is the light text ✓ (no colour: a Stop
+# systemMessage can't carry colour codes; there is no X — a failure reads from the words).
 if [ "$armed" -eq 0 ]; then
-  msg="$name disabled"
+  msg="$name is not active"
 elif [ "$ran_this_turn" -eq 1 ] && [ "$ran" -gt 0 ]; then
   hk="$(hookname "$ran_hook")"; tm="$(clock "$runepoch")"
   if [ "$failed" -gt 0 ]; then
-    msg="$name ✗ — Last run: $hk · $tm · $failed checks failed"
+    u=checks; [ "$failed" -eq 1 ] && u=check
+    msg="$name is active ✓
+Last run: $hk $failed $u failed at $tm"
   else
-    msg="$name ✓ — Last run: $hk · $tm · $ran/$ran checks run"
+    msg="$name is active ✓
+Last run: $hk $ran/$ran checks at $tm"
   fi
 else
-  msg="$name enabled ✓"
+  msg="$name is active ✓"
 fi
 [ "$armed" -eq 1 ] && [ -n "$nudge" ] && msg="$msg
 $name — $nudge"
