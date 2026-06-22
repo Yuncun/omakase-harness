@@ -92,9 +92,7 @@ render_inventory() {
   comm="$(committed_list)"
   pers="$(personal_list)"
   if [ "$FORMAT" = md ]; then
-    echo "### Inventory"
-    echo
-    echo "**Committed (this repo)** — tracked harness files"
+    echo "### Committed (this repo) — tracked harness files"
     if [ -n "$comm" ]; then
       printf '%s\n' "$comm" | while IFS= read -r rel; do
         [ -z "$rel" ] && continue
@@ -104,10 +102,13 @@ render_inventory() {
       echo "- _(none)_"
     fi
     echo
-    echo "**Injected (omakase)** — placed by \`/omakase init\`, gitignored"
+    echo "### Injected (omakase) — placed by \`/omakase init\`, gitignored"
     if [ -f "$PLACED" ] && [ -s "$PLACED" ]; then
+      shown=0
       while IFS=$'\t' read -r rel kind src hash enabled; do
         [ -z "$rel" ] && continue
+        case "$rel" in .omakase/*) continue;; esac   # omakase's own engine/gate scripts live here; not listed (active gates show under Guards; .omakase/ is disclosed under Hidden)
+        shown=1
         dz=""; if is_drifted "$rel" "$hash" "$enabled"; then dz=" — **DRIFTED** (differs from canonical; \`/omakase init\` to re-sync, or it may be an intentional local edit)"; fi
         if [ "$enabled" = "0" ]; then
           echo "- \`$rel\` — $kind, from $src — disabled (not restored, not verified)"
@@ -119,11 +120,12 @@ render_inventory() {
           echo "- \`$rel\` — $kind, from $src — **MISSING** (run \`/omakase init\` to restore)"
         fi
       done < "$PLACED"
+      [ "$shown" = "0" ] && echo "- _(none)_"
     else
       echo "- _(none)_"
     fi
     echo
-    echo "**Personal (global)** — Claude ~/.claude + Copilot ~/.copilot, applies to every repo"
+    echo "### Personal (global) — Claude ~/.claude + Copilot ~/.copilot, applies to every repo"
     if [ -n "$pers" ]; then
       printf '%s\n' "$pers" | while IFS=$'\t' read -r rel kind; do
         [ -z "$rel" ] && continue
@@ -133,8 +135,7 @@ render_inventory() {
       echo "- _(none)_"
     fi
   else
-    echo "INVENTORY — every harness artifact in this repo, by origin"
-    echo "  COMMITTED (this repo) — tracked harness files"
+    echo "COMMITTED (this repo) — tracked harness files"
     if [ -n "$comm" ]; then
       printf '%s\n' "$comm" | while IFS= read -r rel; do
         [ -z "$rel" ] && continue
@@ -143,10 +144,13 @@ render_inventory() {
     else
       echo "    (none)"
     fi
-    echo "  INJECTED (omakase) — placed by /omakase init, gitignored"
+    echo "INJECTED (omakase) — placed by /omakase init, gitignored"
     if [ -f "$PLACED" ] && [ -s "$PLACED" ]; then
+      shown=0
       while IFS=$'\t' read -r rel kind src hash enabled; do
         [ -z "$rel" ] && continue
+        case "$rel" in .omakase/*) continue;; esac   # omakase's own engine/gate scripts live here; not listed (active gates show under Guards; .omakase/ is disclosed under Hidden)
+        shown=1
         dz=""; mk="+"; if is_drifted "$rel" "$hash" "$enabled"; then dz="; DRIFTED — differs from canonical, run /omakase init to re-sync"; mk="~"; fi
         if [ "$enabled" = "0" ]; then
           echo "    - $rel   ($kind, from $src; disabled — not restored, not verified)"
@@ -158,10 +162,11 @@ render_inventory() {
           echo "    ! $rel   ($kind, from $src; MISSING — run /omakase init to restore)"
         fi
       done < "$PLACED"
+      [ "$shown" = "0" ] && echo "    (none)"
     else
       echo "    (none)"
     fi
-    echo "  PERSONAL (global) — Claude ~/.claude + Copilot ~/.copilot, applies to every repo"
+    echo "PERSONAL (global) — Claude ~/.claude + Copilot ~/.copilot, applies to every repo"
     if [ -n "$pers" ]; then
       printf '%s\n' "$pers" | while IFS=$'\t' read -r rel kind; do
         [ -z "$rel" ] && continue
