@@ -72,6 +72,11 @@ cp -RL "$SRC/commands" "$WORK/commands"
 cp -RL "$SRC/payload" "$WORK/payload"
 [ -n "$STACK" ] && cp -RL "$STACK/payload/." "$WORK/payload/"
 
+# Prune the junk .gitignore declares non-shippable: cp copies the working tree verbatim,
+# so OS/editor cruft (.DS_Store on macOS, *.bak) would otherwise ride into the dist and
+# then into every adopter repo. Keep the bundle to what the repo considers real source.
+find "$WORK" \( -name .DS_Store -o -name '*.bak' \) -delete
+
 # 3) plugin.json — the stack's own, else the base one.
 if [ -n "$STACK" ] && [ -f "$STACK/plugin.json" ]; then
   cp -L "$STACK/plugin.json" "$WORK/.claude-plugin/plugin.json"

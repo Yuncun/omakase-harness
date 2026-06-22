@@ -65,11 +65,24 @@ if ! BASE="$(resolve_base)"; then
 fi
 
 # Files changed on this branch, merge-base bounded (three-dot) so a file changed
-# only on the base since branch-point does not false-trigger the gate.
-CHANGED="$(git diff --name-only "${BASE}...HEAD" 2>/dev/null || true)"
+# only on the base since branch-point does not false-trigger the gate. If the three-dot
+# range is UNRESOLVABLE (unrelated histories / no merge base -> git fatals instead of
+# returning empty), fall back to a two-dot diff so a range ERROR can't masquerade as
+# "no changes" and silently skip an in-scope push.
+if ! CHANGED="$(git diff --name-only "${BASE}...HEAD" 2>/dev/null)"; then
+  CHANGED="$(git diff --name-only "${BASE}..HEAD" 2>/dev/null || true)"
+fi
+
+# A wired gate (CHECK is set) with no trigger globs is a misconfiguration. An empty
+# OMAKASE_GLOB used to leave `matched` at 0 and silently SKIP (fail-open). Refuse instead.
+if [[ -z "${OMAKASE_GLOB:-}" ]]; then
+  echo "deferred-check[$CHECK]: OMAKASE_GLOB is not set - cannot tell which pushes this gate guards." >&2
+  echo "  Fix: set OMAKASE_GLOB to the trigger paths (e.g. 'src/* lib/*'), or '*' to gate every push." >&2
+  exit 1
+fi
 
 matched=0
-if [[ -n "$CHANGED" && -n "${OMAKASE_GLOB:-}" ]]; then
+if [[ -n "$CHANGED" ]]; then
   # noglob: $OMAKASE_GLOB must word-split into literal case patterns (src/*),
   # NOT pathname-expand against the working tree. Without this, a pattern that
   # matches real files (the common case) expands to those filenames and the

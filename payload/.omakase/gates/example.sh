@@ -6,12 +6,15 @@
 # them in lefthook-local.yml. Exit non-zero to block; exit 0 to allow.
 set -euo pipefail
 
+# A real conflict always writes the <<<<<<< / >>>>>>> pair, each with a trailing ref
+# label, so matching those two is sufficient. We deliberately do NOT match a bare
+# ======= line: that is also a Markdown/RST heading underline and would false-block.
 fail=0
 while IFS= read -r f; do
   [ -f "$f" ] || continue
-  if grep -nE '^(<<<<<<<|=======|>>>>>>>)([[:space:]]|$)' "$f" >/dev/null 2>&1; then
+  if grep -nE '^(<<<<<<<|>>>>>>>)([[:space:]]|$)' "$f" >/dev/null 2>&1; then
     echo "omakase: unresolved merge-conflict marker in $f" >&2
-    grep -nE '^(<<<<<<<|=======|>>>>>>>)([[:space:]]|$)' "$f" | sed 's/^/    /' >&2
+    grep -nE '^(<<<<<<<|>>>>>>>)([[:space:]]|$)' "$f" | sed 's/^/    /' >&2
     fail=1
   fi
 done < <(git diff --cached --name-only --diff-filter=ACM)
