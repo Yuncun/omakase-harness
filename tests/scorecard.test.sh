@@ -3,10 +3,11 @@
 #   - omakase-ledger.sh      : run-ledger recorder; stamps epoch/hook/gate/verdict/ms/SHA
 #   - omakase-statusline.sh  : the CANARY — "<name> is running" where the harness is
 #                              active, dark elsewhere. No verdict, only the 🍣 icon.
-#   - omakase-stop-notice.sh : the Stop-hook ONE-LINER — "<name> enabled ✓" at rest,
-#                              "<name> ✓/✗ — Last run: <Hook> · <clock> · summary" right
-#                              after a run, "<name> disabled" when gates aren't armed, and a
-#                              "files missing · /omakase init" nudge. Detail -> /omakase show.
+#   - omakase-stop-notice.sh : the Stop-hook status — "<name> is active ✓" (light ✓, no colour)
+#                              when gates are armed, plus a "Last run: <Hook> N/N checks at <clk>"
+#                              line after a run (a failure shows there, in words; the header keeps
+#                              "is active ✓"), "<name> is not active" when gates aren't armed, and
+#                              a "files missing · /omakase init" nudge. Detail -> /omakase show.
 #   - bin/show.sh            : /omakase show GUARDS chart (+ --markdown)
 # Ledger lines are TAB-separated (epoch, hook, gate, verdict, ms, sha); assertions use
 # awk, not grep -P (BSD).
@@ -81,18 +82,19 @@ SA=sess-aaa; SB=sess-bbb
 notice(){ printf '{"cwd":"%s","session_id":"%s"}' "$REPO" "$1" | bash "$NOTICE"; }
 
 OUT="$(notice "$SA")"
-echo "$OUT" | grep -q 'omakase enabled ✓' && pass "armed + no runs -> 'enabled ✓'" || fail "no enabled baseline ($OUT)"
+echo "$OUT" | grep -q 'omakase is active ✓' && pass "armed + no runs -> 'is active ✓'" || fail "no active baseline ($OUT)"
 OUT="$(notice "$SA")"; [ -z "$OUT" ] && pass "same session, no change -> silent" || fail "fired with no change ($OUT)"
-OUT="$(notice "$SB")"; echo "$OUT" | grep -q 'enabled ✓' && pass "a new session re-announces the resting state" || fail "no reshow on new session ($OUT)"
+OUT="$(notice "$SB")"; echo "$OUT" | grep -q 'is active ✓' && pass "a new session re-announces the resting state" || fail "no reshow on new session ($OUT)"
 
 # a pre-push run, all three gates pass on HEAD
 T=$(date +%s)
 for g in gamma alpha beta; do printf '%s\tpre-push\t%s\tpass\t1000\t%s\n' "$T" "$g" "$HEAD" >> "$LEDGER"; done
 OUT="$(notice "$SB")"
-echo "$OUT" | grep -q 'Last run: Pre-push Gate' && pass "a run names the hook (Pre-push Gate)" || fail "no hook name ($OUT)"
-echo "$OUT" | grep -q '3/3 checks run' && pass "all-pass -> 'N/N checks run'" || fail "no N/N run summary ($OUT)"
-echo "$OUT" | grep -qE '[0-9]+:[0-9][0-9] [AP]M' && pass "shows a clock time" || fail "no clock time ($OUT)"
-echo "$OUT" | grep -q '✓' && pass "all-pass carries ✓" || fail "no ✓ on a clean run ($OUT)"
+echo "$OUT" | grep -q 'Last run: Pre-push gate' && pass "a run names the hook (Pre-push gate)" || fail "no hook name ($OUT)"
+echo "$OUT" | grep -q '3/3 checks at' && pass "all-pass -> 'N/N checks at <time>'" || fail "no N/N run summary ($OUT)"
+echo "$OUT" | grep -q 'is active ✓' && pass "a clean run keeps the 'is active ✓' header" || fail "no active header on a clean run ($OUT)"
+echo "$OUT" | grep -qE '[0-9]+:[0-9][0-9][AP]M' && pass "shows a clock time" || fail "no clock time ($OUT)"
+echo "$OUT" | grep -q '✓' && pass "the header carries the light ✓" || fail "no ✓ on a clean run ($OUT)"
 OUT="$(notice "$SB")"; [ -z "$OUT" ] && pass "after a run, no new run -> silent" || fail "re-fired after a run ($OUT)"
 
 # a later run with a failure: beta fails (gamma/alpha still pass)
@@ -100,15 +102,16 @@ T2=$((T + 5))
 for g in gamma alpha; do printf '%s\tpre-push\t%s\tpass\t1000\t%s\n' "$T2" "$g" "$HEAD" >> "$LEDGER"; done
 printf '%s\tpre-push\tbeta\tfail\t1000\t%s\n' "$T2" "$HEAD" >> "$LEDGER"
 OUT="$(notice "$SB")"
-echo "$OUT" | grep -q '✗' && pass "a failure carries ✗" || fail "no ✗ on failure ($OUT)"
-echo "$OUT" | grep -q '1 checks failed' && pass "failure -> count failed (not a fraction)" || fail "no failure count ($OUT)"
-echo "$OUT" | grep -q 'checks run' && fail "failure line should not say 'checks run'" || pass "failure line drops the run fraction"
+echo "$OUT" | grep -q 'omakase is active ✓' && pass "a failed run keeps the 'is active ✓' header" || fail "failed run changed the header ($OUT)"
+echo "$OUT" | grep -qE '✗|❌|✖' && fail "a failed run must not show an X glyph" || pass "no X on a failed run"
+echo "$OUT" | grep -q '1 check failed' && pass "failure -> count failed (singular, not a fraction)" || fail "no failure count ($OUT)"
+echo "$OUT" | grep -qE '[0-9]+/[0-9]+' && fail "failure line should not show a pass fraction" || pass "failure line drops the run fraction"
 
 # fail-then-fixed on the SAME commit: beta passes again -> back to all green (latest verdict wins)
 T3=$((T2 + 5))
 printf '%s\tpre-push\tbeta\tpass\t1000\t%s\n' "$T3" "$HEAD" >> "$LEDGER"
 OUT="$(notice "$SB")"
-echo "$OUT" | grep -q '3/3 checks run' && pass "fail-then-fixed counts as passed (latest verdict per gate)" || fail "fixed gate not re-counted ($OUT)"
+echo "$OUT" | grep -q '3/3 checks at' && pass "fail-then-fixed counts as passed (latest verdict per gate)" || fail "fixed gate not re-counted ($OUT)"
 
 # an empty-sha row (omakase-ledger writes one when HEAD is unborn — e.g. the first commit's
 # pre-commit) must NOT become "the last run" and mask a later real run
@@ -118,13 +121,13 @@ OUT="$(notice "$SB")"; [ -z "$OUT" ] && pass "empty-sha row alone -> silent (not
 T5=$((T4 + 5))
 for g in gamma alpha beta; do printf '%s\tpre-push\t%s\tpass\t1000\t%s\n' "$T5" "$g" "$HEAD" >> "$LEDGER"; done
 OUT="$(notice "$SB")"
-echo "$OUT" | grep -q '3/3 checks run' && pass "a real run after an empty-sha row still announces" || fail "real run masked by empty-sha row ($OUT)"
+echo "$OUT" | grep -q '3/3 checks at' && pass "a real run after an empty-sha row still announces" || fail "real run masked by empty-sha row ($OUT)"
 
 # gates no longer armed -> 'disabled'
 rm -f "$REPO/.git/hooks/pre-commit"
 OUT="$(notice "$SB")"
-echo "$OUT" | grep -q 'omakase disabled' && pass "no armed hook -> 'disabled'" || fail "not disabled with hooks gone ($OUT)"
-printf '%s' "$OUT" | grep -q '✓' && fail "disabled should carry no ✓" || pass "disabled has no glyph"
+echo "$OUT" | grep -q 'omakase is not active' && pass "no armed hook -> 'is not active'" || fail "not 'is not active' with hooks gone ($OUT)"
+printf '%s' "$OUT" | grep -qE '✓|✗|✅|❌' && fail "'is not active' should carry no glyph" || pass "'is not active' has no glyph"
 
 # re-armed, but an enabled placed file is missing -> re-init nudge
 arm pre-commit
