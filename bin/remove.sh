@@ -51,14 +51,21 @@ delete_placed() {  # $1 = repo-relative path
 }
 LEDGER="$COMMON/omakase/placed.tsv"
 if [ -f "$LEDGER" ]; then
-  while IFS=$'\t' read -r rel kind src hash enabled; do
+  while IFS=$'\t' read -r rel kind src hash enabled || [ -n "$rel" ]; do
     [ -z "$rel" ] && continue
     delete_placed "$rel"
   done < "$LEDGER"
-else
+elif { [ -f "$EXCLUDE" ] && grep -qF "$BEGIN" "$EXCLUDE"; } || [ -d "$COMMON/omakase" ]; then
+  # No ledger (a pre-0.10 install) but omakase WAS installed here — fall back to enumerating
+  # the payload. The install-proof sentinel (init always writes the exclude block; a leftover
+  # snapshot dir also counts) is REQUIRED: without it this fallback deletes the user's own
+  # untracked files in a repo that merely shares a payload filename (e.g. .claude/settings.json).
   while IFS= read -r -d '' f; do
     delete_placed "${f#"$PAYLOAD"/}"
   done < <(find "$PAYLOAD" \( -type f -o -type l \) -print0)  # -type l: also enumerate symlinks init.sh placed
+else
+  echo "omakase: nothing installed here; nothing to remove." >&2
+  exit 0
 fi
 
 # Remove the auto-created skeleton lefthook.yml if it is untracked and is lefthook's default banner.

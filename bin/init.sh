@@ -293,6 +293,12 @@ same_file() {
 }
 place_file() {  # $1 = source payload path, $2 = relative dest
   mkdir -p "$ROOT/$(dirname "$2")"
+  # Unlink a non-directory dest first. Bare `cp -P` FOLLOWS an existing dest symlink and
+  # writes through it to the link's TARGET — clobbering an out-of-tree file and leaving the
+  # placed path a stale symlink — and a DANGLING dest symlink makes `cp -P` fail outright
+  # (aborting the whole install under set -e). The place loop has already decided this dest
+  # should be (re)written, so removing it first is safe. `[ -d ]` guard: don't rm a dir.
+  [ -d "$ROOT/$2" ] || rm -f "$ROOT/$2"
   cp -P "$1" "$ROOT/$2"   # -P: carry symlinks as symlinks (e.g. CLAUDE.md -> AGENTS.md)
   case "$2" in *.sh) [ -L "$ROOT/$2" ] || chmod +x "$ROOT/$2";; esac
 }
@@ -521,7 +527,10 @@ LEDGER="$COMMON/omakase/placed.tsv"   # provenance ledger: path,kind,source,sha2
 [ -f "$LEDGER" ] || exit 0   # harness not installed -> nothing to verify
 TAB="$(printf '\t')"
 missing=0
-while IFS="$TAB" read -r rel kind src hash enabled; do
+# `|| [ -n "$rel" ]`: process a final row lacking a trailing newline (matches ensure-present).
+# A truncated/corrupt ledger is exactly the damaged-overlay case this guard exists to catch, so
+# it must not silently drop its LAST gate and fail OPEN for it.
+while IFS="$TAB" read -r rel kind src hash enabled || [ -n "$rel" ]; do
   [ -z "$rel" ] && continue
   [ "$enabled" = "1" ] || continue   # disabled artifacts are deliberately absent — never block on them
   [ -e "$ROOT/$rel" ] || [ -L "$ROOT/$rel" ] && continue
