@@ -20,11 +20,15 @@ it is skipped and reported.
   --source <git-url|path>
                pull a harness SOURCE — a git repo carrying a payload/ tree plus an
                omakase.manifest (flat key: value; name required, version + recommends optional) —
-               into a local cache (${XDG_CACHE_HOME:-~/.cache}/omakase/sources) and
-               inject its payload. The source is remembered; a later bare init.sh
-               refreshes and re-injects the same source.
+               into a local cache (${XDG_CACHE_HOME:-~/.cache}/omakase/sources) and inject
+               the engine base payload with the source's payload layered ON TOP (base
+               machinery underneath, source wins on overlap), so a source ships only its
+               delta and relies on base machinery without vendoring it. The source is
+               remembered; a later bare init.sh refreshes and re-injects the same source.
   --cut-over   also untrack (git rm --cached) every payload path the repo currently
-               commits, so the injected copies take over. This STAGES DELETIONS of
+               commits, so the injected copies take over. With --source this is the MERGED
+               base+source set, not only the source delta (a --source install equals a
+               built bundle). This STAGES DELETIONS of
                shared files; the next commit applies them for everyone. It prints
                exactly what it will untrack and the consequences, then REFUSES
                unless OMAKASE_CUTOVER_CONFIRM=1 is set. You review and commit the
@@ -46,6 +50,15 @@ while [ $# -gt 0 ]; do
 done
 # TSV column safety: the source string is recorded verbatim in the TAB-separated ledger.
 case "$SOURCE" in *$'\t'*|*$'\n'*) echo "omakase: --source must not contain a tab or newline" >&2; exit 2;; esac
+
+# A --source install merges the engine base payload under the source delta into a temp
+# staging dir (built below). Clean it on ANY exit so a failure never leaks scratch.
+MERGED=""
+# return 0 unconditionally: an EXIT trap's last status becomes the script's exit code,
+# so a bare `[ -n "$MERGED" ]` failing (MERGED empty on a non-source install) must not
+# turn a clean run into a non-zero exit.
+cleanup() { [ -n "$MERGED" ] && rm -rf "$MERGED"; return 0; }
+trap cleanup EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "omakase: not inside a git repo" >&2; exit 1; }
@@ -119,8 +132,47 @@ fi
 # or worktree.
 if [ -n "$SOURCE" ] && [ -d "$SOURCE" ]; then SOURCE="$(cd "$SOURCE" && pwd)"; fi
 if [ -n "$SOURCE" ]; then
-  fetch_source "$SOURCE"
+  fetch_source "$SOURCE"   # sets PAYLOAD to the cached source payload/
   SOURCE_LABEL="$SOURCE"
+  # Layer the engine base payload UNDER the source delta, so a source can RELY on base
+  # machinery (banner / ledger / record / deferred-check / status-line / stop-notice)
+  # without vendoring its own copy. This mirrors tools/build.sh (base payload, then the
+  # stack delta on top — stack wins): a --source install equals a built bundle, merged at
+  # inject time instead of build time. cp -RP PRESERVES symlinks (a payload may ship e.g.
+  # CLAUDE.md -> AGENTS.md), which the symlink-aware place loop below carries through.
+  base_payload="$(cd "$SCRIPT_DIR/../payload" && pwd)"
+  MERGED="$(mktemp -d "${TMPDIR:-/tmp}/omakase-merge.XXXXXX")" \
+    || { echo "omakase: could not create a temp dir to merge the base + source payload" >&2; exit 1; }
+  cp -RP "$base_payload/." "$MERGED/" \
+    || { echo "omakase: failed to copy the base payload into the merge staging dir" >&2; exit 1; }
+  # Overlay the source delta with REPLACE semantics — rm the staging dest, THEN copy — one
+  # file at a time, NOT a bulk `cp -RP "$PAYLOAD/." "$MERGED/"`. A bulk copy writes THROUGH a
+  # base symlink sitting at the same path (following the link and clobbering its target,
+  # leaving base's symlink in place) instead of letting the source win. The rm-first mirrors
+  # place_file() below; cp -P carries a source symlink across as a symlink (e.g. CLAUDE.md ->
+  # AGENTS.md). The per-file error names the path that collided (e.g. a dir-vs-file clash).
+  while IFS= read -r -d '' f; do
+    rel="${f#"$PAYLOAD"/}"
+    mkdir -p "$MERGED/$(dirname "$rel")" && rm -rf "$MERGED/$rel" && cp -P "$f" "$MERGED/$rel" \
+      || { echo "omakase: failed to overlay source payload file '$rel' onto the base payload" >&2; exit 1; }
+  done < <(find "$PAYLOAD" \( -type f -o -type l \) -print0)
+  PAYLOAD="$MERGED"
+  # Fail-closed wiring guard (mirrors tools/build.sh): every .omakase/*.sh the MERGED hook
+  # wiring references must exist in the merged payload. A source that wires a script neither
+  # it nor the engine ships would otherwise die at commit time with a cryptic exit 127 —
+  # refuse here, before anything is placed.
+  wiring="$MERGED/lefthook-local.yml"
+  if [ -f "$wiring" ]; then
+    missing=""
+    for ref in $(grep -oE '\.omakase/[A-Za-z0-9._/-]+\.sh' "$wiring" | sort -u); do
+      [ -f "$MERGED/$ref" ] || missing="$missing $ref"
+    done
+    if [ -n "$missing" ]; then
+      echo "omakase: source '$SOURCE' hook wiring references script(s) neither it nor the engine ships:$missing" >&2
+      echo "  These would fail at commit time (exit 127). Fix the source's lefthook-local.yml or ship the script(s). Nothing was placed." >&2
+      exit 1
+    fi
+  fi
 else
   PAYLOAD="${OMAKASE_PAYLOAD:-$(cd "$SCRIPT_DIR/../payload" && pwd)}"
 fi

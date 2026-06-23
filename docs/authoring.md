@@ -1,9 +1,18 @@
 # Authoring a harness
 
-A harness is a git repository with a `payload/` tree. `payload/` is copied verbatim into
-a target on install; everything else in the repo (README, tests, `bin/`) stays in the
-harness. To install a harness from a URL or path with `--source`, it also needs an
-`omakase.manifest` at the root (see [Reference](reference.md#manifest)).
+A harness is a git repository with a `payload/` tree. `payload/` is copied onto a target on
+install; everything else in the repo (README, tests, `bin/`) stays in the harness. To install
+a harness from a URL or path with `--source`, it also needs an `omakase.manifest` at the root
+(see [Reference](reference.md#manifest)).
+
+A `--source` install layers the engine **base payload** under your `payload/` (your delta
+wins on overlap), so you ship only your delta and **rely on base machinery without vendoring
+it** — the banner, the `omakase-ledger.sh` scorecard wrapper, the `omakase-record.sh` recorder,
+the `deferred-check.sh` push gate, the status-line and stop-notice scripts are all provided by
+the engine. Wire them in `payload/lefthook-local.yml` and ship only your own gates. (This is
+the same base+delta merge `tools/build.sh` bakes into a plugin bundle, performed at install
+time instead.) If your wiring references a `.omakase/*.sh` neither you nor the engine ships,
+`init` refuses and places nothing — so a typo surfaces at install, not as an exit-127 on commit.
 
 Start from this repo or an existing harness, edit `payload/`, and publish. To capture the
 harness already living inside a project, run `bin/import.sh /path/to/project`, which reads

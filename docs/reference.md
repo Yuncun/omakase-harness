@@ -10,8 +10,12 @@ installed (untracked) file to match payload and warns. Removes a previously plac
 the payload no longer ships, unless it was edited locally.
 
 - `--source <git-url|path>` — install from a harness source (a `payload/` tree plus an
-  `omakase.manifest`) instead of the local or plugin payload. The source is remembered; a
-  later bare `init` refreshes and reinstalls it.
+  `omakase.manifest`). The engine base payload is layered UNDER the source's payload (base
+  machinery underneath, the source delta winning on overlap), so a source ships only its
+  delta and relies on base machinery without vendoring it — the same base+delta merge
+  `tools/build.sh` bakes into a bundle, done at install time. Refuses (placing nothing) if
+  the merged hook wiring references a `.omakase/*.sh` script neither side ships. The source
+  is remembered; a later bare `init` refreshes and reinstalls it.
 - `--cut-over` — also untrack (`git rm --cached`) every payload path the repo currently
   tracks, so the installed copy takes over. Guarded: refuses without
   `OMAKASE_CUTOVER_CONFIRM=1`.
