@@ -216,6 +216,10 @@ printf 'name: needs-base\nversion: 0.1.0\n' > "$SRC6/omakase.manifest"
 ( cd "$SRC6" && git add -A && git commit -q -m harness )
 SRC6="$(cd "$SRC6" && pwd)"
 newrepo "$REPO6"
+# Scope TMPDIR to this run so the merge-staging leak check below can't false-fail on a stale
+# or concurrent omakase-merge.* dir in the shared system /tmp. init.sh's mktemp honors TMPDIR,
+# so this exercises the same staging + EXIT-cleanup path, just inside our own scratch.
+export TMPDIR="$TMP/merge-tmp"; mkdir -p "$TMPDIR"
 ( cd "$REPO6" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$SRC6" ) >/dev/null 2>&1
 # base machinery the source did NOT ship is present (layered from the engine base payload)
 [ -x "$REPO6/.omakase/bin/omakase-banner.sh" ] && pass "base banner layered in (source did not ship it)" || fail "base banner missing — base payload not layered under source"
@@ -225,7 +229,7 @@ newrepo "$REPO6"
 [ -x "$REPO6/.omakase/gates/discipline.sh" ] && pass "source's own gate placed" || fail "source gate missing"
 grep -q 'SOURCE-OVERRODE-EXAMPLE' "$REPO6/.omakase/gates/example.sh" 2>/dev/null && pass "source wins over a base file at the same path (replace semantics, no write-through)" || fail "base file won over the source on overlap (merge write-through?)"
 { [ -L "$REPO6/CLAUDE.md" ] && [ "$(readlink "$REPO6/CLAUDE.md")" = "AGENTS.md" ]; } && pass "source symlink preserved through the merge (CLAUDE.md -> AGENTS.md)" || fail "source symlink not preserved by the merge loop"
-[ -z "$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'omakase-merge.*' 2>/dev/null)" ] && pass "merge staging dir cleaned on exit (no scratch leak)" || fail "merge staging dir leaked in ${TMPDIR:-/tmp}"
+[ -z "$(find "$TMPDIR" -maxdepth 1 -name 'omakase-merge.*' 2>/dev/null)" ] && pass "merge staging dir cleaned on exit (no scratch leak)" || fail "merge staging dir leaked in $TMPDIR"
 # the source's lefthook WINS over the base's (it is the overlay)
 grep -q 'source-discipline' "$REPO6/lefthook-local.yml" 2>/dev/null && pass "source lefthook-local.yml overlays the base one" || fail "source wiring did not win"
 COMMON6="$(cd "$REPO6" && cd "$(git rev-parse --git-common-dir)" && pwd)"
@@ -261,6 +265,38 @@ ERR=$( cd "$REPO7" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" 
 echo "$ERR" | grep -q 'this-script-does-not-exist.sh' && pass "refusal names the missing script" || fail "refusal does not name the script ($ERR)"
 { [ ! -e "$REPO7/.omakase" ] && [ -z "$(cd "$REPO7" && git status --porcelain)" ]; } && pass "nothing placed on wiring refusal" || fail "wiring refusal left artifacts behind"
 grep -q 'omakase-harness' "$REPO7/.git/info/exclude" 2>/dev/null && fail "wiring refusal wrote the exclude block" || pass "no exclude block on wiring refusal"
+
+# ---------- Scenario S8: a COMMENTED-OUT wiring reference is ignored, not a false refusal ----------
+# The wiring guard greps the merged lefthook-local.yml; it must strip YAML '#' comments first, or a
+# commented-out breadcrumb referencing a script the source doesn't ship (the pattern the base
+# payload's own wiring uses for its templates) would trip a fail-closed refusal for a dead line.
+echo "== Scenario S8: a commented-out wiring reference is ignored, not refused =="
+SRC8="$TMP/src-commented-wiring"; REPO8="$TMP/repoS8"
+rm -rf "$SRC8"; mkdir -p "$SRC8/payload/.omakase/gates"
+( cd "$SRC8" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
+cat > "$SRC8/payload/.omakase/gates/live.sh" <<'SH'
+#!/usr/bin/env bash
+echo live; exit 0
+SH
+# the LIVE gate is shipped; the gate referenced in the COMMENT (legacy-removed.sh) is NOT — and must
+# not be treated as a live requirement.
+cat > "$SRC8/payload/lefthook-local.yml" <<'YML'
+pre-commit:
+  jobs:
+    # Old gate, replaced by 'live' below — left as a breadcrumb:
+    # - run: bash .omakase/gates/legacy-removed.sh
+    - name: live
+      run: bash .omakase/gates/live.sh
+YML
+printf 'name: commented-wiring\n' > "$SRC8/omakase.manifest"
+( cd "$SRC8" && git add -A && git commit -q -m m )
+SRC8="$(cd "$SRC8" && pwd)"
+newrepo "$REPO8"
+OUT8=$( cd "$REPO8" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$SRC8" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] && pass "commented-out wiring reference did not cause a refusal (install succeeded)" || { fail "commented-out reference tripped the wiring guard (rc=$rc)"; echo "$OUT8" | sed 's/^/      /'; }
+echo "$OUT8" | grep -q 'legacy-removed.sh' && fail "guard named a commented-out script" || pass "guard ignored the commented-out script"
+[ -x "$REPO8/.omakase/gates/live.sh" ] && pass "source's live gate placed" || fail "live gate missing"
+( cd "$REPO8" && bash "$REMOVE" ) >/dev/null 2>&1
 
 rm -rf "$TMP"
 echo ""

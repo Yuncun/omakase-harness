@@ -164,7 +164,10 @@ if [ -n "$SOURCE" ]; then
   wiring="$MERGED/lefthook-local.yml"
   if [ -f "$wiring" ]; then
     missing=""
-    for ref in $(grep -oE '\.omakase/[A-Za-z0-9._/-]+\.sh' "$wiring" | sort -u); do
+    # Strip YAML '#' comments first: a commented-out wiring breadcrumb — a pattern the base
+    # payload's own lefthook-local.yml uses for templates — must not trip a fail-closed
+    # refusal for a script it deliberately does not ship.
+    for ref in $(sed 's/#.*//' "$wiring" | grep -oE '\.omakase/[A-Za-z0-9._/-]+\.sh' | sort -u); do
       [ -f "$MERGED/$ref" ] || missing="$missing $ref"
     done
     if [ -n "$missing" ]; then

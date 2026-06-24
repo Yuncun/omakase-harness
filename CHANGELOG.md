@@ -16,8 +16,10 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   payload and relies on base machinery — the banner, `omakase-ledger.sh`, `omakase-record.sh`,
   `deferred-check.sh`, the status-line and stop-notice scripts — without vendoring a copy. This
   mirrors the base+delta merge `tools/build.sh` bakes into a plugin bundle, performed at install
-  time instead; a `--source` install and a built bundle now place an identical file set. Symlinks
-  in either layer are preserved. Covered by `tests/sources.test.sh` (S6).
+  time instead; for a symlink-free source a `--source` install and a built bundle place a
+  byte-identical file set (verified against `omakase-android`). They diverge only on symlinks:
+  `--source` preserves them, a built bundle dereferences them into real files. Covered by
+  `tests/sources.test.sh` (S6).
 - `--source` fails closed if the merged hook wiring references a `.omakase/*.sh` script neither
   the source nor the engine ships — refusing at install (placing nothing) instead of dying with a
   cryptic exit-127 at commit time (the same wiring guard `tools/build.sh` applies to a bundle).
