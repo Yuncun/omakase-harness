@@ -91,7 +91,9 @@ fi
 WIRING="$WORK/payload/lefthook-local.yml"
 if [ -f "$WIRING" ]; then
   MISSING=""
-  for ref in $(grep -oE '\.omakase/[A-Za-z0-9._/-]+\.sh' "$WIRING" | sort -u); do
+  # Strip YAML '#' comments first (mirror bin/init.sh): a commented-out wiring breadcrumb
+  # must not be treated as a live requirement.
+  for ref in $(sed 's/#.*//' "$WIRING" | grep -oE '\.omakase/[A-Za-z0-9._/-]+\.sh' | sort -u); do
     [ -f "$WORK/payload/$ref" ] || MISSING="$MISSING $ref"
   done
   if [ -n "$MISSING" ]; then

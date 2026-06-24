@@ -27,7 +27,7 @@ With a source — `/omakase init <git-url-or-local-path>`:
 bash "${CLAUDE_PLUGIN_ROOT}/bin/init.sh" --source "<git-url-or-local-path>"
 ```
 
-`--source` pulls a harness SOURCE (a git repo with a `payload/` tree plus an `omakase.manifest`) into a local cache and injects its payload instead of the plugin's. The source is remembered: a later bare `/omakase init` refreshes and re-injects it. If the script refuses the source (no `payload/`, no `omakase.manifest`), relay the error verbatim — nothing was changed.
+`--source` pulls a harness SOURCE (a git repo with a `payload/` tree plus an `omakase.manifest`) into a local cache and injects the engine base payload with the source's payload layered on top — base machinery (banner, ledger, deferred-check, …) underneath, the source's delta winning on overlap — so a source ships only its delta and never vendors the engine. The source is remembered: a later bare `/omakase init` refreshes and re-injects it. If the script refuses the source (no `payload/`, no `omakase.manifest`, or merged hook wiring that references a `.omakase/*.sh` script neither side ships), relay the error verbatim — nothing was changed.
 
 The manifest is flat `key: value` (`name:` required; `version:` and `recommends:` optional). If a source declares `recommends:` (free text — e.g. companion plugins the harness pairs with), init prints it once at install (`omakase: this harness recommends — …`); relay it so the user can act on it. Init also prints how to customize: editing injected files in place is overwritten on re-init, so the supported path is forking the source (clone → edit → publish) and init-ing from the copy. Surface that if the user asks how to change the harness.
 
