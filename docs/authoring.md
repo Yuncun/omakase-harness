@@ -8,8 +8,8 @@ a harness from a URL or path with `--source`, it also needs an `omakase.manifest
 A `--source` install layers the engine **base payload** under your `payload/` (your delta
 wins on overlap), so you ship only your delta and **rely on base machinery without vendoring
 it** — the banner, the `omakase-ledger.sh` scorecard wrapper, the `omakase-record.sh` recorder,
-the `deferred-check.sh` push gate, the status-line and stop-notice scripts are all provided by
-the engine. Wire them in `payload/lefthook-local.yml` and ship only your own gates. (This is
+and the `deferred-check.sh` push gate are all provided by the engine. Wire them in
+`payload/lefthook-local.yml` and ship only your own gates. (This is
 the same base+delta merge `tools/build.sh` bakes into a plugin bundle, performed at install
 time instead.) If your wiring references a `.omakase/*.sh` neither you nor the engine ships,
 `init` refuses and places nothing — so a typo surfaces at install, not as an exit-127 on commit.
