@@ -9,7 +9,7 @@
 # omakase itself is host-agnostic: it injects whatever a payload contains and never branches
 # on "which agent." This table is the ONLY place that encodes a specific agent's on-disk
 # layout, and it encodes them all at once — there is no per-host mode. Supporting another
-# agent (Cursor, Gemini, …) = add its rows below; nothing else in the engine changes.
+# agent (Cursor, Gemini, …) = add its rows below; nothing else in the base harness changes.
 #
 #   Claude Code        : .claude/{rules,skills,commands,agents,hooks}, .claude/settings*.json, CLAUDE.md, AGENTS.md
 #   GitHub Copilot CLI : .github/{skills,instructions,prompts,chatmodes,hooks}, .github/copilot-instructions.md

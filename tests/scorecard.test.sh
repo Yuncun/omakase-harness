@@ -235,7 +235,7 @@ echo "$OUT" | grep '\.claude/settings\.json' | grep -qi 'disabled' && pass "hand
 # omakase's own machinery (.omakase/) is not itemised in Injected; scope the absence check
 # to that section (Guards may legitimately name an .omakase/ gate path in the ENFORCES cell).
 INJ="$(echo "$OUT" | awk '/^INJECTED \(omakase\)/{f=1;next} /^PERSONAL \(global\)/{f=0} f')"
-echo "$INJ" | grep -q '\.omakase/' && fail "engine files under .omakase/ leaked into the Injected list" || pass ".omakase/ engine files excluded from the Injected list"
+echo "$INJ" | grep -q '\.omakase/' && fail "machinery files under .omakase/ leaked into the Injected list" || pass ".omakase/ machinery files excluded from the Injected list"
 echo "$OUT" | grep '\.claude/rules/team\.md' | grep -qi 'payload' && fail "committed file leaked into the Injected group" || pass "committed file stays out of Injected"
 echo "$OUT" | grep -qi 'token' && fail "output mentions tokens (explicitly cut from the spec)" || pass "no token counts anywhere (terminal)"
 
@@ -246,7 +246,7 @@ echo "$OUT" | grep -qiF 'Injected (omakase)' && pass "markdown: Injected group" 
 echo "$OUT" | grep -qiF 'Personal (global)' && pass "markdown: Personal group" || fail "markdown missing Personal group"
 echo "$OUT" | grep '\.claude/settings\.json' | grep -qi 'disabled' && pass "markdown: disabled marker carried" || fail "markdown lost the disabled marker"
 INJ="$(echo "$OUT" | awk '/^### Injected/{f=1;next} /^### /{f=0} f')"
-echo "$INJ" | grep -q '\.omakase/' && fail "markdown: engine files under .omakase/ leaked into the Injected list" || pass "markdown: .omakase/ engine files excluded from the Injected list"
+echo "$INJ" | grep -q '\.omakase/' && fail "markdown: machinery files under .omakase/ leaked into the Injected list" || pass "markdown: .omakase/ machinery files excluded from the Injected list"
 echo "$OUT" | grep -qi 'token' && fail "markdown mentions tokens" || pass "no token counts anywhere (markdown)"
 
 # an empty Personal group prints (none)

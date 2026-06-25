@@ -75,7 +75,7 @@ OUT=$(cd "$REPO" && echo x > g.txt && git add g.txt 2>/dev/null; git commit -m t
 # A fresh worktree has none of the gitignored harness files. init.sh snapshots the
 # placed files into the shared git dir; the post-checkout job copies the MISSING
 # ones into each worktree, never overwriting a local edit. (.worktreeinclude — the
-# Claude-Code-native copy — can't be exercised from bash; tested live in pixterm.)
+# Claude-Code-native copy — can't be exercised from bash; tested live in a real project.)
 echo "== Scenario C: worktree auto-install =="
 PAY="$TMP/payloadC"; REPO="$TMP/repoC"
 mkpayload "$PAY"; newrepo "$REPO"

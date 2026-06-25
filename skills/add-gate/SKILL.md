@@ -5,8 +5,8 @@ description: Wire a tool, skill, or check to run on a git hook as an omakase gat
 
 # /add-gate — attach a tool to a git hook
 
-You are editing a **harness source** (a clone of omakase-harness or a fork like
-omakase-android), adding a gate to its `payload/`. You are NOT editing an installed
+You are editing a **custom harness** (a clone of omakase-harness or your own harness
+repo), adding a gate to its `payload/`. You are NOT editing an installed
 overlay — edits to an injected copy are overwritten on the next `init`. Confirm you are in
 the harness repo (it has `payload/` and `omakase.manifest`); if you are in an adopter repo,
 stop and switch to the harness clone first.
@@ -127,11 +127,11 @@ should trip the gate and one that shouldn't:
 
 ```bash
 cd "$(mktemp -d)" && git init -q && git commit -q --allow-empty -m init
-OMAKASE_PAYLOAD=<your>/payload bash <engine>/bin/init.sh
+OMAKASE_PAYLOAD=<your>/payload bash <base-harness>/bin/init.sh
 # gate: stage a violating file, attempt commit, see it block, fix, see it pass.
 # deferred gate: touch a file matching OMAKASE_GLOB, attempt push -> blocked (no record);
 #   run the job (records the result); attempt push -> allowed.
-OMAKASE_PAYLOAD=<your>/payload bash <engine>/bin/remove.sh    # reset
+OMAKASE_PAYLOAD=<your>/payload bash <base-harness>/bin/remove.sh    # reset
 ```
 
 Then, if the harness lists its gates in a guard table (README / docs), add the new one there;
@@ -142,4 +142,4 @@ and for `--source` harnesses, leave `omakase.manifest` alone unless the gate nee
 
 - [authoring.md](../../docs/authoring.md) — "Adding a gate", "Wrapping a third-party check".
 - [concepts.md](../../docs/concepts.md) — gates and deferred gates, owned vs shared dirs.
-- Worked examples in omakase-android: `visual-verify` (deferred gate, blocks on failure) and `review-verify` (deferred gate, proof-it-ran).
+- Worked-example shapes: a deferred gate that blocks on failure, and a deferred gate that just records proof it ran.

@@ -21,9 +21,9 @@ it is skipped and reported.
                pull a harness SOURCE — a git repo carrying a payload/ tree plus an
                omakase.manifest (flat key: value; name required, version + recommends optional) —
                into a local cache (${XDG_CACHE_HOME:-~/.cache}/omakase/sources) and inject
-               the engine base payload with the source's payload layered ON TOP (base
+               the base harness's payload with the source's payload layered ON TOP (base
                machinery underneath, source wins on overlap), so a source ships only its
-               delta and relies on base machinery without vendoring it. The source is
+               delta and relies on base machinery without keeping its own copy. The source is
                remembered; a later bare init.sh refreshes and re-injects the same source.
   --cut-over   also untrack (git rm --cached) every payload path the repo currently
                commits, so the injected copies take over. With --source this is the MERGED
@@ -51,7 +51,7 @@ done
 # TSV column safety: the source string is recorded verbatim in the TAB-separated ledger.
 case "$SOURCE" in *$'\t'*|*$'\n'*) echo "omakase: --source must not contain a tab or newline" >&2; exit 2;; esac
 
-# A --source install merges the engine base payload under the source delta into a temp
+# A --source install merges the base harness's payload under the source delta into a temp
 # staging dir (built below). Clean it on ANY exit so a failure never leaks scratch.
 MERGED=""
 # return 0 unconditionally: an EXIT trap's last status becomes the script's exit code,
@@ -134,9 +134,9 @@ if [ -n "$SOURCE" ] && [ -d "$SOURCE" ]; then SOURCE="$(cd "$SOURCE" && pwd)"; f
 if [ -n "$SOURCE" ]; then
   fetch_source "$SOURCE"   # sets PAYLOAD to the cached source payload/
   SOURCE_LABEL="$SOURCE"
-  # Layer the engine base payload UNDER the source delta, so a source can RELY on base
+  # Layer the base harness's payload UNDER the source delta, so a source can RELY on base
   # machinery (banner / ledger / record / deferred-check / status-line / stop-notice)
-  # without vendoring its own copy. This mirrors tools/build.sh (base payload, then the
+  # without keeping its own copy. This mirrors tools/build.sh (base payload, then the
   # stack delta on top — stack wins): a --source install equals a built bundle, merged at
   # inject time instead of build time. cp -RP PRESERVES symlinks (a payload may ship e.g.
   # CLAUDE.md -> AGENTS.md), which the symlink-aware place loop below carries through.
@@ -159,7 +159,7 @@ if [ -n "$SOURCE" ]; then
   PAYLOAD="$MERGED"
   # Fail-closed wiring guard (mirrors tools/build.sh): every .omakase/*.sh the MERGED hook
   # wiring references must exist in the merged payload. A source that wires a script neither
-  # it nor the engine ships would otherwise die at commit time with a cryptic exit 127 —
+  # it nor the base harness ships would otherwise die at commit time with a cryptic exit 127 —
   # refuse here, before anything is placed.
   wiring="$MERGED/lefthook-local.yml"
   if [ -f "$wiring" ]; then
@@ -171,7 +171,7 @@ if [ -n "$SOURCE" ]; then
       [ -f "$MERGED/$ref" ] || missing="$missing $ref"
     done
     if [ -n "$missing" ]; then
-      echo "omakase: source '$SOURCE' hook wiring references script(s) neither it nor the engine ships:$missing" >&2
+      echo "omakase: source '$SOURCE' hook wiring references script(s) neither it nor the base harness ships:$missing" >&2
       echo "  These would fail at commit time (exit 127). Fix the source's lefthook-local.yml or ship the script(s). Nothing was placed." >&2
       exit 1
     fi
@@ -219,8 +219,8 @@ incumbent=()
 RESET_HOOKSPATH=0
 hookspath="$(git -C "$ROOT" config --get core.hooksPath 2>/dev/null || true)"
 if [ -n "$hookspath" ]; then
-  # core.hooksPath pointing at the repo's OWN standard hooks dir is harmless (the
-  # live pixterm-engine install does exactly this); only a path that resolves
+  # core.hooksPath pointing at the repo's OWN standard hooks dir is harmless (some real
+  # repos do exactly this); only a path that resolves
   # elsewhere means a foreign manager owns the hooks. Resolve relative values
   # against $ROOT and compare physically (symlinks resolved).
   case "$hookspath" in /*) hp_abs="$hookspath";; *) hp_abs="$ROOT/$hookspath";; esac

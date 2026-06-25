@@ -97,7 +97,7 @@ echo "== Scenario S3b: a file the source drops between versions is swept =="
 ( cd "$SRC" && git rm -q payload/.claude/rules/style.md && git commit -q -m v3 )
 ( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" ) >/dev/null 2>&1
 [ ! -e "$REPO/.claude/rules/style.md" ] && pass "dropped payload file deleted from the repo" || fail "dropped file left behind (silent residue)"
-# Under base-layering the engine's base .claude/settings.json (Stop-hook) is layered in, so
+# Under base-layering the base harness's .claude/settings.json (Stop-hook) is layered in, so
 # .claude/ legitimately persists; only the genuinely-emptied source dir (.claude/rules) is pruned.
 # This also proves the prune STOPS at base content and never over-prunes base machinery.
 [ ! -d "$REPO/.claude/rules" ] && pass "emptied source dir (.claude/rules) pruned" || fail ".claude/rules left behind"
@@ -172,9 +172,9 @@ echo "== Scenario S5: remove deletes placed files + the remembered source =="
 grep -q 'omakase-harness' "$REPO/.git/info/exclude" 2>/dev/null && fail "remove left the exclude block" || pass "exclude block stripped"
 
 # ---------- Scenario S6: base machinery is layered UNDER the source delta ----------
-# A real harness (e.g. omakase-android) WIRES base machinery — the banner, the ledger
+# A real harness WIRES base machinery — the banner, the ledger
 # wrapper, the deferred-check gate — but ships only its OWN delta. --source must layer
-# the engine's base payload under the source so that wiring resolves at hook time;
+# the base harness's payload under the source so that wiring resolves at hook time;
 # otherwise the hook dies on commit with exit 127 (No such file: .omakase/bin/omakase-banner.sh).
 echo "== Scenario S6: --source layers base machinery under the source delta =="
 SRC6="$TMP/src-needs-base"; REPO6="$TMP/repoS6"
@@ -186,7 +186,7 @@ cat > "$SRC6/payload/.omakase/gates/discipline.sh" <<'SH'
 echo "source-discipline-gate-ran"
 exit 0
 SH
-# the source OVERRIDES a base file (the engine base ships .omakase/gates/example.sh) — proves
+# the source OVERRIDES a base file (the base harness ships .omakase/gates/example.sh) — proves
 # the merge lets the SOURCE win on overlap via rm-before-copy, never writing through a base file
 cat > "$SRC6/payload/.omakase/gates/example.sh" <<'SH'
 #!/usr/bin/env bash
@@ -221,7 +221,7 @@ newrepo "$REPO6"
 # so this exercises the same staging + EXIT-cleanup path, just inside our own scratch.
 export TMPDIR="$TMP/merge-tmp"; mkdir -p "$TMPDIR"
 ( cd "$REPO6" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$SRC6" ) >/dev/null 2>&1
-# base machinery the source did NOT ship is present (layered from the engine base payload)
+# base machinery the source did NOT ship is present (layered from the base harness's payload)
 [ -x "$REPO6/.omakase/bin/omakase-banner.sh" ] && pass "base banner layered in (source did not ship it)" || fail "base banner missing — base payload not layered under source"
 [ -x "$REPO6/.omakase/bin/omakase-ledger.sh" ] && pass "base ledger wrapper layered in" || fail "base ledger wrapper missing"
 [ -x "$REPO6/.omakase/gates/deferred-check.sh" ] && pass "base deferred-check layered in" || fail "base deferred-check missing"
@@ -246,7 +246,7 @@ echo "$OUT" | grep -qiE 'No such file|not found|: 127' && { fail "commit hit a m
 # Defense mirroring tools/build.sh's wiring guard: after the base+source merge, every
 # .omakase/*.sh the merged wiring references must exist, else the harness would die at
 # commit with exit 127. Refuse at init, fail-closed, place nothing.
-echo "== Scenario S7: a source wiring a script neither it nor the engine ships is refused =="
+echo "== Scenario S7: a source wiring a script neither it nor the base harness ships is refused =="
 SRC7="$TMP/src-bad-wiring"; REPO7="$TMP/repoS7"
 rm -rf "$SRC7"; mkdir -p "$SRC7/payload/.omakase/gates"
 ( cd "$SRC7" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
