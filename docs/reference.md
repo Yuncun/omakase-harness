@@ -9,13 +9,14 @@ and installs hooks through lefthook. Skips paths the repo tracks. Overwrites a d
 installed (untracked) file to match payload and warns. Removes a previously placed file
 the payload no longer ships, unless it was edited locally.
 
-- `--source <git-url|path>` — install from a harness source (a `payload/` tree plus an
-  `omakase.manifest`). The engine base payload is layered UNDER the source's payload (base
-  machinery underneath, the source delta winning on overlap), so a source ships only its
-  delta and relies on base machinery without vendoring it — the same base+delta merge
-  `tools/build.sh` bakes into a bundle, done at install time. Refuses (placing nothing) if
-  the merged hook wiring references a `.omakase/*.sh` script neither side ships. The source
-  is remembered; a later bare `init` refreshes and reinstalls it.
+- `--source <git-url|path>` — install from a custom harness (a `payload/` tree plus an
+  `omakase.manifest`). The omakase base harness's payload is layered UNDER the custom harness's
+  payload (base machinery underneath, the custom harness's delta winning on overlap), so a
+  custom harness ships only its delta and relies on base machinery without keeping its own copy
+  — the same base+delta merge `tools/build.sh` bakes into a bundle, done at install time.
+  Refuses (placing nothing) if the merged hook wiring references a `.omakase/*.sh` script
+  neither side ships. The custom harness is remembered; a later bare `init` refreshes and
+  reinstalls it.
 - `--cut-over` — also untrack (`git rm --cached`) every payload path the repo currently
   tracks, so the installed copy takes over. Guarded: refuses without
   `OMAKASE_CUTOVER_CONFIRM=1`.

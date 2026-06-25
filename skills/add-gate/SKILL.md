@@ -127,11 +127,11 @@ should trip the gate and one that shouldn't:
 
 ```bash
 cd "$(mktemp -d)" && git init -q && git commit -q --allow-empty -m init
-OMAKASE_PAYLOAD=<your>/payload bash <engine>/bin/init.sh
+OMAKASE_PAYLOAD=<your>/payload bash <base-harness>/bin/init.sh
 # gate: stage a violating file, attempt commit, see it block, fix, see it pass.
 # deferred gate: touch a file matching OMAKASE_GLOB, attempt push -> blocked (no record);
 #   run the job (records the result); attempt push -> allowed.
-OMAKASE_PAYLOAD=<your>/payload bash <engine>/bin/remove.sh    # reset
+OMAKASE_PAYLOAD=<your>/payload bash <base-harness>/bin/remove.sh    # reset
 ```
 
 Then, if the harness lists its gates in a guard table (README / docs), add the new one there;

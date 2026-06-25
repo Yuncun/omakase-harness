@@ -40,5 +40,5 @@ every `HARNESS_LOC_DIRS` entry classifies to a real kind, so a new capture-dir w
 ## Adding another agent (Cursor, Gemini, …)
 
 Add its rows to the table in `lib-harness-paths.sh` (`kind_of` case + `HARNESS_LOC_*` +
-`HARNESS_COMMITTED_GLOBS`) and an assertion here. Nothing else in the engine branches on host —
+`HARNESS_COMMITTED_GLOBS`) and an assertion here. Nothing else in the base harness branches on host —
 omakase injects whatever a payload contains; this table is the only host-aware part.

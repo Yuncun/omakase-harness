@@ -1,5 +1,18 @@
 # Concepts
 
+## Base harness and custom harness
+
+**omakase base harness** — the tool you install once. It holds the install/remove logic
+(`bin/`), the base machinery every harness can rely on (the banner, the scorecard ledger,
+the deferred-gate scripts), and the `/omakase` front door. This repo is the base harness.
+
+**custom harness** — a personal harness you make and share: a git repo with a `payload/`
+tree and a one-line `omakase.manifest`. You install it with `--source`, and the base harness
+layers its machinery underneath your files (your files win on overlap), so a custom harness
+ships only your own delta. See [Authoring](authoring.md).
+
+The rest of these docs say just "harness" when the distinction does not matter.
+
 ## The overlay
 
 A harness is a `payload/` directory holding the files a project needs for local

@@ -8,22 +8,28 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 ### Added
 - A generic Copilot CLI `/omakase` management skill (`skills/omakase/`) — the host-agnostic
   front door (show / init / remove, including `--source`) that mirrors the Claude `/omakase`
-  command, via a self-locating `run.sh` dispatcher that finds the engine `bin/` from its own
-  install location. Ships in the plugin bundle, so a source repo no longer vendors its own
-  management skill — the engine carries it once.
-- A `--source` install now layers the engine **base payload under the source's delta**
-  (base machinery underneath, the source winning on overlap), so a source ships only its own
-  payload and relies on base machinery — the banner, `omakase-ledger.sh`, `omakase-record.sh`,
-  `deferred-check.sh`, the status-line and stop-notice scripts — without vendoring a copy. This
-  mirrors the base+delta merge `tools/build.sh` bakes into a plugin bundle, performed at install
-  time instead; for a symlink-free source a `--source` install and a built bundle place a
-  byte-identical file set (verified against `omakase-android`). They diverge only on symlinks:
-  `--source` preserves them, a built bundle dereferences them into real files. Covered by
-  `tests/sources.test.sh` (S6).
+  command, via a self-locating `run.sh` dispatcher that finds the base harness's `bin/` from its
+  own install location. Ships in the plugin bundle, so a custom harness no longer keeps its own
+  copy of the management skill — the base harness carries it once.
+- A `--source` install now layers the **base harness's payload under the custom harness's delta**
+  (base machinery underneath, the custom harness winning on overlap), so a custom harness ships
+  only its own payload and relies on base machinery — the banner, `omakase-ledger.sh`,
+  `omakase-record.sh`, `deferred-check.sh`, the status-line and stop-notice scripts — without
+  keeping its own copy. This mirrors the base+delta merge `tools/build.sh` bakes into a plugin
+  bundle, performed at install time instead; for a symlink-free custom harness a `--source`
+  install and a built bundle place a byte-identical file set (verified against `omakase-android`).
+  They diverge only on symlinks: `--source` preserves them, a built bundle dereferences them into
+  real files. Covered by `tests/sources.test.sh` (S6).
 - `--source` fails closed if the merged hook wiring references a `.omakase/*.sh` script neither
-  the source nor the engine ships — refusing at install (placing nothing) instead of dying with a
-  cryptic exit-127 at commit time (the same wiring guard `tools/build.sh` applies to a bundle).
-  Covered by `tests/sources.test.sh` (S7).
+  the custom harness nor the base harness ships — refusing at install (placing nothing) instead of
+  dying with a cryptic exit-127 at commit time (the same wiring guard `tools/build.sh` applies to a
+  bundle). Covered by `tests/sources.test.sh` (S7).
+
+### Changed
+- Docs terminology: the tool you install once is now the **omakase base harness** (was "the
+  engine"), and a personal harness you point `--source` at is a **custom harness** (was
+  "a source"). This mirrors the base/custom layering the install actually performs. Wording
+  only — the `--source` flag and all behaviour are unchanged.
 
 ### Fixed
 - The base+source merge runs through a temp staging dir cleaned on any exit; its cleanup trap

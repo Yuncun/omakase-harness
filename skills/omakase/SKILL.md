@@ -6,23 +6,23 @@ allowed-tools: Bash(*/run.sh *) Bash(*/bin/init.sh *) Bash(*/bin/remove.sh *) Ba
 
 # /omakase — manage a harness (zero committed footprint)
 
-This is the engine's host-agnostic management front door for **Copilot CLI** (Claude Code
-uses the `/omakase` *command* with the same behaviour). It overlays a harness **payload**
-onto the current repo at real paths, records every placed path in `.git/info/exclude` (so
-nothing is committed and `.gitignore` is untouched), and installs lefthook to run the gates.
-`/omakase remove` reverses it.
+This is the omakase base harness's host-agnostic management front door for **Copilot CLI**
+(Claude Code uses the `/omakase` *command* with the same behaviour). It overlays a harness
+**payload** onto the current repo at real paths, records every placed path in
+`.git/info/exclude` (so nothing is committed and `.gitignore` is untouched), and installs
+lefthook to run the gates. `/omakase remove` reverses it.
 
-The payload comes from either this engine's base payload (a bare `init`), or — the usual
-case — a **source** you point it at: `/omakase init --source <git-url-or-path>` pulls a repo
-carrying a `payload/` tree plus an `omakase.manifest` and injects the engine base payload
-with **that source's payload layered on top** (base machinery underneath, the source winning
-on overlap). So a source ships only its own delta and relies on base machinery without
-vendoring it. The source is remembered, so a later bare `/omakase init` refreshes and
-re-injects it. (Example: the OneDrive Android harness lives in a source repo — install this
-engine once, then `init --source` that repo.)
+The payload comes from either the base harness's own payload (a bare `init`), or — the usual
+case — a **custom harness** you point it at: `/omakase init --source <git-url-or-path>` pulls a
+repo carrying a `payload/` tree plus an `omakase.manifest` and injects the base harness's payload
+with **that custom harness's payload layered on top** (base machinery underneath, the custom
+harness winning on overlap). So a custom harness ships only its own delta and relies on base
+machinery without keeping its own copy. It is remembered, so a later bare `/omakase init`
+refreshes and re-injects it. (Example: the OneDrive Android harness lives in its own repo —
+install the omakase base harness once, then `init --source` that repo.)
 
 All work goes through the self-locating dispatcher `run.sh` in this skill's directory (it
-finds the engine injector in `bin/` and operates on the current git repo).
+finds the base harness's injector in `bin/` and operates on the current git repo).
 
 ## Dispatch on the user's request
 
@@ -43,7 +43,7 @@ harness is installed it says so; relay that.
 
 ```bash
 bash <this-skill-dir>/run.sh init                              # re-inject the remembered/base payload
-bash <this-skill-dir>/run.sh init --source <git-url-or-path>   # pull + inject a harness source
+bash <this-skill-dir>/run.sh init --source <git-url-or-path>   # pull + inject a custom harness
 ```
 
 Overlays the payload onto the repo root. It **skips any path the repo already tracks** (never
@@ -55,8 +55,8 @@ files were placed/overwritten/skipped/removed, and that `/omakase remove` undoes
 
 If the source declares `recommends:` in its manifest, init prints it once — relay it. If init
 **refuses** the source (no `payload/`, no `omakase.manifest`, or merged hook wiring that
-references a `.omakase/*.sh` script neither the source nor the engine ships), relay the
-refusal verbatim and STOP — nothing was placed. If init refuses because an incumbent hook
+references a `.omakase/*.sh` script neither the custom harness nor the base harness ships),
+relay the refusal verbatim and STOP — nothing was placed. If init refuses because an incumbent hook
 manager is present (husky, pre-commit, a foreign `core.hooksPath`, non-lefthook hooks), relay
 that refusal verbatim and STOP — do not force it. For paths reported **skipped (committed)**,
 never run `git rm --cached` or set `OMAKASE_CUTOVER_CONFIRM=1` yourself; surface the skip and
@@ -75,6 +75,6 @@ back to its pre-init state.
 ## Notes
 
 - After `init`, run `/skills reload` so Copilot picks up any injected project skill in the
-  target repo (a harness source may ship `.github/skills/*`).
-- The harness is host-agnostic: the same `bin/` runs from Copilot CLI, Claude Code, or a
-  plain shell (`bash <engine>/bin/init.sh`).
+  target repo (a custom harness may ship `.github/skills/*`).
+- omakase is host-agnostic: the same `bin/` runs from Copilot CLI, Claude Code, or a
+  plain shell (`bash <base-harness>/bin/init.sh`).
