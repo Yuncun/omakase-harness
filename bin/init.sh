@@ -180,6 +180,10 @@ else
   PAYLOAD="${OMAKASE_PAYLOAD:-$(cd "$SCRIPT_DIR/../payload" && pwd)}"
 fi
 [ -d "$PAYLOAD" ] || { echo "omakase: payload dir not found at $PAYLOAD" >&2; exit 1; }
+# Normalize once: the place/cut-over/source loops derive rel via ${f#"$PAYLOAD"/}, which only
+# strips cleanly when PAYLOAD has no trailing slash (a tab-completed OMAKASE_PAYLOAD=/p/ would
+# otherwise yield bad rel values). No-op for the already-clean cache/merge/default sources.
+PAYLOAD="${PAYLOAD%/}"
 # Resolve a lefthook invocation WITHOUT mutating the user's global environment.
 # Order (shared with remove.sh via lib-lefthook.sh): an explicit override; lefthook
 # already on PATH (a global brew/mise install); then the repo's own node_modules/.bin
@@ -299,7 +303,7 @@ if [ "$CUTOVER" -eq 1 ]; then
   cutover=()
   while IFS= read -r -d '' f; do
     rel="${f#"$PAYLOAD"/}"
-    git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1 && cutover+=("$rel")
+    git -C "$ROOT" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1 && cutover+=("$rel")
   done < <(find "$PAYLOAD" \( -type f -o -type l \) -print0)
   if [ "${#cutover[@]}" -eq 0 ]; then
     echo "omakase: --cut-over: no payload path is tracked by this repo — nothing to cut over."
@@ -336,7 +340,7 @@ fi
 if [ -n "$prior_paths" ]; then
   while IFS= read -r rel; do
     [ -z "$rel" ] && continue
-    if git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
+    if git -C "$ROOT" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1; then
       if [ -e "$OMK/payload-snapshot/$rel" ] || [ -L "$OMK/payload-snapshot/$rel" ]; then
         mkdir -p "$OMK/clobbered/$(dirname "$rel")"
         rm -f "$OMK/clobbered/$rel"   # a stale symlink here would make cp -P abort under set -e
@@ -374,6 +378,14 @@ same_file() {
 }
 place_file() {  # $1 = source payload path, $2 = relative dest
   mkdir -p "$ROOT/$(dirname "$2")"
+  # An untracked real directory sitting where the payload ships a regular file would make the
+  # `cp -P file dir` below copy INTO it (dir/<basename>) — a silently wrong placement that then
+  # corrupts the snapshot+ledger. Refuse with a clear message instead. (A symlink-to-dir is NOT
+  # caught here: it must still be rm'd and rewritten, per the unlink rationale below.)
+  if [ -d "$ROOT/$2" ] && [ ! -L "$ROOT/$2" ]; then
+    echo "omakase: refusing to overlay file '$2' — an untracked directory exists there; remove it and re-run" >&2
+    return 1
+  fi
   # Unlink a non-directory dest first. Bare `cp -P` FOLLOWS an existing dest symlink and
   # writes through it to the link's TARGET — clobbering an out-of-tree file and leaving the
   # placed path a stale symlink — and a DANGLING dest symlink makes `cp -P` fail outright
@@ -400,7 +412,7 @@ while IFS= read -r -d '' f; do
   dest="$ROOT/$rel"
   # Never touch a path the repo tracks (committed file wins). Report it so the user can
   # cut over deliberately (init --cut-over, guarded) to let the injected copy take over.
-  if git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
+  if git -C "$ROOT" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1; then
     skipped+=("$rel"); echo "omakase: SKIP (already tracked) $rel" >&2; continue
   fi
   # Fresh placement: nothing there yet.
@@ -452,7 +464,7 @@ if [ -f "$OMK/placed.tsv" ]; then
     still=0
     for p in "${placed[@]:-}"; do [ "$p" = "$rel" ] && { still=1; break; }; done
     [ "$still" -eq 1 ] && continue
-    git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1 && continue   # tracked: upstream owns it (collision guard warned above)
+    git -C "$ROOT" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1 && continue   # tracked: upstream owns it (collision guard warned above)
     { [ -e "$ROOT/$rel" ] || [ -L "$ROOT/$rel" ]; } || continue                  # already gone
     if [ "$(hash_of "$ROOT/$rel")" = "$hash" ]; then
       rm -f "$ROOT/$rel"
@@ -478,14 +490,14 @@ for rel in "${placed[@]:-}"; do
   [ -n "$rel" ] || continue
   if is_shared_topdir "${rel%%/*}"; then add_prefix "$rel"; else add_prefix "${rel%%/*}"; fi
 done
-git -C "$ROOT" ls-files --error-unmatch lefthook.yml >/dev/null 2>&1 || add_prefix "lefthook.yml"
+git -C "$ROOT" ls-files --error-unmatch -- lefthook.yml >/dev/null 2>&1 || add_prefix "lefthook.yml"
 
 # Worktree auto-install wiring (.worktreeinclude). Only when the repo does not TRACK
 # .worktreeinclude — appending to a tracked file would be a committed footprint,
 # which the additive rule forbids. When skipped, manual `git worktree add` won't
 # get it automatically; new Claude-created worktrees still receive it via the snapshot + post-checkout.
 WTINC_TRACKED=0
-if git -C "$ROOT" ls-files --error-unmatch .worktreeinclude >/dev/null 2>&1; then
+if git -C "$ROOT" ls-files --error-unmatch -- .worktreeinclude >/dev/null 2>&1; then
   WTINC_TRACKED=1
   echo "omakase: .worktreeinclude is tracked — leaving it untouched (re-run /omakase-init inside a new manual worktree to install it there)." >&2
 else

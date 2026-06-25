@@ -35,7 +35,7 @@ while IFS="$TAB" read -r rel kind src hash enabled || [ -n "$rel" ]; do
   # so the personal copy was likely clobbered (the upstream-collision guard). This
   # check must run BEFORE the existence check: a tracked file exists in the working
   # tree, so existence-first would skip it silently.
-  if git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
+  if git -C "$ROOT" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1; then
     echo "omakase: WARNING — injected path '$rel' is now TRACKED by the repo; your personal copy was likely clobbered by an upstream commit (git overwrites ignored files on checkout). Last-injected copy: $SNAP/$rel — diff it against the tracked file, then drop the path from your payload or cut over (init --cut-over)." >&2
     continue
   fi

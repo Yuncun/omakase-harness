@@ -6,6 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PAYLOAD="${OMAKASE_PAYLOAD:-$(cd "$SCRIPT_DIR/../payload" && pwd)}"
+PAYLOAD="${PAYLOAD%/}"   # match init.sh: rel derivation (${f#"$PAYLOAD"/}) needs no trailing slash
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "omakase: not inside a git repo" >&2; exit 1; }
 BEGIN="# >>> omakase-harness >>>"
 END="# <<< omakase-harness <<<"
@@ -42,7 +43,7 @@ done
 # Without a ledger (pre-0.10 install, or no install at all) fall back to
 # enumerating the payload — the old behavior.
 delete_placed() {  # $1 = repo-relative path
-  git -C "$ROOT" ls-files --error-unmatch "$1" >/dev/null 2>&1 && return 0
+  git -C "$ROOT" ls-files --error-unmatch -- "$1" >/dev/null 2>&1 && return 0
   rm -f "$ROOT/$1"
   local d; d="$(dirname "$1")"
   while [ "$d" != "." ] && [ -d "$ROOT/$d" ] && [ -z "$(ls -A "$ROOT/$d")" ]; do
@@ -69,13 +70,13 @@ else
 fi
 
 # Remove the auto-created skeleton lefthook.yml if it is untracked and is lefthook's default banner.
-if [ -f "$ROOT/lefthook.yml" ] && ! git -C "$ROOT" ls-files --error-unmatch lefthook.yml >/dev/null 2>&1; then
+if [ -f "$ROOT/lefthook.yml" ] && ! git -C "$ROOT" ls-files --error-unmatch -- lefthook.yml >/dev/null 2>&1; then
   grep -q "EXAMPLE USAGE" "$ROOT/lefthook.yml" 2>/dev/null && rm -f "$ROOT/lefthook.yml"
 fi
 
 # Strip our .worktreeinclude block; delete the file if it is now empty and untracked.
 WTINC="$ROOT/.worktreeinclude"
-if [ -f "$WTINC" ] && ! git -C "$ROOT" ls-files --error-unmatch .worktreeinclude >/dev/null 2>&1; then
+if [ -f "$WTINC" ] && ! git -C "$ROOT" ls-files --error-unmatch -- .worktreeinclude >/dev/null 2>&1; then
   awk -v b="$BEGIN" -v e="$END" '$0==b{s=1} !s{print} $0==e{s=0}' "$WTINC" > "$WTINC.tmp" && mv "$WTINC.tmp" "$WTINC"
   [ -s "$WTINC" ] || rm -f "$WTINC"
 fi

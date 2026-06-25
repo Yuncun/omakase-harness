@@ -13,7 +13,7 @@ while IFS="$TAB" read -r rel kind src hash enabled || [ -n "$rel" ]; do
   [ -z "$rel" ] && continue
   [ "$enabled" = "1" ] || continue   # disabled artifacts are deliberately absent — never block on them
   [ -e "$ROOT/$rel" ] || [ -L "$ROOT/$rel" ] && continue
-  git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1 && continue  # tracked: upstream owns it (warned at init/checkout)
+  git -C "$ROOT" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1 && continue  # tracked: upstream owns it (warned at init/checkout)
   [ "$missing" -eq 0 ] && echo "omakase: BLOCKING — the injected harness is incomplete; its gates would silently not run:" >&2
   echo "  missing: $rel" >&2
   missing=1
