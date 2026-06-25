@@ -1,0 +1,14 @@
+{
+  "name": "omakase",
+  "owner": {
+    "name": "yuncun",
+    "url": "https://github.com/yuncun/omakase-harness"
+  },
+  "plugins": [
+    {
+      "name": "omakase-harness",
+      "source": "./",
+      "description": "Inject a personal harness into any existing repo: overlay a file tree (rules, docs, gates), keep it out of git, and run gates on your git hooks. Zero committed footprint."
+    }
+  ]
+}

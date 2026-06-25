@@ -6,6 +6,10 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 ## [Unreleased]
 
 ### Added
+- A `.claude-plugin/marketplace.json` so the repo is itself an installable marketplace: the
+  documented `plugin marketplace add yuncun/omakase-harness` + `plugin install
+  omakase-harness@omakase` now resolves (the plugin's `source` is the repo root, `"./"`).
+  Without it those install lines had nothing to fetch.
 - A generic Copilot CLI `/omakase` management skill (`skills/omakase/`) — the host-agnostic
   front door (show / init / remove, including `--source`) that mirrors the Claude `/omakase`
   command, via a self-locating `run.sh` dispatcher that finds the base harness's `bin/` from its

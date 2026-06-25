@@ -19,8 +19,8 @@ it never reaches a pull request. Removing deletes exactly what was placed.
 
 Claude Code:
 
-    /plugin marketplace add owner/marketplace
-    /plugin install omakase-harness@marketplace
+    /plugin marketplace add yuncun/omakase-harness
+    /plugin install omakase-harness@omakase
     /omakase init
 
 Any other environment, including GitHub Copilot CLI and a plain shell:
