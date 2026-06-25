@@ -14,7 +14,9 @@ the same base+delta merge `tools/build.sh` bakes into a plugin bundle, performed
 time instead.) If your wiring references a `.omakase/*.sh` neither you nor the base harness ships,
 `init` refuses and places nothing — so a typo surfaces at install, not as an exit-127 on commit.
 
-Start from the base harness repo or an existing custom harness, edit `payload/`, and publish. To
+Start from the base harness repo or an existing custom harness, edit `payload/`, and publish. The
+smallest worked example is [`examples/sample-harness/`](../examples/sample-harness/) — one rule,
+one gate, and the wiring; copy it and edit the three files under `payload/`. To
 capture the harness files already living inside a project, run `bin/import.sh /path/to/project`,
 which reads that project's harness files into `payload/` and leaves the project untouched.
 

@@ -6,6 +6,10 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 ## [Unreleased]
 
 ### Added
+- `examples/sample-harness/` — a minimal worked custom harness (one rule, one gate, the wiring)
+  to read, try, and copy. It ships only its delta and relies on the base harness machinery layered
+  in at install, so it doubles as a live demonstration of the base+source merge. Covered end-to-end
+  by `tests/sample-harness.test.sh` (copy into a repo → `init --source` → gate fires → remove).
 - A `.claude-plugin/marketplace.json` so the repo is itself an installable marketplace: the
   documented `plugin marketplace add yuncun/omakase-harness` + `plugin install
   omakase-harness@omakase` now resolves (the plugin's `source` is the repo root, `"./"`).
