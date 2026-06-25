@@ -87,8 +87,8 @@ OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
 [ "$rc" -eq 0 ] && pass "re-init does not trip over lefthook's own stubs" || fail "re-init refused its own stubs ($OUT)"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
-# H7: core.hooksPath pointing at the repo's OWN hooks dir is NOT an incumbent (the live
-# pixterm-engine state). lefthook refuses to install while ANY core.hooksPath is set, so
+# H7: core.hooksPath pointing at the repo's OWN hooks dir is NOT an incumbent (a real-world
+# configuration). lefthook refuses to install while ANY core.hooksPath is set, so
 # init clears the redundant entry (with a notice) and succeeds. Foreign stays refused (H3).
 REPO="$TMP/repoH7"; newrepo "$REPO"
 ( cd "$REPO" && git config core.hooksPath .git/hooks )

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # omakase-harness show — render the installed (gitignored, invisible) harness as ONE
 # readable map: the harness files grouped by origin (committed / injected / personal;
-# omakase's own .omakase/ engine is disclosed under Hidden, not listed), which git
+# omakase's own .omakase/ machinery is disclosed under Hidden, not listed), which git
 # hooks run what, and what is hidden via .git/info/exclude. Read-only. This is the cure
 # for "the install is invisible" — it lets you SEE the whole harness at a glance without
 # committing anything.
@@ -51,7 +51,7 @@ is_drifted() {  # $1 rel, $2 ledger-hash, $3 enabled -> 0 (true) if present & co
 
 # ============================ Inventory (spec §3) ============================
 # The harness files grouped by origin: committed by the project, injected from a
-# source (the provenance ledger; omakase's own .omakase/ engine is disclosed under
+# source (the provenance ledger; omakase's own .omakase/ machinery is disclosed under
 # Hidden, not listed), personal (~/.claude + ~/.copilot).
 # No token counts — the host owns context-cost ground truth.
 
@@ -109,7 +109,7 @@ render_inventory() {
       shown=0
       while IFS=$'\t' read -r rel kind src hash enabled; do
         [ -z "$rel" ] && continue
-        case "$rel" in .omakase/*) continue;; esac   # omakase's own engine/gate scripts live here; not listed (active gates show under Guards; .omakase/ is disclosed under Hidden)
+        case "$rel" in .omakase/*) continue;; esac   # omakase's own machinery/gate scripts live here; not listed (active gates show under Guards; .omakase/ is disclosed under Hidden)
         shown=1
         dz=""; if is_drifted "$rel" "$hash" "$enabled"; then dz=" — **DRIFTED** (differs from canonical; \`/omakase init\` to re-sync, or it may be an intentional local edit)"; fi
         if [ "$enabled" = "0" ]; then
@@ -151,7 +151,7 @@ render_inventory() {
       shown=0
       while IFS=$'\t' read -r rel kind src hash enabled; do
         [ -z "$rel" ] && continue
-        case "$rel" in .omakase/*) continue;; esac   # omakase's own engine/gate scripts live here; not listed (active gates show under Guards; .omakase/ is disclosed under Hidden)
+        case "$rel" in .omakase/*) continue;; esac   # omakase's own machinery/gate scripts live here; not listed (active gates show under Guards; .omakase/ is disclosed under Hidden)
         shown=1
         dz=""; mk="+"; if is_drifted "$rel" "$hash" "$enabled"; then dz="; DRIFTED — differs from canonical, run /omakase init to re-sync"; mk="~"; fi
         if [ "$enabled" = "0" ]; then

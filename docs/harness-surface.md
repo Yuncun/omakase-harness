@@ -24,7 +24,7 @@ Anything not listed falls to `other` and is left to the project — that boundar
 | `.husky/*`, `.githooks/*` | agnostic | `gate` ⬅ |
 | everything else | — | `other` (not harness) |
 
-⬅ = added/fixed by the 2026-06-18 pressure test (capturing AndroidClient, a real Claude+Copilot
+⬅ = added/fixed by the 2026-06-18 pressure test (capturing a real Claude+Copilot
 repo). Before it, omakase was blind to Copilot's `.github/hooks` gate layer, and three dirs it
 already imported (`.claude/hooks`, `.husky`, `.githooks`) were recorded as `other`.
 

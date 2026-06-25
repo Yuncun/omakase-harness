@@ -18,8 +18,8 @@ repo carrying a `payload/` tree plus an `omakase.manifest` and injects the base 
 with **that custom harness's payload layered on top** (base machinery underneath, the custom
 harness winning on overlap). So a custom harness ships only its own delta and relies on base
 machinery without keeping its own copy. It is remembered, so a later bare `/omakase init`
-refreshes and re-injects it. (Example: the OneDrive Android harness lives in its own repo —
-install the omakase base harness once, then `init --source` that repo.)
+refreshes and re-injects it. (Example: install the omakase base harness once, then
+`init --source` a custom-harness repo.)
 
 All work goes through the self-locating dispatcher `run.sh` in this skill's directory (it
 finds the base harness's injector in `bin/` and operates on the current git repo).
