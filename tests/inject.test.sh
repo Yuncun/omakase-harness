@@ -164,6 +164,10 @@ OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 )
 grep -q 'omakase-example-gate-ran' "$REPO/.omakase/gates/example.sh" && pass "re-init overwrote the edited gate back to payload" || fail "re-init did not overwrite the edit"
 grep -q 'MY EDIT' "$REPO/.omakase/gates/example.sh" && fail "re-init left the local edit in place" || pass "the local edit was replaced"
 echo "$OUT" | grep -qi 'overwrote' && pass "re-init warned that it overwrote a changed file" || fail "re-init did not warn about the overwrite"
+# the overwritten content is recoverable: init preserves the pre-overwrite copy under clobbered/
+CMN="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+grep -q 'MY EDIT' "$CMN/omakase/clobbered/.omakase/gates/example.sh" 2>/dev/null && pass "pre-overwrite copy preserved under clobbered/ (recoverable)" || fail "overwritten content was destroyed with no backup"
+echo "$OUT" | grep -q 'clobbered/' && pass "the overwrite warning names the preserved-copy path" || fail "overwrite warning does not name the backup ($OUT)"
 [ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status still clean after an overwrite" || { fail "status not clean after overwrite"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
 # E2 — payload changed upstream; re-init takes the new version (same overwrite path).
 PAY="$TMP/payloadE2"; REPO="$TMP/repoE2"; mkpayload "$PAY"; newrepo "$REPO"
