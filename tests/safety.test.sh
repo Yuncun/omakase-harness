@@ -124,6 +124,52 @@ mkdir -p "$REPO/.husky"; printf '#!/bin/sh\ntrue\n' > "$REPO/.husky/pre-commit"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAYH" bash "$INIT" ) >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 0 ] && pass "untracked .husky matching the payload stays exempt (roundtrip)" || fail "untracked payload .husky wrongly refused"
 
+# H10: Git LFS hooks are NOT an incumbent manager. lefthook absorbs git-lfs natively (it
+# re-runs `git lfs <event>` at runtime for events it owns and leaves the rest in place), so a
+# Git-LFS repo must install cleanly instead of being misclassified as a rival hook manager.
+# A genuine foreign hook alongside the LFS hooks must still refuse, narrowly.
+mklfs(){ # $1 = hooks dir — write the four stock hooks `git lfs install` creates
+  local d="$1" h
+  for h in post-checkout post-commit post-merge pre-push; do
+    printf '#!/bin/sh\ncommand -v git-lfs >/dev/null 2>&1 || { printf >&2 "%%s" "This repository is configured for Git LFS but git-lfs was not found."; exit 2; }\ngit lfs %s "$@"\n' "$h" > "$d/$h"
+    chmod +x "$d/$h"
+  done
+}
+# H10a: a clean Git-LFS repo installs; the LFS events lefthook does not own stay intact.
+REPO="$TMP/repoH10a"; newrepo "$REPO"; mklfs "$REPO/.git/hooks"
+OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] && pass "Git-LFS repo installs (LFS hooks not misclassified as a rival manager)" || fail "init refused a Git-LFS repo ($OUT)"
+grep -q 'git lfs pre-push'   "$REPO/.git/hooks/pre-push"   2>/dev/null && pass "LFS pre-push left intact (lefthook owns no pre-push job)" || fail "LFS pre-push was clobbered ($OUT)"
+grep -q 'git lfs post-merge' "$REPO/.git/hooks/post-merge" 2>/dev/null && pass "LFS post-merge left intact" || fail "LFS post-merge was clobbered"
+OUT2=$( cd "$REPO" && echo x > x.txt && git add x.txt && git commit -m x 2>&1 )
+echo "$OUT2" | grep -q 'omakase-example-gate-ran' && pass "harness gates actually run in a Git-LFS repo" || fail "harness gates dead in a Git-LFS repo ($OUT2)"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
+
+# H10b: a genuine foreign hook ALONGSIDE the LFS hooks still refuses, and names only it.
+REPO="$TMP/repoH10b"; newrepo "$REPO"; mklfs "$REPO/.git/hooks"
+printf '#!/bin/sh\necho team-precommit\nexit 1\n' > "$REPO/.git/hooks/pre-commit"; chmod +x "$REPO/.git/hooks/pre-commit"
+OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
+[ "$rc" -ne 0 ] && pass "foreign pre-commit alongside LFS hooks still refuses" || fail "did not refuse a genuine foreign hook in an LFS repo ($OUT)"
+echo "$OUT" | grep -q 'pre-commit' && pass "refusal names the genuine foreign hook" || fail "refusal does not name pre-commit ($OUT)"
+echo "$OUT" | grep -Eq 'post-merge|post-commit|pre-push' && fail "refusal wrongly names an exempt LFS hook ($OUT)" || pass "refusal does NOT name the exempt LFS hooks"
+grep -q 'git lfs pre-push' "$REPO/.git/hooks/pre-push" 2>/dev/null && pass "refusal mutated nothing (LFS hooks untouched)" || fail "LFS hook touched despite refusal"
+
+# H10c: a customized hook that forwards to git-lfs AND does extra work is NOT exempt (the
+# exemption is for the pristine stub only) — it still refuses.
+REPO="$TMP/repoH10c"; newrepo "$REPO"
+printf '#!/bin/sh\nnpm run lint || exit 1\ncommand -v git-lfs >/dev/null 2>&1 || exit 2\ngit lfs pre-push "$@"\n' > "$REPO/.git/hooks/pre-push"; chmod +x "$REPO/.git/hooks/pre-push"
+OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
+[ "$rc" -ne 0 ] && pass "a multi-step hook that merely calls git-lfs is NOT exempted (still refuses)" || fail "a customized hook was wrongly exempted as stock git-lfs ($OUT)"
+grep -q 'npm run lint' "$REPO/.git/hooks/pre-push" 2>/dev/null && pass "the customized hook is left exactly in place" || fail "customized hook was displaced"
+
+# H10d: work crammed onto the SAME line as the git-lfs forward must still refuse — the exemption
+# is whole-line-anchored, not a substring match (a `git lfs pre-push "$@" && ./x` is not pristine).
+REPO="$TMP/repoH10d"; newrepo "$REPO"
+printf '#!/bin/sh\ncommand -v git-lfs >/dev/null 2>&1 || exit 2\ngit lfs pre-push "$@" && ./team-check.sh\n' > "$REPO/.git/hooks/pre-push"; chmod +x "$REPO/.git/hooks/pre-push"
+OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
+[ "$rc" -ne 0 ] && pass "hook with work crammed onto the git-lfs forward line still refuses" || fail "same-line customized hook wrongly exempted ($OUT)"
+grep -q 'team-check' "$REPO/.git/hooks/pre-push" 2>/dev/null && pass "the customized same-line hook is left in place" || fail "customized hook displaced"
+
 # ---------- Scenario I: guarded cut-over ----------
 echo "== Scenario I: guarded cut-over =="
 PAY="$TMP/payI"; mkpayload "$PAY"; printf 'payload agents\n' > "$PAY/AGENTS.md"
