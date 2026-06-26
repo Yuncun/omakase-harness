@@ -19,5 +19,5 @@ while IFS="$TAB" read -r rel kind src hash enabled || [ -n "$rel" ]; do
   missing=1
 done < "$LEDGER"
 [ "$missing" -eq 0 ] && exit 0
-echo "omakase: restore it with  bash $COMMON/omakase/ensure-present.sh  (or /omakase init), then retry." >&2
+echo "omakase: restore it with  bash $COMMON/omakase/ensure-present.sh  (or omakase init), then retry." >&2
 exit 1

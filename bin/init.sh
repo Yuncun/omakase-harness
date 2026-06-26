@@ -11,12 +11,16 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-usage: init.sh [--source <git-url|path>] [--cut-over] [--help]
+usage: init.sh [<owner/repo[#ref]> | --source <git-url|path>] [--cut-over] [--help]
 
 Overlay payload/ into the current repo additively (zero committed footprint) and
 install lefthook hooks. A payload path the repo already COMMITS is never touched:
 it is skipped and reported.
 
+  <owner/repo[#ref]>
+               shorthand for --source https://github.com/owner/repo (optionally pinned to a
+               branch or tag with #ref). This is the shareable install line: a harness
+               published at github.com/you/harness installs with `init you/harness`.
   --source <git-url|path>
                pull a harness SOURCE — a git repo carrying a payload/ tree plus an
                omakase.manifest (flat key: value; name required, version + recommends optional) —
@@ -44,7 +48,10 @@ while [ $# -gt 0 ]; do
     --cut-over) CUTOVER=1;;
     --source)   shift; [ $# -gt 0 ] || { echo "omakase: --source needs a git URL or local path" >&2; exit 2; }; SOURCE="$1";;
     -h|--help)  usage; exit 0;;
-    *) echo "omakase: unknown argument '$1'" >&2; usage >&2; exit 2;;
+    -*) echo "omakase: unknown option '$1'" >&2; usage >&2; exit 2;;
+    *)  # positional: a harness SOURCE as owner/repo[#ref] shorthand, a git URL, or a local path.
+        if [ -n "$SOURCE" ]; then echo "omakase: unexpected extra argument '$1' (source already set)" >&2; usage >&2; exit 2; fi
+        SOURCE="$1";;
   esac
   shift
 done
@@ -111,6 +118,13 @@ fetch_source() {  # $1 = git URL or local path; sets PAYLOAD to the cached paylo
     rm -rf "$cache"; mkdir -p "${cache%/*}"
     git clone -q "$src" "$cache" || { echo "omakase: could not clone source '$src' into the cache ($cache)" >&2; exit 1; }
   fi
+  # Pin to a requested #ref (branch or tag). The refresh/clone above leaves the cache on the
+  # remote default branch; a ref checkout overrides that. Fetch tags so a tag ref resolves.
+  if [ -n "${SOURCE_REF:-}" ]; then
+    git -C "$cache" fetch -q --tags origin >/dev/null 2>&1 || true
+    git -C "$cache" -c advice.detachedHead=false checkout -q "$SOURCE_REF" >/dev/null 2>&1 \
+      || { echo "omakase: source '$src' has no ref '$SOURCE_REF' (no such branch or tag)" >&2; exit 1; }
+  fi
   # Validate fail-closed BEFORE anything is placed. Manifest values are stripped of
   # trailing whitespace incl. CR, so a CRLF manifest does not leak ^M downstream.
   [ -f "$cache/omakase.manifest" ] || { echo "omakase: source '$src' has no omakase.manifest at its root — not an omakase source" >&2; exit 1; }
@@ -127,13 +141,26 @@ fetch_source() {  # $1 = git URL or local path; sets PAYLOAD to the cached paylo
 if [ -z "$SOURCE" ] && [ -z "${OMAKASE_PAYLOAD:-}" ] && [ -s "$OMK/source" ]; then
   SOURCE="$(head -n1 "$OMK/source")"
 fi
+# owner/repo[#ref] shorthand -> a GitHub URL, and pull an optional #ref (branch or tag) off
+# any source string. The shareable install line is `omakase init you/harness`, so a bare slug
+# must resolve to a clone URL. Applies to BOTH a freshly given source and a remembered one
+# (so a bare re-run round-trips a pinned ref). Skipped when SOURCE is empty or already names an
+# existing local path — a real path wins over the shorthand.
+SOURCE_REF=""
+if [ -n "$SOURCE" ] && [ ! -e "$SOURCE" ]; then
+  case "$SOURCE" in *#*) SOURCE_REF="${SOURCE#*#}"; SOURCE="${SOURCE%%#*}";; esac
+  if case "$SOURCE" in *://*|git@*) false;; *) true;; esac \
+     && printf '%s' "$SOURCE" | grep -qE '^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$'; then
+    SOURCE="https://github.com/$SOURCE"
+  fi
+fi
 # A local directory source becomes an ABSOLUTE path before it is cached, ledgered,
 # or remembered — a remembered relative path breaks bare re-runs from another cwd
 # or worktree.
 if [ -n "$SOURCE" ] && [ -d "$SOURCE" ]; then SOURCE="$(cd "$SOURCE" && pwd)"; fi
 if [ -n "$SOURCE" ]; then
   fetch_source "$SOURCE"   # sets PAYLOAD to the cached source payload/
-  SOURCE_LABEL="$SOURCE"
+  SOURCE_LABEL="$SOURCE${SOURCE_REF:+#$SOURCE_REF}"
   # Layer the base harness's payload UNDER the source delta, so a source can RELY on base
   # machinery (banner / ledger / record / deferred-check / status-line / stop-notice)
   # without keeping its own copy. This mirrors tools/build.sh (base payload, then the
@@ -462,7 +489,7 @@ done < <(find "$PAYLOAD" \( -type f -o -type l \) -print0)
 # ---- orphan sweep ----
 # A re-init whose payload no longer contains a previously placed path (a source
 # dropped the file between versions, or the payload shrank) would otherwise leave
-# silent residue: the regenerated ledger forgets the path, so /omakase remove never
+# silent residue: the regenerated ledger forgets the path, so omakase remove never
 # deletes it and it leaks untracked noise into git status. For every prior ledger
 # row absent from this placement: delete the file when it is untracked AND still
 # hashes to what init placed (untouched harness residue; prune emptied dirs like
@@ -509,7 +536,7 @@ git -C "$ROOT" ls-files --error-unmatch -- lefthook.yml >/dev/null 2>&1 || add_p
 WTINC_TRACKED=0
 if git -C "$ROOT" ls-files --error-unmatch -- .worktreeinclude >/dev/null 2>&1; then
   WTINC_TRACKED=1
-  echo "omakase: .worktreeinclude is tracked — leaving it untouched (re-run /omakase-init inside a new manual worktree to install it there)." >&2
+  echo "omakase: .worktreeinclude is tracked — leaving it untouched (re-run omakase init inside a new manual worktree to install it there)." >&2
 else
   add_prefix ".worktreeinclude"
 fi
@@ -528,7 +555,7 @@ awk -v b="$BEGIN" -v e="$END" '$0==b{s=1} !s{print} $0==e{s=0}' "$EXCLUDE" > "$E
 
 # Write the .worktreeinclude block (Claude Code copies gitignored files matching
 # these patterns into worktrees it creates). Marked block so re-runs stay idempotent
-# and /omakase-remove can strip exactly what we added.
+# and omakase remove can strip exactly what we added.
 if [ "$WTINC_TRACKED" -eq 0 ] && [ "${#placed[@]}" -gt 0 ]; then
   WTINC="$ROOT/.worktreeinclude"
   touch "$WTINC"
@@ -560,7 +587,7 @@ mkdir -p "$OMK/payload-snapshot"
 # Remember a source install ($OMK/source, one line) so a bare re-run refreshes the
 # same source. A plain payload install leaves any remembered source in place — the
 # precedence above (flag > env > remembered) already decides who wins.
-if [ -n "$SOURCE" ]; then printf '%s\n' "$SOURCE" > "$OMK/source"; fi
+if [ -n "$SOURCE" ]; then printf '%s\n' "$SOURCE${SOURCE_REF:+#$SOURCE_REF}" > "$OMK/source"; fi
 # TODO(when: anything writes enabled=0): merge prior enabled values instead of
 # hardcoding 1 — wholesale regeneration silently re-enables declined artifacts.
 : > "$OMK/placed.tsv"
@@ -618,7 +645,7 @@ for o in "${overwrote[@]:-}"; do [ -n "$o" ] && echo "  ^ overwrote to match pay
 for w in "${swept[@]:-}"; do [ -n "$w" ] && echo "  - removed (placed by a prior init, no longer in the payload): $w"; done
 for s in "${skipped[@]:-}"; do [ -n "$s" ] && echo "  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see init.sh --help): $s"; done
 echo "omakase: ignores -> .git/info/exclude; hooks installed; new worktrees auto-install the harness. Nothing to commit."
-echo "omakase: see the whole harness any time with  /omakase show"
+echo "omakase: see the whole harness any time with  omakase status"
 # A harness may name companion tools (e.g. plugins it pairs with) in its manifest's
 # 'recommends:' line. Surfaced once here, at install — installing a companion is a
 # one-time setup action, not a per-session instruction.

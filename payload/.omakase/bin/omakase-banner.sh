@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # omakase-banner — print a rounded, gray-gradient box header branded to the harness,
 # in place of lefthook's own box (which is suppressed via `output:` in lefthook-local.yml).
-# Usage: omakase-banner.sh [hook-name]   (hook omitted -> just name + version, e.g. for /omakase show)
-# Icon is swappable: $OMAKASE_ICON (default 🍣). Version read from .omakase/VERSION if present.
+# Usage: omakase-banner.sh [hook-name]   (hook omitted -> just name + version, e.g. for omakase status)
+# Icon is swappable: $OMAKASE_ICON (default 🥡). Version read from .omakase/VERSION if present.
 # Honors NO_COLOR. Never fails a hook.
 set -uo pipefail
 
-icon="${OMAKASE_ICON:-🍣}"
+icon="${OMAKASE_ICON:-🥡}"
 name="omakase-harness"
 hook="${1:-}"
 ver=""
@@ -37,8 +37,13 @@ border() {
 }
 
 top="╭$(border ─)╮"; bot="╰$(border ─)╯"
-# content row: pad label out to the inner width (W). Emoji are ~2 cells; trim one space.
-pad=$(( W - ${#label} - 2 )); [ "$pad" -lt 0 ] && pad=0
+# content row: pad the label out to the inner width W. The icon renders as ~2 terminal cells
+# but bash counts it as ONE codepoint, so the label's display width is (icon cells) + (the
+# ASCII/-`·` remainder, where each codepoint is one cell). Measuring the icon explicitly keeps
+# the right edge aligned for any icon (emoji = 2 cells, a plain ASCII icon = 1).
+rest="${label#"$icon"}"
+case "$icon" in *[!$'\x00'-$'\x7f']*) iw=2;; *) iw=1;; esac
+pad=$(( W - 2 - iw - ${#rest} )); [ "$pad" -lt 0 ] && pad=0
 spaces=""; for (( i=0; i<pad; i++ )); do spaces+=" "; done
 if [ "$use_color" -eq 1 ]; then
   edge=$'\033'"[38;2;75;75;75m│"$'\033'"[0m"

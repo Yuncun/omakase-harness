@@ -8,14 +8,14 @@
 #
 # Two output modes:
 #   (default)    terminal — ANSI banner box + indented columns, for a real terminal.
-#   --markdown   Markdown — for the /omakase command to relay VERBATIM into the chat,
+#   --markdown   Markdown — for `omakase status` to relay VERBATIM into the chat,
 #                so the script owns the formatting and Claude never reformats (no drift,
 #                no editorializing). Renders as a real heading/list/table in the reply.
 set -euo pipefail
 
 FORMAT=term
 case "${1:-}" in --markdown|-m|md) FORMAT=md;; esac
-ICON="${OMAKASE_ICON:-🍣}"
+ICON="${OMAKASE_ICON:-🥡}"
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "omakase: not inside a git repo" >&2; exit 1; }
 COMMON="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)"
@@ -104,14 +104,14 @@ render_inventory() {
       echo "- _(none)_"
     fi
     echo
-    echo "### Injected (omakase) — placed by \`/omakase init\`, gitignored"
+    echo "### Injected (omakase) — placed by \`omakase init\`, gitignored"
     if [ -f "$PLACED" ] && [ -s "$PLACED" ]; then
       shown=0
       while IFS=$'\t' read -r rel kind src hash enabled; do
         [ -z "$rel" ] && continue
         case "$rel" in .omakase/*) continue;; esac   # omakase's own machinery/gate scripts live here; not listed (active gates show under Guards; .omakase/ is disclosed under Hidden)
         shown=1
-        dz=""; if is_drifted "$rel" "$hash" "$enabled"; then dz=" — **DRIFTED** (differs from canonical; \`/omakase init\` to re-sync, or it may be an intentional local edit)"; fi
+        dz=""; if is_drifted "$rel" "$hash" "$enabled"; then dz=" — **DRIFTED** (differs from canonical; \`omakase init\` to re-sync, or it may be an intentional local edit)"; fi
         if [ "$enabled" = "0" ]; then
           echo "- \`$rel\` — $kind, from $src — disabled (not restored, not verified)"
         elif [ -L "$ROOT/$rel" ]; then
@@ -119,7 +119,7 @@ render_inventory() {
         elif [ -e "$ROOT/$rel" ]; then
           echo "- \`$rel\` — $kind, from $src$dz"
         else
-          echo "- \`$rel\` — $kind, from $src — **MISSING** (run \`/omakase init\` to restore)"
+          echo "- \`$rel\` — $kind, from $src — **MISSING** (run \`omakase init\` to restore)"
         fi
       done < "$PLACED"
       [ "$shown" = "0" ] && echo "- _(none)_"
@@ -146,14 +146,14 @@ render_inventory() {
     else
       echo "    (none)"
     fi
-    echo "INJECTED (omakase) — placed by /omakase init, gitignored"
+    echo "INJECTED (omakase) — placed by omakase init, gitignored"
     if [ -f "$PLACED" ] && [ -s "$PLACED" ]; then
       shown=0
       while IFS=$'\t' read -r rel kind src hash enabled; do
         [ -z "$rel" ] && continue
         case "$rel" in .omakase/*) continue;; esac   # omakase's own machinery/gate scripts live here; not listed (active gates show under Guards; .omakase/ is disclosed under Hidden)
         shown=1
-        dz=""; mk="+"; if is_drifted "$rel" "$hash" "$enabled"; then dz="; DRIFTED — differs from canonical, run /omakase init to re-sync"; mk="~"; fi
+        dz=""; mk="+"; if is_drifted "$rel" "$hash" "$enabled"; then dz="; DRIFTED — differs from canonical, run omakase init to re-sync"; mk="~"; fi
         if [ "$enabled" = "0" ]; then
           echo "    - $rel   ($kind, from $src; disabled — not restored, not verified)"
         elif [ -L "$ROOT/$rel" ]; then
@@ -161,7 +161,7 @@ render_inventory() {
         elif [ -e "$ROOT/$rel" ]; then
           echo "    $mk $rel   ($kind, from $src$dz)"
         else
-          echo "    ! $rel   ($kind, from $src; MISSING — run /omakase init to restore)"
+          echo "    ! $rel   ($kind, from $src; MISSING — run omakase init to restore)"
         fi
       done < "$PLACED"
       [ "$shown" = "0" ] && echo "    (none)"
@@ -342,11 +342,11 @@ if [ ! -f "$PLACED" ]; then
   # never report a false negative about an enforcement system.
   if [ -f "$OMK/placed.list" ]; then
     if [ "$FORMAT" = md ]; then
-      echo "**Pre-0.10 omakase install detected** (record: \`placed.list\`). Run \`/omakase init\` to migrate to the provenance ledger. Placed files:"
+      echo "**Pre-0.10 omakase install detected** (record: \`placed.list\`). Run \`omakase init\` to migrate to the provenance ledger. Placed files:"
       sed 's/^/- `/; s/$/`/' "$OMK/placed.list"
     else
       echo "Pre-0.10 omakase install detected (record: placed.list)."
-      echo "Run  /omakase init  to migrate to the provenance ledger. Placed files:"
+      echo "Run  omakase init  to migrate to the provenance ledger. Placed files:"
       sed 's/^/  /' "$OMK/placed.list"
     fi
     exit 0
@@ -354,11 +354,11 @@ if [ ! -f "$PLACED" ]; then
   # Not installed — say so, then still render the inventory: the audit view
   # (what does this repo feed your agent?) works on an uninstalled repo.
   if [ "$FORMAT" = md ]; then
-    echo "**No omakase harness is installed in this repo.** Run \`/omakase init\` to inject one."
+    echo "**No omakase harness is installed in this repo.** Run \`omakase init\` to inject one."
     echo
   else
     echo "No omakase harness is installed in this repo."
-    echo "Run  /omakase init  to inject one."
+    echo "Run  omakase init  to inject one."
     echo
   fi
   render_inventory
@@ -366,7 +366,7 @@ if [ ! -f "$PLACED" ]; then
 fi
 
 # ============================ Markdown mode ============================
-# The script emits the final Markdown; the /omakase command relays it verbatim.
+# The script emits the final Markdown; `omakase status` relays it verbatim.
 if [ "$FORMAT" = md ]; then
   echo "## $ICON omakase-harness"
   echo
@@ -384,7 +384,7 @@ if [ "$FORMAT" = md ]; then
     echo "${hidden%, }"
   fi
   echo
-  echo "_Refresh:_ \`/omakase init\`  ·  _Remove:_ \`/omakase remove\`  ·  _read-only; running show changes nothing._"
+  echo "_Refresh:_ \`omakase init\`  ·  _Remove:_ \`omakase remove\`  ·  _read-only; running show changes nothing._"
   exit 0
 fi
 
@@ -406,5 +406,5 @@ if [ -f "$EXCLUDE" ]; then
   awk -v b="$BEGIN" -v e="$END" '$0==b{s=1;next} $0==e{s=0} s&&NF{print "  "$0}' "$EXCLUDE"
 fi
 echo
-echo "Update to the latest harness (syncs files; removes dropped ones):   /omakase init"
-echo "Undo everything:                                                    /omakase remove"
+echo "Update to the latest harness (syncs files; removes dropped ones):   omakase init"
+echo "Undo everything:                                                    omakase remove"

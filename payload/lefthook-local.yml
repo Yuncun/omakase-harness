@@ -20,7 +20,7 @@ pre-commit:
     # --- scoped checker (the shipped example: blocks staged merge-conflict markers) ---
     # Wrapped in omakase-ledger.sh so the run lands in the scorecard ledger; it passes
     # the gate's exit code straight through. Wrap your own gates the same way to have
-    # them show up in `/omakase show` and the 🍣 status-line segment; or call the gate
+    # them show up in `omakase status` and the 🥡 status-line segment; or call the gate
     # directly to keep it off the scorecard. OMAKASE_HOOK is the trigger label.
     - name: omakase-example
       run: bash .omakase/bin/omakase-ledger.sh omakase-example -- bash .omakase/gates/example.sh

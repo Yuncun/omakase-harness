@@ -2,13 +2,13 @@
 # TDD spec for the harness STATUS SURFACES:
 #   - omakase-ledger.sh      : run-ledger recorder; stamps epoch/hook/gate/verdict/ms/SHA
 #   - omakase-statusline.sh  : the CANARY — "<name> is running" where the harness is
-#                              active, dark elsewhere. No verdict, only the 🍣 icon.
+#                              active, dark elsewhere. No verdict, only the 🥡 icon.
 #   - omakase-stop-notice.sh : the Stop-hook status — "<name> is active ✓" (light ✓, no colour)
 #                              when gates are armed, plus a "Last run: <Hook> N/N checks at <clk>"
 #                              line after a run (a failure shows there, in words; the header keeps
 #                              "is active ✓"), "<name> is not active" when gates aren't armed, and
-#                              a "files missing · /omakase init" nudge. Detail -> /omakase show.
-#   - bin/show.sh            : /omakase show GUARDS chart (+ --markdown)
+#                              a "files missing · omakase init" nudge. Detail -> omakase status.
+#   - bin/show.sh            : omakase status GUARDS chart (+ --markdown)
 # Ledger lines are TAB-separated (epoch, hook, gate, verdict, ms, sha); assertions use
 # awk, not grep -P (BSD).
 set -u
@@ -57,7 +57,7 @@ OUT="$( cd "$REPO" && NO_COLOR=1 bash "$CANARY" )"
 [ -z "$OUT" ] && pass "dark where the harness is not installed" || fail "canary lit without harness ($OUT)"
 mkdir -p "$REPO/.omakase"
 OUT="$( cd "$REPO" && NO_COLOR=1 bash "$CANARY" )"
-echo "$OUT" | grep -q '🍣' && pass "shows the sushi icon" || fail "no icon ($OUT)"
+echo "$OUT" | grep -q '🥡' && pass "shows the takeout icon" || fail "no icon ($OUT)"
 echo "$OUT" | grep -q 'omakase is running' && pass "says 'omakase is running' (default name)" || fail "wrong text ($OUT)"
 printf '%s' "$OUT" | grep -q "$(printf '\033')" && fail "NO_COLOR not honored" || pass "NO_COLOR strips ANSI"
 OUT="$( cd "$REPO" && bash "$CANARY" )"
@@ -141,7 +141,7 @@ printf '%s' "$OUT" | grep -qE '✓|✗|✅|❌' && fail "'is not active' should 
 arm pre-commit
 printf '.omakase/gone.sh\tgate\tpayload\tdeadbeef\t1\n' > "$(dirname "$LEDGER")/placed.tsv"
 OUT="$(notice "$SB")"
-echo "$OUT" | grep -q '/omakase init to update' && pass "a missing placed file -> re-init nudge" || fail "no nudge for a missing file ($OUT)"
+echo "$OUT" | grep -q 'omakase init to update' && pass "a missing placed file -> re-init nudge" || fail "no nudge for a missing file ($OUT)"
 echo "$OUT" | grep -q 'files missing' && pass "the nudge names the reason" || fail "nudge missing its reason ($OUT)"
 
 # a repo without the overlay stays silent (the global Stop hook must not chatter elsewhere)
@@ -149,7 +149,7 @@ REPO2="$TMP/repoK2"; newrepo "$REPO2"
 OUT="$(printf '{"cwd":"%s","session_id":"x"}' "$REPO2" | bash "$NOTICE")"
 [ -z "$OUT" ] && pass "no overlay -> silent (not an omakase repo)" || fail "fired in a non-omakase repo ($OUT)"
 
-# ---------- Scenario S: /omakase show surfaces a 6-col ledger verdict on the guards chart ----------
+# ---------- Scenario S: omakase status surfaces a 6-col ledger verdict on the guards chart ----------
 # Since #23 `show` lists gates from the lefthook WIRING, joined to the latest ledger verdict
 # (the old ledger-only "recent runs" table now only appears in the lefthook-unresolved
 # fallback). So a 6-col row for the base payload's WIRED gate (omakase-example) must surface

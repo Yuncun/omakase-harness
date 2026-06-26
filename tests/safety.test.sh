@@ -305,7 +305,7 @@ OUT=$( cd "$REPO" && echo c > c.txt && git add c.txt && git commit -m c 2>&1 ); 
 # ---------- Scenario L: init runs clean from inside a linked worktree ----------
 # $ROOT/.git is a FILE in a linked worktree, so an exclude path literally under
 # "$ROOT/.git/info" crashes mkdir; it must resolve via the shared git dir. (The
-# fail-closed block message recommends /omakase init from exactly this state.)
+# fail-closed block message recommends omakase init from exactly this state.)
 echo "== Scenario L: init from inside a linked worktree =="
 PAY="$TMP/payL"; mkpayload "$PAY"
 REPO="$TMP/repoL"; newrepo "$REPO"
