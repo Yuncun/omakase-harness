@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # omakase build — assemble a self-contained Claude Code plugin bundle from the
-# single source: this repo's machinery (bin/, commands/, skills/) + the base
-# payload, optionally overlaid with a stack's payload delta.
+# single source: this repo's machinery (bin/, skills/, optional commands/) + the
+# base payload, optionally overlaid with a stack's payload delta.
 #
 # Every file in the output is a REAL file: symlinks in the source are dereferenced
 # (cp -RL), and the build refuses to emit a bundle that still contains a symlink.
@@ -29,7 +29,7 @@ Assemble a self-contained plugin bundle into <dir> (created fresh).
                   Omitted = the generic stack (base payload only).
   -h, --help      show this help.
 
-Bundle layout (the installable plugin): bin/, commands/, skills/ (if any),
+Bundle layout (the installable plugin): bin/, skills/, commands/ (if any),
 .claude-plugin/plugin.json, payload/. Every file is materialized real (no symlinks).
 USAGE
 }
@@ -50,8 +50,8 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$(cd "$SCRIPT_DIR/.." && pwd)"   # the single source of truth (this repo)
 
-[ -d "$SRC/bin" ] && [ -d "$SRC/payload" ] && [ -d "$SRC/commands" ] && [ -f "$SRC/.claude-plugin/plugin.json" ] \
-  || { echo "build: source missing bin/, payload/, commands/, or .claude-plugin/plugin.json ($SRC)" >&2; exit 1; }
+[ -d "$SRC/bin" ] && [ -d "$SRC/payload" ] && [ -d "$SRC/skills" ] && [ -f "$SRC/.claude-plugin/plugin.json" ] \
+  || { echo "build: source missing bin/, payload/, skills/, or .claude-plugin/plugin.json ($SRC)" >&2; exit 1; }
 if [ -n "$STACK" ]; then
   [ -d "$STACK" ]         || { echo "build: --stack dir not found: $STACK" >&2; exit 1; }
   [ -d "$STACK/payload" ] || { echo "build: stack has no payload/: $STACK" >&2; exit 1; }
@@ -64,10 +64,12 @@ trap 'rm -rf "$WORK"' EXIT
 rm -rf "$WORK"
 mkdir -p "$WORK/.claude-plugin"
 
-# 1) Machinery — the one copy, dereferenced to real files.
-cp -RL "$SRC/bin"      "$WORK/bin"
-cp -RL "$SRC/commands" "$WORK/commands"
-[ -d "$SRC/skills" ] && cp -RL "$SRC/skills" "$WORK/skills"
+# 1) Machinery — the one copy, dereferenced to real files. skills/ is the verb surface
+#    (one skill per verb, e.g. skills/init); commands/ is legacy and optional (a stack
+#    may still ship one), so it is copied only when present.
+cp -RL "$SRC/bin"    "$WORK/bin"
+cp -RL "$SRC/skills" "$WORK/skills"
+[ -d "$SRC/commands" ] && cp -RL "$SRC/commands" "$WORK/commands"
 
 # 2) Base payload, then the stack's payload delta on top (stack wins).
 cp -RL "$SRC/payload" "$WORK/payload"

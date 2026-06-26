@@ -14,7 +14,7 @@ pre-commit:
     - name: omakase-banner
       run: bash .omakase/bin/omakase-banner.sh pre-commit
     # The sample gate: block a staged DO-NOT-COMMIT marker. Wrapped in the base harness's
-    # omakase-ledger.sh so the run shows up in `/omakase show` and the 🍣 status-line; the
+    # omakase-ledger.sh so the run shows up in `omakase status` and the 🥡 status-line; the
     # wrapper passes the gate's exit code straight through (non-zero blocks the commit).
     - name: block-marker
       run: bash .omakase/bin/omakase-ledger.sh block-marker -- bash .omakase/gates/block-marker.sh

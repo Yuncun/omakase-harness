@@ -51,8 +51,8 @@ while IFS="$TAB" read -r rel kind src hash enabled || [ -n "$rel" ]; do
   if [ -e "$ROOT/$rel" ] || [ -L "$ROOT/$rel" ]; then
     actual="$(omakase_hash_of "$ROOT/$rel")" || actual=""
     if [ -n "$hash" ] && [ -n "$actual" ] && [ "$actual" != "$hash" ]; then
-      if [ -e "$SNAP/$rel" ] || [ -L "$SNAP/$rel" ]; then fix="cp -P '$SNAP/$rel' '$ROOT/$rel'  (or /omakase init to re-sync every file)"
-      else fix="/omakase init"; fi
+      if [ -e "$SNAP/$rel" ] || [ -L "$SNAP/$rel" ]; then fix="cp -P '$SNAP/$rel' '$ROOT/$rel'  (or omakase init to re-sync every file)"
+      else fix="omakase init"; fi
       echo "omakase: WARNING — injected '$rel' has DRIFTED from canonical (ledger ${hash:0:12}…, on-disk ${actual:0:12}…); a gate may be weakened or stale. Drift only surfaces — your copy is left as-is. Adopt canonical with: $fix" >&2
     fi
     continue                                                                  # never overwrite (also catches dangling symlinks)

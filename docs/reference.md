@@ -2,13 +2,17 @@
 
 ## Commands
 
-### `init.sh [--source <git-url|path>] [--cut-over] [--help]`
+### `init.sh [<owner/repo[#ref]> | --source <git-url|path>] [--cut-over] [--help]`
 
 Overlays `payload/` onto the current repo, records placed paths in `.git/info/exclude`,
 and installs hooks through lefthook. Skips paths the repo tracks. Overwrites a divergent
 installed (untracked) file to match payload and warns. Removes a previously placed file
 the payload no longer ships, unless it was edited locally.
 
+- `<owner/repo[#ref]>` — positional shorthand for `--source https://github.com/owner/repo`,
+  optionally pinned to a branch or tag with `#ref`. This is the shareable install line others
+  run after `share`: `omakase init you/harness`. A real local path with the same shape wins
+  over the shorthand.
 - `--source <git-url|path>` — install from a custom harness (a `payload/` tree plus an
   `omakase.manifest`). The omakase base harness's payload is layered UNDER the custom harness's
   payload (base machinery underneath, the custom harness's delta winning on overlap), so a
@@ -32,10 +36,18 @@ personal), the hook wiring, the run ledger, and the paths hidden via `.git/info/
 Uninstalls hooks, deletes exactly the untracked files `init` placed, and strips the
 omakase block from `.git/info/exclude`. Tracked files are never touched.
 
+### `share.sh [<name>]`
+
+The inverse of `init`. Captures the current repo's harness into a NEW harness repo created
+as a sibling directory (`../<name>`, default `<reponame>-harness`): writes `payload/`,
+scaffolds `omakase.manifest` + a `README.md` carrying the install line, and runs `git init` +
+commit so it is ready to push. Prints the publish command and the one-line install others run
+(`omakase init you/<name>`). Never changes the source repo. Wraps `import.sh`.
+
 ### `import.sh <source-repo>`
 
-Creator tool. Reads a project's harness files into `payload/`. Read-only on the source.
-Not part of the adopter surface.
+The capture step behind `share`. Reads a project's harness files into `payload/`
+(`OMAKASE_PAYLOAD` sets the destination). Read-only on the project it reads. Not an adopter command.
 
 ## Environment
 
@@ -61,6 +73,7 @@ lines.
 |---|---|---|
 | `name` | for `--source` | harness name, shown on install |
 | `version` | no | harness version |
+| `recommends` | no | free-text companion-tool hint, printed once at install |
 
 ## Path classification
 

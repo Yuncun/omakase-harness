@@ -24,7 +24,7 @@ repo, so put them in one first:
 
 Then, from any project:
 
-    /omakase init --source /tmp/sample-harness          # Claude Code or Copilot CLI
+    omakase init --source /tmp/sample-harness          # Claude Code or Copilot CLI
     # or, in a plain shell:
     bash <path-to>/omakase-harness/bin/init.sh --source /tmp/sample-harness
 
@@ -32,10 +32,10 @@ Now:
 
 - a commit that stages a file containing the `DO NOT COMMIT` marker is **blocked**;
 - a clean commit **passes**;
-- `/omakase show` lists the `block-marker` gate;
-- `/omakase remove` deletes it all and restores the repo.
+- `omakase status` lists the `block-marker` gate;
+- `omakase remove` deletes it all and restores the repo.
 
 ## Make your own
 
 Copy this directory, edit the three files under `payload/`, push it to a git repo, and
-share the URL. People adopt it with `/omakase init --source <your-repo>`.
+share the URL. People adopt it with `omakase init --source <your-repo>`.

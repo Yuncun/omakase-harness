@@ -12,13 +12,21 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   by `tests/sample-harness.test.sh` (copy into a repo → `init --source` → gate fires → remove).
 - A `.claude-plugin/marketplace.json` so the repo is itself an installable marketplace: the
   documented `plugin marketplace add yuncun/omakase-harness` + `plugin install
-  omakase-harness@omakase` now resolves (the plugin's `source` is the repo root, `"./"`).
+  omakase@omakase` now resolves (the plugin's `source` is the repo root, `"./"`).
   Without it those install lines had nothing to fetch.
-- A generic Copilot CLI `/omakase` management skill (`skills/omakase/`) — the host-agnostic
-  front door (show / init / remove, including `--source`) that mirrors the Claude `/omakase`
-  command, via a self-locating `run.sh` dispatcher that finds the base harness's `bin/` from its
-  own install location. Ships in the plugin bundle, so a custom harness no longer keeps its own
-  copy of the management skill — the base harness carries it once.
+- A **one-skill-per-verb command surface** (`skills/{init,status,remove,share,add-gate}/`), each a
+  thin self-locating `run.sh` over the base harness's `bin/`. It works the same on Claude Code
+  (typed as `/omakase:init` or model-invoked), Copilot CLI, and a plain shell. Replaces the single
+  dispatch-on-argument command/skill; `commands/` is dropped (Claude Code merges commands into
+  skills, so one set of skills serves both hosts).
+- `omakase share` — the inverse of `init`: capture the current repo's harness into a new,
+  publishable harness repo created as a sibling directory (`payload/` + `omakase.manifest` + a
+  README carrying the install line), git-initialized and committed ready to push. Prints the
+  one-line install others run, `omakase init you/harness`. Wraps `import.sh`. Covered by
+  `tests/share.test.sh`.
+- `init` accepts an `owner/repo[#ref]` shorthand (e.g. `omakase init alice/harness`) that expands
+  to `https://github.com/owner/repo`, optionally pinned to a branch or tag — the shareable install
+  line `share` prints. An existing local path of the same shape still wins.
 - A `--source` install now layers the **base harness's payload under the custom harness's delta**
   (base machinery underneath, the custom harness winning on overlap), so a custom harness ships
   only its own payload and relies on base machinery — the banner, `omakase-ledger.sh`,
@@ -34,6 +42,14 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   bundle). Covered by `tests/sources.test.sh` (S7).
 
 ### Changed
+- **Plugin renamed `omakase-harness` → `omakase`** (the plugin identity only): install is now
+  `plugin install omakase@omakase`, and the skills read `/omakase:<verb>` on Claude Code. The
+  repo name, the `.git/info/exclude` markers, and the harness banner stay `omakase-harness`
+  (on-disk contracts).
+- User-facing nudges now use host-neutral phrasing — `omakase init` / `omakase status` /
+  `omakase remove` (was the slash form `/omakase init`, `/omakase show`); the inspect verb is now
+  `status` (it still calls `bin/show.sh`).
+- Mascot: the default status icon is now 🥡 (was 🍣); still overridable with `OMAKASE_ICON`.
 - Docs terminology: the tool you install once is now the **omakase base harness** (was "the
   engine"), and a personal harness you point `--source` at is a **custom harness** (was
   "a source"). This mirrors the base/custom layering the install actually performs. Wording

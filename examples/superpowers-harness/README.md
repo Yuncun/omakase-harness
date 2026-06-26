@@ -57,12 +57,12 @@ These files are the contents of a harness repo, so put them in one first:
 
 Then, from any project:
 
-    /omakase init --source /tmp/superpowers-harness        # Claude Code or Copilot CLI
+    omakase init --source /tmp/superpowers-harness         # Claude Code or Copilot CLI
 
-`/omakase show` lists what it placed; `/omakase remove` deletes it all and restores the repo.
+`omakase status` lists what it placed; `omakase remove` deletes it all and restores the repo.
 
 ## Make your own
 
 Copy this directory, point both settings files + the manifest's `recommends:` at the plugin you
 pair with, push it to a git repo, and share the URL. People adopt it with
-`/omakase init --source <your-repo>`.
+`omakase init --source <your-repo>`.

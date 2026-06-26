@@ -197,7 +197,7 @@ grep -q 'omakase-example-gate-ran' "$REPO/.omakase/gates/example.sh" 2>/dev/null
 CMN="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 [ -L "$CMN/omakase/clobbered/.omakase/gates/example.sh" ] && pass "the user's symlink was backed up under clobbered/ (as a symlink)" || fail "symlink dest not backed up"
 
-# ---------- Scenario F: /omakase show renders the installed harness ----------
+# ---------- Scenario F: omakase status renders the installed harness ----------
 echo "== Scenario F: show renders the installed-but-invisible harness =="
 SHOW="$HERE/../bin/show.sh"
 PAY="$TMP/payloadF"; REPO="$TMP/repoF"; mkpayload "$PAY"; newrepo "$REPO"

@@ -2,7 +2,7 @@
 # omakase-statusline — the harness canary for the status bar. Its presence is the
 # whole signal: "<name> is running" means the harness is active and watching THIS
 # repo; it goes dark in a repo the harness doesn't guard. No verdicts, no jargon,
-# only the 🍣 icon. Honors NO_COLOR, costs no API tokens. Name comes from
+# only the 🥡 icon. Honors NO_COLOR, costs no API tokens. Name comes from
 # .omakase/NAME (or $OMAKASE_NAME), default "omakase".
 set -uo pipefail
 
@@ -24,7 +24,7 @@ name="omakase"
 [ -f "$top/.omakase/NAME" ] && name="$(tr -d ' \n' < "$top/.omakase/NAME" 2>/dev/null)"
 name="${OMAKASE_NAME:-$name}"
 [ -n "$name" ] || name="omakase"
-icon="${OMAKASE_ICON:-🍣}"
+icon="${OMAKASE_ICON:-🥡}"
 
 if [ -n "${NO_COLOR:-}" ]; then
   printf '%s %s is running\n' "$icon" "$name"

@@ -3,13 +3,13 @@
 # Wired per-repo as a Claude Code Stop hook (.claude/settings.json). Reads the Stop-hook
 # JSON on stdin. Deterministic — no LLM, no API tokens. Never blocks the turn.
 #
-# The states it can show (always the harness's name, no 🍣; detail lives in /omakase show):
+# The states it can show (always the harness's name, no 🥡; detail lives in omakase status):
 #   <name> is active ✓                                        harness deployed and gates armed
 #   <name> is active ✓ / Last run: <Hook> 8/8 checks at <clk> a run just finished, all passed
 #   <name> is active ✓ / Last run: <Hook> 2 checks failed …   a run failed — header stays "active"
 #                                                             (it tracks the harness, not the run)
 #   <name> is not active                                      overlay present but gates not armed
-#   <name> — files missing · /omakase init to update          overlay incomplete in this worktree
+#   <name> — files missing · omakase init to update          overlay incomplete in this worktree
 #
 # "Last run" = the most recent hook run (pre-commit OR pre-push), summarised from the
 # shared ledger via latest-verdict-per-gate (so a check that failed then passed on the
@@ -53,8 +53,8 @@ done
 
 # install nudge — any ENABLED placed file missing from this worktree means the overlay is
 # incomplete here (e.g. a fresh `git worktree add` that hasn't self-healed). One fix for
-# all of it: /omakase init. (An EDITED file is not flagged — that may be intentional and
-# init would clobber it; that case stays in /omakase show.)
+# all of it: omakase init. (An EDITED file is not flagged — that may be intentional and
+# init would clobber it; that case stays in omakase status.)
 nudge=""
 placed="$common/omakase/placed.tsv"
 if [ -f "$placed" ]; then
@@ -62,7 +62,7 @@ if [ -f "$placed" ]; then
   # rows count (enabled=1, matching show.sh); a malformed/blank row is skipped, not nudged.
   while IFS=$'\t' read -r rel kind src hash enabled || [ -n "$rel" ]; do
     [ "$enabled" = "1" ] && [ -n "$rel" ] || continue
-    [ -e "$root/$rel" ] || [ -L "$root/$rel" ] || { nudge="files missing · /omakase init to update"; break; }
+    [ -e "$root/$rel" ] || [ -L "$root/$rel" ] || { nudge="files missing · omakase init to update"; break; }
   done < "$placed"
 fi
 
