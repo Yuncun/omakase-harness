@@ -102,5 +102,35 @@ mkdir -p "$TMP/plainlocal"
 OUT=$( cd "$S" && bash "$INIT" "$TMP/plainlocal" 2>&1 )
 echo "$OUT" | grep -q 'github.com' && fail "an existing local path was github-expanded" || pass "an existing local path is not expanded"
 
+echo "== Scenario OWNER FALLBACK: github.user, then the <you> placeholder, when there is no origin =="
+# (a) no origin remote, but a configured github.user -> the install line uses that owner.
+NR="$TMP/no-origin/widget"; rm -rf "$NR"; mkdir -p "$NR"
+( cd "$NR" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git config github.user bob )
+printf 'doctrine\n' > "$NR/AGENTS.md"
+( cd "$NR" && git add AGENTS.md && git commit -q -m init )   # deliberately NO remote
+( cd "$NR" && bash "$SHARE" ) >/dev/null 2>&1
+grep -q 'omakase init bob/widget-harness' "$TMP/no-origin/widget-harness/README.md" 2>/dev/null \
+  && pass "owner falls back to github.user when there is no origin" || fail "github.user fallback wrong"
+# (b) neither origin nor github.user -> the <you> placeholder the author fills in.
+AN="$TMP/anon/gadget"; rm -rf "$AN"; mkdir -p "$AN"
+( cd "$AN" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
+printf 'doctrine\n' > "$AN/AGENTS.md"
+( cd "$AN" && git add AGENTS.md && git commit -q -m init )
+( cd "$AN" && bash "$SHARE" ) >/dev/null 2>&1
+grep -q 'omakase init <you>/gadget-harness' "$TMP/anon/gadget-harness/README.md" 2>/dev/null \
+  && pass "owner falls back to the <you> placeholder when nothing is configured" || fail "<you> placeholder fallback wrong"
+
+echo "== Scenario EMPTY PAYLOAD: a repo with no harness files captures nothing, with a note =="
+PL="$TMP/plainproj/site"; rm -rf "$PL"; mkdir -p "$PL"
+( cd "$PL" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
+printf '# just a readme\n' > "$PL/README.md"   # NOT a harness file -> import captures nothing
+( cd "$PL" && git add README.md && git commit -q -m init )
+OUT=$( cd "$PL" && bash "$SHARE" 2>&1 ); rc=$?
+ED="$TMP/plainproj/site-harness"
+[ "$rc" -eq 0 ] && pass "share exits 0 even with no harness to capture" || { fail "share rc=$rc on empty"; echo "$OUT" | sed 's/^/      /'; }
+{ [ -d "$ED/payload" ] && [ -z "$(ls -A "$ED/payload" 2>/dev/null)" ]; } && pass "payload/ is empty (nothing captured)" || fail "payload not empty as expected"
+echo "$OUT" | grep -qi 'no harness files were found' && pass "prints the empty-payload note" || fail "no empty-payload note ($OUT)"
+[ -f "$ED/omakase.manifest" ] && pass "still scaffolds the manifest (a valid starting skeleton)" || fail "manifest not scaffolded on empty"
+
 echo ""
 [ "$FAILED" -eq 0 ] && echo "share.test.sh: ALL PASS" || { echo "share.test.sh: FAILURES"; exit 1; }

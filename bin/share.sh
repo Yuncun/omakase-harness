@@ -5,7 +5,7 @@
 #   omakase init you/<name>
 #
 # It delegates the capture to import.sh (the deterministic "read a repo's scattered harness
-# into payload/" engine) and adds the scaffolding + a ready-to-push git repo on top.
+# into payload/" step) and adds the scaffolding + a ready-to-push git repo on top.
 #
 #   cd ~/my-project && bash <base-harness>/bin/share.sh            # -> ../my-project-harness
 #   cd ~/my-project && bash <base-harness>/bin/share.sh team-rig   # -> ../team-rig
