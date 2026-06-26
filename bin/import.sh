@@ -88,7 +88,7 @@ consider() {  # $1 = relative path of a real file/symlink under ROOT
   if ignored_personal "$rel"; then skipped_personal+=("$rel"); return 0; fi
   copy_into_payload "$rel"
   imported+=("$rel")
-  if git -C "$ROOT" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then tracked+=("$rel"); fi
+  if git -C "$ROOT" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1; then tracked+=("$rel"); fi
   return 0   # never let an untracked file (git rc=1) abort the walk under set -e
 }
 

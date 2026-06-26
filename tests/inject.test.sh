@@ -175,6 +175,27 @@ PAY="$TMP/payloadE2"; REPO="$TMP/repoE2"; mkpayload "$PAY"; newrepo "$REPO"
 printf '#!/usr/bin/env bash\necho NEW-PAYLOAD-V2\nexit 0\n' > "$PAY/.omakase/gates/example.sh"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 grep -q 'NEW-PAYLOAD-V2' "$REPO/.omakase/gates/example.sh" && pass "re-init took the new payload version (upstream update)" || fail "upstream update did not apply"
+# E3 — FIRST install over a user's OWN pre-existing untracked file at a payload path. No prior
+# ledger exists, so the place-loop backup is the ONLY safety net (the collision guard is skipped).
+PAY="$TMP/payloadE3"; REPO="$TMP/repoE3"; mkpayload "$PAY"; newrepo "$REPO"
+mkdir -p "$REPO/.omakase/gates"; echo 'MY OWN FILE' > "$REPO/.omakase/gates/example.sh"
+OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 )
+grep -q 'omakase-example-gate-ran' "$REPO/.omakase/gates/example.sh" && pass "first install overwrote the user's pre-existing untracked file" || fail "first install did not overwrite"
+CMN="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+grep -q 'MY OWN FILE' "$CMN/omakase/clobbered/.omakase/gates/example.sh" 2>/dev/null && pass "first-install: user's content preserved under clobbered/ (no prior ledger needed)" || fail "first-install backup missing — user file destroyed with no recovery"
+echo "$OUT" | grep -q 'clobbered/' && pass "first-install overwrite warning names the backup" || fail "no backup path in the warning ($OUT)"
+# E4 — an untracked SYMLINK-TO-DIRECTORY where the payload ships a regular file: init must replace
+# the symlink with the payload file, NOT write the file through into the linked dir (regression
+# guard for the bare-`-d`-follows-symlink bug), and back up the symlink.
+PAY="$TMP/payloadE4"; REPO="$TMP/repoE4"; mkpayload "$PAY"; newrepo "$REPO"
+mkdir -p "$REPO/realdir" "$REPO/.omakase/gates"
+( cd "$REPO/.omakase/gates" && ln -s ../../realdir example.sh )   # example.sh -> a directory
+OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 )
+[ ! -L "$REPO/.omakase/gates/example.sh" ] && pass "symlink-to-dir dest replaced (no longer a symlink)" || fail "symlink-to-dir dest left as a symlink"
+grep -q 'omakase-example-gate-ran' "$REPO/.omakase/gates/example.sh" 2>/dev/null && pass "payload file placed at the path" || fail "payload not placed at the path"
+[ ! -e "$REPO/realdir/example.sh" ] && pass "payload NOT written through into the linked directory" || fail "payload leaked into the linked dir (write-through bug)"
+CMN="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+[ -L "$CMN/omakase/clobbered/.omakase/gates/example.sh" ] && pass "the user's symlink was backed up under clobbered/ (as a symlink)" || fail "symlink dest not backed up"
 
 # ---------- Scenario F: /omakase show renders the installed harness ----------
 echo "== Scenario F: show renders the installed-but-invisible harness =="

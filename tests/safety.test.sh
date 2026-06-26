@@ -162,6 +162,14 @@ OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
 [ "$rc" -ne 0 ] && pass "a multi-step hook that merely calls git-lfs is NOT exempted (still refuses)" || fail "a customized hook was wrongly exempted as stock git-lfs ($OUT)"
 grep -q 'npm run lint' "$REPO/.git/hooks/pre-push" 2>/dev/null && pass "the customized hook is left exactly in place" || fail "customized hook was displaced"
 
+# H10d: work crammed onto the SAME line as the git-lfs forward must still refuse — the exemption
+# is whole-line-anchored, not a substring match (a `git lfs pre-push "$@" && ./x` is not pristine).
+REPO="$TMP/repoH10d"; newrepo "$REPO"
+printf '#!/bin/sh\ncommand -v git-lfs >/dev/null 2>&1 || exit 2\ngit lfs pre-push "$@" && ./team-check.sh\n' > "$REPO/.git/hooks/pre-push"; chmod +x "$REPO/.git/hooks/pre-push"
+OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
+[ "$rc" -ne 0 ] && pass "hook with work crammed onto the git-lfs forward line still refuses" || fail "same-line customized hook wrongly exempted ($OUT)"
+grep -q 'team-check' "$REPO/.git/hooks/pre-push" 2>/dev/null && pass "the customized same-line hook is left in place" || fail "customized hook displaced"
+
 # ---------- Scenario I: guarded cut-over ----------
 echo "== Scenario I: guarded cut-over =="
 PAY="$TMP/payI"; mkpayload "$PAY"; printf 'payload agents\n' > "$PAY/AGENTS.md"

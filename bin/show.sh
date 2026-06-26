@@ -44,7 +44,7 @@ omakase_hash_of() {  # $1 = path; echoes the hex digest, or nothing if no digest
 is_drifted() {  # $1 rel, $2 ledger-hash, $3 enabled -> 0 (true) if present & content-changed
   [ "$3" = "1" ] || return 1                                            # disabled: not managed, never "drifted"
   { [ -e "$ROOT/$1" ] || [ -L "$ROOT/$1" ]; } || return 1              # missing is its own state, not drift
-  git -C "$ROOT" ls-files --error-unmatch "$1" >/dev/null 2>&1 && return 1   # tracked: upstream owns it
+  git -C "$ROOT" ls-files --error-unmatch -- "$1" >/dev/null 2>&1 && return 1   # tracked: upstream owns it
   local a; a="$(omakase_hash_of "$ROOT/$1")" || a=""
   [ -n "$2" ] && [ -n "$a" ] && [ "$a" != "$2" ]
 }

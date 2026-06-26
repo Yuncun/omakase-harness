@@ -179,11 +179,14 @@ if [ -n "$SOURCE" ]; then
 else
   PAYLOAD="${OMAKASE_PAYLOAD:-$(cd "$SCRIPT_DIR/../payload" && pwd)}"
 fi
-[ -d "$PAYLOAD" ] || { echo "omakase: payload dir not found at $PAYLOAD" >&2; exit 1; }
-# Normalize once: the place/cut-over/source loops derive rel via ${f#"$PAYLOAD"/}, which only
-# strips cleanly when PAYLOAD has no trailing slash (a tab-completed OMAKASE_PAYLOAD=/p/ would
-# otherwise yield bad rel values). No-op for the already-clean cache/merge/default sources.
+# Normalize BEFORE validating: the place/cut-over loops derive rel via ${f#"$PAYLOAD"/}, which
+# only strips cleanly when PAYLOAD has no trailing slash (a tab-completed OMAKASE_PAYLOAD=/p/
+# would otherwise yield bad rel values). Stripping first also means a pathological
+# OMAKASE_PAYLOAD=/ collapses to "" and is REJECTED by the check below, not silently mangled.
+# No-op for the already-clean cache/merge/default sources. (The source-merge loop above derives
+# rel from $cache/payload, which is trailing-slash-free by construction, so it needs no strip.)
 PAYLOAD="${PAYLOAD%/}"
+[ -d "$PAYLOAD" ] || { echo "omakase: payload dir not found at $PAYLOAD" >&2; exit 1; }
 # Resolve a lefthook invocation WITHOUT mutating the user's global environment.
 # Order (shared with remove.sh via lib-lefthook.sh): an explicit override; lefthook
 # already on PATH (a global brew/mise install); then the repo's own node_modules/.bin
@@ -220,17 +223,21 @@ is_stock_git_lfs_hook() {  # $1 = hook file
   local hf="$1" evt
   evt="$(basename "$hf")"
   case "$evt" in
-    post-applypatch|post-checkout|post-commit|post-merge|pre-push) ;;
+    post-checkout|post-commit|post-merge|pre-push) ;;   # exactly what `git lfs install` writes
     *) return 1;;
   esac
   grep -q 'command -v git-lfs' "$hf" 2>/dev/null || return 1
-  # Empty once the shebang, comments, blank lines, the presence guard, and the
-  # `git lfs <evt>` forward are stripped — anything left means it does extra work and refuses.
+  # Empty once the shebang, comments, blank lines, the presence guard, and the `git lfs <evt>`
+  # forward are stripped — anything left means it does extra work and refuses. The guard and
+  # forward strips are ANCHORED to the whole line: a line that merely CONTAINS the substring
+  # (a trailing `# command -v git-lfs` comment, or `git lfs pre-push "$@" && ./mycheck.sh`
+  # cramming work onto the forward line) must NOT be stripped, or a customized hook would be
+  # mistaken for a pristine stub and silently displaced.
   [ -z "$(grep -v '^#!' "$hf" \
         | grep -v '^[[:space:]]*#' \
         | grep -v '^[[:space:]]*$' \
-        | grep -v 'command -v git-lfs' \
-        | grep -v "git lfs ${evt}")" ]
+        | grep -vE '^[[:space:]]*command -v git-lfs' \
+        | grep -vE "^[[:space:]]*(exec[[:space:]]+)?git lfs ${evt}([[:space:]]+\"\\\$@\")?[[:space:]]*\$")" ]
 }
 
 # ---- incumbent hook-manager guard (runs BEFORE any mutation) ----
@@ -373,8 +380,8 @@ same_file() {
   if [ -L "$1" ] || [ -L "$2" ]; then
     [ "$(readlink "$1" 2>/dev/null)" = "$(readlink "$2" 2>/dev/null)" ]
   else
-    cmp -s "$1" "$2"
-  fi
+    cmp -s "$1" "$2" 2>/dev/null   # 2>/dev/null: a directory dest makes cmp emit "Is a directory"
+  fi                                # to stderr even with -s, muddying the clean refusal that follows
 }
 place_file() {  # $1 = source payload path, $2 = relative dest
   mkdir -p "$ROOT/$(dirname "$2")"
@@ -390,8 +397,10 @@ place_file() {  # $1 = source payload path, $2 = relative dest
   # writes through it to the link's TARGET — clobbering an out-of-tree file and leaving the
   # placed path a stale symlink — and a DANGLING dest symlink makes `cp -P` fail outright
   # (aborting the whole install under set -e). The place loop has already decided this dest
-  # should be (re)written, so removing it first is safe. `[ -d ]` guard: don't rm a dir.
-  [ -d "$ROOT/$2" ] || rm -f "$ROOT/$2"
+  # should be (re)written, so removing it first is safe. The guard must match the refusal
+  # above: a bare `[ -d ]` follows a symlink-to-dir and would skip the rm, leaving the symlink
+  # so `cp -P file symlink-to-dir` writes INTO the linked dir — only a REAL dir is kept.
+  { [ -d "$ROOT/$2" ] && [ ! -L "$ROOT/$2" ]; } || rm -f "$ROOT/$2"
   cp -P "$1" "$ROOT/$2"   # -P: carry symlinks as symlinks (e.g. CLAUDE.md -> AGENTS.md)
   case "$2" in *.sh) [ -L "$ROOT/$2" ] || chmod +x "$ROOT/$2";; esac
 }
@@ -428,11 +437,12 @@ while IFS= read -r -d '' f; do
   # path — e.g. a personal .claude/settings.json (the payload ships one): the collision guard
   # above only runs when a prior ledger exists, so this backup is the only safety net then.
   # Best-effort, mirroring the collision guard's clobbered/ backup: copy the LIVE dest (cp -P
-  # round-trips a symlink; skip a directory dest), rm-first so a stale symlink can't abort us,
-  # and a backup failure WARNS rather than killing the overlay. clobbered/ keeps the last
-  # pre-overwrite copy per path (not a full history); remove.sh tears the whole tree down.
+  # round-trips a symlink; skip only a REAL directory dest), rm-first so a stale symlink can't
+  # abort us, and a backup failure WARNS rather than killing the overlay. clobbered/ keeps the
+  # last pre-overwrite copy per path (not a full history); remove.sh tears the whole tree down.
+  # The `|| [ -L ]` matches place_file's unlink: a symlink-to-dir IS replaced, so back it up too.
   saved=""
-  if [ ! -d "$dest" ]; then
+  if [ ! -d "$dest" ] || [ -L "$dest" ]; then
     if { mkdir -p "$OMK/clobbered/$(dirname "$rel")" \
          && rm -f "$OMK/clobbered/$rel" \
          && cp -P "$dest" "$OMK/clobbered/$rel"; }; then
