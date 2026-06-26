@@ -24,6 +24,13 @@ bash "$BUILD" --out "$GEN" >/dev/null 2>&1 && pass "build generic exits 0" || fa
 grep -q '"name": "omakase"' "$GEN/.claude-plugin/plugin.json" && pass "generic plugin name" || fail "wrong plugin name"
 [ -f "$GEN/payload/lefthook-local.yml" ] && pass "base payload wiring present" || fail "no payload wiring"
 [ -f "$GEN/payload/.omakase/gates/deferred-check.sh" ] && pass "base gate present" || fail "no base gate"
+# Opt-in chrome: the base payload must NOT auto-wire the Claude-only Stop-hook notice (no
+# .claude/settings.json) nor the cosmetic commit banner job; both are opt-in. The scripts still
+# ship (a user-added Stop hook / terminal `omakase status`), so assert their presence too.
+[ ! -e "$GEN/payload/.claude/settings.json" ] && pass "no auto-wired Stop-hook settings.json (notice is opt-in)" || fail "base payload re-added the Stop-hook settings.json"
+grep -qE '^[[:space:]]*-[[:space:]]*name:[[:space:]]*omakase-banner' "$GEN/payload/lefthook-local.yml" && fail "base wiring re-added the cosmetic banner job" || pass "no auto-wired banner job (banner is opt-in)"
+[ -x "$GEN/payload/.omakase/bin/omakase-banner.sh" ] && pass "omakase-banner.sh still ships (terminal status uses it)" || fail "banner script missing"
+[ -x "$GEN/payload/.omakase/bin/omakase-stop-notice.sh" ] && pass "omakase-stop-notice.sh still ships (opt-in)" || fail "stop-notice script missing"
 [ -z "$(find "$GEN" -type l)" ] && pass "zero symlinks (real files only)" || fail "bundle has symlinks"
 diff -r "$SRC/bin" "$GEN/bin" >/dev/null 2>&1 && pass "machinery byte-identical to source (no drift)" || fail "machinery differs from source"
 
