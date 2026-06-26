@@ -74,6 +74,26 @@ OUT=$( cd "$ADOPT" && bash "$INIT" acme/proj-harness 2>&1 ); rc=$?
 grep -q 'omakase-harness' "$ADOPT/.git/info/exclude" 2>/dev/null && pass "zero committed footprint (exclude block written)" || fail "no exclude block"
 [ "$(head -n1 "$ADOPT/.git/omakase/source" 2>/dev/null)" = "https://github.com/acme/proj-harness" ] && pass "expanded source remembered (bare re-run refreshes it)" || fail "remembered source wrong"
 
+echo "== Scenario REF PIN: owner/repo#ref adopts the TAG's payload, not the default branch =="
+# Put a distinctive delta on a tag only (the default branch must NOT have it), so a passing
+# test proves the #ref actually drove a tag checkout — not that the file happened to be present.
+DEF="$(git -C "$DEST" symbolic-ref --short HEAD)"
+git -C "$DEST" checkout -q -b _pinned
+printf 'pinned delta\n' > "$DEST/payload/PINNED.md"
+git -C "$DEST" add payload/PINNED.md && git -C "$DEST" commit -q -m 'pinned payload'
+git -C "$DEST" tag v1
+git -C "$DEST" checkout -q "$DEF"                       # default branch has no PINNED.md
+PIN="$TMP/pinned-adopter"; mkdir -p "$PIN"; ( cd "$PIN" && git init -q && git commit -q --allow-empty -m init )
+OUT=$( cd "$PIN" && bash "$INIT" 'acme/proj-harness#v1' 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] && pass "init <owner/repo#ref> exits 0" || { fail "ref init rc=$rc"; echo "$OUT" | sed 's/^/      /'; }
+echo "$OUT" | grep -q 'https://github.com/acme/proj-harness' && pass "slug expands with #ref stripped off the clone URL" || fail "ref slug not expanded cleanly"
+[ -f "$PIN/PINNED.md" ] && pass "the tag's payload delta landed (checkout pinned to the tag)" || fail "tagged payload not placed"
+[ "$(head -n1 "$PIN/.git/omakase/source" 2>/dev/null)" = "https://github.com/acme/proj-harness#v1" ] && pass "remembered source carries the #ref (bare re-run re-pins)" || fail "remembered ref wrong"
+CTRL="$TMP/unpinned-adopter"; mkdir -p "$CTRL"; ( cd "$CTRL" && git init -q && git commit -q --allow-empty -m init )
+( cd "$CTRL" && bash "$INIT" acme/proj-harness ) >/dev/null 2>&1
+[ ! -f "$CTRL/PINNED.md" ] && pass "no-ref install does NOT get the tag-only file (the pin is load-bearing)" || fail "unpinned install leaked the tagged file"
+git -C "$DEST" tag -d v1 >/dev/null 2>&1; git -C "$DEST" branch -q -D _pinned >/dev/null 2>&1   # leave $DEST as ROUNDTRIP found it
+
 echo "== Scenario SHORTHAND: expand a slug; leave an existing local path alone =="
 S="$TMP/short"; mkdir -p "$S"; ( cd "$S" && git init -q && git commit -q --allow-empty -m init )
 OUT=$( cd "$S" && bash "$INIT" zzz-nobody/zzz-nothing 2>&1 )

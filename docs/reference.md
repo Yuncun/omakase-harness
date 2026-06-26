@@ -46,8 +46,8 @@ commit so it is ready to push. Prints the publish command and the one-line insta
 
 ### `import.sh <source-repo>`
 
-Creator engine behind `share`. Reads a project's harness files into `payload/`
-(`OMAKASE_PAYLOAD` sets the destination). Read-only on the source. Not an adopter command.
+The capture step behind `share`. Reads a project's harness files into `payload/`
+(`OMAKASE_PAYLOAD` sets the destination). Read-only on the project it reads. Not an adopter command.
 
 ## Environment
 
@@ -73,6 +73,7 @@ lines.
 |---|---|---|
 | `name` | for `--source` | harness name, shown on install |
 | `version` | no | harness version |
+| `recommends` | no | free-text companion-tool hint, printed once at install |
 
 ## Path classification
 

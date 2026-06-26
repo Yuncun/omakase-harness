@@ -1,5 +1,7 @@
 *.bak
 .DS_Store
+# Stock scaffold lefthook drops in a repo root; the real gate config is payload/lefthook-local.yml
+/lefthook.yml
 
 # Local scratch — never ship to origin
 docs/notes/

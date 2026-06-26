@@ -116,7 +116,7 @@ fetch_source() {  # $1 = git URL or local path; sets PAYLOAD to the cached paylo
   fi
   if [ ! -d "$cache/.git" ]; then
     rm -rf "$cache"; mkdir -p "${cache%/*}"
-    git clone -q "$src" "$cache" || { echo "omakase: could not clone source '$src' into the cache ($cache)" >&2; exit 1; }
+    git clone -q -- "$src" "$cache" || { echo "omakase: could not clone source '$src' into the cache ($cache)" >&2; exit 1; }
   fi
   # Pin to a requested #ref (branch or tag). The refresh/clone above leaves the cache on the
   # remote default branch; a ref checkout overrides that. Fetch tags so a tag ref resolves.
