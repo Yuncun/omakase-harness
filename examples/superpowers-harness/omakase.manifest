@@ -1,0 +1,3 @@
+name: superpowers-harness
+version: 0.1.0
+recommends: superpowers — if not auto-installed, run (claude OR copilot): plugin marketplace add obra/superpowers-marketplace && plugin install superpowers@superpowers-marketplace
