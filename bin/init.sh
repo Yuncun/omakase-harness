@@ -461,7 +461,7 @@ while IFS= read -r -d '' f; do
   # so overwrite — but first preserve the pre-existing copy, since this replaces whatever was
   # there (an upstream update, or a local in-place edit; init cannot tell which and does not
   # try). The classic loss is a FIRST install over a user's OWN untracked file at a payload
-  # path — e.g. a personal .claude/settings.json (the payload ships one): the collision guard
+  # path — e.g. a personal lefthook-local.yml (the payload ships one): the collision guard
   # above only runs when a prior ledger exists, so this backup is the only safety net then.
   # Best-effort, mirroring the collision guard's clobbered/ backup: copy the LIVE dest (cp -P
   # round-trips a symlink; skip only a REAL directory dest), rm-first so a stale symlink can't
@@ -664,4 +664,12 @@ if [ -f "$ROOT/.omakase/bin/omakase-statusline.sh" ]; then
   echo "         takes over the bar). Add this command to your status-line script:"
   echo "           bash $ROOT/.omakase/bin/omakase-statusline.sh"
   echo "         Claude Code: your ~/.claude statusLine script. Copilot CLI: ~/.copilot. tmux: status-right."
+fi
+# End-of-turn notice (Claude Code only): a deterministic Stop hook that prints a one-line
+# "harness active / last run" status. Opt-in (no API tokens, never blocks) and surfaced here so
+# the developer can wire it; omakase status shows the same detail on demand.
+if [ -f "$ROOT/.omakase/bin/omakase-stop-notice.sh" ]; then
+  echo "omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line 'harness active'"
+  echo "         status when a turn ends. Enable by adding a Stop hook to .claude/settings.json:"
+  echo "           bash \$CLAUDE_PROJECT_DIR/.omakase/bin/omakase-stop-notice.sh"
 fi

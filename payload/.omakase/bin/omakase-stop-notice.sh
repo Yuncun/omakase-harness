@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # omakase-stop-notice — a short, end-of-turn status for the developer driving the session.
-# Wired per-repo as a Claude Code Stop hook (.claude/settings.json). Reads the Stop-hook
+# Opt-in Claude Code Stop hook: add it to .claude/settings.json (init prints how). Reads the Stop-hook
 # JSON on stdin. Deterministic — no LLM, no API tokens. Never blocks the turn.
 #
 # The states it can show (always the harness's name, no 🥡; detail lives in omakase status):

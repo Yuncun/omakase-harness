@@ -97,11 +97,13 @@ echo "== Scenario S3b: a file the source drops between versions is swept =="
 ( cd "$SRC" && git rm -q payload/.claude/rules/style.md && git commit -q -m v3 )
 ( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" ) >/dev/null 2>&1
 [ ! -e "$REPO/.claude/rules/style.md" ] && pass "dropped payload file deleted from the repo" || fail "dropped file left behind (silent residue)"
-# Under base-layering the base harness's .claude/settings.json (Stop-hook) is layered in, so
-# .claude/ legitimately persists; only the genuinely-emptied source dir (.claude/rules) is pruned.
-# This also proves the prune STOPS at base content and never over-prunes base machinery.
+# The base harness ships nothing under .claude/ (the Stop-hook end-of-turn notice is opt-in), so
+# once the source's only .claude/ file is dropped, .claude/ is genuinely empty and is pruned.
+# Base machinery lives under .omakase/, which never empties — the prune clearing the emptied
+# .claude/ while leaving .omakase/ intact proves it removes orphaned dirs without over-pruning.
 [ ! -d "$REPO/.claude/rules" ] && pass "emptied source dir (.claude/rules) pruned" || fail ".claude/rules left behind"
-[ -f "$REPO/.claude/settings.json" ] && pass ".claude kept — base Stop-hook settings.json still layered (prune stopped at base content)" || fail "base .claude/settings.json over-pruned"
+[ ! -e "$REPO/.claude" ] && pass "fully-emptied .claude pruned (base ships nothing there)" || fail ".claude left behind after its last file was dropped"
+[ -d "$REPO/.omakase" ] && pass "base machinery (.omakase/) survives the prune (no over-reach)" || fail "prune over-reached into base machinery"
 grep -q 'style.md' "$LEDGER" && fail "ledger still lists the dropped file" || pass "ledger no longer lists the dropped file"
 [ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status clean after the sweep" || { fail "status not clean after sweep"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
 # a LOCALLY EDITED dropped file is kept, with a warning

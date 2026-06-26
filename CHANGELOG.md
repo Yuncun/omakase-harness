@@ -54,6 +54,13 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   engine"), and a personal harness you point `--source` at is a **custom harness** (was
   "a source"). This mirrors the base/custom layering the install actually performs. Wording
   only — the `--source` flag and all behaviour are unchanged.
+- The end-of-turn **Stop-hook notice is now opt-in** (was wired on by every install). It does no
+  enforcement — it only prints a one-line "harness active / last run" status — and is Claude
+  Code-only, so the base payload no longer ships `.claude/settings.json`; `init` prints how to
+  enable it, and `omakase status` shows the same detail on demand. Leaner default install.
+- The cosmetic commit **banner is no longer auto-wired** into the shipped hook configs; lefthook's
+  own run header stands by default. The `omakase-banner.sh` script still ships (terminal `omakase
+  status` uses it) and the base `lefthook-local.yml` documents how to re-enable the branded box.
 
 ### Fixed
 - The base+source merge runs through a temp staging dir cleaned on any exit; its cleanup trap

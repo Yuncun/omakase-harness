@@ -224,8 +224,13 @@ OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --markdown 2>&1 )"
 { echo "$OUT" | grep -qi 'No omakase harness' && echo "$OUT" | grep -qiF 'Committed (this repo)'; } \
   && pass "markdown not-installed keeps the message and the Committed group" || fail "markdown not-installed inventory wrong ($OUT)"
 
-# installed — injected rows come from the provenance ledger with source + kind
-( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+# installed — injected rows come from the provenance ledger with source + kind.
+# Install a copy of the base payload PLUS a .claude/settings.json, so there is an injected
+# CONFIG row to hand-disable below. The base payload no longer ships one (the Stop-hook
+# end-of-turn notice is opt-in), so the fixture adds it here.
+PAYI="$TMP/payI"; rm -rf "$PAYI"; cp -R "$PAY/." "$PAYI/"; mkdir -p "$PAYI/.claude"
+printf '{ "hooks": {} }\n' > "$PAYI/.claude/settings.json"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAYI" bash "$INIT" ) >/dev/null 2>&1
 PLACEDTSV="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)/omakase/placed.tsv"
 awk -F'\t' -v OFS='\t' '$1==".claude/settings.json"{$5=0} 1' "$PLACEDTSV" > "$PLACEDTSV.tmp" && mv "$PLACEDTSV.tmp" "$PLACEDTSV"
 OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" 2>&1 )"
