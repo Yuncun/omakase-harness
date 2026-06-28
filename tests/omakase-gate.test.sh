@@ -105,3 +105,65 @@ OUT="$( cd "$REPO" && bash "$GATE" review --cacheable --step "$blocker" 2>&1 )";
 ( cd "$REPO" && bash "$GATE" review --record ) >/dev/null
 OUT="$( cd "$REPO" && bash "$GATE" review --cacheable --step "$blocker" 2>&1 )"; RC=$?
 [ "$RC" -eq 0 ] && pass "deferment: after --record the same HEAD is allowed" || fail "deferment still blocked after --record ($RC: $OUT)"
+
+echo "== Cycle C: --glob scope, concurrency, end-to-end =="
+# A bare repo as origin so origin/HEAD resolves a base for the --glob range.
+REMOTE="$TMP/remoteC.git"; git init -q --bare "$REMOTE"
+REPO="$TMP/repoC"; newrepo "$REPO"
+( cd "$REPO" && git branch -M main && git remote add origin "$REMOTE" && git push -q -u origin main )
+( cd "$REPO" && mkdir -p src docs && printf 'a\n' > src/app.txt && git add src/app.txt && git commit -q -m feat )
+LEDGER="$(ledger_of "$REPO")"
+
+# glob match -> the step runs (records a row)
+OUT="$( cd "$REPO" && bash "$GATE" g1 --glob 'src/*' --step 'true' 2>&1 )"
+has_row "$LEDGER" g1 pass && pass "glob match: the step runs" || fail "glob match did not run ($OUT)"
+# glob miss -> skip (no row, exit 0)
+OUT="$( cd "$REPO" && bash "$GATE" g2 --glob 'docs/*' --step 'false' 2>&1 )"; RC=$?
+{ [ "$RC" -eq 0 ] && ! has_row "$LEDGER" g2 fail; } && pass "glob miss: skips (no run)" || fail "glob miss did not skip ($RC: $OUT)"
+# no --glob -> always runs even when nothing in range would match
+OUT="$( cd "$REPO" && bash "$GATE" g3 --step 'false' 2>&1 )"; RC=$?
+{ [ "$RC" -ne 0 ] && has_row "$LEDGER" g3 fail; } && pass "no --glob: always in scope (runs every time)" || fail "no-glob gate did not run ($RC: $OUT)"
+
+# base fail-open: a repo with no remote and no resolvable base -> skip, never a git error
+REPONB="$TMP/repoNB"; newrepo "$REPONB"
+( cd "$REPONB" && mkdir -p src && printf 'a\n' > src/app.txt && git add src/app.txt && git commit -q -m c1 )
+OUT="$( cd "$REPONB" && bash "$GATE" fo --glob 'src/*' --step 'false' 2>&1 )"; RC=$?
+{ [ "$RC" -eq 0 ] && echo "$OUT" | grep -q 'no resolvable base'; } && pass "glob: fails open when no base resolves" || fail "did not fail open without a base ($RC: $OUT)"
+
+# concurrency: N parallel appends yield N complete (untorn) 4-field rows
+REPOC="$TMP/repoCC"; newrepo "$REPOC"; LEDGERC="$(ledger_of "$REPOC")"
+( cd "$REPOC" && for i in 1 2 3 4 5 6 7 8; do bash "$GATE" "cc$i" --step 'true' & done; wait ) >/dev/null 2>&1
+rows=$(grep -c . "$LEDGERC"); torn=$(awk -F'\t' 'NF!=4{n++} END{print n+0}' "$LEDGERC")
+{ [ "$rows" -eq 8 ] && [ "$torn" -eq 0 ]; } && pass "concurrency: 8 parallel appends -> 8 untorn rows" || fail "concurrency: $rows rows, $torn torn"
+
+# end-to-end: a real git push through an installed pre-push hook wired to the primitive.
+echo "== Cycle C: end-to-end git push =="
+PAYE="$TMP/payE"; REPOE="$TMP/repoE"; REMOTEE="$TMP/remoteE.git"
+mkdir -p "$PAYE"; cp -R "$PAY/." "$PAYE/"
+cat > "$PAYE/lefthook-local.yml" <<'YML'
+pre-push:
+  jobs:
+    - name: review
+      run: bash .omakase/bin/omakase-gate.sh review --cacheable --glob 'src/*' --step 'echo "BLOCKED - record review then push" >&2; exit 1'
+post-checkout:
+  jobs:
+    - name: omakase-ensure-present
+      run: bash "$(git rev-parse --git-common-dir)/omakase/ensure-present.sh"
+YML
+newrepo "$REPOE"; git init -q --bare "$REMOTEE"
+( cd "$REPOE" && git branch -M main && git remote add origin "$REMOTEE" && git push -q -u origin main )
+( cd "$REPOE" && OMAKASE_PAYLOAD="$PAYE" bash "$INIT" ) >/dev/null 2>&1
+LEDGERE="$(ledger_of "$REPOE")"
+( cd "$REPOE" && mkdir -p src && printf 'x\n' > src/app.txt && git add src/app.txt && git commit -q -m feat )
+OUT="$( cd "$REPOE" && git push origin main 2>&1 )"; RC=$?
+{ [ "$RC" -ne 0 ] && echo "$OUT" | grep -q 'BLOCKED'; } && pass "e2e: push BLOCKED when review never recorded for the commit" || fail "e2e push not blocked ($RC: $OUT)"
+has_row "$LEDGERE" review fail && pass "e2e: the blocked run recorded a fail row" || fail "e2e no fail row in the ledger"
+( cd "$REPOE" && bash "$GATE" review --record ) >/dev/null
+OUT="$( cd "$REPOE" && git push origin main 2>&1 )"; RC=$?
+[ "$RC" -eq 0 ] && pass "e2e: push ALLOWED after --record for the same commit" || fail "e2e push still blocked after --record ($RC: $OUT)"
+OUT="$( cd "$REPOE" && bash "$SHOW" --markdown 2>&1 )"
+echo "$OUT" | grep -q 'review' && pass "e2e: omakase status renders the review gate" || fail "show did not render the gate"
+
+rm -rf "$TMP"
+echo ""
+[ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }
