@@ -3,7 +3,7 @@
 # The example is the CONTENTS of a harness repo, so the test does what an adopter does:
 # copy it into a git repo, then `init --source` that repo. It checks:
 #   - the overlay is placed and gitignored (CLAUDE.md, the gate, the wiring)
-#   - the base harness machinery the wiring relies on is layered in (omakase-ledger.sh) —
+#   - the base harness machinery the wiring relies on is layered in (omakase-gate.sh) —
 #     this is the PR-#28 base+source merge, exercised through the real sample
 #   - a clean commit passes; a commit staging a DO-NOT-COMMIT marker is BLOCKED
 #   - remove tears it all down, exclude block included
@@ -48,7 +48,7 @@ grep -q 'omakase-harness' "$REPO/.git/info/exclude" 2>/dev/null && pass "exclude
   && fail "CLAUDE.md is tracked (must be gitignored)" || pass "CLAUDE.md not tracked"
 
 # 4) Base layering: machinery the sample does NOT ship is present from the base layer.
-[ -f "$REPO/.omakase/bin/omakase-ledger.sh" ] && pass "base machinery layered in (omakase-ledger.sh)" || fail "base machinery missing"
+[ -f "$REPO/.omakase/bin/omakase-gate.sh" ] && pass "base machinery layered in (omakase-gate.sh)" || fail "base machinery missing"
 [ -f "$REPO/.omakase/bin/omakase-banner.sh" ] && pass "base machinery layered in (omakase-banner.sh)" || fail "base banner missing"
 
 # 5) A clean commit passes (and the gate ran).

@@ -23,7 +23,7 @@ bash "$BUILD" --out "$GEN" >/dev/null 2>&1 && pass "build generic exits 0" || fa
 [ -f "$GEN/.claude-plugin/plugin.json" ] && pass "plugin.json present" || fail "no plugin.json"
 grep -q '"name": "omakase"' "$GEN/.claude-plugin/plugin.json" && pass "generic plugin name" || fail "wrong plugin name"
 [ -f "$GEN/payload/lefthook-local.yml" ] && pass "base payload wiring present" || fail "no payload wiring"
-[ -f "$GEN/payload/.omakase/gates/deferred-check.sh" ] && pass "base gate present" || fail "no base gate"
+[ -f "$GEN/payload/.omakase/bin/omakase-gate.sh" ] && pass "base gate primitive present" || fail "no base gate primitive"
 # Opt-in chrome: the base payload must NOT auto-wire the Claude-only Stop-hook notice (no
 # .claude/settings.json) nor the cosmetic commit banner job; both are opt-in. The scripts still
 # ship (a user-added Stop hook / terminal `omakase status`), so assert their presence too.
@@ -44,7 +44,7 @@ printf '{ "name": "foo-harness", "version": "0.0.1", "commands": "./commands" }\
 FOO="$TMP/foo"
 bash "$BUILD" --out "$FOO" --stack "$STK" >/dev/null 2>&1 && pass "build stack exits 0" || fail "build stack failed"
 [ -f "$FOO/payload/.omakase/gates/foo-gate.sh" ] && pass "stack delta gate added" || fail "stack gate missing"
-[ -f "$FOO/payload/.omakase/gates/deferred-check.sh" ] && pass "base scaffold retained under stack" || fail "base scaffold lost"
+[ -f "$FOO/payload/.omakase/bin/omakase-gate.sh" ] && pass "base scaffold retained under stack" || fail "base scaffold lost"
 grep -q 'foo stack wiring' "$FOO/payload/lefthook-local.yml" && pass "stack overrides base wiring" || fail "wiring not overridden"
 grep -q '"name": "foo-harness"' "$FOO/.claude-plugin/plugin.json" && pass "stack plugin.json used" || fail "stack plugin.json not used"
 [ -x "$FOO/bin/init.sh" ] && pass "machinery present in stack bundle" || fail "no machinery in stack bundle"

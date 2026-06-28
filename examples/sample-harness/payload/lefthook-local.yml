@@ -1,19 +1,16 @@
-# Sample harness hook wiring (gitignored via .git/info/exclude — never committed).
-# This one file IS the harness — read it top to bottom to see everything that runs.
-# Each `run` resolves from the repo root. The .omakase/bin/* helpers below are NOT shipped
-# by this harness: they come from the omakase base harness, layered in underneath this
-# harness's own files at install time. So this harness carries only its delta — its rule,
-# its one gate, and this wiring.
+# Sample harness hook wiring (gitignored via .git/info/exclude - never committed).
+# This one file IS the harness - read it top to bottom to see everything that runs.
+# The .omakase/bin/omakase-gate.sh helper below is NOT shipped by this harness: it comes
+# from the omakase base harness, layered in underneath this harness's own files at install
+# time. So this harness carries only its delta - its rule, its one gate, and this wiring.
 
 pre-commit:
   jobs:
-    # The sample gate: block a staged DO-NOT-COMMIT marker. Wrapped in the base harness's
-    # omakase-ledger.sh so the run shows up in `omakase status` and the 🥡 status-line; the
-    # wrapper passes the gate's exit code straight through (non-zero blocks the commit).
+    # The sample gate: block a staged DO-NOT-COMMIT marker. One omakase-gate.sh call: the
+    # run lands in `omakase status` and the takeout status-line, and the step's exit code
+    # passes straight through (non-zero blocks the commit).
     - name: block-marker
-      run: bash .omakase/bin/omakase-ledger.sh block-marker -- bash .omakase/gates/block-marker.sh
-      env:
-        OMAKASE_HOOK: pre-commit
+      run: bash .omakase/bin/omakase-gate.sh block-marker --step 'bash .omakase/gates/block-marker.sh'
 
 # Worktree auto-install (from the base harness): on checkout, copy any MISSING injected
 # file into the worktree. Never overwrites a local edit, never touches a tracked path.
