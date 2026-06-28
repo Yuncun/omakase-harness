@@ -183,12 +183,11 @@ render_inventory() {
 # ============================ Guards chart (the "run when" table) ============================
 # ONE chart for every wired guard: which git hook fires it (RUN WHEN), the guard's
 # canonical (ledgered) name, what it ENFORCES, and the most-recent verdict from the run
-# ledger. Derived from `lefthook dump` (the normalized wiring) joined to ledger.tsv — this
+# ledger. Derived from `lefthook dump` (the normalized wiring) joined to ledger.tsv. This
 # replaces the old raw-YAML "git hooks" dump + the separate "recent runs" table with a
-# single readable chart. The cosmetic banner job is omitted. ENFORCES is a short built-in
-# phrase keyed by the gate script's basename (falls back to the script path for custom/
-# unknown gates, so the base harness and any consumer gate still render). If lefthook can't
-# be resolved, degrades to the raw wiring file + the plain run ledger (render_guards_fallback).
+# single readable chart. The cosmetic banner job is omitted. ENFORCES describes a gate by
+# its safe flags only (--cacheable, and --glob's value), never the quoted --step body. If
+# lefthook can't be resolved no gates run, so the chart degrades to a one-line note.
 render_guards() {
   local LH="" DUMP="" now RUNS_FILE
   if [ -n "${LEFTHOOK_BIN:-}" ]; then LH="$LEFTHOOK_BIN"

@@ -43,7 +43,8 @@
 - `payload/.omakase/gates/deferred-check.sh`
 - `payload/.omakase/bin/omakase-ledger.sh`
 - `payload/.omakase/bin/omakase-record.sh`
-- `tests/deferred-gate.test.sh`
+
+**Deleted earlier (Task 4):** `tests/deferred-gate.test.sh` — it was the sole consumer of `show.sh`'s old-wiring branches, so deleting it in Task 4 let `show.sh` drop those branches with no back-compat shim (clean break). Its behavioral coverage already lives in `tests/omakase-gate.test.sh`.
 
 **Kept unchanged:** `payload/.omakase/gates/example.sh` (the one shipped gate body, now the always-run case).
 
@@ -945,16 +946,16 @@ git commit -m "refactor(examples,tests): wire fixtures to omakase-gate; assert t
 ## Task 7: Delete the old scripts; rename the placed-ledger test; final sweep
 
 **Files:**
-- Delete: `payload/.omakase/gates/deferred-check.sh`, `payload/.omakase/bin/omakase-ledger.sh`, `payload/.omakase/bin/omakase-record.sh`, `tests/deferred-gate.test.sh`
+- Delete: `payload/.omakase/gates/deferred-check.sh`, `payload/.omakase/bin/omakase-ledger.sh`, `payload/.omakase/bin/omakase-record.sh` (`tests/deferred-gate.test.sh` was already deleted in Task 4)
 - Rename: `tests/ledger.test.sh` → `tests/placed.test.sh`
 
 **Interfaces:**
 - Consumes: nothing new (all references rewired in Tasks 4-6).
 - Produces: a repo with one gate primitive and no dangling references to the deleted scripts.
 
-- [ ] **Step 1: Delete the three old scripts and the old test.**
+- [ ] **Step 1: Delete the three old scripts.**
 ```bash
-git rm payload/.omakase/gates/deferred-check.sh payload/.omakase/bin/omakase-ledger.sh payload/.omakase/bin/omakase-record.sh tests/deferred-gate.test.sh
+git rm payload/.omakase/gates/deferred-check.sh payload/.omakase/bin/omakase-ledger.sh payload/.omakase/bin/omakase-record.sh
 ```
 
 - [ ] **Step 2: Rename the provenance-ledger test to its accurate name.** `tests/ledger.test.sh` tests `placed.tsv` (provenance), not `ledger.tsv`:
