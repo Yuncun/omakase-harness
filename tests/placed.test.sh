@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# Proof of the provenance ledger (spec §2 + safety fix 5): init writes
-# .git/omakase/placed.tsv — one row per placed artifact, TAB-separated columns
+# Proof of the provenance store placed.tsv (spec §2 + safety fix 5): init writes
+# .git/omakase/placed.tsv, one row per placed artifact, TAB-separated columns
 #   path  kind  source  sha256  enabled
 # and every consumer (ensure-present, verify-overlay, remove, show, the
-# upstream-collision guard) reads the ledger instead of the old placed.list.
-#   M. ledger written with correct columns / kinds / hashes; placed.list gone
-#   N. symlink row — hash is the link TARGET STRING; round-trips (CLAUDE.md case)
+# upstream-collision guard) reads placed.tsv instead of the old placed.list.
+# (This is the provenance store, NOT ledger.tsv, which is the gate run + cache store.)
+#   M. placed.tsv written with correct columns / kinds / hashes; placed.list gone
+#   N. symlink row: hash is the link TARGET STRING; round-trips (CLAUDE.md case)
 #   O. space-in-path row round-trips (restore, verify, remove)
-#   P. enabled=0 honored — fix 5: not restored, not blocking, still removed
-#   Q. upstream-collision warning keys off ledger paths
-#   T. pre-0.10 migration — placed.list regenerates into placed.tsv and is deleted
-#   U. pre-0.10 remove — no ledger: payload-enumeration fallback tears down
+#   P. enabled=0 honored - fix 5: not restored, not blocking, still removed
+#   Q. upstream-collision warning keys off placed.tsv paths
+#   T. pre-0.10 migration - placed.list regenerates into placed.tsv and is deleted
+#   U. pre-0.10 remove - no placed.tsv: payload-enumeration fallback tears down
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"

@@ -24,6 +24,9 @@ bash "$BUILD" --out "$GEN" >/dev/null 2>&1 && pass "build generic exits 0" || fa
 grep -q '"name": "omakase"' "$GEN/.claude-plugin/plugin.json" && pass "generic plugin name" || fail "wrong plugin name"
 [ -f "$GEN/payload/lefthook-local.yml" ] && pass "base payload wiring present" || fail "no payload wiring"
 [ -f "$GEN/payload/.omakase/bin/omakase-gate.sh" ] && pass "base gate primitive present" || fail "no base gate primitive"
+# The pre-redesign gate machinery is gone: one primitive replaced the ledger wrapper, the
+# recorder, and the deferred-check push gate. None must ship in the bundle.
+{ [ ! -e "$GEN/payload/.omakase/gates/deferred-check.sh" ] && [ ! -e "$GEN/payload/.omakase/bin/omakase-ledger.sh" ] && [ ! -e "$GEN/payload/.omakase/bin/omakase-record.sh" ]; } && pass "old gate machinery dropped from the bundle" || fail "a deleted script still ships in the bundle"
 # Opt-in chrome: the base payload must NOT auto-wire the Claude-only Stop-hook notice (no
 # .claude/settings.json) nor the cosmetic commit banner job; both are opt-in. The scripts still
 # ship (a user-added Stop hook / terminal `omakase status`), so assert their presence too.
