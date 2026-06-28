@@ -5,6 +5,26 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Breaking - gate primitive
+
+One primitive (`omakase-gate.sh`) replaces the three scripts it supersedes
+(`omakase-ledger.sh`, `omakase-record.sh`, `deferred-check.sh`). These three files are
+removed from the base payload; `omakase init` sweeps orphaned copies from adopter repos.
+
+**Run ledger**: columns drop from 6 to 4 (`epoch name verdict sha`). A pre-v2 ledger with
+6 columns is renamed aside on `omakase init`; the new ledger starts fresh.
+
+**Removed environment variables**: `OMAKASE_HOOK`, `OMAKASE_CHECK`, `OMAKASE_GLOB`,
+`OMAKASE_BASE`. The waiver mechanism (`--verdict`, `--reason`, `WAIVED` rows) is gone.
+The single audited bypass is `OMAKASE_SKIP_<NAME>=1` (name upper-cased, `-`→`_`).
+
+**Migration for adopters**: run `omakase init` once. The orphan sweep removes the three old
+scripts, re-injects the wiring, and rotates the old ledger.
+
+**Migration for harness authors**: rewire `lefthook-local.yml` jobs to call
+`bash .omakase/bin/omakase-gate.sh <name> --step '<cmd>' [--cacheable] [--glob '<pats>']`;
+replace `omakase-record.sh` calls with `omakase-gate.sh <name> --record`.
+
 ### Added
 - `examples/sample-harness/` — a minimal worked custom harness (one rule, one gate, the wiring)
   to read, try, and copy. It ships only its delta and relies on the base harness machinery layered
