@@ -225,15 +225,13 @@ render_guards() {
       haverun=1
       line=$0; sub(/^[[:space:]]*run:[[:space:]]*/,"",line); runcmd=line
       if (jobname=="omakase-banner") { jobname=""; next }   # cosmetic header box, not a guard
-      ledgered=0; gate=""; oldstyle=0
-      if (match(runcmd, /omakase-gate\.sh [A-Za-z0-9._-]+/)) {     # new-style gate -> canonical name
+      ledgered=0; gate=""
+      if (match(runcmd, /omakase-gate\.sh [A-Za-z0-9._-]+/)) {     # a gate -> its canonical name
         s=substr(runcmd,RSTART,RLENGTH); sub(/^omakase-gate\.sh /,"",s); gate=s; ledgered=1
-      } else if (match(runcmd, /omakase-ledger\.sh [A-Za-z0-9._-]+/)) {  # old-style gate (compat)
-        s=substr(runcmd,RSTART,RLENGTH); sub(/^omakase-ledger\.sh /,"",s); gate=s; ledgered=1; oldstyle=1
       }
       if (runcmd ~ /ensure-present\.sh/) {
         enf="self-heal: restore any missing injected files"
-      } else if (ledgered && !oldstyle) {
+      } else if (ledgered) {
         # Describe the gate by its SAFE flags only - never the quoted --step body (it can
         # carry spaces, quotes, ; and even a literal --record).
         cached=(runcmd ~ /--cacheable/)
@@ -242,14 +240,6 @@ render_guards() {
           g=substr(runcmd,RSTART,RLENGTH); sub(/^--glob '"'"'/,"",g); sub(/'"'"'$/,"",g); scope="scope: "g
         }
         enf=(cached ? "cached; " : "") scope
-      } else if (ledgered && oldstyle) {
-        # Old-style: extract the action script name after " -- " for the ENFORCES description.
-        act=runcmd; p=index(act," -- "); if (p>0) act=substr(act,p+4)
-        sub(/^bash[ \t]+/,"",act); gsub(/"/,"",act)
-        base=act; sub(/[ \t].*/,"",base); sub(/.*\//,"",base)
-        if      (base=="worktree-discipline.sh") enf="no main-checkout commit carrying WIP from another worktree"
-        else if (base=="deferred-check.sh")      enf="deferred gate - needs a fresh recorded PASS to push"
-        else enf=act
       } else enf=runcmd
       gname=(ledgered ? gate : jobname)
       if (gate!="" && (gate in seen)) {
