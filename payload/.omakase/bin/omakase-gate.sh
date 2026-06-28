@@ -43,7 +43,9 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-[ "$RECORD" -eq 1 ] && [ "$HAVE_STEP" -eq 1 ] && die_misuse "--record takes no --step (it writes a pass without running anything)"
+if [ "$RECORD" -eq 1 ] && { [ "$HAVE_STEP" -eq 1 ] || [ "$CACHEABLE" -eq 1 ] || [ -n "$GLOB" ]; }; then
+  die_misuse "--record takes no other flags (it writes a pass for HEAD without running anything)"
+fi
 [ "$RECORD" -eq 0 ] && [ "$HAVE_STEP" -eq 0 ] && die_misuse "need --step '<cmd>' (or --record)"
 
 # Resolve the SHARED git dir BEFORE running the step: a step that cd's must not be able to
@@ -79,7 +81,7 @@ if [ "$RECORD" -eq 1 ]; then
 fi
 
 # (2) audited bypass, uniform for every gate.
-skipvar="OMAKASE_SKIP_$(printf '%s' "$NAME" | tr '[:lower:]-' '[:upper:]_')"
+skipvar="OMAKASE_SKIP_$(printf '%s' "$NAME" | tr '[:lower:].-' '[:upper:]__')"
 if [ "${!skipvar:-0}" = "1" ]; then
   echo "omakase-gate[$NAME]: skipped via $skipvar (audited)"
   exit 0

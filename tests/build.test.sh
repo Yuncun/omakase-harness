@@ -74,6 +74,22 @@ BADERR="$(bash "$BUILD" --out "$BADOUT" --stack "$BAD" 2>&1)" && fail "build sho
 echo "$BADERR" | grep -q 'nonexistent.sh' && pass "build error names the offending script (not an unrelated failure)" || fail "build error did not name the missing script ($BADERR)"
 [ ! -e "$BADOUT" ] && pass "no partial bundle left at --out on failure" || fail "partial bundle left behind"
 
+# wiring guard differential: a script named AFTER a '#' inside a '--step' value must be caught.
+# Under the old 'sed s/#.*//' guard, the line is cut at the '#' and does-not-ship.sh is invisible.
+# Under the awk guard (skips only full-line comments), the full line is kept and the reference found.
+BADS="$TMP/stack-hash-step"
+mkdir -p "$BADS/payload"
+cat > "$BADS/payload/lefthook-local.yml" <<'YML'
+pre-commit:
+  jobs:
+    - name: ghost
+      run: bash .omakase/bin/omakase-gate.sh ghost --step 'echo "#skip"; bash .omakase/gates/does-not-ship.sh'
+YML
+BADSOUT="$TMP/badsout"
+BADSERR="$(bash "$BUILD" --out "$BADSOUT" --stack "$BADS" 2>&1)" && fail "build should reject a script after # inside --step" || pass "build fails when a script after # in --step is missing"
+echo "$BADSERR" | grep -q 'does-not-ship.sh' && pass "build error names the script hidden after # in --step" || fail "build error did not name the script ($BADSERR)"
+[ ! -e "$BADSOUT" ] && pass "no partial bundle left at --out for the # inside --step case" || fail "partial bundle left behind"
+
 # ---------- atomic: a dangling symlink fails without clobbering --out ----------
 echo "== atomic build on failure =="
 GOOD="$TMP/keep"; bash "$BUILD" --out "$GOOD" >/dev/null 2>&1   # a prior good bundle

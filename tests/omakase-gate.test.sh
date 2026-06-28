@@ -64,6 +64,14 @@ OUT="$( cd "$OUTSIDE" && bash "$GATE" g --step 'true' 2>&1 )"; RC=$?
 nf=$(tail -1 "$LEDGER" | awk -F'\t' '{print NF}')
 [ "$nf" -eq 4 ] && pass "tab in name sanitized (row stays 4 fields)" || fail "tab in name shifted columns ($nf)"
 
+# dotted gate name bypass: '.' must map to '_' in the skip var
+OUT="$( cd "$REPO" && OMAKASE_SKIP_LINT_FAST=1 bash "$GATE" lint.fast --step 'exit 1' 2>&1 )"; RC=$?
+[ "$RC" -eq 0 ] && pass "dotted gate name: OMAKASE_SKIP_LINT_FAST bypasses lint.fast" || fail "dotted gate name bypass did not work ($RC: $OUT)"
+
+# --record rejects extra flags
+OUT="$( cd "$REPO" && bash "$GATE" x --record --cacheable 2>&1 )"; RC=$?
+[ "$RC" -eq 2 ] && pass "--record --cacheable -> misuse exit 2" || fail "--record --cacheable exit $RC ($OUT)"
+
 echo "== Cycle B: --cacheable, --record, deferment =="
 REPO="$TMP/repoB"; newrepo "$REPO"; LEDGER="$(ledger_of "$REPO")"
 ( cd "$REPO" && mkdir -p src && printf 'a\n' > src/app.txt && git add src/app.txt && git commit -q -m c1 )
@@ -106,6 +114,13 @@ OUT="$( cd "$REPO" && bash "$GATE" review --cacheable --step "$blocker" 2>&1 )";
 OUT="$( cd "$REPO" && bash "$GATE" review --cacheable --step "$blocker" 2>&1 )"; RC=$?
 [ "$RC" -eq 0 ] && pass "deferment: after --record the same HEAD is allowed" || fail "deferment still blocked after --record ($RC: $OUT)"
 
+# fail row must NOT satisfy the cache: a blocked gate must re-run, not skip on a fail row
+REPOCF="$TMP/repoCF"; newrepo "$REPOCF"
+m="$TMP/cf.mark"; : > "$m"
+( cd "$REPOCF" && bash "$GATE" cf --cacheable --step "printf x >> $m; exit 1" ) >/dev/null 2>&1
+( cd "$REPOCF" && bash "$GATE" cf --cacheable --step "printf x >> $m; exit 1" ) >/dev/null 2>&1
+[ "$(wc -c < "$m" | tr -d ' ')" = "2" ] && pass "a fail row does not satisfy the cache (re-runs, not skips)" || fail "fail row wrongly cached (step did not re-run)"
+
 echo "== Cycle C: --glob scope, concurrency, end-to-end =="
 # A bare repo as origin so origin/HEAD resolves a base for the --glob range.
 REMOTE="$TMP/remoteC.git"; git init -q --bare "$REMOTE"
@@ -124,11 +139,26 @@ OUT="$( cd "$REPO" && bash "$GATE" g2 --glob 'docs/*' --step 'false' 2>&1 )"; RC
 OUT="$( cd "$REPO" && bash "$GATE" g3 --step 'false' 2>&1 )"; RC=$?
 { [ "$RC" -ne 0 ] && has_row "$LEDGER" g3 fail; } && pass "no --glob: always in scope (runs every time)" || fail "no-glob gate did not run ($RC: $OUT)"
 
+# multi-pattern --glob: a change under the SECOND pattern must trigger the gate
+( cd "$REPO" && mkdir -p lib && printf 'y\n' > lib/util.txt && git add lib/util.txt && git commit -q -m libchange )
+OUT="$( cd "$REPO" && bash "$GATE" mg --glob 'src/* lib/*' --step 'false' 2>&1 )"; RC=$?
+[ "$RC" -ne 0 ] && pass "multi-pattern --glob matches the second pattern (lib/*)" || fail "multi-pattern glob missed the second pattern ($RC: $OUT)"
+
 # base fail-open: a repo with no remote and no resolvable base -> skip, never a git error
 REPONB="$TMP/repoNB"; newrepo "$REPONB"
 ( cd "$REPONB" && mkdir -p src && printf 'a\n' > src/app.txt && git add src/app.txt && git commit -q -m c1 )
 OUT="$( cd "$REPONB" && bash "$GATE" fo --glob 'src/*' --step 'false' 2>&1 )"; RC=$?
 { [ "$RC" -eq 0 ] && echo "$OUT" | grep -q 'no resolvable base'; } && pass "glob: fails open when no base resolves" || fail "did not fail open without a base ($RC: $OUT)"
+
+# two-dot fallback: an orphan HEAD with unrelated history (three-dot fatal) must still find
+# an in-scope change via the two-dot fallback, so "no changes" cannot masquerade as skip.
+REMOTE2="$TMP/remote2.git"; git init -q --bare "$REMOTE2"
+REPO2="$TMP/repo2dot"; newrepo "$REPO2"
+( cd "$REPO2" && git branch -M main && git remote add origin "$REMOTE2" && printf 'b\n' > base.txt && git add base.txt && git commit -q -m base && git push -q -u origin main )
+( cd "$REPO2" && git checkout -q --orphan orphanwork && git rm -rfq --cached . 2>/dev/null; rm -f base.txt && mkdir -p src && printf 'x\n' > src/app.txt && git add src/app.txt && git commit -q -m orphan )
+m2="$TMP/td.mark"; : > "$m2"
+OUT="$( cd "$REPO2" && bash "$GATE" td --glob 'src/*' --step "printf x >> $m2; exit 1" 2>&1 )"; RC=$?
+{ [ "$RC" -ne 0 ] && [ -s "$m2" ]; } && pass "two-dot fallback finds the in-scope change on unrelated histories (step ran)" || fail "two-dot fallback did not find the change ($RC: $OUT)"
 
 # concurrency: N parallel appends yield N complete (untorn) 4-field rows
 REPOC="$TMP/repoCC"; newrepo "$REPOC"; LEDGERC="$(ledger_of "$REPOC")"

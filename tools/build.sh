@@ -93,9 +93,10 @@ fi
 WIRING="$WORK/payload/lefthook-local.yml"
 if [ -f "$WIRING" ]; then
   MISSING=""
-  # Strip YAML '#' comments first (mirror bin/init.sh): a commented-out wiring breadcrumb
-  # must not be treated as a live requirement.
-  for ref in $(sed 's/#.*//' "$WIRING" | grep -oE '\.omakase/[A-Za-z0-9._/-]+\.sh' | sort -u); do
+  # Skip only FULL-LINE comments (mirror bin/init.sh): a commented-out wiring breadcrumb
+  # is ignored while the rest of each line is kept intact, so a '#' inside a quoted
+  # --step value cannot truncate the scan and hide a real missing reference.
+  for ref in $(awk '!/^[[:space:]]*#/' "$WIRING" | grep -oE '\.omakase/[A-Za-z0-9._/-]+\.sh' | sort -u); do
     [ -f "$WORK/payload/$ref" ] || MISSING="$MISSING $ref"
   done
   if [ -n "$MISSING" ]; then
