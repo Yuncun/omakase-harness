@@ -164,6 +164,18 @@ OUT="$( cd "$REPOE" && git push origin main 2>&1 )"; RC=$?
 OUT="$( cd "$REPOE" && bash "$SHOW" --markdown 2>&1 )"
 echo "$OUT" | grep -q 'review' && pass "e2e: omakase status renders the review gate" || fail "show did not render the gate"
 
+echo "== Upgrade: a pre-v2 (6-col) ledger is rotated aside on init =="
+PAYU="$TMP/payU"; REPOU="$TMP/repoU"
+mkdir -p "$PAYU"; cp -R "$PAY/." "$PAYU/"
+newrepo "$REPOU"
+COMMONU="$(cd "$REPOU" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+mkdir -p "$COMMONU/omakase"
+# plant an old 6-column ledger
+printf '%s\tpre-commit\told-gate\tpass\t40\t%s\n' 1700000000 "$(cd "$REPOU" && git rev-parse HEAD)" > "$COMMONU/omakase/ledger.tsv"
+( cd "$REPOU" && OMAKASE_PAYLOAD="$PAYU" bash "$INIT" ) >/dev/null 2>&1
+[ -f "$COMMONU/omakase/ledger.tsv.pre-v2.bak" ] && pass "upgrade: pre-v2 ledger rotated to .pre-v2.bak" || fail "pre-v2 ledger not rotated"
+{ [ ! -f "$COMMONU/omakase/ledger.tsv" ] || ! awk -F'\t' 'NF>=6{f=1} END{exit f?0:1}' "$COMMONU/omakase/ledger.tsv"; } && pass "upgrade: the live ledger no longer holds 6-col rows" || fail "6-col rows survived in the live ledger"
+
 rm -rf "$TMP"
 echo ""
 [ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }

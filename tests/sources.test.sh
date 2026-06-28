@@ -300,6 +300,25 @@ echo "$OUT8" | grep -q 'legacy-removed.sh' && fail "guard named a commented-out 
 [ -x "$REPO8/.omakase/gates/live.sh" ] && pass "source's live gate placed" || fail "live gate missing"
 ( cd "$REPO8" && bash "$REMOVE" ) >/dev/null 2>&1
 
+# ---------- Scenario S9: a non-shipping script named AFTER a '#' inside a --step is still caught ----------
+# The '#'-truncation hazard the awk guard closes: a '#' INSIDE a quoted --step value precedes the
+# script reference. A line-comment-stripping guard (sed 's/#.*//') would cut the line at the '#' and
+# miss does-not-ship.sh, passing the install. The guard skips only FULL-LINE comments, so it keeps
+# this line whole, finds the reference, and refuses. (This is the differential vs a sed-based guard.)
+echo "== Scenario S9: wiring guard catches a script named after a # inside a --step =="
+REPOWG="$TMP/repoWG"; PAYWG="$TMP/payWG"
+rm -rf "$PAYWG"; cp -R "$HERE/../payload/." "$PAYWG/"
+cat > "$PAYWG/lefthook-local.yml" <<'YML'
+pre-commit:
+  jobs:
+    - name: ghost
+      run: bash .omakase/bin/omakase-gate.sh ghost --step 'echo "#skip"; bash .omakase/gates/does-not-ship.sh'
+YML
+newrepo "$REPOWG"
+OUT="$( cd "$REPOWG" && OMAKASE_PAYLOAD="$PAYWG" bash "$INIT" 2>&1 )"; RC=$?
+{ [ "$RC" -ne 0 ] && echo "$OUT" | grep -q 'does-not-ship.sh'; } && pass "guard refuses a script named after a # inside a --step (plain path)" || fail "guard missed the non-shipping script ($RC: $OUT)"
+[ ! -d "$REPOWG/.omakase" ] && pass "guard refused before placing anything" || fail "guard placed files despite refusing"
+
 rm -rf "$TMP"
 echo ""
 [ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }

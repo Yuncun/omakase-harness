@@ -75,6 +75,17 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "omakase: not insi
 COMMON="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 OMK="$COMMON/omakase"
 
+# ---- one-time ledger schema upgrade ----
+# The run + cache store (ledger.tsv) survives re-init, but a pre-v2 ledger holds 6-column
+# rows (epoch hook gate verdict ms sha) that the 4-column reader (epoch name verdict sha)
+# would misparse on the scorecard. Detect any 6+-column row and rotate the whole file aside
+# once; it is disposable per-clone run history. The cache itself is already safe across the
+# change (an old $4 verdict string is never a 40-hex sha, so a freshness query fails closed).
+if [ -f "$OMK/ledger.tsv" ] && awk -F'\t' 'NF>=6{f=1; exit} END{exit f?0:1}' "$OMK/ledger.tsv"; then
+  mv -f "$OMK/ledger.tsv" "$OMK/ledger.tsv.pre-v2.bak" \
+    && echo "omakase: rotated a pre-v2 (6-column) run ledger aside to ledger.tsv.pre-v2.bak (the new store starts clean)."
+fi
+
 # sha256 — detect the digest tool once (shasum on macOS, sha256sum elsewhere).
 # Used for the provenance ledger below and the source-cache slug here.
 if command -v shasum >/dev/null 2>&1; then SHA256=(shasum -a 256)
@@ -162,7 +173,7 @@ if [ -n "$SOURCE" ]; then
   fetch_source "$SOURCE"   # sets PAYLOAD to the cached source payload/
   SOURCE_LABEL="$SOURCE${SOURCE_REF:+#$SOURCE_REF}"
   # Layer the base harness's payload UNDER the source delta, so a source can RELY on base
-  # machinery (banner / ledger / record / deferred-check / status-line / stop-notice)
+  # machinery (banner / gate / status-line / stop-notice)
   # without keeping its own copy. This mirrors tools/build.sh (base payload, then the
   # stack delta on top — stack wins): a --source install equals a built bundle, merged at
   # inject time instead of build time. cp -RP PRESERVES symlinks (a payload may ship e.g.
@@ -184,25 +195,6 @@ if [ -n "$SOURCE" ]; then
       || { echo "omakase: failed to overlay source payload file '$rel' onto the base payload" >&2; exit 1; }
   done < <(find "$PAYLOAD" \( -type f -o -type l \) -print0)
   PAYLOAD="$MERGED"
-  # Fail-closed wiring guard (mirrors tools/build.sh): every .omakase/*.sh the MERGED hook
-  # wiring references must exist in the merged payload. A source that wires a script neither
-  # it nor the base harness ships would otherwise die at commit time with a cryptic exit 127 —
-  # refuse here, before anything is placed.
-  wiring="$MERGED/lefthook-local.yml"
-  if [ -f "$wiring" ]; then
-    missing=""
-    # Strip YAML '#' comments first: a commented-out wiring breadcrumb — a pattern the base
-    # payload's own lefthook-local.yml uses for templates — must not trip a fail-closed
-    # refusal for a script it deliberately does not ship.
-    for ref in $(sed 's/#.*//' "$wiring" | grep -oE '\.omakase/[A-Za-z0-9._/-]+\.sh' | sort -u); do
-      [ -f "$MERGED/$ref" ] || missing="$missing $ref"
-    done
-    if [ -n "$missing" ]; then
-      echo "omakase: source '$SOURCE' hook wiring references script(s) neither it nor the base harness ships:$missing" >&2
-      echo "  These would fail at commit time (exit 127). Fix the source's lefthook-local.yml or ship the script(s). Nothing was placed." >&2
-      exit 1
-    fi
-  fi
 else
   PAYLOAD="${OMAKASE_PAYLOAD:-$(cd "$SCRIPT_DIR/../payload" && pwd)}"
 fi
@@ -214,6 +206,24 @@ fi
 # rel from $cache/payload, which is trailing-slash-free by construction, so it needs no strip.)
 PAYLOAD="${PAYLOAD%/}"
 [ -d "$PAYLOAD" ] || { echo "omakase: payload dir not found at $PAYLOAD" >&2; exit 1; }
+# Fail-closed wiring guard (both install paths): every .omakase/*.sh the hook wiring invokes
+# must exist in the payload about to be placed. A wired script that does not ship would die at
+# commit time with a cryptic exit 127 - refuse here, before anything is placed. Skip full-line
+# YAML comments (commented templates may reference scripts on purpose) but scan the REST of
+# each line in full, so a '#' inside a quoted --step value cannot truncate the scan and hide a
+# real missing reference.
+wiring="$PAYLOAD/lefthook-local.yml"
+if [ -f "$wiring" ]; then
+  missing=""
+  for ref in $(awk '!/^[[:space:]]*#/' "$wiring" | grep -oE '\.omakase/[A-Za-z0-9._/-]+\.sh' | sort -u); do
+    [ -f "$PAYLOAD/$ref" ] || missing="$missing $ref"
+  done
+  if [ -n "$missing" ]; then
+    echo "omakase: hook wiring references script(s) the payload does not ship:$missing" >&2
+    echo "  These would fail at commit time (exit 127). Fix lefthook-local.yml or ship the script(s). Nothing was placed." >&2
+    exit 1
+  fi
+fi
 # Resolve a lefthook invocation WITHOUT mutating the user's global environment.
 # Order (shared with remove.sh via lib-lefthook.sh): an explicit override; lefthook
 # already on PATH (a global brew/mise install); then the repo's own node_modules/.bin
@@ -580,8 +590,8 @@ fi
 # Plain TSV on purpose: the hook-time readers (ensure-present, verify-overlay) are
 # dependency-free POSIX sh. Regenerated wholesale each init; paths may not contain
 # tabs. enabled is written 1 here — nothing writes 0 yet, but every reader honors it
-# (spec §2 + safety fix 5). NOT $OMK/ledger.tsv: that is the gate-RUN ledger
-# (omakase-ledger.sh), which must survive re-init.
+# (spec §2 + safety fix 5). NOT $OMK/ledger.tsv: that is the gate run + cache store
+# (omakase-gate.sh), which survives re-init (a pre-v2 6-col ledger is rotated aside above).
 rm -rf "$OMK/payload-snapshot"
 mkdir -p "$OMK/payload-snapshot"
 # Remember a source install ($OMK/source, one line) so a bare re-run refreshes the
