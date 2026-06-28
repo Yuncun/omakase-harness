@@ -1,51 +1,44 @@
-# Personal hook wiring (gitignored via .git/info/exclude — never committed).
-# This one file IS your harness — read it top to bottom to see everything that runs.
-# Gates group by type; add more of a type, don't special-case:
-#   scoped checkers   — fast, staged-file-scoped; run per-commit (pre-commit).
-#   complete checkers — whole-project; run per-push (pre-push).
-# Each `run` resolves from the repo root.
-
+# Personal hook wiring (gitignored via .git/info/exclude - never committed).
+# This one file IS your harness - read it top to bottom to see everything that runs.
+# Every gate is one omakase-gate.sh call. Its flags pick the shape:
+#   (default)     run the --step every time; non-zero blocks. Good for fast checks.
+#   --cacheable   run once per commit, then reuse the pass (skip) until HEAD moves.
+#   --glob 'PATS' only run when a changed file in the range matches a pattern.
+#   --record      (out of band) write a pass for the current commit without running a step.
+# A "deferred" check is just --cacheable + a step that blocks: the step refuses, an agent or
+# human runs the real check and then `omakase-gate.sh <name> --record`, and the re-push at the
+# same commit is allowed. Every run lands in the scorecard (omakase status, the takeout
+# status-line). The per-gate audited bypass is OMAKASE_SKIP_<NAME>=1.
+#
 # By default lefthook's own run header shows. The branded omakase box is opt-in (it enforces
-# nothing): to use it, add an omakase-banner job as the first pre-commit job —
-# `run: bash .omakase/bin/omakase-banner.sh pre-commit` — and add a top-level
+# nothing): to use it, add an omakase-banner job as the first pre-commit job -
+# `run: bash .omakase/bin/omakase-banner.sh pre-commit` - and add a top-level
 # `output: [summary, success, failure, execution_out]` to drop lefthook's own header.
 
 pre-commit:
   jobs:
-    # --- scoped checker (the shipped example: blocks staged merge-conflict markers) ---
-    # Wrapped in omakase-ledger.sh so the run lands in the scorecard ledger; it passes
-    # the gate's exit code straight through. Wrap your own gates the same way to have
-    # them show up in `omakase status` and the 🥡 status-line segment; or call the gate
-    # directly to keep it off the scorecard. OMAKASE_HOOK is the trigger label.
-    - name: omakase-example
-      run: bash .omakase/bin/omakase-ledger.sh omakase-example -- bash .omakase/gates/example.sh
-      env:
-        OMAKASE_HOOK: pre-commit
+    # The shipped example: block a staged merge-conflict marker. Runs every commit.
+    - name: markers
+      run: bash .omakase/bin/omakase-gate.sh markers --step 'bash .omakase/gates/example.sh'
 
-# --- pre-push: complete checkers + deferred gates. Left commented so this example
-# --- harness installs cleanly on any repo. Uncomment and adapt to your stack.
+# --- pre-push: complete checkers + deferred gates. Left commented so this example harness
+# --- installs cleanly on any repo. Uncomment and adapt to your stack.
 # pre-push:
 #   parallel: true
 #   jobs:
-#     # complete checker — your whole-project checks run IN the hook; non-zero blocks.
+#     # complete checker, cached per commit: your whole-project check runs once per HEAD.
 #     - name: tests
-#       run: bash .omakase/bin/omakase-ledger.sh tests -- <your check, e.g. make check | npm test | pytest | cargo test>
-#       env: { OMAKASE_HOOK: pre-push }
-#     # deferred gate — for a slow / non-deterministic check (a render, an LLM review)
-#     # that can't run in a hook. A job records the result in-session with:
-#     #   bash .omakase/bin/omakase-record.sh --check review --verdict pass
-#     # and this push gate blocks unless a fresh PASS exists for the commit.
-#     - name: deferred-check-review
-#       run: bash .omakase/bin/omakase-ledger.sh review -- bash .omakase/gates/deferred-check.sh
-#       env:
-#         OMAKASE_CHECK: review            # matches --check above; UNSET = dormant
-#         OMAKASE_GLOB: 'src/* lib/*'      # gate fires only when a pushed file matches
-#         OMAKASE_HOOK: pre-push
+#       run: bash .omakase/bin/omakase-gate.sh tests --cacheable --glob 'src/* lib/*' --step '<your check, e.g. make check | npm test | pytest>'
+#     # deferred gate: a slow / non-deterministic check (a render, an LLM review) that can't
+#     # run in a hook. The step blocks; an agent or human runs the real check and records:
+#     #   bash .omakase/bin/omakase-gate.sh review --record
+#     - name: review
+#       run: bash .omakase/bin/omakase-gate.sh review --cacheable --glob 'src/*' --step 'echo "BLOCKED: run review, then: omakase-gate.sh review --record" >&2; exit 1'
 
 # Worktree auto-install: on every checkout (including `git worktree add`), copy any
-# MISSING injected file into this worktree from the shared snapshot. Never
-# overwrites a local edit, never touches a tracked path. The script lives in the
-# shared git dir, so it is reachable from any worktree. Written by init.sh.
+# MISSING injected file into this worktree from the shared snapshot. Never overwrites a
+# local edit, never touches a tracked path. The script lives in the shared git dir, so it
+# is reachable from any worktree. Written by init.sh.
 post-checkout:
   jobs:
     - name: omakase-ensure-present

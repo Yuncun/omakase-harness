@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
 # TDD spec for the harness STATUS SURFACES:
-#   - omakase-ledger.sh      : run-ledger recorder; stamps epoch/hook/gate/verdict/ms/SHA
 #   - omakase-statusline.sh  : the CANARY — "<name> is running" where the harness is
 #                              active, dark elsewhere. No verdict, only the 🥡 icon.
 #   - omakase-stop-notice.sh : the Stop-hook status — "<name> is active ✓" (light ✓, no colour)
-#                              when gates are armed, plus a "Last run: <Hook> N/N checks at <clk>"
+#                              when gates are armed, plus a "Last run: N/N checks at <clk>"
 #                              line after a run (a failure shows there, in words; the header keeps
 #                              "is active ✓"), "<name> is not active" when gates aren't armed, and
 #                              a "files missing · omakase init" nudge. Detail -> omakase status.
 #   - bin/show.sh            : omakase status GUARDS chart (+ --markdown)
-# Ledger lines are TAB-separated (epoch, hook, gate, verdict, ms, sha); assertions use
+# Ledger lines are TAB-separated (epoch, name, verdict, sha); assertions use
 # awk, not grep -P (BSD).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RECORD="$HERE/../payload/.omakase/bin/omakase-ledger.sh"
 CANARY="$HERE/../payload/.omakase/bin/omakase-statusline.sh"
 NOTICE="$HERE/../payload/.omakase/bin/omakase-stop-notice.sh"
 BANNER_REL=".omakase/bin/omakase-banner.sh"
@@ -29,26 +27,8 @@ pass(){ echo "  PASS: $1"; }
 fail(){ echo "  FAIL: $1"; FAILED=1; }
 newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }
 ledger_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)/omakase/ledger.tsv"; }
-has_run(){ awk -F'\t' -v g="$2" -v v="$3" '$3==g && $4==v{f=1} END{exit f?0:1}' "$1"; }
+has_run(){ awk -F'\t' -v g="$2" -v v="$3" '$2==g && $3==v{f=1} END{exit f?0:1}' "$1"; }
 export PATH="$(dirname "$LEFTHOOK"):$PATH"
-
-# ---------- Scenario R: recorder writes a 6-col line (incl. the commit SHA) ----------
-echo "== Scenario R: omakase-ledger records epoch,hook,gate,verdict,ms,SHA =="
-REPO="$TMP/repoR"; newrepo "$REPO"; LEDGER="$(ledger_of "$REPO")"
-( cd "$REPO" && bash "$RECORD" mygate -- bash -c 'exit 0' ); rc=$?
-[ "$rc" -eq 0 ] && pass "record passes exit 0 through" || fail "record lost exit 0 ($rc)"
-{ [ -f "$LEDGER" ] && has_run "$LEDGER" mygate pass; } && pass "pass run recorded" || fail "pass run not recorded"
-( cd "$REPO" && bash "$RECORD" failgate -- bash -c 'exit 7' ); rc=$?
-[ "$rc" -eq 7 ] && pass "record preserves exit 7" || fail "record lost exit 7 ($rc)"
-has_run "$LEDGER" failgate fail && pass "fail run recorded" || fail "fail run not recorded"
-line="$(awk -F'\t' '$3=="mygate"{print; exit}' "$LEDGER")"
-nf=$(printf '%s' "$line" | awk -F'\t' '{print NF}')
-[ "$nf" -eq 6 ] && pass "ledger line has 6 fields" || fail "ledger line has $nf fields, want 6"
-sha="$(printf '%s' "$line" | awk -F'\t' '{print $6}')"
-head="$(cd "$REPO" && git rev-parse HEAD)"
-[ "$sha" = "$head" ] && pass "6th field is the commit sha" || fail "sha mismatch ($sha vs $head)"
-rm -rf "$(dirname "$LEDGER")"
-( cd "$REPO" && bash "$RECORD" g2 -- true ); { [ -f "$LEDGER" ]; } && pass "recreates a missing ledger dir" || fail "did not recreate ledger dir"
 
 # ---------- Scenario C: the canary ----------
 echo "== Scenario C: omakase-statusline canary =="
@@ -88,9 +68,9 @@ OUT="$(notice "$SB")"; echo "$OUT" | grep -q 'is active ✓' && pass "a new sess
 
 # a pre-push run, all three gates pass on HEAD
 T=$(date +%s)
-for g in gamma alpha beta; do printf '%s\tpre-push\t%s\tpass\t1000\t%s\n' "$T" "$g" "$HEAD" >> "$LEDGER"; done
+for g in gamma alpha beta; do printf '%s\t%s\tpass\t%s\n' "$T" "$g" "$HEAD" >> "$LEDGER"; done
 OUT="$(notice "$SB")"
-echo "$OUT" | grep -q 'Last run: Pre-push gate' && pass "a run names the hook (Pre-push gate)" || fail "no hook name ($OUT)"
+echo "$OUT" | grep -q 'Last run:' && pass "a run shows Last run:" || fail "no Last run line ($OUT)"
 echo "$OUT" | grep -q '3/3 checks at' && pass "all-pass -> 'N/N checks at <time>'" || fail "no N/N run summary ($OUT)"
 echo "$OUT" | grep -q 'is active ✓' && pass "a clean run keeps the 'is active ✓' header" || fail "no active header on a clean run ($OUT)"
 echo "$OUT" | grep -qE '[0-9]+:[0-9][0-9][AP]M' && pass "shows a clock time" || fail "no clock time ($OUT)"
@@ -99,8 +79,8 @@ OUT="$(notice "$SB")"; [ -z "$OUT" ] && pass "after a run, no new run -> silent"
 
 # a later run with a failure: beta fails (gamma/alpha still pass)
 T2=$((T + 5))
-for g in gamma alpha; do printf '%s\tpre-push\t%s\tpass\t1000\t%s\n' "$T2" "$g" "$HEAD" >> "$LEDGER"; done
-printf '%s\tpre-push\tbeta\tfail\t1000\t%s\n' "$T2" "$HEAD" >> "$LEDGER"
+for g in gamma alpha; do printf '%s\t%s\tpass\t%s\n' "$T2" "$g" "$HEAD" >> "$LEDGER"; done
+printf '%s\tbeta\tfail\t%s\n' "$T2" "$HEAD" >> "$LEDGER"
 OUT="$(notice "$SB")"
 echo "$OUT" | grep -q 'omakase is active ✓' && pass "a failed run keeps the 'is active ✓' header" || fail "failed run changed the header ($OUT)"
 echo "$OUT" | grep -qE '✗|❌|✖' && fail "a failed run must not show an X glyph" || pass "no X on a failed run"
@@ -109,24 +89,24 @@ echo "$OUT" | grep -qE '[0-9]+/[0-9]+' && fail "failure line should not show a p
 
 # fail-then-fixed on the SAME commit: beta passes again -> back to all green (latest verdict wins)
 T3=$((T2 + 5))
-printf '%s\tpre-push\tbeta\tpass\t1000\t%s\n' "$T3" "$HEAD" >> "$LEDGER"
+printf '%s\tbeta\tpass\t%s\n' "$T3" "$HEAD" >> "$LEDGER"
 OUT="$(notice "$SB")"
 echo "$OUT" | grep -q '3/3 checks at' && pass "fail-then-fixed counts as passed (latest verdict per gate)" || fail "fixed gate not re-counted ($OUT)"
 
-# an empty-sha row (omakase-ledger writes one when HEAD is unborn — e.g. the first commit's
-# pre-commit) must NOT become "the last run" and mask a later real run
+# an empty-sha row (a pre-commit on an unborn HEAD, e.g. the first commit's pre-commit)
+# must NOT become "the last run" and mask a later real run
 T4=$((T3 + 5))
-printf '%s\tpre-commit\tprecommit-gate\tpass\t1000\t\n' "$T4" >> "$LEDGER"   # 6 cols, empty sha
+printf '%s\tprecommit-gate\tpass\t\n' "$T4" >> "$LEDGER"   # 4 cols, empty sha
 OUT="$(notice "$SB")"; [ -z "$OUT" ] && pass "empty-sha row alone -> silent (not a run)" || fail "empty-sha row spoke ($OUT)"
 T5=$((T4 + 5))
-for g in gamma alpha beta; do printf '%s\tpre-push\t%s\tpass\t1000\t%s\n' "$T5" "$g" "$HEAD" >> "$LEDGER"; done
+for g in gamma alpha beta; do printf '%s\t%s\tpass\t%s\n' "$T5" "$g" "$HEAD" >> "$LEDGER"; done
 OUT="$(notice "$SB")"
 echo "$OUT" | grep -q '3/3 checks at' && pass "a real run after an empty-sha row still announces" || fail "real run masked by empty-sha row ($OUT)"
 
 # a fresh run with TWO failures -> plural "N checks failed" (the singular path is not hardcoded)
 T6=$((T5 + 5))
-printf '%s\tpre-push\tgamma\tpass\t1000\t%s\n' "$T6" "$HEAD" >> "$LEDGER"
-for g in alpha beta; do printf '%s\tpre-push\t%s\tfail\t1000\t%s\n' "$T6" "$g" "$HEAD" >> "$LEDGER"; done
+printf '%s\tgamma\tpass\t%s\n' "$T6" "$HEAD" >> "$LEDGER"
+for g in alpha beta; do printf '%s\t%s\tfail\t%s\n' "$T6" "$g" "$HEAD" >> "$LEDGER"; done
 OUT="$(notice "$SB")"
 echo "$OUT" | grep -q '2 checks failed' && pass "two failures -> plural 'N checks failed'" || fail "no plural failure count ($OUT)"
 echo "$OUT" | grep -qE '[0-9]+/[0-9]+' && fail "plural failure line should not show a fraction" || pass "plural failure line drops the fraction"
@@ -149,51 +129,34 @@ REPO2="$TMP/repoK2"; newrepo "$REPO2"
 OUT="$(printf '{"cwd":"%s","session_id":"x"}' "$REPO2" | bash "$NOTICE")"
 [ -z "$OUT" ] && pass "no overlay -> silent (not an omakase repo)" || fail "fired in a non-omakase repo ($OUT)"
 
-# ---------- Scenario S: omakase status surfaces a 6-col ledger verdict on the guards chart ----------
-# Since #23 `show` lists gates from the lefthook WIRING, joined to the latest ledger verdict
-# (the old ledger-only "recent runs" table now only appears in the lefthook-unresolved
-# fallback). So a 6-col row for the base payload's WIRED gate (omakase-example) must surface
-# with its verdict in both modes. Asserts on gate-name + verdict, not the exact header, so it
-# holds whether the chart or the fallback renders.
-echo "== Scenario S: show surfaces a 6-col verdict on the guards chart =="
+# ---------- Scenario S: omakase status surfaces a 4-col ledger verdict on the guards chart ----------
+# Since #23 `show` lists gates from the lefthook WIRING, joined to the latest ledger verdict.
+# A 4-col row for the base payload's WIRED gate (markers) must surface with its verdict in both
+# modes. Asserts on gate-name + verdict, not the exact header.
+echo "== Scenario S: show surfaces a 4-col verdict on the guards chart =="
 REPO="$TMP/repoS"; newrepo "$REPO"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 LEDGER="$(ledger_of "$REPO")"; mkdir -p "$(dirname "$LEDGER")"
 HEAD="$(cd "$REPO" && git rev-parse HEAD)"
-printf '%s\tpre-commit\tomakase-example\tfail\t40\t%s\n' $((NOW-60)) "$HEAD" >> "$LEDGER"
+printf '%s\tmarkers\tfail\t%s\n' $((NOW-60)) "$HEAD" >> "$LEDGER"
 OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW bash "$SHOW" 2>&1 )"
-echo "$OUT" | grep -q 'omakase-example' && pass "show lists the wired gate (6-col)" || fail "show missed 6-col gate"
-echo "$OUT" | grep 'omakase-example' | grep -q 'fail' && pass "show shows a fail verdict on the gate row" || fail "show missing fail verdict on the gate row"
+echo "$OUT" | grep -q 'markers' && pass "show lists the wired gate (4-col)" || fail "show missed 4-col gate"
+echo "$OUT" | grep 'markers' | grep -q 'fail' && pass "show shows a fail verdict on the gate row" || fail "show missing fail verdict on the gate row"
 OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW bash "$SHOW" --markdown 2>&1 )"
 echo "$OUT" | grep -qE '^\| *-+ *\|' && pass "markdown table renders" || fail "no markdown table"
-echo "$OUT" | grep -E 'omakase-example' | grep -q 'fail' && pass "markdown fail row (6-col)" || fail "no fail row in markdown"
+echo "$OUT" | grep -E 'markers' | grep -q 'fail' && pass "markdown fail row (4-col)" || fail "no fail row in markdown"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
-# ---------- Scenario U: a real commit records a 6-col row through the wiring ----------
-echo "== Scenario U: a real lefthook commit writes a 6-col ledger row =="
+# ---------- Scenario U: a real commit records a 4-col row through the wiring ----------
+echo "== Scenario U: a real lefthook commit writes a 4-col ledger row =="
 REPO="$TMP/repoU"; newrepo "$REPO"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 LEDGER="$(ledger_of "$REPO")"
 ( cd "$REPO" && echo hi > f.txt && git add f.txt && git commit -m t ) >/dev/null 2>&1
-{ [ -f "$LEDGER" ] && has_run "$LEDGER" omakase-example pass; } && pass "real commit recorded the example gate" || { fail "no pass row after a real commit"; sed 's/^/      /' "$LEDGER" 2>/dev/null; }
-nf=$(awk -F'\t' '$3=="omakase-example"{print NF; exit}' "$LEDGER")
-[ "$nf" -eq 6 ] && pass "real commit row has 6 fields" || fail "real commit row has $nf fields"
+{ [ -f "$LEDGER" ] && has_run "$LEDGER" markers pass; } && pass "real commit recorded the example gate" || { fail "no pass row after a real commit"; sed 's/^/      /' "$LEDGER" 2>/dev/null; }
+nf=$(awk -F'\t' '$2=="markers"{print NF; exit}' "$LEDGER")
+[ "$nf" -eq 4 ] && pass "real commit row has 4 fields" || fail "real commit row has $nf fields"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
-
-# ---------- Scenario V: hardening (recorder + canary) ----------
-echo "== Scenario V: hardening =="
-OUTSIDE="$TMP/notarepo2"; rm -rf "$OUTSIDE"; mkdir -p "$OUTSIDE"
-( cd "$OUTSIDE" && bash "$RECORD" g -- true ); rc=$?
-[ "$rc" -eq 0 ] && pass "recorder outside a repo passes exit through" || fail "recorder outside repo exit $rc"
-[ ! -e "$OUTSIDE/omakase" ] && pass "recorder writes no stray omakase/ outside a repo" || fail "recorder littered outside a repo"
-REPO="$TMP/repoV"; newrepo "$REPO"; LEDGER="$(ledger_of "$REPO")"; mkdir -p "$(dirname "$LEDGER")"
-( cd "$REPO" && bash "$RECORD" cdgate -- cd /tmp ) >/dev/null 2>&1
-has_run "$LEDGER" cdgate pass && pass "records even when the gate changes directory" || fail "cd-in-gate dropped the record"
-( cd "$REPO" && bash "$RECORD" emptyg -- ); rc=$?
-{ [ "$rc" -eq 0 ] && ! has_run "$LEDGER" emptyg pass; } && pass "empty command records nothing, exits 0" || fail "empty command mishandled"
-( cd "$REPO" && bash "$RECORD" "$(printf 'tab\tname')" -- true ) >/dev/null 2>&1
-nf=$(tail -1 "$LEDGER" | awk -F'\t' '{print NF}')
-[ "$nf" -eq 6 ] && pass "tab in gate name sanitized (line stays 6 fields)" || fail "tab in gate name shifted columns ($nf)"
 
 # ---------- Scenario I: the inventory — every harness artifact, grouped by origin ----------
 # spec §3: show gains an inventory (Committed / Injected / Personal), both modes,
