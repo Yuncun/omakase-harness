@@ -63,3 +63,45 @@ OUT="$( cd "$OUTSIDE" && bash "$GATE" g --step 'true' 2>&1 )"; RC=$?
 ( cd "$REPO" && bash "$GATE" "$(printf 'tab\tname')" --step 'true' ) >/dev/null 2>&1
 nf=$(tail -1 "$LEDGER" | awk -F'\t' '{print NF}')
 [ "$nf" -eq 4 ] && pass "tab in name sanitized (row stays 4 fields)" || fail "tab in name shifted columns ($nf)"
+
+echo "== Cycle B: --cacheable, --record, deferment =="
+REPO="$TMP/repoB"; newrepo "$REPO"; LEDGER="$(ledger_of "$REPO")"
+( cd "$REPO" && mkdir -p src && printf 'a\n' > src/app.txt && git add src/app.txt && git commit -q -m c1 )
+
+# --cacheable freshness: no row -> runs; after a pass -> next run skips (cached)
+runs="$TMP/ran.B"; : > "$runs"
+step="printf x >> $runs"
+OUT="$( cd "$REPO" && bash "$GATE" cached --cacheable --step "$step" 2>&1 )"
+[ "$(wc -c < "$runs" | tr -d ' ')" = "1" ] && pass "cacheable: first run executes the step" || fail "cacheable first run did not execute ($OUT)"
+OUT="$( cd "$REPO" && bash "$GATE" cached --cacheable --step "$step" 2>&1 )"
+{ [ "$(wc -c < "$runs" | tr -d ' ')" = "1" ] && echo "$OUT" | grep -q 'cached'; } && pass "cacheable: a fresh pass skips the step" || fail "cacheable did not skip on a fresh pass ($OUT)"
+# HEAD moves -> the pass is stale -> the step runs again
+( cd "$REPO" && printf 'b\n' > src/more.txt && git add src/more.txt && git commit -q -m c2 )
+OUT="$( cd "$REPO" && bash "$GATE" cached --cacheable --step "$step" 2>&1 )"
+[ "$(wc -c < "$runs" | tr -d ' ')" = "2" ] && pass "cacheable: a new commit busts the cache (re-runs)" || fail "cacheable did not re-run after HEAD moved ($OUT)"
+
+# --record: writes a PASS for HEAD with no step; a subsequent --cacheable run skips
+REPO="$TMP/repoR"; newrepo "$REPO"; LEDGER="$(ledger_of "$REPO")"
+OUT="$( cd "$REPO" && bash "$GATE" review --record 2>&1 )"; RC=$?
+{ [ "$RC" -eq 0 ] && has_row "$LEDGER" review pass; } && pass "--record writes a pass row, exit 0" || fail "--record did not write a pass ($RC: $OUT)"
+ran="$TMP/ran.R"; : > "$ran"
+OUT="$( cd "$REPO" && bash "$GATE" review --cacheable --step "printf x >> $ran" 2>&1 )"
+[ ! -s "$ran" ] && pass "--record then --cacheable run skips the step" || fail "cacheable ran despite a recorded pass ($OUT)"
+
+# --record fail-loud: an unwritable ledger dir -> exit non-zero and say so
+REPO="$TMP/repoRL"; newrepo "$REPO"
+COMMON="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+# make the omakase dir un-creatable by planting a FILE where the dir must go
+rm -rf "$COMMON/omakase"; : > "$COMMON/omakase"
+OUT="$( cd "$REPO" && bash "$GATE" review --record 2>&1 )"; RC=$?
+{ [ "$RC" -ne 0 ] && echo "$OUT" | grep -qi 'FAILED to record'; } && pass "--record fails loud on a write error" || fail "--record did not fail loud ($RC: $OUT)"
+rm -f "$COMMON/omakase"
+
+# deferment (case 3): a blocking step blocks; after --record the same HEAD is allowed
+REPO="$TMP/repoD"; newrepo "$REPO"; LEDGER="$(ledger_of "$REPO")"
+blocker='echo "BLOCKED: run review then: omakase-gate.sh review --record" >&2; exit 1'
+OUT="$( cd "$REPO" && bash "$GATE" review --cacheable --step "$blocker" 2>&1 )"; RC=$?
+{ [ "$RC" -ne 0 ] && echo "$OUT" | grep -q 'BLOCKED'; } && pass "deferment: the blocking step blocks first" || fail "deferment did not block ($RC: $OUT)"
+( cd "$REPO" && bash "$GATE" review --record ) >/dev/null
+OUT="$( cd "$REPO" && bash "$GATE" review --cacheable --step "$blocker" 2>&1 )"; RC=$?
+[ "$RC" -eq 0 ] && pass "deferment: after --record the same HEAD is allowed" || fail "deferment still blocked after --record ($RC: $OUT)"
