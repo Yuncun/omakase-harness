@@ -6,7 +6,7 @@
 #       .claude/settings.json          (Claude Code reads this)
 #       .github/copilot/settings.json  (Copilot CLI reads this — same JSON, different path)
 #   - each file registers the superpowers-marketplace and enables the plugin
-#   - the base harness machinery the wiring relies on is layered in (omakase-ledger.sh)
+#   - the base harness machinery the wiring relies on is layered in (omakase-gate.sh)
 #   - init prints the manifest's `recommends:` fallback line
 #   - remove tears it all down, exclude block included
 # HOME and XDG_CACHE_HOME point at fixture dirs so nothing touches the real machine.
@@ -58,7 +58,7 @@ for f in "$CC" "$CP"; do
 done
 
 # 5) Base layering: machinery the example does NOT ship is present from the base layer.
-[ -f "$REPO/.omakase/bin/omakase-ledger.sh" ] && pass "base machinery layered in (omakase-ledger.sh)" || fail "base machinery missing"
+[ -f "$REPO/.omakase/bin/omakase-gate.sh" ] && pass "base machinery layered in (omakase-gate.sh)" || fail "base machinery missing"
 
 # 6) init surfaced the manifest's recommends fallback line.
 echo "$OUT" | grep -q 'this harness recommends' && pass "recommends line printed" || { fail "no recommends line"; echo "$OUT" | sed 's/^/      /'; }

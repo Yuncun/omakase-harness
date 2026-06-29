@@ -5,8 +5,8 @@
 #
 # The states it can show (always the harness's name, no 🥡; detail lives in omakase status):
 #   <name> is active ✓                                        harness deployed and gates armed
-#   <name> is active ✓ / Last run: <Hook> 8/8 checks at <clk> a run just finished, all passed
-#   <name> is active ✓ / Last run: <Hook> 2 checks failed …   a run failed — header stays "active"
+#   <name> is active ✓ / Last run: 8/8 checks at <clk>       a run just finished, all passed
+#   <name> is active ✓ / Last run: 2 checks failed ...        a run failed - header stays "active"
 #                                                             (it tracks the harness, not the run)
 #   <name> is not active                                      overlay present but gates not armed
 #   <name> — files missing · omakase init to update          overlay incomplete in this worktree
@@ -66,23 +66,23 @@ if [ -f "$placed" ]; then
   done < "$placed"
 fi
 
-# last run — summarise the most recent 6-col run (epoch hook gate verdict ms sha). Pass 1
-# finds the (hook, sha) of the newest run row; pass 2 takes the latest verdict per gate for
-# that run and counts passed/failed plus the run's clock epoch. Legacy 5-col rows (no sha)
-# are ignored.
+# last run - summarise the most recent run from the 4-col ledger (epoch name verdict sha).
+# Pass 1 finds the sha of the newest run row. Pass 2 takes the latest verdict per gate name
+# for that sha and counts passed/failed plus the run's clock epoch. Rows with an empty sha
+# (a pre-commit on an unborn HEAD) are ignored so they cannot mask a later real run.
 ledger="$common/omakase/ledger.tsv"
-maxepoch=0; ran_hook=""; ran_sha=""; ran=0; passed=0; failed=0; runepoch=0
+maxepoch=0; ran_sha=""; ran=0; passed=0; failed=0; runepoch=0
 if [ -s "$ledger" ]; then
-  read -r maxepoch ran_hook ran_sha <<EOF
-$(awk -F'\t' 'NF>=6 && $6!="" && $1 ~ /^[0-9]+$/ && ($1+0)>m{m=$1+0; h=$2; s=$6} END{printf "%d %s %s\n", m+0, h, s}' "$ledger")
+  read -r maxepoch ran_sha <<EOF
+$(awk -F'\t' 'NF>=4 && $4!="" && $1 ~ /^[0-9]+$/ && ($1+0)>m{m=$1+0; s=$4} END{printf "%d %s\n", m+0, s}' "$ledger")
 EOF
   case "${maxepoch:-}" in ''|*[!0-9]*) maxepoch=0;; esac
   if [ "$maxepoch" -gt 0 ] && [ -n "$ran_sha" ]; then
     read -r ran passed failed runepoch <<EOF
-$(awk -F'\t' -v H="$ran_hook" -v S="$ran_sha" '
-        NF>=6 && $1 ~ /^[0-9]+$/ && $2==H && $6==S {
-          e=$1+0; g=$3
-          if (!(g in te) || e>=te[g]) { te[g]=e; tv[g]=$4 }
+$(awk -F'\t' -v S="$ran_sha" '
+        NF>=4 && $1 ~ /^[0-9]+$/ && $4==S {
+          e=$1+0; g=$2
+          if (!(g in te) || e>=te[g]) { te[g]=e; tv[g]=$3 }
           if (e>re) re=e
         }
         END { for (g in tv){ n++; if (tv[g]=="pass") p++ }
@@ -91,7 +91,6 @@ EOF
   fi
 fi
 
-hookname() { case "$1" in pre-commit) printf 'Pre-commit gate';; pre-push) printf 'Pre-push gate';; *) printf '%s' "$1";; esac; }
 clock() { # epoch -> "3:42PM" (BSD `date -r`, GNU `date -d @`); drop a leading zero hour
   local e="$1" t; t="$(date -r "$e" '+%I:%M%p' 2>/dev/null)"
   [ -n "$t" ] || t="$(date -d "@$e" '+%I:%M%p' 2>/dev/null)"; printf '%s' "${t#0}"
@@ -128,14 +127,14 @@ printf '%s\t%s\t%s\n' "$session" "$maxepoch" "$statusig" > "$marker" 2>/dev/null
 if [ "$armed" -eq 0 ]; then
   msg="$name is not active"
 elif [ "$ran_this_turn" -eq 1 ] && [ "$ran" -gt 0 ]; then
-  hk="$(hookname "$ran_hook")"; tm="$(clock "$runepoch")"
+  tm="$(clock "$runepoch")"
   if [ "$failed" -gt 0 ]; then
     u=checks; [ "$failed" -eq 1 ] && u=check
     msg="$name is active ✓
-Last run: $hk $failed $u failed at $tm"
+Last run: $failed $u failed at $tm"
   else
     msg="$name is active ✓
-Last run: $hk $ran/$ran checks at $tm"
+Last run: $ran/$ran checks at $tm"
   fi
 else
   msg="$name is active ✓"

@@ -10,9 +10,10 @@ It carries only its own **delta**:
     payload/.omakase/gates/block-marker.sh  the gate
     payload/lefthook-local.yml              wires the gate onto pre-commit
 
-Everything else the wiring uses — `omakase-ledger.sh` (the scorecard wrapper) and the worktree
-auto-install — comes from the **omakase base harness**, layered in underneath at install. That
-is why this directory is so small.
+Everything else the wiring uses comes from the **omakase base harness**, layered in
+underneath at install: `omakase-gate.sh` (the one gate primitive: it runs the check, records
+the run, and passes the exit code through) and the worktree auto-install. That is why this
+directory is so small.
 
 ## Try it
 

@@ -7,9 +7,8 @@ install one from a URL or path with `--source`, it also needs an `omakase.manife
 
 A `--source` install layers the omakase **base harness's payload** under your `payload/` (your
 delta wins on overlap), so you ship only your delta and **rely on base machinery without keeping
-your own copy** — the banner, the `omakase-ledger.sh` scorecard wrapper, the `omakase-record.sh`
-recorder, and the `deferred-check.sh` push gate are all provided by the base harness. Wire them in
-`payload/lefthook-local.yml` and ship only your own gates. (This is
+your own copy**: the banner and the `omakase-gate.sh` primitive are provided by the base harness. Wire the
+primitive into `payload/lefthook-local.yml` and ship only your own gates. (This is
 the same base+delta merge `tools/build.sh` bakes into a plugin bundle, performed at install
 time instead.) If your wiring references a `.omakase/*.sh` neither you nor the base harness ships,
 `init` refuses and places nothing — so a typo surfaces at install, not as an exit-127 on commit.
@@ -22,20 +21,18 @@ which reads that project's harness files into `payload/` and leaves the project 
 
 ## Adding a gate
 
-The `add-gate` skill walks an agent through this end-to-end — picking the gate shape,
-pre-flighting whether a third-party tool can even be gated, and wiring it. This section is the
-conceptual reference behind it.
+The `add-gate` skill walks an agent through this end-to-end: picking the flags, pre-flighting
+whether a third-party tool can even be gated, and wiring it. This section is the conceptual
+reference behind it.
 
-omakase has two kinds of gate (see [Concepts](concepts.md#gates-and-deferred-gates)):
+A gate is one `omakase-gate.sh` call wired into a hook job (see [Concepts](concepts.md#gates)).
+Three flags cover the common cases:
 
-- A **gate** runs in the hook. The hook command is the whole gate — for a linter or a
-  test, lefthook runs it and a non-zero exit blocks.
-- A **deferred gate** is two pieces: a job that runs the check in-session and records a
-  result keyed to the commit, and a hook entry in `payload/lefthook-local.yml` that reads
-  that record on push and blocks unless the job recorded success for the commit.
-
-The deferred-gate scripts under `.omakase/` (the recorder and the push gate) are reusable.
-A new deferred gate supplies its own job and points the gate at its record by name.
+- `--step '<cmd>'`: the check. Exit 0 = pass; non-zero blocks the commit or push.
+- `--cacheable`: reuse a passing result for the same commit (run it once, then skip). Use
+  for expensive steps or for a check that runs out of band: a blocking step refuses the push
+  until the check records its own pass via `omakase-gate.sh <name> --record`.
+- `--glob '<pats>'`: space-separated path globs; skip the gate when no changed file matches.
 
 ## Wrapping a third-party check
 

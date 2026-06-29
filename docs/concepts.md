@@ -3,8 +3,8 @@
 ## Base harness and custom harness
 
 **omakase base harness** — the tool you install once. It holds the install/remove logic
-(`bin/`), the base machinery every harness can rely on (the banner, the scorecard ledger,
-the deferred-gate scripts), and the `omakase` commands. This repo is the base harness.
+(`bin/`), the base machinery every harness can rely on (the banner, the gate primitive
+(`omakase-gate.sh`) and its scorecard ledger), and the `omakase` commands. This repo is the base harness.
 
 **custom harness** — a personal harness you make and share: a git repo with a `payload/`
 tree and a one-line `omakase.manifest`. You install it with `--source`, and the base harness
@@ -37,25 +37,22 @@ the exact files it placed, not the directory. The set of shared top directories 
 The distinction matters when a gate writes files: anything created under an owned
 directory is gitignored wholesale and will not reach a teammate.
 
-## Gates and deferred gates
+## Gates
 
-A gate is a check wired into a git hook. It either runs in the hook or defers to a job
-that ran earlier.
+A gate is a check wired into a git hook via `omakase-gate.sh`. The primitive takes a name
+and a `--step '<cmd>'`. The step exits 0 (pass) or non-zero (block). Two flags extend the
+behavior:
 
-A gate runs the check inside the hook and blocks on the result — a linter, a type check,
-or a fast test, anything deterministic and quick enough to run while you wait. The hook
-runs it; a non-zero exit blocks the commit or push.
+- `--cacheable`: once a step passes for a given commit, subsequent runs at that commit skip
+  the step. Use for expensive checks, or when a check runs out of band: the hook uses a
+  blocking step that refuses the push, the check runs separately (by an agent or developer),
+  and when it passes it calls `omakase-gate.sh <name> --record` to record the result. The
+  re-push at the same commit is then allowed.
+- `--glob '<pats>'`: space-separated path globs; the gate is skipped when no changed file
+  matches.
 
-A deferred gate is for checks too slow or non-deterministic to run inside a hook, such as
-an emulator render or an LLM review. The job runs earlier, when the work is done (the
-developer or agent runs it), and records a result keyed to the commit. The deferred gate
-runs at push, reads that record, and blocks unless the job recorded success for the exact
-commit being pushed. It never runs the check itself.
-
-What counts as success is the job's call: a render-diff records success only when the
-output matches, so its gate blocks a broken render; a review records success whenever it
-ran, so its gate only enforces that the review happened and leaves the findings for a
-human. Same gate either way — the policy lives in the job, not the gate.
+Every run appends to the scorecard, visible in `omakase status`. The single audited bypass
+is `OMAKASE_SKIP_<NAME>=1` (name upper-cased, `-`→`_`).
 
 ## State
 

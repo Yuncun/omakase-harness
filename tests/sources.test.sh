@@ -198,7 +198,7 @@ SH
 # a source SYMLINK must survive the merge loop's cp -P (the advertised CLAUDE.md -> AGENTS.md)
 printf 'shared agent instructions\n' > "$SRC6/payload/AGENTS.md"
 ( cd "$SRC6/payload" && ln -s AGENTS.md CLAUDE.md )
-# wiring that DEPENDS on base machinery the source does NOT ship (banner + ledger wrapper)
+# wiring that DEPENDS on base machinery the source does NOT ship (banner + gate primitive)
 cat > "$SRC6/payload/lefthook-local.yml" <<'YML'
 output: [summary, success, failure, execution_out]
 pre-commit:
@@ -206,9 +206,7 @@ pre-commit:
     - name: omakase-banner
       run: bash .omakase/bin/omakase-banner.sh pre-commit
     - name: source-discipline
-      run: bash .omakase/bin/omakase-ledger.sh source-discipline -- bash .omakase/gates/discipline.sh
-      env:
-        OMAKASE_HOOK: pre-commit
+      run: bash .omakase/bin/omakase-gate.sh source-discipline --step 'bash .omakase/gates/discipline.sh'
 post-checkout:
   jobs:
     - name: omakase-ensure-present
@@ -225,8 +223,7 @@ export TMPDIR="$TMP/merge-tmp"; mkdir -p "$TMPDIR"
 ( cd "$REPO6" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$SRC6" ) >/dev/null 2>&1
 # base machinery the source did NOT ship is present (layered from the base harness's payload)
 [ -x "$REPO6/.omakase/bin/omakase-banner.sh" ] && pass "base banner layered in (source did not ship it)" || fail "base banner missing — base payload not layered under source"
-[ -x "$REPO6/.omakase/bin/omakase-ledger.sh" ] && pass "base ledger wrapper layered in" || fail "base ledger wrapper missing"
-[ -x "$REPO6/.omakase/gates/deferred-check.sh" ] && pass "base deferred-check layered in" || fail "base deferred-check missing"
+[ -x "$REPO6/.omakase/bin/omakase-gate.sh" ] && pass "base gate primitive layered in" || fail "base gate primitive missing"
 # the source's own gate is placed too
 [ -x "$REPO6/.omakase/gates/discipline.sh" ] && pass "source's own gate placed" || fail "source gate missing"
 grep -q 'SOURCE-OVERRODE-EXAMPLE' "$REPO6/.omakase/gates/example.sh" 2>/dev/null && pass "source wins over a base file at the same path (replace semantics, no write-through)" || fail "base file won over the source on overlap (merge write-through?)"
@@ -299,6 +296,25 @@ OUT8=$( cd "$REPO8" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT"
 echo "$OUT8" | grep -q 'legacy-removed.sh' && fail "guard named a commented-out script" || pass "guard ignored the commented-out script"
 [ -x "$REPO8/.omakase/gates/live.sh" ] && pass "source's live gate placed" || fail "live gate missing"
 ( cd "$REPO8" && bash "$REMOVE" ) >/dev/null 2>&1
+
+# ---------- Scenario S9: a non-shipping script named AFTER a '#' inside a --step is still caught ----------
+# The '#'-truncation hazard the awk guard closes: a '#' INSIDE a quoted --step value precedes the
+# script reference. A line-comment-stripping guard (sed 's/#.*//') would cut the line at the '#' and
+# miss does-not-ship.sh, passing the install. The guard skips only FULL-LINE comments, so it keeps
+# this line whole, finds the reference, and refuses. (This is the differential vs a sed-based guard.)
+echo "== Scenario S9: wiring guard catches a script named after a # inside a --step =="
+REPOWG="$TMP/repoWG"; PAYWG="$TMP/payWG"
+rm -rf "$PAYWG"; cp -R "$HERE/../payload/." "$PAYWG/"
+cat > "$PAYWG/lefthook-local.yml" <<'YML'
+pre-commit:
+  jobs:
+    - name: ghost
+      run: bash .omakase/bin/omakase-gate.sh ghost --step 'echo "#skip"; bash .omakase/gates/does-not-ship.sh'
+YML
+newrepo "$REPOWG"
+OUT="$( cd "$REPOWG" && OMAKASE_PAYLOAD="$PAYWG" bash "$INIT" 2>&1 )"; RC=$?
+{ [ "$RC" -ne 0 ] && echo "$OUT" | grep -q 'does-not-ship.sh'; } && pass "guard refuses a script named after a # inside a --step (plain path)" || fail "guard missed the non-shipping script ($RC: $OUT)"
+[ ! -d "$REPOWG/.omakase" ] && pass "guard refused before placing anything" || fail "guard placed files despite refusing"
 
 rm -rf "$TMP"
 echo ""

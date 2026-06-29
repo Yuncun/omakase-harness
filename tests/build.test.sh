@@ -23,7 +23,10 @@ bash "$BUILD" --out "$GEN" >/dev/null 2>&1 && pass "build generic exits 0" || fa
 [ -f "$GEN/.claude-plugin/plugin.json" ] && pass "plugin.json present" || fail "no plugin.json"
 grep -q '"name": "omakase"' "$GEN/.claude-plugin/plugin.json" && pass "generic plugin name" || fail "wrong plugin name"
 [ -f "$GEN/payload/lefthook-local.yml" ] && pass "base payload wiring present" || fail "no payload wiring"
-[ -f "$GEN/payload/.omakase/gates/deferred-check.sh" ] && pass "base gate present" || fail "no base gate"
+[ -f "$GEN/payload/.omakase/bin/omakase-gate.sh" ] && pass "base gate primitive present" || fail "no base gate primitive"
+# The pre-redesign gate machinery is gone: one primitive replaced the ledger wrapper, the
+# recorder, and the deferred-check push gate. None must ship in the bundle.
+{ [ ! -e "$GEN/payload/.omakase/gates/deferred-check.sh" ] && [ ! -e "$GEN/payload/.omakase/bin/omakase-ledger.sh" ] && [ ! -e "$GEN/payload/.omakase/bin/omakase-record.sh" ]; } && pass "old gate machinery dropped from the bundle" || fail "a deleted script still ships in the bundle"
 # Opt-in chrome: the base payload must NOT auto-wire the Claude-only Stop-hook notice (no
 # .claude/settings.json) nor the cosmetic commit banner job; both are opt-in. The scripts still
 # ship (a user-added Stop hook / terminal `omakase status`), so assert their presence too.
@@ -44,7 +47,7 @@ printf '{ "name": "foo-harness", "version": "0.0.1", "commands": "./commands" }\
 FOO="$TMP/foo"
 bash "$BUILD" --out "$FOO" --stack "$STK" >/dev/null 2>&1 && pass "build stack exits 0" || fail "build stack failed"
 [ -f "$FOO/payload/.omakase/gates/foo-gate.sh" ] && pass "stack delta gate added" || fail "stack gate missing"
-[ -f "$FOO/payload/.omakase/gates/deferred-check.sh" ] && pass "base scaffold retained under stack" || fail "base scaffold lost"
+[ -f "$FOO/payload/.omakase/bin/omakase-gate.sh" ] && pass "base scaffold retained under stack" || fail "base scaffold lost"
 grep -q 'foo stack wiring' "$FOO/payload/lefthook-local.yml" && pass "stack overrides base wiring" || fail "wiring not overridden"
 grep -q '"name": "foo-harness"' "$FOO/.claude-plugin/plugin.json" && pass "stack plugin.json used" || fail "stack plugin.json not used"
 [ -x "$FOO/bin/init.sh" ] && pass "machinery present in stack bundle" || fail "no machinery in stack bundle"
@@ -70,6 +73,22 @@ BADOUT="$TMP/badout"
 BADERR="$(bash "$BUILD" --out "$BADOUT" --stack "$BAD" 2>&1)" && fail "build should reject missing wiring ref" || pass "build fails when wiring references a missing script"
 echo "$BADERR" | grep -q 'nonexistent.sh' && pass "build error names the offending script (not an unrelated failure)" || fail "build error did not name the missing script ($BADERR)"
 [ ! -e "$BADOUT" ] && pass "no partial bundle left at --out on failure" || fail "partial bundle left behind"
+
+# wiring guard differential: a script named AFTER a '#' inside a '--step' value must be caught.
+# Under the old 'sed s/#.*//' guard, the line is cut at the '#' and does-not-ship.sh is invisible.
+# Under the awk guard (skips only full-line comments), the full line is kept and the reference found.
+BADS="$TMP/stack-hash-step"
+mkdir -p "$BADS/payload"
+cat > "$BADS/payload/lefthook-local.yml" <<'YML'
+pre-commit:
+  jobs:
+    - name: ghost
+      run: bash .omakase/bin/omakase-gate.sh ghost --step 'echo "#skip"; bash .omakase/gates/does-not-ship.sh'
+YML
+BADSOUT="$TMP/badsout"
+BADSERR="$(bash "$BUILD" --out "$BADSOUT" --stack "$BADS" 2>&1)" && fail "build should reject a script after # inside --step" || pass "build fails when a script after # in --step is missing"
+echo "$BADSERR" | grep -q 'does-not-ship.sh' && pass "build error names the script hidden after # in --step" || fail "build error did not name the script ($BADSERR)"
+[ ! -e "$BADSOUT" ] && pass "no partial bundle left at --out for the # inside --step case" || fail "partial bundle left behind"
 
 # ---------- atomic: a dangling symlink fails without clobbering --out ----------
 echo "== atomic build on failure =="

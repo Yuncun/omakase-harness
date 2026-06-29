@@ -12,17 +12,19 @@ fail(){ echo "  FAIL: $1"; FAILED=1; }
 
 mkpayload(){ # $1 = payload dir
   local p="$1"
-  mkdir -p "$p/.omakase/gates"
+  mkdir -p "$p/.omakase/gates" "$p/.omakase/bin"
   cat > "$p/.omakase/gates/example.sh" <<'SH'
 #!/usr/bin/env bash
 echo "omakase-example-gate-ran"
 exit 0
 SH
+  cp "$HERE/../payload/.omakase/bin/omakase-gate.sh" "$p/.omakase/bin/omakase-gate.sh"
+  chmod +x "$p/.omakase/bin/omakase-gate.sh"
   cat > "$p/lefthook-local.yml" <<'YML'
 pre-commit:
   jobs:
     - name: omakase-example
-      run: bash .omakase/gates/example.sh
+      run: bash .omakase/bin/omakase-gate.sh omakase-example --step 'bash .omakase/gates/example.sh'
 post-checkout:
   jobs:
     - name: omakase-ensure-present
