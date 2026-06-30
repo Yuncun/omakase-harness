@@ -19,6 +19,22 @@ one gate, and the wiring; copy it and edit the three files under `payload/`. To
 capture the harness files already living inside a project, run `bin/import.sh /path/to/project`,
 which reads that project's harness files into `payload/` and leaves the project untouched.
 
+## Public surface (the stability contract)
+
+The base harness exposes exactly **one stable primitive a custom harness may reference:
+`.omakase/bin/omakase-gate.sh`**. Its name and its CLI grammar — `<name>` followed by
+`--step` / `--cacheable` / `--glob` / `--record` — are the contract. They will not be renamed
+or repurposed out from under your wiring; anything else is an internal refactor you never see.
+
+The other base scripts are **optional UX, opt-in, and not part of the contract**:
+`omakase-banner.sh` (the branded box), `omakase-statusline.sh` (the status-line segment), and
+`omakase-stop-notice.sh` (the Stop-hook notice). Wire them only if you want them — skip them
+and your harness still works. Do not build wiring that depends on their names being stable.
+
+The install- and build-time wiring guard rejects any wiring that references a `.omakase/*.sh`
+the surface does not ship, so a drift between your wiring and the surface **fails closed at
+install, not silently at commit time**.
+
 ## Adding a gate
 
 The `add-gate` skill walks an agent through this end-to-end: picking the flags, pre-flighting
