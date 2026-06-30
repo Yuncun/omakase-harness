@@ -7,7 +7,7 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GATE="$HERE/../payload/.omakase/bin/omakase-gate.sh"
 INIT="$HERE/../bin/init.sh"
-SHOW="$HERE/../bin/show.sh"
+SHOW="$HERE/../bin/status.sh"
 PAY="$HERE/../payload"
 LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 TMP="${TMPDIR:-/tmp}/omakase-gate-test.$$"

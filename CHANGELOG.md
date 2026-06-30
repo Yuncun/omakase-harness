@@ -5,6 +5,12 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Changed
+- Renamed the inventory script `bin/show.sh` → `bin/status.sh` so it matches the `status`
+  verb it has served since the command-surface redesign (the 0.16.0 entry below noted the
+  verb still called `bin/show.sh`). Plugin-internal only: `bin/` is never injected into an
+  adopter repo, the `status` skill behaves identically, and no payload behavior changes.
+
 ## [0.17.0] — 2026-06-29
 
 ### Breaking - gate primitive

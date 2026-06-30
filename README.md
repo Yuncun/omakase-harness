@@ -34,7 +34,7 @@ The Claude Code plugin wraps the same `bin/` scripts behind `/omakase:*` skills
 ## Commands
 
     init.sh [<owner/repo> | --source <url>]   overlay the harness, exclude it from git, install hooks
-    show.sh [--markdown]                       print what is installed and what runs when
+    status.sh [--markdown]                       print what is installed and what runs when
     remove.sh                                  delete the placed files, uninstall hooks, restore the repo
     share.sh [<name>]                          capture this repo's harness into a new, publishable harness repo
 

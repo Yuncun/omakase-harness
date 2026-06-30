@@ -3,4 +3,4 @@
 set -euo pipefail
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # <plugin>/skills/status
 BIN="$(cd "$SKILL_DIR/../../bin" && pwd)"                    # <plugin>/bin
-exec bash "$BIN/show.sh" --markdown
+exec bash "$BIN/status.sh" --markdown

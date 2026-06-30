@@ -78,7 +78,7 @@ re-install.
 
 **A plugin's files are read-only.** A harness distributed as a Claude Code plugin lives in
 a cache that is replaced on every update, so it cannot be edited there. Clone the harness
-repo, edit `payload/`, and install from the clone. `placed.tsv` and `show.sh` record the
+repo, edit `payload/`, and install from the clone. `placed.tsv` and `status.sh` record the
 source of each installed file, so the active source is always inspectable. Do not install
 from both the plugin and a clone into one repo.
 

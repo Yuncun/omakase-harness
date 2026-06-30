@@ -48,7 +48,7 @@ if [ "$PAYLOAD" = "$ROOT" ] || overlaps "$PAYLOAD" "$ROOT" || overlaps "$ROOT" "
 fi
 
 # Declared harness locations (the contract: the path IS the classification). The capture
-# lists live in lib-harness-paths.sh — the one table shared with init.sh and show.sh.
+# lists live in lib-harness-paths.sh — the one table shared with init.sh and status.sh.
 . "$SCRIPT_DIR/lib-harness-paths.sh"
 
 copy_into_payload() {  # $1 = relative path under ROOT

@@ -17,7 +17,7 @@ mkdir -p "$TMP/plugin/bin" "$TMP/plugin/skills"
 
 # Stub every bin script a run.sh might exec: echo a marker, then each arg on its own line so a
 # collapsed "$*" (which would join 'be ta' into the prior arg) is caught.
-for s in init show remove share; do
+for s in init status remove share; do
   printf '#!/usr/bin/env bash\necho "STUB:%s"\nfor a in "$@"; do echo "ARG[$a]"; done\n' "$s" > "$TMP/plugin/bin/$s.sh"
   chmod +x "$TMP/plugin/bin/$s.sh"
 done
@@ -42,11 +42,11 @@ echo "$OUT" | grep -qxF 'STUB:remove' && pass "remove/run.sh execs bin/remove.sh
 OUT=$(run share team-rig)
 echo "$OUT" | grep -qxF 'STUB:share'  && pass "share/run.sh execs bin/share.sh"  || fail "share reached wrong script ($OUT)"
 echo "$OUT" | grep -qxF 'ARG[team-rig]' && pass "share forwards its name arg"     || fail "share dropped its arg ($OUT)"
-# status -> bin/show.sh --markdown (FIXED args; read-only inventory — must NOT forward caller args).
+# status -> bin/status.sh --markdown (FIXED args; read-only inventory — must NOT forward caller args).
 # Pass a sentinel to prove BOTH halves: --markdown IS sent, and a caller arg is NOT leaked into the
 # read-only render (a regression that began forwarding "$@" here would otherwise ship green).
 OUT=$(run status SHOULD_NOT_APPEAR)
-echo "$OUT" | grep -qxF 'STUB:show'       && pass "status/run.sh execs bin/show.sh"    || fail "status reached wrong script ($OUT)"
+echo "$OUT" | grep -qxF 'STUB:status'     && pass "status/run.sh execs bin/status.sh"  || fail "status reached wrong script ($OUT)"
 echo "$OUT" | grep -qxF 'ARG[--markdown]' && pass "status passes the fixed --markdown" || fail "status did not pass --markdown ($OUT)"
 echo "$OUT" | grep -qxF 'ARG[SHOULD_NOT_APPEAR]' && fail "status forwarded a caller arg into the read-only render" || pass "status does not forward caller args (fixed --markdown only)"
 

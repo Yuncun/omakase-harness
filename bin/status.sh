@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# omakase-harness show — render the installed (gitignored, invisible) harness as ONE
+# omakase-harness status — render the installed (gitignored, invisible) harness as ONE
 # readable map: the harness files grouped by origin (committed / injected / personal;
 # omakase's own .omakase/ machinery is disclosed under Hidden, not listed), which git
 # hooks run what, and what is hidden via .git/info/exclude. Read-only. This is the cure
@@ -323,7 +323,7 @@ if [ "$FORMAT" = md ]; then
     echo "${hidden%, }"
   fi
   echo
-  echo "_Refresh:_ \`omakase init\`  ·  _Remove:_ \`omakase remove\`  ·  _read-only; running show changes nothing._"
+  echo "_Refresh:_ \`omakase init\`  ·  _Remove:_ \`omakase remove\`  ·  _read-only; running status changes nothing._"
   exit 0
 fi
 

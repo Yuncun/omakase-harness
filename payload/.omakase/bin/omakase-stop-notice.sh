@@ -59,7 +59,7 @@ nudge=""
 placed="$common/omakase/placed.tsv"
 if [ -f "$placed" ]; then
   # `|| [ -n "$rel" ]` processes a final line with no trailing newline. Only ENABLED
-  # rows count (enabled=1, matching show.sh); a malformed/blank row is skipped, not nudged.
+  # rows count (enabled=1, matching status.sh); a malformed/blank row is skipped, not nudged.
   while IFS=$'\t' read -r rel kind src hash enabled || [ -n "$rel" ]; do
     [ "$enabled" = "1" ] && [ -n "$rel" ] || continue
     [ -e "$root/$rel" ] || [ -L "$root/$rel" ] || { nudge="files missing · omakase init to update"; break; }
