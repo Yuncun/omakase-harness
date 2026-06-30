@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-06-29
+
 ### Breaking - gate primitive
 
 One primitive (`omakase-gate.sh`) replaces the three scripts it supersedes
