@@ -3,6 +3,10 @@
 # shared run ledger (the scorecard), and pass the check's exit code through UNCHANGED so a
 # non-zero result blocks the commit/push. Flags turn one primitive into every gate shape:
 #
+# PUBLIC SURFACE: this is the ONE base script a custom harness may reference by name. Its
+# name and the CLI grammar below are a stability contract — they will not be renamed out from
+# under downstream wiring. banner/statusline/stop-notice are optional UX, NOT contract.
+#
 #   omakase-gate.sh <name> --step '<cmd>' [--cacheable] [--glob '<pats>']
 #   omakase-gate.sh <name> --record        # out-of-band: write a PASS for HEAD, no step
 #
