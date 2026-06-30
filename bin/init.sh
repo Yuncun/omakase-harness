@@ -238,7 +238,7 @@ fi
 resolve_lefthook fetch || { lefthook_install_guidance; exit 1; }
 
 # Shared harness-path table — kind_of() + capture/scan lists, the single source of truth
-# for which paths are agent artifacts (shared with show.sh and import.sh).
+# for which paths are agent artifacts (shared with status.sh and import.sh).
 . "$SCRIPT_DIR/lib-harness-paths.sh"
 
 BEGIN="# >>> omakase-harness >>>"
@@ -403,7 +403,7 @@ fi
 
 # ---- provenance-ledger helpers ----
 # kind_of() (classify a placed path by location) is provided by lib-harness-paths.sh,
-# sourced above — the one table shared with show.sh and import.sh.
+# sourced above — the one table shared with status.sh and import.sh.
 # sha256 of placed content (the SHA256 tool was detected once, up top). For a
 # symlink, hash the link TARGET STRING, not the dereferenced content, so a
 # payload symlink (CLAUDE.md -> AGENTS.md) round-trips.

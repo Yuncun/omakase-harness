@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # omakase-harness — the single source of truth for "which repo paths are agent-harness
 # artifacts, and what kind each is." Sourced by init.sh (records the kind in the provenance
-# ledger), show.sh (inventory + committed-surface scan), and import.sh (capture locations).
+# ledger), status.sh (inventory + committed-surface scan), and import.sh (capture locations).
 # NOT executed directly: defines one function + three path lists and runs nothing at source
 # time. Safe under the callers' `set -euo pipefail` — the arrays are never empty, so there
 # is no unbound-array expansion under bash 3.2 + set -u.
@@ -56,7 +56,7 @@ kind_of() {
 HARNESS_LOC_FILES=(AGENTS.md CLAUDE.md .github/copilot-instructions.md lefthook-local.yml lefthook.yml .pre-commit-config.yaml .claude/settings.json)
 HARNESS_LOC_DIRS=(.claude/rules .claude/skills .claude/commands .claude/agents .claude/hooks .github/skills .github/instructions .github/prompts .github/chatmodes .github/hooks .omakase .husky .githooks)
 
-# show.sh committed-surface scan — the tracked pathspecs it audits as the project's OWN
+# status.sh committed-surface scan — the tracked pathspecs it audits as the project's OWN
 # committed harness:  git ls-files -- "${HARNESS_COMMITTED_GLOBS[@]}"
 HARNESS_COMMITTED_GLOBS=(AGENTS.md CLAUDE.md CLAUDE.local.md .claude lefthook.yml lefthook-local.yml .lefthook .omakase .husky .githooks .github/copilot-instructions.md .github/instructions .github/skills .github/prompts .github/chatmodes .github/hooks)
 

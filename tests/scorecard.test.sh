@@ -7,7 +7,7 @@
 #                              line after a run (a failure shows there, in words; the header keeps
 #                              "is active ✓"), "<name> is not active" when gates aren't armed, and
 #                              a "files missing · omakase init" nudge. Detail -> omakase status.
-#   - bin/show.sh            : omakase status GUARDS chart (+ --markdown)
+#   - bin/status.sh            : omakase status GUARDS chart (+ --markdown)
 # Ledger lines are TAB-separated (epoch, name, verdict, sha); assertions use
 # awk, not grep -P (BSD).
 set -u
@@ -15,7 +15,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CANARY="$HERE/../payload/.omakase/bin/omakase-statusline.sh"
 NOTICE="$HERE/../payload/.omakase/bin/omakase-stop-notice.sh"
 BANNER_REL=".omakase/bin/omakase-banner.sh"
-SHOW="$HERE/../bin/show.sh"
+SHOW="$HERE/../bin/status.sh"
 INIT="$HERE/../bin/init.sh"
 REMOVE="$HERE/../bin/remove.sh"
 PAY="$HERE/../payload"

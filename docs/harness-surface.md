@@ -31,7 +31,7 @@ already imported (`.claude/hooks`, `.husky`, `.githooks`) were recorded as `othe
 ## Why it drifts, and the lock
 
 One table feeds four things that must agree: `kind_of()` (the ledger's label), `HARNESS_LOC_*`
-(what `import.sh` captures), and `HARNESS_COMMITTED_GLOBS` (what `show.sh` audits). Add a path to
+(what `import.sh` captures), and `HARNESS_COMMITTED_GLOBS` (what `status.sh` audits). Add a path to
 one, forget the others, and a captured file lands in the ledger as `other` — silently. The lock
 is in [`tests/harness-paths.test.sh`](../tests/harness-paths.test.sh): an anti-drift loop asserts
 every `HARNESS_LOC_DIRS` entry classifies to a real kind, so a new capture-dir without a matching

@@ -201,7 +201,7 @@ CMN="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 
 # ---------- Scenario F: omakase status renders the installed harness ----------
 echo "== Scenario F: show renders the installed-but-invisible harness =="
-SHOW="$HERE/../bin/show.sh"
+SHOW="$HERE/../bin/status.sh"
 PAY="$TMP/payloadF"; REPO="$TMP/repoF"; mkpayload "$PAY"; newrepo "$REPO"
 OUT=$( cd "$REPO" && bash "$SHOW" 2>&1 )
 echo "$OUT" | grep -qi 'No omakase harness' && pass "show reports empty state before init" || fail "show did not report empty state"

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# show.sh's "Personal (global)" inventory must list the user's global harness for BOTH hosts:
+# status.sh's "Personal (global)" inventory must list the user's global harness for BOTH hosts:
 # Claude (~/.claude) AND Copilot CLI (~/.copilot/skills), each row qualified by origin AND
-# carrying its kind. Drives show.sh with an isolated $HOME so it never touches the real one.
-# set -u (not -e): we deliberately capture show.sh's exit status to assert it.
+# carrying its kind. Drives status.sh with an isolated $HOME so it never touches the real one.
+# set -u (not -e): we deliberately capture status.sh's exit status to assert it.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SHOW="$HERE/../bin/show.sh"
+SHOW="$HERE/../bin/status.sh"
 TMP="${TMPDIR:-/tmp}/omakase-personal.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
@@ -20,7 +20,7 @@ H="$TMP/home-both"
 mkskill "$H/.claude/skills/claude-skill"
 mkskill "$H/.copilot/skills/copilot-skill"
 OUT="$( cd "$REPO" && HOME="$H" bash "$SHOW" --markdown 2>&1 )"; rc=$?
-[ "$rc" -eq 0 ] && pass "show exits clean with both hosts" || fail "show.sh non-zero exit ($rc): $OUT"
+[ "$rc" -eq 0 ] && pass "show exits clean with both hosts" || fail "status.sh non-zero exit ($rc): $OUT"
 printf '%s\n' "$OUT" | grep -Eq '~/\.claude/skills/claude-skill/.*skill'   && pass "global Claude skill listed + kinded"  || fail "Claude personal skill missing/unkinded"
 printf '%s\n' "$OUT" | grep -Eq '~/\.copilot/skills/copilot-skill/.*skill' && pass "global Copilot skill listed + kinded" || fail "Copilot personal skill missing/unkinded"
 printf '%s\n' "$OUT" | grep -q 'Personal (global)'     && pass "section relabeled to (global)"   || fail "section not relabeled"
