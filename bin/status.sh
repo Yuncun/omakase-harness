@@ -20,11 +20,8 @@ ICON="${OMAKASE_ICON:-🥡}"
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "omakase: not inside a git repo" >&2; exit 1; }
 COMMON="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 OMK="$COMMON/omakase"
-EXCLUDE="$COMMON/info/exclude"   # shared git dir — also correct inside a linked worktree, where $ROOT/.git is a file
 RUNS="$OMK/ledger.tsv"      # gate run + cache store (omakase-gate.sh): epoch,name,verdict,sha
 PLACED="$OMK/placed.tsv"    # provenance ledger (init.sh): path,kind,source,sha256,enabled
-BEGIN="# >>> omakase-harness >>>"
-END="# <<< omakase-harness <<<"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib-harness-paths.sh"   # kind_of() + committed-scan globs (shared with init/import)
@@ -127,7 +124,7 @@ render_inventory() {
       echo "- _(none)_"
     fi
     echo
-    echo "### Personal (global) — Claude ~/.claude + Copilot ~/.copilot, applies to every repo"
+    echo "### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)"
     if [ -n "$pers" ]; then
       printf '%s\n' "$pers" | while IFS=$'\t' read -r rel kind; do
         [ -z "$rel" ] && continue
@@ -168,7 +165,7 @@ render_inventory() {
     else
       echo "    (none)"
     fi
-    echo "PERSONAL (global) — Claude ~/.claude + Copilot ~/.copilot, applies to every repo"
+    echo "GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)"
     if [ -n "$pers" ]; then
       printf '%s\n' "$pers" | while IFS=$'\t' read -r rel kind; do
         [ -z "$rel" ] && continue
@@ -304,46 +301,54 @@ if [ ! -f "$PLACED" ]; then
   exit 0
 fi
 
+# ============================ Identity (installed harness) ============================
+# Lead with WHAT this repo tracks. Repo-local only: the remembered source ($OMK/source) gives
+# the harness name + origin; the base machinery version is the injected .omakase/VERSION. The
+# custom harness's OWN manifest version is NOT persisted here (it lives in the source cache),
+# so it is intentionally not shown — surfacing it would need an init-time persist.
+src=""; [ -s "$OMK/source" ] && src="$(head -n1 "$OMK/source" 2>/dev/null || true)"
+hname="omakase-harness"
+if [ -n "$src" ]; then n="${src%%#*}"; n="${n%.git}"; n="${n%/}"; hname="${n##*/}"; fi
+srcdisp="$(printf '%s' "$src" | sed -e 's,^[a-z][a-z]*://,,' -e 's,/$,,')"
+basever=""; [ -s "$ROOT/.omakase/VERSION" ] && basever="$(head -n1 "$ROOT/.omakase/VERSION" 2>/dev/null || true)"
+nplaced=0; [ -f "$PLACED" ] && nplaced="$(grep -c . "$PLACED" 2>/dev/null || echo 0)"
+
 # ============================ Markdown mode ============================
-# The script emits the final Markdown; `omakase status` relays it verbatim.
+# The script emits the final Markdown; `omakase status` relays it verbatim. Order is
+# question-first: identity (what is this) -> footprint (did it stay clean) -> Guards (what
+# gates me) -> inventory (the files; global config last and clearly NOT installed by omakase).
 if [ "$FORMAT" = md ]; then
-  echo "## $ICON omakase-harness"
+  echo "## $ICON $hname"
   echo
-  echo "Installed in \`$ROOT\`. Injected files are gitignored via \`.git/info/exclude\` — invisible to git, never committed."
+  if [ -n "$srcdisp" ]; then echo "\`$srcdisp\` · base omakase ${basever:-?} · installed in \`$ROOT\`"
+  else echo "base omakase ${basever:-?} · installed in \`$ROOT\`"; fi
   echo
-  render_inventory
+  echo "**Zero footprint** — $nplaced file(s) injected, 0 committed; all gitignored via \`.git/info/exclude\` (invisible to git)."
   echo
-  echo "### Guards — what runs, when, and the last verdict"
+  echo "### Guards — what runs when you commit / push"
   echo
   render_guards
   echo
-  echo "### Hidden via \`.git/info/exclude\`"
-  if [ -f "$EXCLUDE" ]; then
-    hidden="$(awk -v b="$BEGIN" -v e="$END" '$0==b{s=1;next} $0==e{s=0} s&&NF{printf "`%s`, ", $0}' "$EXCLUDE")"
-    echo "${hidden%, }"
-  fi
+  render_inventory
   echo
   echo "_Refresh:_ \`omakase init\`  ·  _Remove:_ \`omakase remove\`  ·  _read-only; running status changes nothing._"
   exit 0
 fi
 
 # ============================ Terminal mode (default) ============================
+# Same question-first order as markdown: banner -> identity + footprint -> Guards -> inventory.
 BANNER="$ROOT/.omakase/bin/omakase-banner.sh"
 if [ -f "$BANNER" ]; then bash "$BANNER" 2>/dev/null || true; fi
-echo "installed in $ROOT"
-echo "(injected files are gitignored via .git/info/exclude: invisible to git, never committed)"
-echo
-render_inventory
+if [ -n "$srcdisp" ]; then echo "$hname — $srcdisp · base omakase ${basever:-?} · installed in $ROOT"
+else echo "installed in $ROOT (base omakase ${basever:-?})"; fi
+echo "zero footprint: $nplaced injected, 0 committed, all gitignored (.git/info/exclude)"
 echo
 
-echo "GUARDS — what runs, when, and the last verdict"
+echo "GUARDS — what runs when you commit / push"
 render_guards
 echo
 
-echo "HIDDEN VIA .git/info/exclude"
-if [ -f "$EXCLUDE" ]; then
-  awk -v b="$BEGIN" -v e="$END" '$0==b{s=1;next} $0==e{s=0} s&&NF{print "  "$0}' "$EXCLUDE"
-fi
+render_inventory
 echo
 echo "Update to the latest harness (syncs files; removes dropped ones):   omakase init"
 echo "Undo everything:                                                    omakase remove"
