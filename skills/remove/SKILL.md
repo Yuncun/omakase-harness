@@ -10,8 +10,8 @@ allowed-tools: Bash(*/run.sh*) Bash(*/bin/remove.sh*)
 bash "${CLAUDE_PLUGIN_ROOT}/skills/remove/run.sh"
 ```
 
-On Copilot CLI or a plain shell, run this skill directory's `run.sh`.
+(On Copilot CLI or a plain shell, run this skill directory's `run.sh`.)
 
-Uninstalls the git hooks, deletes exactly the untracked files init placed (never a tracked
-file), and strips the omakase block from `.git/info/exclude`. Confirm to the user that the
-working tree is back to its pre-init state. Tracked files are never touched.
+Uninstalls the git hooks, deletes exactly the untracked files init placed (never a tracked file),
+and strips the omakase block from `.git/info/exclude`. Confirm to the user that the working tree
+is back to its pre-init state.
