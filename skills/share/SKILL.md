@@ -14,17 +14,17 @@ bash "${CLAUDE_PLUGIN_ROOT}/skills/share/run.sh"            # -> ../<reponame>-h
 bash "${CLAUDE_PLUGIN_ROOT}/skills/share/run.sh" team-rig   # -> ../team-rig (custom name)
 ```
 
-On Copilot CLI or a plain shell, run this skill directory's `run.sh` with the same args.
+(On Copilot CLI or a plain shell, run this skill directory's `run.sh` with the same args.)
 
-It creates a SIBLING directory (never inside this repo), captures the harness into its
-`payload/`, scaffolds `omakase.manifest` + `README.md` (carrying the install line), and
-git-inits + commits it. **Relay the script's output**, especially the printed next steps: the
-publish command (`gh repo create … --push`, or push to any git host) and the one-line install
-others run — `omakase init you/<name>`.
+It creates a SIBLING directory (never inside this repo), captures the harness into its `payload/`,
+scaffolds `omakase.manifest` + `README.md` (carrying the install line), and git-inits + commits it.
+**Relay the script's output**, especially the printed next steps: the publish command
+(`gh repo create … --push`, or push to any git host) and the one-line install others run,
+`omakase init you/<name>`.
 
 Notes:
-- If the capture finds no harness files, `payload/` is empty — that is a valid starting
-  skeleton; add gates with `/omakase:add-gate`.
+- If the capture finds no harness files, `payload/` is empty — a valid starting skeleton; add
+  gates with `/omakase:add-gate`.
 - It captures from the CURRENT repo. To package a different project, run share from there.
 - A file the current repo still COMMITS is captured into payload but left committed in place
   (share never changes the source repo); the script lists those.
