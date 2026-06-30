@@ -23,7 +23,7 @@ OUT="$( cd "$REPO" && HOME="$H" bash "$SHOW" --markdown 2>&1 )"; rc=$?
 [ "$rc" -eq 0 ] && pass "show exits clean with both hosts" || fail "status.sh non-zero exit ($rc): $OUT"
 printf '%s\n' "$OUT" | grep -Eq '~/\.claude/skills/claude-skill/.*skill'   && pass "global Claude skill listed + kinded"  || fail "Claude personal skill missing/unkinded"
 printf '%s\n' "$OUT" | grep -Eq '~/\.copilot/skills/copilot-skill/.*skill' && pass "global Copilot skill listed + kinded" || fail "Copilot personal skill missing/unkinded"
-printf '%s\n' "$OUT" | grep -q 'Personal (global)'     && pass "section relabeled to (global)"   || fail "section not relabeled"
+printf '%s\n' "$OUT" | grep -qF 'not installed by omakase' && pass "global section labeled not-installed-by-omakase" || fail "global section not relabeled"
 printf '%s\n' "$OUT" | grep -qF 'Personal (~/.claude)' && fail "stale 'Personal (~/.claude)' label reappeared" || pass "no stale ~/.claude-only label"
 
 # --- Copilot-only HOME (no ~/.claude): the asymmetric path most likely to regress ---

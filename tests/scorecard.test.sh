@@ -178,7 +178,7 @@ echo "$OUT" | grep -qi 'No omakase harness' && pass "not-installed message kept"
 echo "$OUT" | grep -qiF 'Committed (this repo)' && pass "Committed group prints on an uninstalled repo" || fail "no Committed group when not installed"
 echo "$OUT" | grep '\.claude/rules/team\.md' | grep -q 'rule' && pass "tracked harness file listed with kind rule" || fail "tracked rule missing or unkinded ($OUT)"
 echo "$OUT" | grep -q 'src/app.js' && fail "non-harness tracked file leaked into the inventory" || pass "non-harness tracked file excluded"
-echo "$OUT" | grep -qiF 'Personal (global)' && pass "Personal group prints on an uninstalled repo" || fail "no Personal group when not installed"
+echo "$OUT" | grep -qiF 'not installed by omakase' && pass "Global group prints on an uninstalled repo" || fail "no Global group when not installed"
 echo "$OUT" | grep 'rules/personal\.md' | grep -q 'rule' && pass "personal rule listed from \$HOME" || fail "personal rule missing ($OUT)"
 echo "$OUT" | grep 'CLAUDE\.md' | grep -q 'doc' && pass "personal CLAUDE.md listed as doc" || fail "personal CLAUDE.md missing"
 [ "$(echo "$OUT" | grep -c 'skills/myskill')" -eq 1 ] && pass "personal skill dir is ONE row (not its files)" || fail "skill dir rows != 1"
@@ -202,7 +202,7 @@ echo "$OUT" | grep 'lefthook-local\.yml' | grep 'gate' | grep -q 'payload' && pa
 echo "$OUT" | grep '\.claude/settings\.json' | grep -qi 'disabled' && pass "hand-disabled row carries the disabled marker" || fail "disabled marker missing ($OUT)"
 # omakase's own machinery (.omakase/) is not itemised in Injected; scope the absence check
 # to that section (Guards may legitimately name an .omakase/ gate path in the ENFORCES cell).
-INJ="$(echo "$OUT" | awk '/^INJECTED \(omakase\)/{f=1;next} /^PERSONAL \(global\)/{f=0} f')"
+INJ="$(echo "$OUT" | awk '/^INJECTED \(omakase\)/{f=1;next} /^GLOBAL /{f=0} f')"
 echo "$INJ" | grep -q '\.omakase/' && fail "machinery files under .omakase/ leaked into the Injected list" || pass ".omakase/ machinery files excluded from the Injected list"
 echo "$OUT" | grep '\.claude/rules/team\.md' | grep -qi 'payload' && fail "committed file leaked into the Injected group" || pass "committed file stays out of Injected"
 echo "$OUT" | grep -qi 'token' && fail "output mentions tokens (explicitly cut from the spec)" || pass "no token counts anywhere (terminal)"
@@ -211,16 +211,23 @@ echo "$OUT" | grep -qi 'token' && fail "output mentions tokens (explicitly cut f
 OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --markdown 2>&1 )"
 echo "$OUT" | grep -qiF 'Committed (this repo)' && pass "markdown: Committed group" || fail "markdown missing Committed group"
 echo "$OUT" | grep -qiF 'Injected (omakase)' && pass "markdown: Injected group" || fail "markdown missing Injected group"
-echo "$OUT" | grep -qiF 'Personal (global)' && pass "markdown: Personal group" || fail "markdown missing Personal group"
+echo "$OUT" | grep -qiF 'not installed by omakase' && pass "markdown: Global group" || fail "markdown missing Global group"
 echo "$OUT" | grep '\.claude/settings\.json' | grep -qi 'disabled' && pass "markdown: disabled marker carried" || fail "markdown lost the disabled marker"
 INJ="$(echo "$OUT" | awk '/^### Injected/{f=1;next} /^### /{f=0} f')"
 echo "$INJ" | grep -q '\.omakase/' && fail "markdown: machinery files under .omakase/ leaked into the Injected list" || pass "markdown: .omakase/ machinery files excluded from the Injected list"
 echo "$OUT" | grep -qi 'token' && fail "markdown mentions tokens" || pass "no token counts anywhere (markdown)"
 
-# an empty Personal group prints (none)
+# status-UX: lead with footprint + identity, and promote Guards above the file inventory
+echo "$OUT" | grep -qiF 'Zero footprint' && pass "markdown shows the zero-footprint line" || fail "markdown missing footprint line ($OUT)"
+echo "$OUT" | grep -q 'base omakase' && pass "identity line names the base version" || fail "identity missing base-version ($OUT)"
+gln=$(echo "$OUT" | grep -n '^### Guards' | head -1 | cut -d: -f1)
+iln=$(echo "$OUT" | grep -n '^### Injected' | head -1 | cut -d: -f1)
+{ [ -n "$gln" ] && [ -n "$iln" ] && [ "$gln" -lt "$iln" ]; } && pass "Guards renders above the file inventory" || fail "Guards not promoted above Injected (g=$gln i=$iln)"
+
+# an empty Global group prints (none)
 HOMEE="$TMP/homeEmpty"; mkdir -p "$HOMEE"
 OUT="$( cd "$REPO" && HOME="$HOMEE" bash "$SHOW" 2>&1 )"
-echo "$OUT" | grep -i -A1 'Personal (global)' | grep -q '(none)' && pass "empty Personal group shows (none)" || fail "empty Personal group not (none) ($OUT)"
+echo "$OUT" | grep -i -A1 'not installed by omakase' | grep -q '(none)' && pass "empty Global group shows (none)" || fail "empty Global group not (none) ($OUT)"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
 # ---------- Scenario W: branding (banner + version, no drift) ----------

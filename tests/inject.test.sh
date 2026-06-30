@@ -208,9 +208,9 @@ echo "$OUT" | grep -qi 'No omakase harness' && pass "show reports empty state be
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 OUT=$( cd "$REPO" && bash "$SHOW" 2>&1 )
 echo "$OUT" | grep -q 'INJECTED (omakase)' && pass "show prints the placed files as the Injected group" || fail "show missing INJECTED group"
-INJ="$(echo "$OUT" | awk '/^INJECTED \(omakase\)/{f=1;next} /^PERSONAL \(global\)/{f=0} f')"
+INJ="$(echo "$OUT" | awk '/^INJECTED \(omakase\)/{f=1;next} /^GLOBAL /{f=0} f')"
 echo "$INJ" | grep -q 'lefthook-local.yml' && pass "show lists an injected harness file in the Injected group" || fail "show did not list the injected file in the Injected group"
-echo "$OUT" | grep -q 'HIDDEN VIA' && pass "show lists what is gitignored" || fail "show missing the exclude section"
+echo "$OUT" | grep -qi 'zero footprint' && pass "show states the zero-committed footprint" || fail "show missing the footprint line"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
 # ---------- Scenario G: the SHIPPED example gate blocks merge-conflict markers ----------
