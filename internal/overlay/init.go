@@ -512,9 +512,21 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	if err := touch(exclude); err != nil {
 		return 1
 	}
+	// bash does this in TWO steps: strip via `awk ... > tmp && mv tmp
+	// EXCLUDE` (a fresh 0666&^umask inode), THEN append the block with
+	// `>> EXCLUDE` (append mode — writes more bytes to that SAME inode,
+	// touching its mode not at all). The net mode after both steps is
+	// therefore whatever the strip's tmp+mv established, unaffected by the
+	// append. rewriteFile with the fully-combined content (strip + block)
+	// reproduces both the final bytes AND that final mode in one call: its
+	// own tmp+rename is what sets 0666&^umask, exactly as bash's step 1 did,
+	// and — since content alone never affects the mode a creation event
+	// picks — writing the already-appended content through the same
+	// tmp+rename machinery lands on the identical mode bash's two-step
+	// dance does.
 	excludeContent, _ := os.ReadFile(exclude)
 	excludeOut := textblock.AppendBlock(textblock.Strip(excludeContent, begin, end), begin, prefixes, end)
-	if err := os.WriteFile(exclude, excludeOut, 0o644); err != nil {
+	if err := rewriteFile(exclude, excludeOut); err != nil {
 		return 1
 	}
 
@@ -548,9 +560,12 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			}
 			wtEntries = append(wtEntries, p)
 		}
+		// Same strip-then-append mode reasoning as the exclude block above:
+		// rewriteFile with the combined content reproduces bash's
+		// tmp+mv-then-append two-step exactly, mode included.
 		wtContent, _ := os.ReadFile(wtinc)
 		wtOut := textblock.AppendBlock(textblock.Strip(wtContent, begin, end), begin, wtEntries, end)
-		if err := os.WriteFile(wtinc, wtOut, 0o644); err != nil {
+		if err := rewriteFile(wtinc, wtOut); err != nil {
 			return 1
 		}
 	}

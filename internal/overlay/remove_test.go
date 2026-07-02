@@ -386,3 +386,166 @@ func TestDisabledPlacedRowStillDeleted(t *testing.T) {
 		t.Errorf("disabled placed file was NOT deleted (enabled flag must not gate removal): %v", err)
 	}
 }
+
+// ---------------------------------------------------------------- mode parity (review finding 1)
+//
+// bash's marked-block rewrites go through `awk ... > "$f.tmp" && mv "$f.tmp"
+// "$f"` -- a NEW inode, mode `0666 &^ umask`, regardless of what mode $f had
+// going in. Confirmed against a live shell run (umask 022):
+//
+//	$ printf orig > f; chmod 0640 f; stat -f '%Lp' f   # 640
+//	$ awk '{print}' f > f.tmp && mv f.tmp f; stat -f '%Lp' f   # 644 = 0666 &^ 022
+//
+// Each test below seeds a PRE-EXISTING file at a mode that deliberately
+// differs from `0666 &^ umask`, so a port that merely preserves the original
+// mode (os.WriteFile over an existing path, which only applies its mode
+// argument at creation) would leave the seeded mode in place instead of
+// normalizing to bash's fresh-inode mode -- exactly the divergence rewriteFile
+// (internal/overlay/overlay.go) fixes. Verified red (fails) against the
+// pre-fix os.WriteFile call sites before this fix landed; see the task-5
+// report addendum for the stash-based red/green run.
+
+// TestHookStubModeMatchesBashFreshInode: a hook stub seeded at 0640 (not
+// executable, and not 0666&^umask either) must end up at `0777 &^ umask`
+// after remove -- the strip's fresh 0666&^umask base, then chmod +x's
+// `0111&^umask` on top (remove.sh:24-37).
+func TestHookStubModeMatchesBashFreshInode(t *testing.T) {
+	_, repo := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+	mustInit(t)
+
+	hf := filepath.Join(repo.CommonDir, "hooks", "pre-commit")
+	content := "#!/bin/sh\n" +
+		"# >>> omakase-harness fail-closed >>>\n" +
+		"marker body\n" +
+		"# <<< omakase-harness fail-closed <<<\n" +
+		"call_lefthook run \"pre-commit\" \"$@\"\n"
+	writeFile(t, hf, content)
+	if err := os.Chmod(hf, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	info, err := os.Stat(hf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := os.FileMode(0o777) &^ currentUmask()
+	if info.Mode().Perm() != want {
+		t.Errorf("hook stub mode after remove = %o, want %o (0777 &^ umask -- the original seeded 0640 must NOT survive)", info.Mode().Perm(), want)
+	}
+}
+
+// TestExcludeStripModeMatchesBashFreshInode: the exclude file seeded at 0600
+// (not 0666&^umask) must end up at exactly `0666 &^ umask` after the
+// unconditional strip (remove.sh:87-90 has no chmod +x -- exclude is never
+// executable).
+func TestExcludeStripModeMatchesBashFreshInode(t *testing.T) {
+	_, repo := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+	mustInit(t)
+
+	exclude := filepath.Join(repo.CommonDir, "info", "exclude")
+	if err := os.Chmod(exclude, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	info, err := os.Stat(exclude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := os.FileMode(0o666) &^ currentUmask()
+	if info.Mode().Perm() != want {
+		t.Errorf("exclude mode after remove = %o, want %o (0666 &^ umask -- the original seeded 0600 must NOT survive)", info.Mode().Perm(), want)
+	}
+}
+
+// TestWtincStripModeMatchesBashFreshInode: same fresh-inode reasoning for the
+// .worktreeinclude strip (remove.sh:77-82), seeded at 0600 with content that
+// survives the strip (so the file isn't deleted for being empty).
+func TestWtincStripModeMatchesBashFreshInode(t *testing.T) {
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+	mustInit(t)
+
+	wtinc := filepath.Join(dir, ".worktreeinclude")
+	before := readFileT(t, wtinc)
+	writeFile(t, wtinc, "my-own-ignore/\n"+before)
+	if err := os.Chmod(wtinc, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	info, err := os.Stat(wtinc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := os.FileMode(0o666) &^ currentUmask()
+	if info.Mode().Perm() != want {
+		t.Errorf("wtinc mode after remove = %o, want %o (0666 &^ umask -- the original seeded 0600 must NOT survive)", info.Mode().Perm(), want)
+	}
+	eq(t, repo.Root, readFileT(t, wtinc), "my-own-ignore/\n") // sanity: content still correct alongside the mode check
+}
+
+// ---------------------------------------------------------------- removeF error propagation (review finding 2)
+//
+// remove.sh:74 (`grep -q "EXAMPLE USAGE" ... && rm -f "$ROOT/lefthook.yml"`)
+// and remove.sh:81 (`[ -s "$WTINC" ] || rm -f "$WTINC"`) both run under
+// `set -e`: an `rm -f` failure there aborts the script with a nonzero exit.
+// The Go port previously discarded removeF's error at both call sites --
+// these tests force a removal failure (a non-empty, non-writable PARENT
+// directory so the unlink itself fails, not just a missing file, which
+// removeF already treats as success) and assert RunRemove now propagates it
+// as exit 1 instead of silently continuing to exit 0.
+
+// TestSkeletonLefthookYmlRemovalFailurePropagates: making the repo root
+// read-only means `rm -f lefthook.yml` cannot unlink the entry (removing a
+// file requires write permission on its PARENT directory, not the file
+// itself) -- RunRemove must report that failure as exit 1, matching set -e.
+//
+// Uses an EMPTY payload (nothing placed) rather than singleGatePayload
+// deliberately: a nested placed path (e.g. .omakase/gates/example.sh) would
+// make the ledger-driven deletion loop, which runs BEFORE this step, prune
+// ROOT/.omakase itself once its contents are gone -- rmdir-ing a direct
+// child of ROOT needs write permission on ROOT, so THAT step would fail
+// first instead (an error path DeletePlaced already propagated correctly
+// before this fix), masking the site actually under test here. An empty
+// payload keeps the ledger-driven loop a true no-op (zero rows), isolating
+// the failure to the lefthook.yml removeF call.
+func TestSkeletonLefthookYmlRemovalFailurePropagates(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory write permission; this fixture needs a non-root unlink to fail")
+	}
+	dir, _ := initRepo(t)
+	stubLefthook(t)
+	t.Setenv("OMAKASE_PAYLOAD", t.TempDir()) // empty: nothing placed
+	mustInit(t)
+
+	writeFile(t, filepath.Join(dir, "lefthook.yml"), "# EXAMPLE USAGE:\n#\n#   see https://lefthook.dev\n")
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) }) // let t.TempDir() clean up afterward
+
+	var stdout, stderr strings.Builder
+	code := RunRemove(nil, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("exit = %d, want 1 (rm -f failure must abort, matching set -e); stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}

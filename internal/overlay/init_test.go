@@ -1161,3 +1161,75 @@ func TestStatuslineAndStopNoticeStanzas(t *testing.T) {
 		"           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-stop-notice.sh\n"
 	eq(t, "summary with stanzas", stdout.String(), wantOut)
 }
+
+// ---------------------------------------------------------------- mode parity (review finding 1)
+//
+// See remove_test.go's fuller comment header for the underlying bash
+// mechanics (`awk ... > tmp && mv tmp f`, always producing a fresh
+// `0666 &^ umask` inode regardless of the pre-existing mode). init.go's
+// exclude/.worktreeinclude sites additionally APPEND a block after the strip
+// (`>> f`, bin/init.sh:556/572) -- but append mode never touches the file's
+// mode once the preceding strip+mv already established it, so the same
+// `0666 &^ umask` expectation holds for the fully-written (stripped +
+// appended) file. Each test below seeds a PRE-EXISTING file at 0600
+// (deliberately not `0666 &^ umask`) so a port that silently preserves the
+// original mode (os.WriteFile over an existing path, which only applies its
+// mode argument at creation) would be caught.
+
+// TestExcludeWriteModeMatchesBashFreshInode: exclude pre-seeded at 0600 must
+// end up at `0666 &^ umask` after init's strip+append (bin/init.sh:556-564).
+func TestExcludeWriteModeMatchesBashFreshInode(t *testing.T) {
+	_, repo := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+
+	exclude := filepath.Join(repo.CommonDir, "info", "exclude")
+	writeFile(t, exclude, "scratch/\n")
+	if err := os.Chmod(exclude, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	info, err := os.Stat(exclude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := os.FileMode(0o666) &^ currentUmask()
+	if info.Mode().Perm() != want {
+		t.Errorf("exclude mode after init = %o, want %o (0666 &^ umask -- the original seeded 0600 must NOT survive)", info.Mode().Perm(), want)
+	}
+}
+
+// TestWtincWriteModeMatchesBashFreshInode: .worktreeinclude pre-seeded at
+// 0600 must end up at `0666 &^ umask` after init's strip+append
+// (bin/init.sh:566-582). singleGatePayload guarantees len(placed) > 0,
+// which is required for this block to be written at all.
+func TestWtincWriteModeMatchesBashFreshInode(t *testing.T) {
+	dir, _ := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+
+	wtinc := filepath.Join(dir, ".worktreeinclude")
+	writeFile(t, wtinc, "my-own-ignore/\n")
+	if err := os.Chmod(wtinc, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	info, err := os.Stat(wtinc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := os.FileMode(0o666) &^ currentUmask()
+	if info.Mode().Perm() != want {
+		t.Errorf("wtinc mode after init = %o, want %o (0666 &^ umask -- the original seeded 0600 must NOT survive)", info.Mode().Perm(), want)
+	}
+}

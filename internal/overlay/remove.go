@@ -123,7 +123,12 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 				continue
 			}
 			out := textblock.Strip(content, gb, ge)
-			if werr := os.WriteFile(hf, out, 0o644); werr != nil {
+			// rewriteFile, not os.WriteFile: reproduces bash's `awk ... >
+			// tmp && mv tmp hf` inode replacement (a fresh 0666&^umask
+			// base), which the trailing chmod +x below then adds exec bits
+			// onto — matching bash byte-for-byte even when hf's PRE-existing
+			// mode differs from 0666&^umask (e.g. a 0640 hook).
+			if werr := rewriteFile(hf, out); werr != nil {
 				return 1
 			}
 			changed = true
@@ -185,7 +190,12 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	// ---- skeleton lefthook.yml removal (remove.sh:72-75) ----
 	lefthookYml := filepath.Join(root, "lefthook.yml")
 	if fileRegular(lefthookYml) && !isTracked("lefthook.yml") && fileContains(lefthookYml, "EXAMPLE USAGE") {
-		removeF(lefthookYml)
+		// set -e: bash's own `rm -f` failure here would abort the script;
+		// propagate rather than discard (removeF only fails on a REAL
+		// removal error, never a missing file — rm -f semantics).
+		if err := removeF(lefthookYml); err != nil {
+			return 1
+		}
 	}
 
 	// ---- .worktreeinclude strip (remove.sh:77-82) ----
@@ -198,11 +208,15 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	if fileRegular(wtinc) && !isTracked(".worktreeinclude") {
 		content, _ := os.ReadFile(wtinc)
 		out := textblock.Strip(content, begin, end)
-		if werr := os.WriteFile(wtinc, out, 0o644); werr != nil {
+		if werr := rewriteFile(wtinc, out); werr != nil {
 			return 1
 		}
 		if len(out) == 0 { // `[ -s ]` false: zero bytes
-			removeF(wtinc)
+			// set -e: bash's own `rm -f` failure here would abort the
+			// script; propagate rather than discard.
+			if err := removeF(wtinc); err != nil {
+				return 1
+			}
 		}
 	}
 
@@ -217,7 +231,7 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	if fileRegular(exclude) {
 		content, _ := os.ReadFile(exclude)
 		out := textblock.Strip(content, begin, end)
-		if werr := os.WriteFile(exclude, out, 0o644); werr != nil {
+		if werr := rewriteFile(exclude, out); werr != nil {
 			return 1
 		}
 	}

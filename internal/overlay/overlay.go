@@ -206,6 +206,46 @@ func DerivePrefixes(placed []string, sharedTopdirs []string, isDir func(string) 
 	return out
 }
 
+// rewriteFile ports the bash idiom every marked-block rewrite in
+// bin/init.sh and bin/remove.sh uses: `awk ... > "$f.tmp" && mv "$f.tmp" "$f"`.
+// That shell redirection creates $f.tmp FRESH via open(..., O_CREAT|O_TRUNC,
+// 0666), masked by the process umask AT CREATION TIME — never by $f's
+// pre-existing mode — and `mv` (a rename) then replaces $f's inode wholesale
+// with that fresh one. So after a bash rewrite, the file's mode is ALWAYS
+// `0666 &^ umask`, regardless of what mode it had going in (e.g. a 0640 hook
+// becomes 0644 under umask 022 — confirmed against a live `awk '{print}' f >
+// f.tmp && mv f.tmp f` run).
+//
+// os.WriteFile over an EXISTING path does NOT reproduce this: its mode
+// argument only applies when the file is created, so writing over an
+// existing file silently preserves whatever mode that file already had.
+// Every in-place marked-block rewrite site in init.go/remove.go must go
+// through rewriteFile instead of os.WriteFile to match bash's inode
+// replacement exactly.
+//
+// Like bash's own `&&` short-circuit, a write failure leaves the ".tmp"
+// file behind and the original path untouched (no cleanup) — the caller
+// aborts the run either way (matching bash's `set -e` behavior when this
+// idiom's last command, the `mv`, never runs).
+func rewriteFile(path string, content []byte) error {
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o666)
+	if err != nil {
+		return fmt.Errorf("overlay: rewriteFile: create %q: %w", tmp, err)
+	}
+	if _, err := f.Write(content); err != nil {
+		f.Close()
+		return fmt.Errorf("overlay: rewriteFile: write %q: %w", tmp, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("overlay: rewriteFile: close %q: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("overlay: rewriteFile: rename %q -> %q: %w", tmp, path, err)
+	}
+	return nil
+}
+
 // DeletePlaced ports delete_placed (bin/remove.sh:45-52; the identical
 // pruning loop appears in the orphan sweep at bin/init.sh:517-519): a
 // tracked path is skipped silently — git, not omakase, owns it — otherwise
