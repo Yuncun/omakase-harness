@@ -27,6 +27,25 @@ func TestRunNoArgs(t *testing.T) {
 	}
 }
 
+// TestRunInitDispatch proves the registry wires "init" to overlay.RunInit:
+// `omakase init --help` reaches RunInit's arg parser and returns its usage on
+// stdout with exit 0 (never the unknown-command path).
+func TestRunInitDispatch(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := run([]string{"omakase", "init", "--help"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	if got := stdout.String(); got == "" || got[:6] != "usage:" {
+		t.Errorf("stdout = %q, want the init usage text", got)
+	}
+	if got := stderr.String(); got != "" {
+		t.Errorf("stderr = %q, want empty", got)
+	}
+}
+
 func TestRunUnknownCommand(t *testing.T) {
 	cases := []struct {
 		name string
