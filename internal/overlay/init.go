@@ -252,8 +252,8 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		// substitution) while continuing best-effort over whatever files it
 		// COULD read. Fault-only divergence — a payload with an unreadable
 		// child (permissions, a race) — never reachable through a normal
-		// payload/ tree; remove.go documents its twin at the orphan-sweep's
-		// walkPayload call (remove.go:172-178).
+		// payload/ tree; remove.go documents its twin at the pre-0.10
+		// payload-enumeration fallback's walkPayload call (remove.go:172-178).
 		return 1
 	}
 

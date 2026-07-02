@@ -262,9 +262,11 @@ func rewriteFile(path string, content []byte) error {
 // already-broken environment (a permissions error, a full disk, a vanished
 // intermediate directory), bash's failing tool — rm, cp, mkdir — prints its
 // OWN diagnostic to the real stderr before `set -e` aborts the script; the Go
-// port's error return exits 1 SILENTLY, with no equivalent line. Exit codes
-// and on-disk state match exactly either way; only the failing OS tool's own
-// stderr text is missing. A narrow, deliberately accepted gap — none of these
+// port's error return exits 1 with no equivalent line (fetchSource's MkdirAll
+// member is the one variation: Go proceeds to the clone attempt and prints
+// the clone-failure line instead — exit 1 either way). Exit codes and on-disk
+// state match exactly either way; only the failing OS tool's own stderr text
+// is missing. A narrow, deliberately accepted gap — none of these
 // paths fail in ordinary use, only in an environment already broken some
 // other way.
 func DeletePlaced(root, rel string, isTracked func(string) bool) error {
