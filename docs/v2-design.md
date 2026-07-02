@@ -157,6 +157,13 @@ conventionally *committed team* file, and silently fails where teams commit it) 
 routing to user-global `~/.copilot/copilot-instructions.md` (machine-wide, outside the
 per-repo overlay/remove model — a special case in an otherwise uniform design).
 
+Verified against live Copilot docs 2026-07-02: root `CLAUDE.md` IS read by Copilot
+(so the project layer needs no Copilot-specific placement), `CLAUDE.local.md` is NOT.
+One more future option recorded: `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` (env var naming
+directories whose `AGENTS.md` Copilot reads) could carry a per-user personal slot —
+rejected for now because it requires mutating the user's shell profile, which omakase
+never does.
+
 ## 9. Migration from v1 (grafts from design C, both judges)
 
 - **Lazy, read-only synthesis:** first v2 run of ANY verb in a v1 repo synthesizes
