@@ -32,7 +32,11 @@ const maxLineBuf = 1 << 20
 // (core.quotePath=false so a non-ASCII path isn't quote-escaped, which would
 // defeat harness.KindOf's pattern matching) and returns the output lines in
 // git's own order. Any error — root isn't a git repo, git isn't on PATH,
-// etc. — yields an empty result, matching bash's `2>/dev/null || true`.
+// etc. — yields an empty result, matching bash's `2>/dev/null || true` for
+// every case that arises here in practice (git exits 0 with output, or
+// fails outright with none). It does not reproduce the unreached case where
+// git writes partial stdout before failing: bash's `$(...)` capture keeps
+// that partial output, this function discards it.
 func CommittedList(root string) []string {
 	args := append([]string{"-C", root, "-c", "core.quotePath=false", "ls-files", "--"}, harness.CommittedGlobs...)
 	out, err := exec.Command("git", args...).Output()

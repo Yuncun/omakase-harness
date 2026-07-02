@@ -2,11 +2,15 @@
 
 ## Layout
 
-The tool is shell scripts in `bin/` and a `payload/` tree copied into adopters. There is
-no build step.
+The tool is shell entry points in `bin/` and a `payload/` tree copied into adopters.
+`status` is the one exception to "shell all the way down": it is implemented by a Go
+binary (module at the repo root) behind the unchanged `bin/status.sh` entry point. CI and
+the shim build it with `CGO_ENABLED=0 go build -o dist/omakase ./cmd/omakase`; the frozen
+v1 bash body stays at `bin/legacy/status.sh` as the no-Go fallback until the rewrite
+completes.
 
-- `bin/` — the installer (`init`), uninstaller (`remove`), inspector (`show`), and capture
-  tool (`import`), plus shared libraries.
+- `bin/` — the installer (`init`), uninstaller (`remove`), inspector (`status`), and
+  capture tool (`import`), plus shared libraries.
 - `payload/` — the harness content copied into every target. Keep it minimal: anything
   added here ships to all adopters.
 - `tests/` — one `*.test.sh` per area.
@@ -16,6 +20,11 @@ no build step.
 Run the suite:
 
     for t in tests/*.test.sh; do bash "$t" || break; done
+
+With Go present, the suite exercises the `status` binary through the shim
+(`tests/status-parity.test.sh` diffs it byte-for-byte against the frozen v1 bash). Without
+Go, `tests/status-parity.test.sh` skips and the shim falls back to the bundled v1 script,
+printing a one-line notice.
 
 A change to the installer or the path model needs a matching test. The path classification
 in `bin/lib-harness-paths.sh` is the single source of truth for what is excluded and how;

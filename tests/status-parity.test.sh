@@ -25,7 +25,7 @@ BIN="$ROOT/dist/omakase"
 LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 NOW=1700000000
 TMP="${TMPDIR:-/tmp}/status-parity.$$"
-NOTICE='omakase: Go binary unavailable — using legacy bash status'
+NOTICE='omakase: Go binary not present — running the bundled v1 status script'
 FAILED=0
 pass(){ echo "  PASS: $1"; }
 fail(){ echo "  FAIL: $1"; FAILED=1; }
@@ -276,6 +276,27 @@ if [ "$HAVE_LH" -eq 1 ]; then
   parity "P8 empty HOME [md]"   "$R2" "$HEMPTY" "--markdown"
   expect_global_empty "P8 empty HOME [md]"   "$TMP/leg.out" md
 fi
+
+# ---------- P9: shim fallback when the Go binary cannot be resolved ----------
+# The path every plugin-bundle adopter without Go on PATH actually runs. OMAKASE_BIN is
+# pointed at a path that doesn't exist so the shim's `[ -x "$BIN" ]` check fails without
+# needing to hide a real Go toolchain; this is invoked directly (not via run_impl, which
+# unsets OMAKASE_BIN — the very override this scenario needs). Runs against P1's R1/H1
+# (uninstalled repo) so it isn't gated on lefthook. One mode is enough: the fallback execs
+# the same legacy script regardless of --markdown.
+echo "== P9: shim fallback (Go binary unresolvable) =="
+P9SO="$TMP/p9-shim.out"; P9SE="$TMP/p9-shim.err"; P9LO="$TMP/p9-legacy.out"
+( cd "$R1" && env -u OMAKASE_ICON -u NO_COLOR PATH="$P_PATH" LEFTHOOK_BIN="$P_LH" \
+    HOME="$H1" OMAKASE_NOW="$NOW" OMAKASE_BIN=/nonexistent/omakase bash "$SHIM" ) >"$P9SO" 2>"$P9SE"
+P9RC=$?
+( cd "$R1" && env -u OMAKASE_ICON -u NO_COLOR -u OMAKASE_BIN PATH="$P_PATH" LEFTHOOK_BIN="$P_LH" \
+    HOME="$H1" OMAKASE_NOW="$NOW" bash "$LEGACY" ) >"$P9LO" 2>/dev/null
+if grep -qF "$NOTICE" "$P9SE"; then pass "P9 fallback: stderr carries the fallback notice"
+else fail "P9 fallback: stderr MISSING the fallback notice"; fi
+if diff "$P9LO" "$P9SO" >"$TMP/p9diff" 2>&1; then pass "P9 fallback: stdout byte-identical to a direct legacy run"
+else fail "P9 fallback: stdout DIFFERS from a direct legacy run"; sed 's/^/      /' "$TMP/p9diff"; fi
+if [ "$P9RC" -eq 0 ]; then pass "P9 fallback: exit 0"
+else fail "P9 fallback: exit $P9RC (want 0)"; fi
 
 rm -rf "$TMP"
 echo ""

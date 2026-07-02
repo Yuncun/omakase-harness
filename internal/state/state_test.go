@@ -157,7 +157,12 @@ func TestReadPlaced(t *testing.T) {
 	content := "rel1\tkind1\tsrc1\thash1\t1\n" +
 		"rel2\tkind2\tsrc2\thash2\t1\textra\n" + // 6th tab absorbed into Enabled
 		"rel3\tkind3\n" + // short row: Src/Hash/Enabled all empty
-		"\tkind4\tsrc4\thash4\t1\n" // empty Rel: dropped
+		// empty Rel: dropped. Malformed (no real writer emits an empty field) --
+		// exercises ReadPlaced's own drop-empty-Rel rule in isolation, not a
+		// bash-parity claim: per ReadPlaced's doc comment, bash's real `read`
+		// strips a leading tab and shifts fields left, so it would never see an
+		// empty Rel here at all.
+		"\tkind4\tsrc4\thash4\t1\n"
 	writeFile(t, dir, "placed.tsv", content)
 
 	got := ReadPlaced(p)

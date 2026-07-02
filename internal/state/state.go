@@ -80,13 +80,34 @@ type PlacedRow struct {
 	Enabled string
 }
 
-// ReadPlaced reads $OMK/placed.tsv the way status.sh's
-// `read -r rel kind src hash enabled` reads it (Global Constraint 5): each
-// line is split into at most 5 tab-separated fields via
-// strings.SplitN(line, "\t", 5), so a 6th tab is absorbed into Enabled
-// rather than split off, and missing trailing fields come back as empty
-// strings. Rows with an empty Rel are dropped — both status.sh render loops
-// skip them (bin/status.sh:108,150). Missing file -> nil. Order-preserving.
+// ReadPlaced reads $OMK/placed.tsv one line at a time, splitting each into
+// at most 5 tab-separated fields via strings.SplitN(line, "\t", 5): a 6th
+// tab is absorbed into Enabled rather than split off, and missing trailing
+// fields come back as empty strings. Rows with an empty Rel are dropped —
+// both status.sh render loops skip them (bin/status.sh:108,150).
+//
+// This SplitN matches bash's `read -r rel kind src hash enabled` for every
+// WELL-FORMED row: one with 5 non-empty tab-separated fields, terminated by
+// a newline. Every omakase writer emits only well-formed rows
+// (bin/init.sh:608 always prints exactly 5 non-empty fields followed by
+// "\n"), so the following two divergences from bash are accepted as
+// unreachable in practice:
+//
+//   - Empty field: tab is one of bash's "IFS whitespace" characters, so
+//     `read` collapses runs of tabs into a single delimiter and strips a
+//     leading tab before splitting. A row with an EMPTY field therefore
+//     parses SHIFTED in bash (later fields slide left to fill the gap) but
+//     POSITIONALLY here (SplitN keeps the empty field where it is).
+//   - Missing trailing newline: bash's `while read` line loop silently
+//     drops a final row with no trailing newline (`read` consumes it but
+//     returns non-zero, so the loop body never runs for it); bufio.Scanner
+//     has no such rule and processes that row like any other.
+//
+// Consequence: parity and golden fixtures for this reader must be built
+// from real writer output only — never a hand-built row with an empty
+// field or a missing final newline, since that input exercises one of the
+// divergences above instead of testing the reader itself. Missing file ->
+// nil. Order-preserving.
 func ReadPlaced(path string) []PlacedRow {
 	f, err := os.Open(path)
 	if err != nil {
