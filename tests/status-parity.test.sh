@@ -54,19 +54,45 @@ P_PATH="$PATH"
 P_LH="$LEFTHOOK"
 
 # run_impl <impl> <cwd> <home> <outfile> <errfile> <flag-or-empty>
-# Pins HOME + OMAKASE_NOW, unsets OMAKASE_ICON + NO_COLOR, pins PATH + LEFTHOOK_BIN. Only $1
-# is inspected by status.sh, so a single optional flag ("" or --markdown) covers both modes.
+# Pins HOME + OMAKASE_NOW, unsets OMAKASE_ICON + NO_COLOR + OMAKASE_BIN (a stray exported
+# OMAKASE_BIN would make bin/status.sh exec a foreign binary instead of dist/omakase, silently
+# defeating the whole comparison), pins PATH + LEFTHOOK_BIN. Only $1 is inspected by status.sh,
+# so a single optional flag ("" or --markdown) covers both modes.
 run_impl(){
   if [ -n "$6" ]; then
-    ( cd "$2" && env -u OMAKASE_ICON -u NO_COLOR PATH="$P_PATH" LEFTHOOK_BIN="$P_LH" HOME="$3" OMAKASE_NOW="$NOW" bash "$1" "$6" ) >"$4" 2>"$5"
+    ( cd "$2" && env -u OMAKASE_ICON -u NO_COLOR -u OMAKASE_BIN PATH="$P_PATH" LEFTHOOK_BIN="$P_LH" HOME="$3" OMAKASE_NOW="$NOW" bash "$1" "$6" ) >"$4" 2>"$5"
   else
-    ( cd "$2" && env -u OMAKASE_ICON -u NO_COLOR PATH="$P_PATH" LEFTHOOK_BIN="$P_LH" HOME="$3" OMAKASE_NOW="$NOW" bash "$1" ) >"$4" 2>"$5"
+    ( cd "$2" && env -u OMAKASE_ICON -u NO_COLOR -u OMAKASE_BIN PATH="$P_PATH" LEFTHOOK_BIN="$P_LH" HOME="$3" OMAKASE_NOW="$NOW" bash "$1" ) >"$4" 2>"$5"
   fi
 }
 
-# parity <label> <cwd> <home> <flag-or-empty>: run both impls, compare stdout/stderr/exit.
+# expect_marker <label> <file> [marker...]: fixed-string (grep -F), CASE-SENSITIVE
+# containment check against the LEGACY capture — the reference side. Case matters: some
+# fixed phrases overlap in lowercase with text that is ALWAYS present (e.g. the guards
+# chart's self-heal row reads "restore any missing injected files", so only the all-caps
+# "MISSING" row-marker is actually specific to the states-matrix scenario). No markers =>
+# no-op (a scenario like P7's "not a repo" error has nothing state-specific to pin).
+#
+# This exists because byte-parity alone proves legacy and shim AGREE, not that they agree
+# on the RIGHT thing: if a future fixture edit silently stopped exercising the state a
+# scenario claims to cover, both sides could still land on the same wrong branch and this
+# gate would go green vacuously. Pinning marker text in the reference output closes that gap.
+expect_marker(){
+  local label="$1" file="$2"; shift 2
+  [ "$#" -eq 0 ] && return 0
+  local pat missing=""
+  for pat in "$@"; do
+    grep -qF -- "$pat" "$file" 2>/dev/null || missing="${missing:+$missing, }'$pat'"
+  done
+  if [ -z "$missing" ]; then pass "$label: legacy output carries the expected marker(s)"
+  else fail "$label: legacy output MISSING marker(s) $missing — fixture may not exercise the intended state"; fi
+}
+
+# parity <label> <cwd> <home> <flag-or-empty> [marker...]: run both impls, compare
+# stdout/stderr/exit, assert non-empty legacy stdout on an exit-0 run, and (when markers
+# are given) assert the legacy capture contains them — see expect_marker above.
 parity(){
-  local label="$1" cwd="$2" home="$3" flag="$4"
+  local label="$1" cwd="$2" home="$3" flag="$4"; shift 4
   local lo="$TMP/leg.out" le="$TMP/leg.err" so="$TMP/shim.out" se="$TMP/shim.err"
   local lrc srrc
   run_impl "$LEGACY" "$cwd" "$home" "$lo" "$le" "$flag"; lrc=$?
@@ -82,12 +108,21 @@ parity(){
   else fail "$label: stderr DIFFERS"; sed 's/^/      /' "$TMP/derr"; fi
   if [ "$lrc" -eq "$srrc" ]; then pass "$label: exit codes equal ($lrc)"
   else fail "$label: exit codes differ (legacy=$lrc shim=$srrc)"; fi
+  if [ "$lrc" -eq 0 ]; then
+    if [ -s "$lo" ]; then pass "$label: legacy stdout non-empty"
+    else fail "$label: legacy stdout EMPTY (exit 0 with nothing rendered)"; fi
+  fi
+  expect_marker "$label" "$lo" "$@"
 }
 
-# parity2 <label> <cwd> <home>: exercise BOTH terminal and --markdown modes.
+# parity2 <label> <cwd> <home> [marker...]: exercise BOTH terminal and --markdown modes,
+# forwarding the same marker(s) to both. Only use this when the marker text is identical
+# in both modes; a scenario whose marker text differs by mode (P2, P4) calls parity()
+# directly for each mode instead — see those call sites below.
 parity2(){
-  parity "$1 [term]" "$2" "$3" ""
-  parity "$1 [md]"   "$2" "$3" "--markdown"
+  local label="$1" cwd="$2" home="$3"; shift 3
+  parity "$label [term]" "$cwd" "$home" ""           "$@"
+  parity "$label [md]"   "$cwd" "$home" "--markdown" "$@"
 }
 
 # Build a PATH with EVERY lefthook executable removed (system dirs appended as candidates,
@@ -123,7 +158,7 @@ mkdir -p "$R1/.claude/rules" "$R1/src"
 printf 'team rule\n' > "$R1/.claude/rules/team.md"    # committed HARNESS file
 printf 'app\n'       > "$R1/src/app.js"               # committed NON-harness file
 ( cd "$R1" && git add .claude/rules/team.md src/app.js && git commit -qm files )
-parity2 "P1 uninstalled" "$R1" "$H1"
+parity2 "P1 uninstalled" "$R1" "$H1" "No omakase harness"
 
 # Install-based scenarios (P2-P4, P6, P8) need a real lefthook: init installs hooks and the
 # guards chart joins a `lefthook dump`. Skip them as one group when lefthook is unresolvable.
@@ -146,7 +181,11 @@ if [ "$HAVE_LH" -eq 1 ]; then
   # one would exercise an unreachable path; 4-column rows only.
   printf '%s\ttests\tpass\t%s\n'   $((NOW-60))   "$HEAD2" >> "$LEDGER2"
   printf '%s\tmarkers\tfail\t%s\n' $((NOW-7200)) "$HEAD2" >> "$LEDGER2"
-  parity2 "P2 plain install" "$R2" "$H1"
+  # Markers: the guards chart carries the wired gate name ("markers"), and the footprint
+  # line renders — case differs by mode ("zero footprint" term / "Zero footprint" md), so
+  # each mode gets its own call rather than routing through parity2's shared marker list.
+  parity "P2 plain install [term]" "$R2" "$H1" ""           "markers" "zero footprint"
+  parity "P2 plain install [md]"   "$R2" "$H1" "--markdown" "markers" "Zero footprint"
 
   # ---------- P3: the states matrix (MISSING / DRIFTED / disabled + normal before/after) ----------
   echo "== P3: states matrix =="
@@ -161,7 +200,9 @@ if [ "$HAVE_LH" -eq 1 ]; then
   printf 'drift\n' >> "$R3/.claude/rules/c.md"         # DRIFTED (appended AFTER init hashed it)
   awk -F'\t' -v OFS='\t' '$1==".claude/rules/d.md"{$5=0} 1' "$PLACED3" > "$PLACED3.tmp" && mv "$PLACED3.tmp" "$PLACED3"   # disabled
   # a.md and e.md are left normal (before/after rows).
-  parity2 "P3 states matrix" "$R3" "$H1"
+  # Markers pin all three fixture-driven states so a future edit that stops exercising one
+  # of them (e.g. forgetting to delete b.md) fails loudly instead of passing vacuously.
+  parity2 "P3 states matrix" "$R3" "$H1" "MISSING" "DRIFTED" "disabled"
 
   # ---------- P4: --source install with a CLAUDE.md -> AGENTS.md symlink ----------
   echo "== P4: --source install with symlink =="
@@ -179,7 +220,10 @@ MAN
   CACHE4="$TMP/cache4"; mkdir -p "$CACHE4"
   ( cd "$R4" && HOME="$H1" XDG_CACHE_HOME="$CACHE4" bash "$INIT" --source "$SRC4ABS" ) >/dev/null 2>&1 || fail "P4: --source init failed"
   [ -L "$R4/claude.md" ] && pass "P4: source symlink placed as a symlink (arrow row exercised)" || fail "P4: claude.md not placed as a symlink"
-  parity2 "P4 source+symlink" "$R4" "$H1"
+  # Marker: the injected-inventory arrow row for the symlink ("->" term / "→" md — distinct
+  # glyphs per mode, so each mode gets its own call rather than parity2's shared list).
+  parity "P4 source+symlink [term]" "$R4" "$H1" ""           "->"
+  parity "P4 source+symlink [md]"   "$R4" "$H1" "--markdown" "→"
 fi
 
 # ---------- P5: pre-0.10 install (placed.list, no placed.tsv) ----------
@@ -188,13 +232,13 @@ R5="$TMP/p5"; newrepo "$R5"
 COMMON5="$(cd "$R5" && cd "$(git rev-parse --git-common-dir)" && pwd)"; mkdir -p "$COMMON5/omakase"
 printf '%s\n%s\n' '.claude/rules/team.md' '.omakase/gates/example.sh' > "$COMMON5/omakase/placed.list"
 rm -f "$COMMON5/omakase/placed.tsv"
-parity2 "P5 pre-0.10" "$R5" "$H1"
+parity2 "P5 pre-0.10" "$R5" "$H1" "Pre-0.10"
 
 # ---------- P6: lefthook unresolved (P2's repo, LEFTHOOK_BIN= and PATH without lefthook) ----------
 if [ "$HAVE_LH" -eq 1 ]; then
   echo "== P6: lefthook unresolved =="
   P_PATH="$(lhfree_path)"; P_LH=""
-  parity2 "P6 lefthook unresolved" "$R2" "$H1"
+  parity2 "P6 lefthook unresolved" "$R2" "$H1" "lefthook not resolved"
   P_PATH="$PATH"; P_LH="$LEFTHOOK"   # restore defaults
 fi
 
@@ -207,7 +251,7 @@ parity2 "P7 not a repo" "$R7" "$H1"
 if [ "$HAVE_LH" -eq 1 ]; then
   echo "== P8: empty HOME =="
   HEMPTY="$TMP/home-empty"; rm -rf "$HEMPTY"; mkdir -p "$HEMPTY"
-  parity2 "P8 empty HOME" "$R2" "$HEMPTY"
+  parity2 "P8 empty HOME" "$R2" "$HEMPTY" "(none)"
 fi
 
 rm -rf "$TMP"
