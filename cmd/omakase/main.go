@@ -1,6 +1,7 @@
 // Command omakase is the v2 install-time binary: one static executable that
 // replaces the bin/*.sh install-time machinery. Verbs are registered
-// incrementally as their Go ports land; only "status" is registered so far.
+// incrementally as their Go ports land; "status", "init", and "remove" are
+// registered so far.
 package main
 
 import (

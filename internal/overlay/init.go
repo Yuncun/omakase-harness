@@ -245,6 +245,15 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// the summary — one order, applied consistently everywhere v1 used the find.
 	payloadRels, err := walkPayload(payload)
 	if err != nil {
+		// A walk error here aborts the ENTIRE run, silently, with exit 1 —
+		// before the wiring guard below even runs. v1's find instead runs
+		// later, inline in the cut-over and place loops, and on an unreadable
+		// child prints its own diagnostic to stderr (through the process
+		// substitution) while continuing best-effort over whatever files it
+		// COULD read. Fault-only divergence — a payload with an unreadable
+		// child (permissions, a race) — never reachable through a normal
+		// payload/ tree; remove.go documents its twin at the orphan-sweep's
+		// walkPayload call (remove.go:172-178).
 		return 1
 	}
 
@@ -596,6 +605,13 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		if err := CopyEntry(filepath.Join(root, rel), filepath.Join(omk, "payload-snapshot", rel)); err != nil {
+			// A mid-loop failure here exits 1 with the PRIOR placed.tsv fully
+			// intact — WritePlaced below runs only after this loop finishes, so
+			// nothing has touched the ledger yet. bash truncates the ledger
+			// FIRST (`: > placed.tsv`, bin/init.sh:603) and rebuilds it row by
+			// row as the loop runs, so the same mid-loop failure there can
+			// leave a PARTIAL ledger on disk. Go is deliberately safer here;
+			// do not "fix" this toward bash's behavior.
 			return 1
 		}
 		rows = append(rows, state.PlacedRow{

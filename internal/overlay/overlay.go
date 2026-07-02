@@ -253,6 +253,20 @@ func rewriteFile(path string, content []byte) error {
 // an error) and each now-empty parent directory is pruned upward, stopping
 // at "." (the rel has no more path segments — the repo root is never
 // removed) or the first directory that is missing or still non-empty.
+//
+// Broken-environment divergence class (documented once, here, for every
+// DeletePlaced call site — remove.go's teardown loop and init.go's orphan
+// sweep — plus the collision-guard backup (init.go's tryClobberBackup and the
+// snapshot-preserve step ahead of it) and fetchSource's best-effort cache-dir
+// MkdirAll (source.go): when the underlying OS operation fails on an
+// already-broken environment (a permissions error, a full disk, a vanished
+// intermediate directory), bash's failing tool — rm, cp, mkdir — prints its
+// OWN diagnostic to the real stderr before `set -e` aborts the script; the Go
+// port's error return exits 1 SILENTLY, with no equivalent line. Exit codes
+// and on-disk state match exactly either way; only the failing OS tool's own
+// stderr text is missing. A narrow, deliberately accepted gap — none of these
+// paths fail in ordinary use, only in an environment already broken some
+// other way.
 func DeletePlaced(root, rel string, isTracked func(string) bool) error {
 	if isTracked(rel) {
 		return nil

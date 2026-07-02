@@ -8,7 +8,8 @@ behind their unchanged `bin/{status,init,remove}.sh` entry points — thin shims
 rebuild and exec the binary, falling back to the frozen v1 bash body only when it cannot be
 resolved. CI and the shims build it with `CGO_ENABLED=0 go build -o dist/omakase
 ./cmd/omakase`; the frozen v1 bodies stay at `bin/legacy/{status,init,remove}.sh` as the
-no-Go fallback until the rewrite completes. (`import` is still bash.)
+no-Go fallback until the rewrite completes. (`import` and `share` are still bash;
+both retire in Phase 6.)
 
 - `bin/` — the installer (`init`), uninstaller (`remove`), inspector (`status`), and
   capture tool (`import`), plus shared libraries.

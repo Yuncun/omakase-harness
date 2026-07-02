@@ -205,6 +205,17 @@ func fetchSource(src, sourceRef string, stdout, stderr io.Writer) (payloadDir, r
 	// An existing clone is refreshed to the remote default branch (never merged —
 	// cache state has no standing). Any failure discards it and falls through to a
 	// fresh clone (bin/init.sh:113-127).
+	//
+	// This refresh (a reset --hard to the remote default, inside refreshCache)
+	// runs BEFORE the #ref checkout further below — so a BRANCH pin does NOT
+	// survive a bare re-run: the hard-reset lands the cache's checked-out branch
+	// on default-branch content, and re-checking out that same branch name then
+	// yields the DEFAULT content, not the pinned one (a TAG pin does survive,
+	// since a tag's ref is immutable — see TestBranchPinNotPreserved vs.
+	// TestRememberedSourceRoundTrip in source_test.go). This is a v1 quirk
+	// (bin/init.sh:117-138), reproduced here deliberately, not a Go bug. Phase
+	// 4's `update` verb is expected to redesign exactly this refresh-then-
+	// checkout sequence.
 	if isDir(filepath.Join(cache, ".git")) {
 		if !refreshCache(cache) {
 			fmt.Fprintf(stderr, "omakase: source cache at %s is stale or corrupt — discarding and re-cloning (a cache is disposable)\n", cache)
