@@ -1,0 +1,96 @@
+// Package harness classifies harness-artifact repo paths into their "kind"
+// and lists the git pathspecs status.sh scans for a project's own committed
+// harness surface. Go twin of bin/lib-harness-paths.sh (kind_of() +
+// HARNESS_COMMITTED_GLOBS) — DUPLICATED bash<->Go until Phase 2 retires the
+// bash callers; keep in lockstep.
+package harness
+
+import "strings"
+
+// CommittedGlobs mirrors bin/lib-harness-paths.sh's HARNESS_COMMITTED_GLOBS
+// verbatim (order matters: it is handed to `git ls-files -- globs...`).
+var CommittedGlobs = []string{
+	"AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", ".claude",
+	"lefthook.yml", "lefthook-local.yml", ".lefthook", ".omakase",
+	".husky", ".githooks", ".github/copilot-instructions.md",
+	".github/instructions", ".github/skills", ".github/prompts",
+	".github/chatmodes", ".github/hooks",
+}
+
+// KindOf classifies a harness path by its location — the path IS the
+// classification. Verbatim port of the kind_of() case table in
+// bin/lib-harness-paths.sh, including case ORDER: specific patterns first
+// (mutually disjoint, so their order relative to each other is free), then
+// the catch-alls */* (nested path), *.md (remaining root-level .md), *
+// (everything else). Valid kinds: rule skill command agent prompt config
+// doc gate other.
+func KindOf(path string) string {
+	switch {
+	// --- Claude Code ---
+	case bashGlobMatch(".claude/rules/*", path):
+		return "rule"
+	case bashGlobMatch(".claude/skills/*", path):
+		return "skill"
+	case bashGlobMatch(".claude/commands/*", path):
+		return "command"
+	case bashGlobMatch(".claude/agents/*", path):
+		return "agent"
+	case bashGlobMatch(".claude/hooks/*", path):
+		return "gate"
+	case bashGlobMatch(".claude/settings.json", path), bashGlobMatch(".claude/settings.*.json", path):
+		return "config"
+	// --- GitHub Copilot ---
+	case bashGlobMatch(".github/skills/*", path):
+		return "skill"
+	case bashGlobMatch(".github/instructions/*", path):
+		return "rule"
+	case bashGlobMatch(".github/prompts/*", path), bashGlobMatch(".github/chatmodes/*", path):
+		return "prompt"
+	case bashGlobMatch(".github/hooks/*", path):
+		return "gate"
+	case bashGlobMatch(".github/copilot-instructions.md", path):
+		return "doc"
+	// --- host-agnostic ---
+	case bashGlobMatch("lefthook-local.yml", path), bashGlobMatch("lefthook.yml", path), bashGlobMatch(".omakase/gates/*", path):
+		return "gate"
+	case bashGlobMatch(".husky/*", path), bashGlobMatch(".githooks/*", path):
+		return "gate"
+	case bashGlobMatch("AGENTS.md", path), bashGlobMatch("CLAUDE.md", path):
+		return "doc"
+	case bashGlobMatch("*/*", path):
+		return "other" // nested, none of the above
+	case bashGlobMatch("*.md", path):
+		return "doc" // remaining root-level *.md
+	default:
+		return "other"
+	}
+}
+
+// bashGlobMatch reproduces bash `case` glob semantics for one pattern
+// against a full string (anchored match). The only wildcard used in the
+// kind_of table is `*`, and unlike path.Match / filepath.Match, bash's `*`
+// matches any sequence of characters INCLUDING `/` — ".claude/skills/*"
+// matches "a/b/c", not just a single path segment. There are no `?` or
+// `[...]` classes in this table, so those are not implemented.
+func bashGlobMatch(pattern, s string) bool {
+	if !strings.Contains(pattern, "*") {
+		return pattern == s
+	}
+
+	parts := strings.Split(pattern, "*")
+
+	if !strings.HasPrefix(s, parts[0]) {
+		return false
+	}
+	s = s[len(parts[0]):]
+
+	for _, mid := range parts[1 : len(parts)-1] {
+		idx := strings.Index(s, mid)
+		if idx < 0 {
+			return false
+		}
+		s = s[idx+len(mid):]
+	}
+
+	return strings.HasSuffix(s, parts[len(parts)-1])
+}

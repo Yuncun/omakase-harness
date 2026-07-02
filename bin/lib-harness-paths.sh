@@ -7,9 +7,13 @@
 # is no unbound-array expansion under bash 3.2 + set -u.
 #
 # omakase itself is host-agnostic: it injects whatever a payload contains and never branches
-# on "which agent." This table is the ONLY place that encodes a specific agent's on-disk
-# layout, and it encodes them all at once — there is no per-host mode. Supporting another
-# agent (Cursor, Gemini, …) = add its rows below; nothing else in the base harness changes.
+# on "which agent." This table is the ONLY place in bash that encodes a specific agent's
+# on-disk layout, and it encodes them all at once — there is no per-host mode.
+#
+# It also has a Go twin: internal/harness/paths.go, a verbatim port used by the Go `status`
+# binary. A row added or changed here MUST be mirrored there — and in its test vectors,
+# internal/harness/paths_test.go and tests/harness-paths.test.sh — or the two readers of
+# the same on-disk layout drift apart.
 #
 #   Claude Code        : .claude/{rules,skills,commands,agents,hooks}, .claude/settings*.json, CLAUDE.md, AGENTS.md
 #   GitHub Copilot CLI : .github/{skills,instructions,prompts,chatmodes,hooks}, .github/copilot-instructions.md
