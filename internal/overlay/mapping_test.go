@@ -129,6 +129,22 @@ func TestBridgeWanted_ExplicitCLAUDEmdSuppresses(t *testing.T) {
 	}
 }
 
+// TestBridgeWanted_PersonalCLAUDElocalDoesNotSuppress is the regression
+// catcher for the "CLAUDE.md anywhere suppresses" check in BridgeWanted: a
+// personal-layer CLAUDE.local.md is a DIFFERENT filename than CLAUDE.md and
+// must NOT trip that check. If the exact-match comparison in contains ever
+// degrades to a substring/prefix check, CLAUDE.local.md would wrongly match
+// "CLAUDE.md" and this test would catch it.
+func TestBridgeWanted_PersonalCLAUDElocalDoesNotSuppress(t *testing.T) {
+	sets := map[LayerName][]string{
+		LayerProject:  {"AGENTS.md"},
+		LayerPersonal: {"CLAUDE.local.md"},
+	}
+	if !BridgeWanted(LayerProject, sets, false) {
+		t.Error("BridgeWanted = false, want true — CLAUDE.local.md in the personal set must not suppress the bridge")
+	}
+}
+
 // TestBridgeWanted_TrackedCLAUDEmdSuppresses covers the brief's "tracked
 // CLAUDE.md suppresses" arm: a team-committed CLAUDE.md the harness doesn't
 // own also suppresses the bridge, even though no layer's post-mapping set

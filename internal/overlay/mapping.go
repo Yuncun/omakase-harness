@@ -105,22 +105,13 @@ func BridgeWanted(layer LayerName, postMappingSets map[LayerName][]string, repoT
 	if repoTracksCLAUDEmd {
 		return false
 	}
-	if !containsPath(postMappingSets[LayerProject], "AGENTS.md") {
+	if !contains(postMappingSets[LayerProject], "AGENTS.md") {
 		return false
 	}
 	for _, set := range postMappingSets {
-		if containsPath(set, "CLAUDE.md") {
+		if contains(set, "CLAUDE.md") {
 			return false
 		}
 	}
 	return true
-}
-
-func containsPath(set []string, target string) bool {
-	for _, p := range set {
-		if p == target {
-			return true
-		}
-	}
-	return false
 }
