@@ -83,6 +83,22 @@ func TestKindOfAntiDrift(t *testing.T) {
 	}
 }
 
+// TestSharedTopdirs pins SharedTopdirs to bin/lib-harness-paths.sh:72's
+// HARNESS_SHARED_TOPDIRS (.github). The exclude-block derivation
+// (overlay.DerivePrefixes) hands this list in, so a drift here would change
+// whether .github is excluded wholesale or file-by-file.
+func TestSharedTopdirs(t *testing.T) {
+	want := []string{".github"}
+	if len(SharedTopdirs) != len(want) {
+		t.Fatalf("len(SharedTopdirs) = %d, want %d: %v", len(SharedTopdirs), len(want), SharedTopdirs)
+	}
+	for i := range want {
+		if SharedTopdirs[i] != want[i] {
+			t.Errorf("SharedTopdirs[%d] = %q, want %q", i, SharedTopdirs[i], want[i])
+		}
+	}
+}
+
 // TestCommittedGlobs pins the verbatim order of the 16-entry
 // HARNESS_COMMITTED_GLOBS array (bin/lib-harness-paths.sh:61).
 func TestCommittedGlobs(t *testing.T) {
