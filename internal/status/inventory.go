@@ -94,7 +94,10 @@ func PersonalList(home string) [][2]string {
 // directories — bash's `*.md` glob doesn't care), bytewise sorted, gated by
 // existence (bash's `[ -e ]`, which follows symlinks: a dangling *.md
 // symlink is excluded). A missing dir yields nil, matching bash's
-// no-match-leaves-pattern-literal-then-fails-`-e` behavior.
+// no-match-leaves-pattern-literal-then-fails-`-e` behavior. A leading-dot
+// name is excluded: none of the status.sh globs run under `shopt -s
+// dotglob`, so bash's bare `*` never matches a dotfile (confirmed against a
+// live bash).
 func globMDFiles(dir string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -102,6 +105,9 @@ func globMDFiles(dir string) []string {
 	}
 	var names []string
 	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
 		if !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
@@ -118,7 +124,8 @@ func globMDFiles(dir string) []string {
 // symlinks-to-directories (bash's `*/` glob), bytewise sorted. It uses
 // os.Stat (follows symlinks) rather than DirEntry.IsDir() (which does not)
 // so a symlink-to-a-directory is included, matching bash's `[ -d ]`. A
-// missing dir yields nil.
+// missing dir yields nil. A leading-dot name is excluded, matching bash's
+// bare `*` without `dotglob` (see globMDFiles).
 func globDirs(dir string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -126,6 +133,9 @@ func globDirs(dir string) []string {
 	}
 	var names []string
 	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
 		info, err := os.Stat(filepath.Join(dir, e.Name()))
 		if err != nil || !info.IsDir() {
 			continue
