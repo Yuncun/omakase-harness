@@ -14,6 +14,14 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   `bin/status.sh` entry point: byte-identical output, with the frozen v1 bash preserved at
   `bin/legacy/status.sh` as the no-Go fallback. New differential parity suite,
   `tests/status-parity.test.sh`.
+- `init` and `remove` are now implemented by the omakase Go binary too, behind the
+  unchanged `bin/init.sh` / `bin/remove.sh` entry points (thin shims that rebuild and exec
+  the binary, falling back to the frozen v1 bash preserved at `bin/legacy/init.sh` /
+  `bin/legacy/remove.sh`). Output is byte-identical except per-file list ORDER: Go's
+  directory walk is lexical where find(1) was filesystem-order, so the placed-file listing,
+  the `placed.tsv` rows, and the `.git/info/exclude` + `.worktreeinclude` entries can appear
+  in a different (still complete, still correct) order. New differential parity suite,
+  `tests/init-remove-parity.test.sh`.
 
 ## [0.17.0] — 2026-06-29
 

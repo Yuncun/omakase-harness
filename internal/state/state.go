@@ -1,14 +1,17 @@
 // Package state ports the repo-discovery, hashing, drift-detection, and
 // frozen-format (placed.tsv / ledger.tsv) reading that bin/status.sh
 // performs before it renders anything (bin/status.sh:20-47, 108, 150, 212,
-// 309, 314). Go twin of that logic — DUPLICATED bash<->Go until Phase 2
+// 309, 314), plus the placed.tsv WRITE side ported from bin/init.sh:603-609
+// (WritePlaced). Go twin of that logic — DUPLICATED bash<->Go until Phase 2
 // retires the bash callers; keep in lockstep.
 package state
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -297,4 +300,42 @@ func FirstLine(path string) string {
 		return sc.Text()
 	}
 	return ""
+}
+
+// WritePlaced regenerates $OMK/placed.tsv wholesale — the writer-side twin
+// of bin/init.sh:603-609's `: > "$OMK/placed.tsv"` truncate followed by one
+// `printf '%s\t%s\t%s\t%s\t%s\n'` line per placed path (rel, kind, source
+// label, sha256, and the literal enabled flag "1"). Frozen format (Global
+// Constraint 4 / design §5): exactly 5 tab-separated, NON-EMPTY fields per
+// row, one "\n" terminator per row, no trailing blank line — the whole file
+// is built in memory and written in one pass, replacing whatever was there
+// (never appended to across calls).
+//
+// Refuses — returns an error and writes nothing at all, not even a partial
+// prefix of valid rows — if any row has an empty field or a field
+// containing a tab or newline. A malformed row would silently corrupt every
+// downstream reader (ReadPlaced's strings.SplitN above, and every hook-time
+// sh reader's `IFS=$'\t' read -r rel kind src hash enabled`), so this
+// validates every row BEFORE writing any of them rather than trusting the
+// caller. This validation is the writer-side format test the design
+// requires (§5).
+func WritePlaced(path string, rows []PlacedRow) error {
+	var buf bytes.Buffer
+	for i, row := range rows {
+		fields := [...]string{row.Rel, row.Kind, row.Src, row.Hash, row.Enabled}
+		for j, f := range fields {
+			if f == "" {
+				return fmt.Errorf("state.WritePlaced: row %d field %d: empty field", i, j)
+			}
+			if strings.ContainsAny(f, "\t\n") {
+				return fmt.Errorf("state.WritePlaced: row %d field %d: contains a tab or newline: %q", i, j, f)
+			}
+		}
+		buf.WriteString(strings.Join(fields[:], "\t"))
+		buf.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		return fmt.Errorf("state.WritePlaced: writing %q: %w", path, err)
+	}
+	return nil
 }

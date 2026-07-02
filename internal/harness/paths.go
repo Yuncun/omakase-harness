@@ -7,6 +7,16 @@ package harness
 
 import "strings"
 
+// SharedTopdirs mirrors bin/lib-harness-paths.sh's HARNESS_SHARED_TOPDIRS
+// verbatim (currently just ".github"): the top-level dirs omakase SHARES with
+// the project rather than owning outright. An injected path under one of these
+// is excluded from git file-by-file in .git/info/exclude — never the whole dir
+// — so omakase never hides the project's OWN untracked files there. Dirs NOT
+// listed here (.omakase, .claude) are omakase-owned and excluded wholesale.
+// Go twin of the bash array — DUPLICATED bash<->Go until Phase 2 retires the
+// bash callers; keep in lockstep with bin/lib-harness-paths.sh:72.
+var SharedTopdirs = []string{".github"}
+
 // CommittedGlobs mirrors bin/lib-harness-paths.sh's HARNESS_COMMITTED_GLOBS
 // verbatim (order matters: it is handed to `git ls-files -- globs...`).
 var CommittedGlobs = []string{

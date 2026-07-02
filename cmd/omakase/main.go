@@ -1,6 +1,7 @@
 // Command omakase is the v2 install-time binary: one static executable that
 // replaces the bin/*.sh install-time machinery. Verbs are registered
-// incrementally as their Go ports land; only "status" is registered so far.
+// incrementally as their Go ports land; "status", "init", and "remove" are
+// registered so far.
 package main
 
 import (
@@ -8,6 +9,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/Yuncun/omakase-harness/internal/overlay"
 	"github.com/Yuncun/omakase-harness/internal/status"
 )
 
@@ -17,6 +19,12 @@ import (
 var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 	"status": func(argv []string, stdout, stderr io.Writer) int {
 		return status.Run(argv[2:], stdout, stderr)
+	},
+	"init": func(argv []string, stdout, stderr io.Writer) int {
+		return overlay.RunInit(argv[2:], stdout, stderr)
+	},
+	"remove": func(argv []string, stdout, stderr io.Writer) int {
+		return overlay.RunRemove(argv[2:], stdout, stderr)
 	},
 }
 

@@ -3,11 +3,13 @@
 ## Layout
 
 The tool is shell entry points in `bin/` and a `payload/` tree copied into adopters.
-`status` is the one exception to "shell all the way down": it is implemented by a Go
-binary (module at the repo root) behind the unchanged `bin/status.sh` entry point. CI and
-the shim build it with `CGO_ENABLED=0 go build -o dist/omakase ./cmd/omakase`; the frozen
-v1 bash body stays at `bin/legacy/status.sh` as the no-Go fallback until the rewrite
-completes.
+`status`, `init`, and `remove` are implemented by a Go binary (module at the repo root)
+behind their unchanged `bin/{status,init,remove}.sh` entry points — thin shims that
+rebuild and exec the binary, falling back to the frozen v1 bash body only when it cannot be
+resolved. CI and the shims build it with `CGO_ENABLED=0 go build -o dist/omakase
+./cmd/omakase`; the frozen v1 bodies stay at `bin/legacy/{status,init,remove}.sh` as the
+no-Go fallback until the rewrite completes. (`import` and `share` are still bash;
+both retire in Phase 6.)
 
 - `bin/` — the installer (`init`), uninstaller (`remove`), inspector (`status`), and
   capture tool (`import`), plus shared libraries.
@@ -21,9 +23,12 @@ Run the suite:
 
     for t in tests/*.test.sh; do bash "$t" || break; done
 
-With Go present, the suite exercises the `status` binary through the shim
-(`tests/status-parity.test.sh` diffs it byte-for-byte against the frozen v1 bash). Without
-Go, `tests/status-parity.test.sh` skips and the shim falls back to the bundled v1 script,
+With Go present, the suite exercises the `status`, `init`, and `remove` binary paths
+through the shims. Two differential suites diff the Go output byte-for-byte against the
+frozen v1 bash: `tests/status-parity.test.sh` for `status`, and
+`tests/init-remove-parity.test.sh` for `init`/`remove` (the latter compares per-file lists
+line-SORTED, since find(1) and Go's directory walk emit the same set of files in different
+orders). Without Go, both suites skip and the shims fall back to the bundled v1 scripts,
 printing a one-line notice.
 
 A change to the installer or the path model needs a matching test. The path classification
