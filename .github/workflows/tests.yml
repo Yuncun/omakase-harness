@@ -14,6 +14,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Go vet, test, build
+        run: |
+          go vet ./... && go test ./... && CGO_ENABLED=0 go build -o dist/omakase ./cmd/omakase
       - run: npm install -g lefthook
       - name: Run test suites
         run: |
