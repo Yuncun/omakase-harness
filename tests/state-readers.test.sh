@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Phase 0 compat contract: the HOOK-TIME READERS — the two scripts init.sh generates
-# into $OMK ($(git rev-parse --git-common-dir)/omakase): ensure-present.sh (self-heal)
-# and verify-overlay.sh (fail-closed guard). These stay POSIX sh forever and READ the
-# state the future Go writer will WRITE, so this file pins their reading/healing
-# contract — exercised today with bash-written state (docs/v2-design.md §5, §10, §13).
+# into $OMK ($(git rev-parse --git-common-dir)/omakase): ensure-present.sh (self-heal;
+# bash, 3.2 floor) and verify-overlay.sh (fail-closed guard; POSIX sh). These stay
+# shell forever (never the Go binary) and READ the state the future Go writer will
+# WRITE, so this file pins their reading/healing contract — exercised today with
+# bash-written state (docs/v2-design.md §1, §5, §10, §13).
 # Every "contract capture" note below freezes OBSERVED v1 behavior deliberately: it
 # records what the readers do today, not new policy.
 # Scenarios:
