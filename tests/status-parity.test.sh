@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+# tests/status-parity.test.sh — the Phase-1 RELEASE GATE for the Go port of omakase status.
+#
+# The v1 bash body is preserved verbatim at bin/legacy/status.sh (the parity oracle). The
+# new bin/status.sh is a thin shim that rebuilds and execs the Go binary (dist/omakase),
+# falling back to the legacy bash only when the binary can't be resolved. This test proves
+# BYTE PARITY: for every scenario below, in BOTH terminal and --markdown modes, the legacy
+# bash and the shim (=> Go binary) must produce byte-identical stdout, byte-identical stderr,
+# and equal exit codes — under identical pinned env and identical cwd. The shim's one-line
+# fallback notice must be ABSENT from stderr in every run: its presence means the binary did
+# not run and the comparison would be bash-vs-bash (a false green), so we fail on it.
+#
+# Skip-with-notice (exit 0) ONLY when dist/omakase is absent AND go is not on PATH. Otherwise
+# we build the binary and run. Scenarios that need a real `lefthook dump` (installs + the
+# guards chart) SKIP gracefully when lefthook is unresolvable; bash 3.2-safe throughout.
+set -u
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$HERE/.."
+LEGACY="$ROOT/bin/legacy/status.sh"
+SHIM="$ROOT/bin/status.sh"
+INIT="$ROOT/bin/init.sh"
+PAY="$ROOT/payload"
+BIN="$ROOT/dist/omakase"
+LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
+NOW=1700000000
+TMP="${TMPDIR:-/tmp}/status-parity.$$"
+NOTICE='omakase: Go binary unavailable — using legacy bash status'
+FAILED=0
+pass(){ echo "  PASS: $1"; }
+fail(){ echo "  FAIL: $1"; FAILED=1; }
+skip(){ echo "  SKIP: $1"; }
+
+# lefthook on PATH so init can install hooks (idiom of tests/omakase-gate.test.sh:12-20).
+[ -n "$LEFTHOOK" ] && export PATH="$(dirname "$LEFTHOOK"):$PATH"
+HAVE_LH=0; { [ -n "$LEFTHOOK" ] && [ -x "$LEFTHOOK" ]; } && HAVE_LH=1
+
+# --- build/skip gate: only skip when there is NO binary AND NO go to build one ---
+if [ ! -x "$BIN" ] && ! command -v go >/dev/null 2>&1; then
+  echo "SKIP: dist/omakase absent and go not on PATH — the parity gate cannot run"
+  exit 0
+fi
+if command -v go >/dev/null 2>&1; then
+  ( cd "$ROOT" && CGO_ENABLED=0 go build -o dist/omakase ./cmd/omakase ) \
+    || { echo "  FAIL: go build failed — cannot run the parity gate"; exit 1; }
+fi
+
+mkdir -p "$TMP"
+newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }
+
+# Per-invocation env overrides (defaults resolve lefthook via LEFTHOOK_BIN so the guards
+# chart is deterministic regardless of PATH; P6 overrides both to make lefthook unresolvable).
+P_PATH="$PATH"
+P_LH="$LEFTHOOK"
+
+# run_impl <impl> <cwd> <home> <outfile> <errfile> <flag-or-empty>
+# Pins HOME + OMAKASE_NOW, unsets OMAKASE_ICON + NO_COLOR, pins PATH + LEFTHOOK_BIN. Only $1
+# is inspected by status.sh, so a single optional flag ("" or --markdown) covers both modes.
+run_impl(){
+  if [ -n "$6" ]; then
+    ( cd "$2" && env -u OMAKASE_ICON -u NO_COLOR PATH="$P_PATH" LEFTHOOK_BIN="$P_LH" HOME="$3" OMAKASE_NOW="$NOW" bash "$1" "$6" ) >"$4" 2>"$5"
+  else
+    ( cd "$2" && env -u OMAKASE_ICON -u NO_COLOR PATH="$P_PATH" LEFTHOOK_BIN="$P_LH" HOME="$3" OMAKASE_NOW="$NOW" bash "$1" ) >"$4" 2>"$5"
+  fi
+}
+
+# parity <label> <cwd> <home> <flag-or-empty>: run both impls, compare stdout/stderr/exit.
+parity(){
+  local label="$1" cwd="$2" home="$3" flag="$4"
+  local lo="$TMP/leg.out" le="$TMP/leg.err" so="$TMP/shim.out" se="$TMP/shim.err"
+  local lrc srrc
+  run_impl "$LEGACY" "$cwd" "$home" "$lo" "$le" "$flag"; lrc=$?
+  run_impl "$SHIM"   "$cwd" "$home" "$so" "$se" "$flag"; srrc=$?
+  if grep -qF "$NOTICE" "$se"; then
+    fail "$label: shim fell back to legacy bash (the Go binary did not run)"
+    sed 's/^/      /' "$se"
+    return
+  fi
+  if diff "$lo" "$so" >"$TMP/dout" 2>&1; then pass "$label: stdout byte-identical"
+  else fail "$label: stdout DIFFERS"; sed 's/^/      /' "$TMP/dout"; fi
+  if diff "$le" "$se" >"$TMP/derr" 2>&1; then pass "$label: stderr byte-identical"
+  else fail "$label: stderr DIFFERS"; sed 's/^/      /' "$TMP/derr"; fi
+  if [ "$lrc" -eq "$srrc" ]; then pass "$label: exit codes equal ($lrc)"
+  else fail "$label: exit codes differ (legacy=$lrc shim=$srrc)"; fi
+}
+
+# parity2 <label> <cwd> <home>: exercise BOTH terminal and --markdown modes.
+parity2(){
+  parity "$1 [term]" "$2" "$3" ""
+  parity "$1 [md]"   "$2" "$3" "--markdown"
+}
+
+# Build a PATH with EVERY lefthook executable removed (system dirs appended as candidates,
+# and any dir — including a system one — that carries lefthook is skipped). Portable way to
+# make lefthook unresolvable for P6 while keeping git/shasum/awk resolvable.
+lhfree_path(){
+  local out="" d oldifs="$IFS"
+  IFS=':'
+  for d in $PATH /usr/bin /bin /usr/sbin /sbin; do
+    IFS="$oldifs"
+    [ -n "$d" ] || { IFS=':'; continue; }
+    [ -x "$d/lefthook" ] && { IFS=':'; continue; }
+    case ":$out:" in *":$d:"*) IFS=':'; continue;; esac
+    out="${out:+$out:}$d"
+    IFS=':'
+  done
+  IFS="$oldifs"
+  printf '%s' "$out"
+}
+
+# ================= Shared personal $HOME (claude rule + skill + CLAUDE.md + copilot skill) =================
+H1="$TMP/home1"
+mkdir -p "$H1/.claude/rules" "$H1/.claude/skills/myskill" "$H1/.copilot/skills/copskill"
+printf 'global doctrine\n' > "$H1/.claude/CLAUDE.md"
+printf 'personal rule\n'   > "$H1/.claude/rules/personal.md"
+printf 'skill body\n'      > "$H1/.claude/skills/myskill/SKILL.md"
+printf 'cop skill\n'       > "$H1/.copilot/skills/copskill/SKILL.md"
+
+# ---------- P1: uninstalled repo (audit view + personal inventory) ----------
+echo "== P1: uninstalled repo =="
+R1="$TMP/p1"; newrepo "$R1"
+mkdir -p "$R1/.claude/rules" "$R1/src"
+printf 'team rule\n' > "$R1/.claude/rules/team.md"    # committed HARNESS file
+printf 'app\n'       > "$R1/src/app.js"               # committed NON-harness file
+( cd "$R1" && git add .claude/rules/team.md src/app.js && git commit -qm files )
+parity2 "P1 uninstalled" "$R1" "$H1"
+
+# Install-based scenarios (P2-P4, P6, P8) need a real lefthook: init installs hooks and the
+# guards chart joins a `lefthook dump`. Skip them as one group when lefthook is unresolvable.
+if [ "$HAVE_LH" -eq 0 ]; then
+  skip "P2-P4, P6, P8 need lefthook (install + guards dump); LEFTHOOK_BIN unset and lefthook not on PATH"
+fi
+
+# R2 is created by P2 and reused (read-only) by P6 and P8, so keep it pristine.
+R2="$TMP/p2"
+if [ "$HAVE_LH" -eq 1 ]; then
+  # ---------- P2: plain install + a seeded 4-column ledger ----------
+  echo "== P2: plain install + seeded ledger =="
+  newrepo "$R2"
+  ( cd "$R2" && HOME="$H1" OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1 || fail "P2: init failed"
+  COMMON2="$(cd "$R2" && cd "$(git rev-parse --git-common-dir)" && pwd)"; mkdir -p "$COMMON2/omakase"
+  LEDGER2="$COMMON2/omakase/ledger.tsv"; HEAD2="$(cd "$R2" && git rev-parse HEAD)"
+  # A pass row and a fail row, DISTINCT gates, epochs NOW-60 and NOW-7200. `markers` is the
+  # base payload's wired gate, so its fail verdict surfaces on the guards chart (✗ + age).
+  # Deliberately NO 6-column pre-v2 row (§5): real init rotates those aside, so a hand-built
+  # one would exercise an unreachable path; 4-column rows only.
+  printf '%s\ttests\tpass\t%s\n'   $((NOW-60))   "$HEAD2" >> "$LEDGER2"
+  printf '%s\tmarkers\tfail\t%s\n' $((NOW-7200)) "$HEAD2" >> "$LEDGER2"
+  parity2 "P2 plain install" "$R2" "$H1"
+
+  # ---------- P3: the states matrix (MISSING / DRIFTED / disabled + normal before/after) ----------
+  echo "== P3: states matrix =="
+  PAY3="$TMP/pay3"; rm -rf "$PAY3"; cp -R "$PAY/." "$PAY3/"
+  mkdir -p "$PAY3/.claude/rules"
+  for f in a b c d e; do printf 'rule %s\n' "$f" > "$PAY3/.claude/rules/$f.md"; done
+  R3="$TMP/p3"; newrepo "$R3"
+  ( cd "$R3" && HOME="$H1" OMAKASE_PAYLOAD="$PAY3" bash "$INIT" ) >/dev/null 2>&1 || fail "P3: init failed"
+  COMMON3="$(cd "$R3" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+  PLACED3="$COMMON3/omakase/placed.tsv"
+  rm -f "$R3/.claude/rules/b.md"                       # MISSING
+  printf 'drift\n' >> "$R3/.claude/rules/c.md"         # DRIFTED (appended AFTER init hashed it)
+  awk -F'\t' -v OFS='\t' '$1==".claude/rules/d.md"{$5=0} 1' "$PLACED3" > "$PLACED3.tmp" && mv "$PLACED3.tmp" "$PLACED3"   # disabled
+  # a.md and e.md are left normal (before/after rows).
+  parity2 "P3 states matrix" "$R3" "$H1"
+
+  # ---------- P4: --source install with a CLAUDE.md -> AGENTS.md symlink ----------
+  echo "== P4: --source install with symlink =="
+  SRC4="$TMP/p4src"; rm -rf "$SRC4"; mkdir -p "$SRC4/payload/.claude"
+  ( cd "$SRC4" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
+  printf 'agent doctrine\n' > "$SRC4/payload/agents.md"
+  ( cd "$SRC4/payload" && ln -s agents.md claude.md )  # symlink row => the arrow
+  cat > "$SRC4/omakase.manifest" <<'MAN'
+name: p4-harness
+version: 0.2.0
+MAN
+  ( cd "$SRC4" && git add -A && git commit -q -m harness )
+  SRC4ABS="$(cd "$SRC4" && pwd)"
+  R4="$TMP/p4"; newrepo "$R4"
+  CACHE4="$TMP/cache4"; mkdir -p "$CACHE4"
+  ( cd "$R4" && HOME="$H1" XDG_CACHE_HOME="$CACHE4" bash "$INIT" --source "$SRC4ABS" ) >/dev/null 2>&1 || fail "P4: --source init failed"
+  [ -L "$R4/claude.md" ] && pass "P4: source symlink placed as a symlink (arrow row exercised)" || fail "P4: claude.md not placed as a symlink"
+  parity2 "P4 source+symlink" "$R4" "$H1"
+fi
+
+# ---------- P5: pre-0.10 install (placed.list, no placed.tsv) ----------
+echo "== P5: pre-0.10 placed.list =="
+R5="$TMP/p5"; newrepo "$R5"
+COMMON5="$(cd "$R5" && cd "$(git rev-parse --git-common-dir)" && pwd)"; mkdir -p "$COMMON5/omakase"
+printf '%s\n%s\n' '.claude/rules/team.md' '.omakase/gates/example.sh' > "$COMMON5/omakase/placed.list"
+rm -f "$COMMON5/omakase/placed.tsv"
+parity2 "P5 pre-0.10" "$R5" "$H1"
+
+# ---------- P6: lefthook unresolved (P2's repo, LEFTHOOK_BIN= and PATH without lefthook) ----------
+if [ "$HAVE_LH" -eq 1 ]; then
+  echo "== P6: lefthook unresolved =="
+  P_PATH="$(lhfree_path)"; P_LH=""
+  parity2 "P6 lefthook unresolved" "$R2" "$H1"
+  P_PATH="$PATH"; P_LH="$LEFTHOOK"   # restore defaults
+fi
+
+# ---------- P7: not inside a git repo (both exit 1, same stderr line) ----------
+echo "== P7: not a git repo =="
+R7="$TMP/p7-notrepo"; rm -rf "$R7"; mkdir -p "$R7"
+parity2 "P7 not a repo" "$R7" "$H1"
+
+# ---------- P8: empty HOME => Global group renders (none) ----------
+if [ "$HAVE_LH" -eq 1 ]; then
+  echo "== P8: empty HOME =="
+  HEMPTY="$TMP/home-empty"; rm -rf "$HEMPTY"; mkdir -p "$HEMPTY"
+  parity2 "P8 empty HOME" "$R2" "$HEMPTY"
+fi
+
+rm -rf "$TMP"
+echo ""
+[ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }
