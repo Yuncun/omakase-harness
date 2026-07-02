@@ -22,6 +22,9 @@ var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 	"init": func(argv []string, stdout, stderr io.Writer) int {
 		return overlay.RunInit(argv[2:], stdout, stderr)
 	},
+	"remove": func(argv []string, stdout, stderr io.Writer) int {
+		return overlay.RunRemove(argv[2:], stdout, stderr)
+	},
 }
 
 // run is the pure dispatch function: no I/O beyond the given writers, no
