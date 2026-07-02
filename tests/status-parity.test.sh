@@ -88,6 +88,23 @@ expect_marker(){
   else fail "$label: legacy output MISSING marker(s) $missing — fixture may not exercise the intended state"; fi
 }
 
+# expect_global_empty <label> <file> <mode>: pins the Global-group-is-empty state to the
+# Global section specifically. A bare substring check for "(none)" is not enough — the
+# fixture repo's Committed section is ALSO "(none)" whenever empty, so that marker passes
+# even when the Global group is NOT empty (this replaced exactly that false assurance).
+# Instead: find the Global section header line and require the very NEXT line to be that
+# mode's empty-group marker ("    (none)" term / "- _(none)_" md), per bin/legacy/status.sh.
+expect_global_empty(){
+  local label="$1" file="$2" mode="$3" hdr empty
+  if [ "$mode" = md ]; then hdr='^### Global '; empty='- _(none)_'
+  else                       hdr='^GLOBAL ';     empty='    (none)'; fi
+  if awk -v hdr="$hdr" -v empty="$empty" \
+      '$0 ~ hdr { g = NR } g && NR == g + 1 && $0 == empty { ok = 1 } END { exit ok ? 0 : 1 }' \
+      "$file"
+  then pass "$label: Global group renders empty (line after the header is '$empty')"
+  else fail "$label: Global group is NOT empty right after its header — fixture may not exercise empty-HOME"; fi
+}
+
 # parity <label> <cwd> <home> <flag-or-empty> [marker...]: run both impls, compare
 # stdout/stderr/exit, assert non-empty legacy stdout on an exit-0 run, and (when markers
 # are given) assert the legacy capture contains them — see expect_marker above.
@@ -248,10 +265,16 @@ R7="$TMP/p7-notrepo"; rm -rf "$R7"; mkdir -p "$R7"
 parity2 "P7 not a repo" "$R7" "$H1"
 
 # ---------- P8: empty HOME => Global group renders (none) ----------
+# Marker: a bare "(none)" substring is satisfied by the Committed section alone (also
+# empty in this fixture), so pin the empty state to the line right after the Global
+# section header instead — see expect_global_empty above.
 if [ "$HAVE_LH" -eq 1 ]; then
   echo "== P8: empty HOME =="
   HEMPTY="$TMP/home-empty"; rm -rf "$HEMPTY"; mkdir -p "$HEMPTY"
-  parity2 "P8 empty HOME" "$R2" "$HEMPTY" "(none)"
+  parity "P8 empty HOME [term]" "$R2" "$HEMPTY" ""
+  expect_global_empty "P8 empty HOME [term]" "$TMP/leg.out" term
+  parity "P8 empty HOME [md]"   "$R2" "$HEMPTY" "--markdown"
+  expect_global_empty "P8 empty HOME [md]"   "$TMP/leg.out" md
 fi
 
 rm -rf "$TMP"
