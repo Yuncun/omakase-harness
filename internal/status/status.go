@@ -104,12 +104,12 @@ func renderMarkdown(w io.Writer, repo *state.Repo, home, icon, hname, srcdisp, b
 // renderTerminal is the default page (bin/status.sh:338-354): optional branded
 // banner, then the same question-first order as markdown.
 func renderTerminal(w io.Writer, repo *state.Repo, home, hname, srcdisp, basever string, nplaced int) {
-	// Banner (bin/status.sh:340-341): if present, run it with cwd=Root, pass its
-	// stdout through, discard stderr, ignore failure.
+	// Banner (bin/status.sh:340-341, `bash "$BANNER" 2>/dev/null || true`): if
+	// present, run it at the INVOCATION cwd (no `cd`), pass its stdout through,
+	// discard stderr, ignore failure.
 	banner := filepath.Join(repo.Root, ".omakase", "bin", "omakase-banner.sh")
 	if info, e := os.Stat(banner); e == nil && !info.IsDir() {
 		cmd := exec.Command("bash", banner)
-		cmd.Dir = repo.Root
 		cmd.Stdout = w
 		cmd.Stderr = io.Discard
 		_ = cmd.Run()

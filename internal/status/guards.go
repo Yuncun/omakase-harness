@@ -111,8 +111,9 @@ func nowFromEnv() int64 {
 	return awkNumeric(s)
 }
 
-// awkNumeric returns the leading integer of s (optional sign, digits), or 0 —
-// awk's rule for using a string in arithmetic.
+// awkNumeric returns the leading integer of s (optional sign, digits), or 0.
+// This covers only awk's integer coercion, which is all the epoch inputs
+// here ever need — not awk's full numeric (float/exponent) string coercion.
 func awkNumeric(s string) int64 {
 	s = strings.TrimLeft(s, " \t")
 	i, neg := 0, false
