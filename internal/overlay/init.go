@@ -255,6 +255,9 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	sourceLabel := "payload" // bin/init.sh:103 (the source arm overrides this)
 	rememberedSource := ""
 	recommends := ""
+	// projectCommit is sources.tsv column 4 for the project row (design §9 /
+	// plan GC4) — left at "-" when there is no project row to write at all.
+	projectCommit := "-"
 	var projectPayloadDir string
 	if projectActive {
 		res, code := runSource(source, sourceRef, defaultPayload(), stdout, stderr)
@@ -266,6 +269,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		sourceLabel = res.label
 		rememberedSource = res.remembered
 		recommends = res.recommends
+		projectCommit = resolvedCommit(source)
 	}
 
 	// ---- personal layer: the one global per-user setting, on top (design §4/§5) ----
@@ -273,13 +277,22 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// otherwise the first line of ${XDG_CONFIG_HOME:-$HOME/.config}/omakase/personal
 	// (absent/empty ⇒ no personal layer, silently) is resolved through the SAME
 	// expandSource + fetchSource machinery as a project source (shared cache slug
-	// namespace). A personal-source failure is fail-closed with the byte-identical
-	// message a project-source failure would print (nothing placed).
+	// namespace) — including fetchSource's manifest-name AND non-empty-payload/
+	// checks (source.go), so a personal source failing either one is fail-closed
+	// with the byte-identical message the project-source arm prints via runSource
+	// (nothing placed, no sources.tsv, no layers/ store — TestPersonalFailClosedNoManifest
+	// / TestPersonalFailClosedEmptyPayload pin both).
 	personalActive := false
 	personalOff := noPersonal || priorOff
 	personalLabel := ""
 	personalSourceForRow := ""
 	personalRefForRow := ""
+	// personalCommit is sources.tsv column 4 for the personal row (design §9 /
+	// plan GC4) — left at "-" when there is no personal row, or the row is the
+	// `personal|off` sentinel (Source "off" names no real source, so there is
+	// no cache to resolve: the off-row's commit stays the literal "-" below,
+	// unconditionally).
+	personalCommit := "-"
 	var personalPayloadDir string
 	if !personalOff {
 		if line := state.FirstLine(personalConfigPath()); line != "" {
@@ -297,6 +310,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 					personalLabel = ps + "#" + pref
 				}
 				personalActive = true
+				personalCommit = resolvedCommit(ps)
 			}
 		}
 	}
@@ -742,16 +756,20 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 
 	// ---- sources.tsv: the layer stack, bottom-to-top (design §5/§9) ----
 	// Rows for the project + personal layers only (base has none). A --no-personal
-	// or a remembered personal|off is recorded as a personal|off row. commit is "-"
-	// throughout: this task ships the FORMAT (design §5: "only the format ships
-	// now"); the resolved-sha pin is Phase 4's `update`/pin-semantics — never
-	// guessed here. epoch = current unix time. Written only when there is a row to
-	// record OR the file already exists (then rewritten faithfully); a bare
-	// base-only install with no prior sources.tsv writes nothing (GC2).
+	// or a remembered personal|off is recorded as a personal|off row. A project or
+	// personal row's commit is the resolved sha recorded NOW (design §9: "First
+	// real init/update records resolved commits"; plan GC4: `git -C <cache>
+	// rev-parse HEAD` after checkout) via projectCommit/personalCommit, computed
+	// right after that layer's own fetchSource success, above — never guessed. The
+	// personal|off row's commit stays the literal "-": "off" is a sentinel, not a
+	// fetched source, so there is no cache to resolve. epoch = current unix time.
+	// Written only when there is a row to record OR the file already exists (then
+	// rewritten faithfully); a bare base-only install with no prior sources.tsv
+	// writes nothing (GC2).
 	epoch := strconv.FormatInt(time.Now().Unix(), 10)
 	var srcRows []state.SourceRow
 	if projectActive {
-		srcRows = append(srcRows, state.SourceRow{Layer: "project", Source: source, Ref: refField(sourceRef), Commit: "-", Epoch: epoch})
+		srcRows = append(srcRows, state.SourceRow{Layer: "project", Source: source, Ref: refField(sourceRef), Commit: projectCommit, Epoch: epoch})
 	}
 	if personalOff {
 		// --no-personal freshly given REFRESHES the epoch; a remembered off-row
@@ -762,7 +780,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		}
 		srcRows = append(srcRows, state.SourceRow{Layer: "personal", Source: "off", Ref: "-", Commit: "-", Epoch: offEpoch})
 	} else if personalActive {
-		srcRows = append(srcRows, state.SourceRow{Layer: "personal", Source: personalSourceForRow, Ref: refField(personalRefForRow), Commit: "-", Epoch: epoch})
+		srcRows = append(srcRows, state.SourceRow{Layer: "personal", Source: personalSourceForRow, Ref: refField(personalRefForRow), Commit: personalCommit, Epoch: epoch})
 	}
 	if len(srcRows) > 0 || sourcesExisted {
 		rowsToWrite := srcRows

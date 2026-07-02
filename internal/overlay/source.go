@@ -419,3 +419,30 @@ func gitCacheOut(cache string, args ...string) string {
 	}
 	return strings.TrimRight(string(out), "\n")
 }
+
+// resolvedCommit is sources.tsv column 4 for a project or personal row (design
+// §9: "First real init/update records resolved commits"; plan GC4: "commit =
+// full sha via `git -C <cache> rev-parse HEAD` after checkout"). Call this
+// AFTER a fetchSource (direct, or via runSource) for src has already
+// succeeded — the cache dir is recomputed from src via sourceCacheDir rather
+// than threaded back through sourceResult/fetchSource's return values: the
+// slug is a pure function of src, and re-running `rev-parse HEAD` against the
+// cache fetchSource just populated is cheap.
+//
+// fetchSource's own clone step (bin/init.sh:104-138) always runs `git clone`
+// into the cache, even when src names a local directory (git clones a local
+// path just as it would a remote URL, producing a full .git checkout there
+// too) — so in every currently reachable success path the cache DOES have a
+// .git dir. The "no .git" arm below is therefore defensive, not exercised by
+// any test: GC4 also specifies "-" for "a non-git local path", so it is kept
+// as the documented fallback rather than assuming rev-parse can never fail.
+func resolvedCommit(src string) string {
+	cache := sourceCacheDir(src)
+	if !isDir(filepath.Join(cache, ".git")) {
+		return "-"
+	}
+	if sha := gitCacheOut(cache, "rev-parse", "HEAD"); sha != "" {
+		return sha
+	}
+	return "-"
+}

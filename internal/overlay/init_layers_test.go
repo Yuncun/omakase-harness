@@ -29,6 +29,37 @@ func allDigits(s string) bool {
 	return true
 }
 
+// isFullSHA reports whether s has the shape of a resolved git commit sha:
+// exactly 40 lowercase hex characters (the same shape-only check style as
+// allDigits, for sources.tsv column 4 post-Finding-1).
+func isFullSHA(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// wantResolvedCommit recomputes the cache dir the SAME way the production
+// code's resolvedCommit does (sourceCacheDir(src), both unexported helpers
+// callable in-package) and reads its HEAD directly with the real git binary —
+// an independent computation of what a sources.tsv row's commit column MUST
+// equal, not a re-assertion of the production code's own return value.
+func wantResolvedCommit(t *testing.T, src string) string {
+	t.Helper()
+	cache := sourceCacheDir(src)
+	sha := gitStdout(cache, "rev-parse", "HEAD")
+	sha = strings.TrimRight(sha, "\n")
+	if sha == "" || !isFullSHA(sha) {
+		t.Fatalf("test could not resolve %s's cache (%s) HEAD via git rev-parse", src, cache)
+	}
+	return sha
+}
+
 // These are the Task 4 layering-integration tests. Discipline per scenario is
 // noted in each test's doc-comment: "invariance" = the assertion is the ABSENCE of
 // any layer artifact/output (the base-only guarantee GC2 — the pre-change binary
@@ -170,9 +201,13 @@ func TestSourceOnlyWritesProjectRow(t *testing.T) {
 	}
 	// sources.tsv: exactly one project row, bottom-of-stack.
 	rows := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
-	if len(rows) != 1 || rows[0].Layer != "project" || rows[0].Source != src || rows[0].Ref != "-" || rows[0].Commit != "-" {
-		t.Fatalf("sources.tsv = %+v, want one {project %s - -} row", rows, src)
+	if len(rows) != 1 || rows[0].Layer != "project" || rows[0].Source != src || rows[0].Ref != "-" {
+		t.Fatalf("sources.tsv = %+v, want one {project %s -} row", rows, src)
 	}
+	if !isFullSHA(rows[0].Commit) {
+		t.Errorf("project row commit = %q, want a 40-hex sha", rows[0].Commit)
+	}
+	eq(t, "project row commit", rows[0].Commit, wantResolvedCommit(t, src))
 	if !allDigits(rows[0].Epoch) {
 		t.Errorf("project row epoch = %q, want a unix-time decimal", rows[0].Epoch)
 	}
@@ -242,12 +277,14 @@ func TestProjectPersonalStack(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("sources.tsv rows = %d, want 2: %+v", len(rows), rows)
 	}
-	if rows[0].Layer != "project" || rows[0].Source != proj || rows[0].Ref != "-" || rows[0].Commit != "-" {
-		t.Errorf("row0 = %+v, want project %s - -", rows[0], proj)
+	if rows[0].Layer != "project" || rows[0].Source != proj || rows[0].Ref != "-" {
+		t.Errorf("row0 = %+v, want project %s -", rows[0], proj)
 	}
-	if rows[1].Layer != "personal" || rows[1].Source != psrc || rows[1].Ref != "-" || rows[1].Commit != "-" {
-		t.Errorf("row1 = %+v, want personal %s - -", rows[1], psrc)
+	if rows[1].Layer != "personal" || rows[1].Source != psrc || rows[1].Ref != "-" {
+		t.Errorf("row1 = %+v, want personal %s -", rows[1], psrc)
 	}
+	eq(t, "project row commit", rows[0].Commit, wantResolvedCommit(t, proj))
+	eq(t, "personal row commit", rows[1].Commit, wantResolvedCommit(t, psrc))
 	for _, r := range rows {
 		if !allDigits(r.Epoch) {
 			t.Errorf("row epoch = %q, want a unix-time decimal", r.Epoch)
@@ -301,6 +338,7 @@ func TestPersonalOnlyStack(t *testing.T) {
 	if len(rows) != 1 || rows[0].Layer != "personal" || rows[0].Source != psrc {
 		t.Fatalf("sources.tsv = %+v, want one personal %s row", rows, psrc)
 	}
+	eq(t, "personal row commit", rows[0].Commit, wantResolvedCommit(t, psrc))
 	// base + personal stores both built.
 	if _, err := os.Stat(filepath.Join(repo.OMK, "layers", "base", "placed.tsv")); err != nil {
 		t.Errorf("layers/base not built for a personal-only stack: %v", err)
@@ -440,6 +478,51 @@ func TestPersonalFailClosedNoManifest(t *testing.T) {
 	// Same wording as the project-source arm (source_test.go TestSourceMissingManifest).
 	if !strings.Contains(stderr.String(), "omakase: source '"+psrc+"' has no omakase.manifest at its root — not an omakase source\n") {
 		t.Errorf("personal manifest refusal not byte-identical to the project arm:\n%s", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".omakase")); err == nil {
+		t.Error("placed files despite a personal-source refusal")
+	}
+	if _, err := os.Stat(filepath.Join(repo.OMK, "sources.tsv")); err == nil {
+		t.Error("wrote sources.tsv despite a personal-source refusal")
+	}
+	if _, err := os.Stat(filepath.Join(repo.OMK, "layers")); err == nil {
+		t.Error("built a layer store despite a personal-source refusal")
+	}
+	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
+		t.Errorf("refusal left changes: %q", out)
+	}
+}
+
+// TestPersonalFailClosedEmptyPayload (broken-variant, mirrors
+// TestPersonalFailClosedNoManifest's shape): a personal source with a valid
+// manifest but NO payload/ tree fails closed with the BYTE-IDENTICAL message
+// the project-source arm prints for the same condition
+// (source_test.go TestSourceEmptyPayload) — both the personal and project arms
+// call fetchSource directly (personal) or via runSource (project), so this is
+// the SAME check, not a separate one the personal arm could skip; pinned here
+// as the personal-arm twin of that project-arm test.
+func TestPersonalFailClosedEmptyPayload(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	// A personal source that is a git repo with a valid manifest but ships no
+	// payload/ tree at all (git cannot track an empty dir, so payload/ is
+	// simply absent from the clone).
+	psrc := newSourceRepo(t)
+	writeFile(t, filepath.Join(psrc, "omakase.manifest"), "name: empty\n")
+	commitAll(t, psrc, "no-payload")
+	setPersonalConfig(t, psrc)
+
+	var stdout, stderr strings.Builder
+	code := RunInit(nil, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	// Same wording as the project-source arm (source_test.go TestSourceEmptyPayload).
+	if !strings.Contains(stderr.String(), "omakase: source '"+psrc+"' has no non-empty payload/ tree — nothing to inject\n") {
+		t.Errorf("personal empty-payload refusal not byte-identical to the project arm:\n%s", stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".omakase")); err == nil {
 		t.Error("placed files despite a personal-source refusal")
