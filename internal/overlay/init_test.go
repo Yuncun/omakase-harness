@@ -700,8 +700,12 @@ func TestLedgerRotation(t *testing.T) {
 	}
 }
 
-// A 5-column (post-v2) ledger must NOT rotate.
-func TestLedgerNoRotationFor5Columns(t *testing.T) {
+// A 4-column (post-v2) ledger must NOT rotate. (Previously misnamed
+// TestLedgerNoRotationFor5Columns despite exercising a 4-field row — the
+// awk test is `NF>=6`, so the boundary needs pinning on both the common
+// post-v2 case (4 columns, this test) and the one-short-of-trigger case
+// (5 columns, TestLedgerNoRotationFor5Columns below).)
+func TestLedgerNoRotationFor4Columns(t *testing.T) {
 	_, repo := initRepo(t)
 	stubLefthook(t)
 	singleGatePayload(t)
@@ -719,6 +723,78 @@ func TestLedgerNoRotationFor5Columns(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo.OMK, "ledger.tsv.pre-v2.bak")); err == nil {
 		t.Error("created a .pre-v2.bak for a 4-column ledger")
+	}
+}
+
+// A genuine 5-column ledger row (one field short of the NF>=6 rotation
+// trigger) must also NOT rotate — pins the awk `NF>=6` boundary from the
+// other side (see TestLedgerNoRotationFor4Columns above and
+// TestLedgerRotation's 6-column row).
+func TestLedgerNoRotationFor5Columns(t *testing.T) {
+	_, repo := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo.OMK, "ledger.tsv"), "111\tname\tpass\tdeadbeefdeadbeef\textra\n")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if strings.Contains(stdout.String(), "rotated a pre-v2") {
+		t.Errorf("rotated a non-6-column ledger:\n%s", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(repo.OMK, "ledger.tsv.pre-v2.bak")); err == nil {
+		t.Error("created a .pre-v2.bak for a 5-column ledger")
+	}
+}
+
+// TestLedgerRotationFailureContinues: when the rotate-aside rename fails (here,
+// constructed portably by pre-creating ledger.tsv.pre-v2.bak AS A DIRECTORY, so
+// os.Rename onto it fails on both macOS and Linux), bin/init.sh's
+// `mv -f ... && echo "..."` is a single && list inside a bare `if ... ; then
+// ... ; fi`: mv is not the LAST command of that list, so its failure is exempt
+// from `set -e`; the failure just short-circuits past the echo (no notice
+// prints), and the script falls through and CONTINUES the rest of the run. Go
+// must match: no notice, no abort, the run still succeeds and completes
+// placement — and the pre-v2 ledger is left exactly where it was (the rename
+// never happened).
+func TestLedgerRotationFailureContinues(t *testing.T) {
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const ledgerContent = "111\thook\tgate\tpass\t5\tdeadbeef\n" // 6 columns: triggers rotation
+	writeFile(t, filepath.Join(repo.OMK, "ledger.tsv"), ledgerContent)
+	// The rotation destination already exists as a directory: os.Rename onto it fails.
+	if err := os.MkdirAll(filepath.Join(repo.OMK, "ledger.tsv.pre-v2.bak"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	code := RunInit(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (a failed rotate must not abort the run); stderr=%q", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "rotated a pre-v2") {
+		t.Errorf("printed the rotation notice despite a failed rename:\n%s", stdout.String())
+	}
+	// The original ledger is untouched (the rename never happened) ...
+	eq(t, "ledger.tsv left in place", readFileT(t, filepath.Join(repo.OMK, "ledger.tsv")), ledgerContent)
+	// ... and the pre-existing directory at the rotation destination is untouched.
+	if info, err := os.Stat(filepath.Join(repo.OMK, "ledger.tsv.pre-v2.bak")); err != nil || !info.IsDir() {
+		t.Errorf(".pre-v2.bak directory disturbed: %v", err)
+	}
+	// The rest of the run still completed: placement, hooks, clean git status.
+	if _, err := os.Stat(filepath.Join(dir, ".omakase", "gates", "example.sh")); err != nil {
+		t.Errorf("run did not continue past the failed rotation: %v", err)
+	}
+	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
+		t.Errorf("git status not clean: %q", out)
 	}
 }
 
@@ -1013,6 +1089,74 @@ func TestTrackedWorktreeincludeNotice(t *testing.T) {
 		"omakase: .worktreeinclude is tracked — leaving it untouched (re-run omakase init inside a new manual worktree to install it there).\n")
 	// the tracked file is left byte-untouched (no block appended).
 	eq(t, "tracked .worktreeinclude untouched", readFileT(t, filepath.Join(dir, ".worktreeinclude")), "manual\n")
+}
+
+// TestWtincBlockOmitsPlacedWorktreeinclude: a payload shipping a top-level
+// .worktreeinclude FILE (not just the wiring entry) still must not appear in
+// the generated .worktreeinclude BLOCK — v1 skips every prefix literally equal
+// to ".worktreeinclude" while writing that block, regardless of whether the
+// prefix came from the wiring append or from a placed path (bin/init.sh:577).
+// The exclude block, by contrast, DOES list it (v1 has no such skip there).
+//
+// Expected bytes captured from a live `bash bin/init.sh` run in a twin
+// fixture (payload: .omakase/gates/example.sh + a top-level .worktreeinclude
+// file containing "custom-pattern\n"), generated with:
+//
+//	cd /tmp && rm -rf omk-wtinc-fixture && mkdir -p omk-wtinc-fixture/repo omk-wtinc-fixture/payload/.omakase/gates
+//	cd omk-wtinc-fixture/repo && git init -q && git config user.email t@t && git config user.name t \
+//	  && git config commit.gpgsign false && git commit -q --allow-empty -m init
+//	printf '#!/usr/bin/env bash\necho hi\n' > ../payload/.omakase/gates/example.sh
+//	printf 'custom-pattern\n' > ../payload/.worktreeinclude
+//	mkdir -p ../stub && printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$LEFTHOOK_STUB_LOG"\nexit 0\n' > ../stub/lefthook && chmod +x ../stub/lefthook
+//	LEFTHOOK_BIN=/tmp/omk-wtinc-fixture/stub/lefthook LEFTHOOK_STUB_LOG=/tmp/omk-wtinc-fixture/stub/argv.log \
+//	  OMAKASE_PAYLOAD=/tmp/omk-wtinc-fixture/payload bash bin/init.sh
+//	cat .git/info/exclude; cat .worktreeinclude   # inspect the two blocks
+//
+// which produced an exclude block of ".omakase/", ".worktreeinclude",
+// "lefthook.yml" and a .worktreeinclude block of "custom-pattern\n" (the
+// payload's own, unstripped content) followed by ".omakase/", "lefthook.yml"
+// only — no ".worktreeinclude" line.
+func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+	p := singleGatePayload(t)
+	writeFile(t, filepath.Join(p, ".worktreeinclude"), "custom-pattern\n")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stderr", stderr.String(), "")
+
+	wantOut := "omakase: placed 2 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
+		"  + .omakase/gates/example.sh\n" +
+		"  + .worktreeinclude\n" + summaryTail
+	eq(t, "stdout", stdout.String(), wantOut)
+
+	// exclude block: DOES list .worktreeinclude (v1 has no skip there).
+	wantExcludeBlock := "# >>> omakase-harness >>>\n" +
+		".omakase/\n" +
+		".worktreeinclude\n" +
+		"lefthook.yml\n" +
+		"# <<< omakase-harness <<<\n"
+	excl := readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude"))
+	if !strings.Contains(excl, wantExcludeBlock) {
+		t.Errorf("exclude block mismatch:\n got:\n%s\nwant block:\n%s", excl, wantExcludeBlock)
+	}
+
+	// .worktreeinclude: the payload's own content (unstripped — no marker
+	// block present yet), THEN the generated block with NO .worktreeinclude
+	// entry (neither the wiring append nor the placed-path prefix survives).
+	wantWtinc := "custom-pattern\n" +
+		"# >>> omakase-harness >>>\n" +
+		".omakase/\n" +
+		"lefthook.yml\n" +
+		"# <<< omakase-harness <<<\n"
+	eq(t, "wtinc", readFileT(t, filepath.Join(dir, ".worktreeinclude")), wantWtinc)
+
+	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
+		t.Errorf("git status not clean: %q", out)
+	}
 }
 
 // TestStatuslineAndStopNoticeStanzas: the closing summary appends the statusline

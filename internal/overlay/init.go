@@ -157,12 +157,19 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	omk := repo.OMK
 
 	// ---- one-time ledger schema upgrade (bin/init.sh:84-87) ----
+	// bin/init.sh: `mv -f "$OMK/ledger.tsv" ... && echo "..."` is a single `&&`
+	// list inside a bare `if COND; then ...; fi`. mv is not the LAST command of
+	// that list, so its failure is exempt from `set -e` (the abort-on-error
+	// option only fires on the last command of an && / || list); the failure
+	// just short-circuits the list, so the echo never runs — no notice prints —
+	// and the script falls through the `fi` and CONTINUES, leaving the pre-v2
+	// ledger in place untouched. Match that: on rename failure, print nothing
+	// and continue the run (do not exit).
 	ledger := filepath.Join(omk, "ledger.tsv")
 	if fileRegular(ledger) && ledgerNeedsRotate(ledger) {
-		if err := os.Rename(ledger, ledger+".pre-v2.bak"); err != nil {
-			return 1 // bin/init.sh: `mv -f && echo` failing aborts under set -e
+		if err := os.Rename(ledger, ledger+".pre-v2.bak"); err == nil {
+			fmt.Fprintln(stdout, "omakase: rotated a pre-v2 (6-column) run ledger aside to ledger.tsv.pre-v2.bak (the new store starts clean).")
 		}
-		fmt.Fprintln(stdout, "omakase: rotated a pre-v2 (6-column) run ledger aside to ledger.tsv.pre-v2.bak (the new store starts clean).")
 	}
 
 	// bin/init.sh:91-93 detects shasum/sha256sum here; Go always has
@@ -490,14 +497,34 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 
 	// ---- .worktreeinclude block (bin/init.sh:566-582) ----
 	// Only when the repo does not TRACK .worktreeinclude AND something was
-	// placed. The entries are the same derived prefixes MINUS .worktreeinclude
-	// itself — obtained by re-deriving with wtincTracked=true (which omits it).
+	// placed. v1 reuses the SAME prefixes array built for the exclude block
+	// and skips any entry equal to ".worktreeinclude" while WRITING the wtinc
+	// block (bin/init.sh:577: `[ "$p" = ".worktreeinclude" ] && continue`) —
+	// it does not re-derive the list. That comparison runs on the RAW,
+	// unsuffixed prefix; the trailing-slash directory suffix is decided after
+	// (bin/init.sh:578), by the SAME `[ -d "$ROOT/$p" ]` test already used for
+	// the exclude block. Reusing the already-suffixed `prefixes` slice here and
+	// trimming a trailing "/" before comparing recovers that raw form exactly,
+	// because the only two possible suffixed forms of the raw prefix
+	// ".worktreeinclude" are ".worktreeinclude" and ".worktreeinclude/".
+	// Filtering `prefixes` this way (instead of re-deriving with
+	// wtincTracked=true, the prior approach) also correctly omits a
+	// ".worktreeinclude" entry that arose from a PLACED path (a payload
+	// shipping a top-level .worktreeinclude) — re-deriving only suppressed the
+	// APPENDED wiring entry DerivePrefixes adds when wtincTracked is false, not
+	// one contributed by the placed-path loop.
 	if !wtincTracked && len(placed) > 0 {
 		wtinc := filepath.Join(root, ".worktreeinclude")
 		if err := touch(wtinc); err != nil {
 			return 1
 		}
-		wtEntries := DerivePrefixes(placed, harness.SharedTopdirs, isDirRoot, lefthookTracked, true)
+		var wtEntries []string
+		for _, p := range prefixes {
+			if strings.TrimSuffix(p, "/") == ".worktreeinclude" {
+				continue
+			}
+			wtEntries = append(wtEntries, p)
+		}
 		wtContent, _ := os.ReadFile(wtinc)
 		wtOut := textblock.AppendBlock(textblock.Strip(wtContent, begin, end), begin, wtEntries, end)
 		if err := os.WriteFile(wtinc, wtOut, 0o644); err != nil {
