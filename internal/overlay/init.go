@@ -19,10 +19,12 @@
 // orphan sweep) follow FILE ROW ORDER, matching v1 exactly — no divergence
 // there.
 //
-// The `--source` arm is NOT ported here: a non-empty source (a --source flag,
-// or a remembered $OMK/source with no OMAKASE_PAYLOAD override) routes to a
-// Task 4 stub. Everything else — including the OMAKASE_PAYLOAD env and the
-// binary-relative ../payload default resolution — is fully ported.
+// The `--source` arm — shorthand/ref rewrites, the disposable source cache,
+// the fail-closed manifest validation, and the base+delta merge staging — lives
+// in source.go (expandSource + runSource); RunInit wires its source-conditional
+// tails (placed.tsv column 3, $OMK/source, the summary `recommends:` line)
+// through this engine. The OMAKASE_PAYLOAD env and the binary-relative
+// ../payload default resolution live here (defaultPayload, in source.go).
 package overlay
 
 import (
@@ -185,29 +187,50 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			source = first
 		}
 	}
-	// A non-empty source (flag or remembered) takes the Task 4 path. The
-	// shorthand / ref / local-dir-absolutize rewrites (bin/init.sh:160-171) and
-	// the fetch+merge (bin/init.sh:172-197) all live in that arm — none of them
-	// mutates the repo before placement, so this stub, like a v1 fetch failure,
-	// leaves the repo untouched.
+	// ---- shorthand / ref / local-dir-absolutize (bin/init.sh:160-171) ----
+	// Applies to BOTH a freshly given source and a remembered one, so a bare
+	// re-run round-trips a pinned ref; skipped when SOURCE is empty or already
+	// names an existing local path. The #ref split can leave SOURCE empty (a
+	// pathological "#ref"), so the install-arm decision below tests the
+	// POST-expansion value, exactly as v1 does.
+	sourceRef := ""
 	if source != "" {
-		// Task 4 replaces this stub.
-		fmt.Fprintln(stderr, "omakase: --source is not yet ported")
-		return 1
+		source, sourceRef = expandSource(source)
 	}
 
-	// ---- payload default resolution (bin/init.sh:199-208) ----
-	// OMAKASE_PAYLOAD overrides; otherwise the binary resolves its own
-	// executable path -> parent dir -> "payload" (dist/omakase => repo root =>
-	// payload/, the same layout as bin/../payload).
-	payload := os.Getenv("OMAKASE_PAYLOAD")
-	if payload == "" {
-		if exe, exeErr := os.Executable(); exeErr == nil {
-			payload = filepath.Join(filepath.Dir(filepath.Dir(exe)), "payload")
+	// ---- payload resolution: --source merge, or the plain default ----
+	// A non-empty (post-expansion) source fetches into the disposable cache and
+	// merges the base payload UNDER the source delta (bin/init.sh:172-197);
+	// otherwise PAYLOAD is OMAKASE_PAYLOAD or the binary-relative default
+	// (bin/init.sh:199). sourceLabel (placed.tsv column 3), rememberedSource
+	// ($OMK/source) and recommends (the summary) are source-only; a plain install
+	// leaves them at their neutral defaults, matching v1's SOURCE_LABEL=payload
+	// and empty SOURCE/recommends.
+	sourceLabel := "payload" // bin/init.sh:103 (the source arm overrides this)
+	rememberedSource := ""
+	recommends := ""
+	var payload string
+	if source != "" {
+		res, code := runSource(source, sourceRef, defaultPayload(), stdout, stderr)
+		if code != 0 {
+			return code // runSource printed the message + cleaned any staging dir
+		}
+		defer os.RemoveAll(res.merged) // v1's EXIT-trap cleanup (bin/init.sh:63-68)
+		payload = res.payload
+		sourceLabel = res.label
+		rememberedSource = res.remembered
+		recommends = res.recommends
+	} else {
+		// OMAKASE_PAYLOAD overrides; otherwise the binary-relative ../payload
+		// default (dist/omakase => repo root => payload/, same as bin/../payload).
+		payload = os.Getenv("OMAKASE_PAYLOAD")
+		if payload == "" {
+			payload = defaultPayload()
 		}
 	}
-	// Strip ONE trailing slash so ${f#"$PAYLOAD"/} derives clean rel values
-	// (a pathological OMAKASE_PAYLOAD=/ collapses to "" and is rejected below).
+	// Strip ONE trailing slash so ${f#"$PAYLOAD"/} derives clean rel values (a
+	// pathological OMAKASE_PAYLOAD=/ collapses to "" and is rejected below). A
+	// no-op for the merge staging dir / cache (trailing-slash-free by construction).
 	payload = strings.TrimSuffix(payload, "/")
 	if info, statErr := os.Stat(payload); statErr != nil || !info.IsDir() {
 		fmt.Fprintf(stderr, "omakase: payload dir not found at %s\n", payload)
@@ -539,10 +562,16 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	if err := os.MkdirAll(filepath.Join(omk, "payload-snapshot"), 0o755); err != nil {
 		return 1
 	}
-	// $OMK/source is written only on a source install (bin/init.sh:600); source
-	// is always "" here (a non-empty source routed to the Task 4 stub), so a
-	// plain install writes no $OMK/source — leaving any remembered one in place.
-	const sourceLabel = "payload" // bin/init.sh:103 (the source arm overrides this)
+	// Remember a source install so a bare re-run refreshes the same source
+	// (bin/init.sh:600). A plain install (rememberedSource == "") leaves any
+	// remembered source in place — the precedence above (flag > env > remembered)
+	// already decides who wins. Positioned exactly as v1: after the snapshot dir
+	// is (re)made, before placed.tsv is rewritten.
+	if rememberedSource != "" {
+		if err := os.WriteFile(filepath.Join(omk, "source"), []byte(rememberedSource+"\n"), 0o644); err != nil {
+			return 1
+		}
+	}
 	var rows []state.PlacedRow
 	for _, rel := range placed {
 		if rel == "" {
@@ -625,8 +654,11 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "omakase: ignores -> .git/info/exclude; hooks installed; new worktrees auto-install the harness. Nothing to commit.")
 	fmt.Fprintln(stdout, "omakase: see the whole harness any time with  omakase status")
-	// A source's manifest 'recommends:' is surfaced here (bin/init.sh:662-664);
-	// only a source install sets it, so it is always empty on this port's path.
+	// A source's manifest 'recommends:' is surfaced once here (bin/init.sh:662-664);
+	// only a source install sets it — empty on a plain payload install.
+	if recommends != "" {
+		fmt.Fprintf(stdout, "omakase: this harness recommends — %s\n", recommends)
+	}
 	fmt.Fprintln(stdout, "omakase: to customize, fork the harness source (clone -> edit -> publish) and")
 	fmt.Fprintln(stdout, "         init from your copy; do not edit injected files in place (overwritten on re-init).")
 	if fileRegular(filepath.Join(root, ".omakase", "bin", "omakase-statusline.sh")) {
