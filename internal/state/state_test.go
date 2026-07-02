@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -404,5 +405,367 @@ func TestWritePlacedOverwritesExistingFileWholesale(t *testing.T) {
 	want := "new.md\tdoc\tpayload\txyz\t1\n"
 	if string(got) != want {
 		t.Errorf("WritePlaced bytes = %q, want %q (must regenerate wholesale, not append)", got, want)
+	}
+}
+
+// ---------------------------------------------------------------- ReadSources
+
+func TestReadSources(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sources.tsv")
+	content := "project\thttps://github.com/owner/repo\tmain\tabc123\t1700000000\n" +
+		"badrow\tonly\tthree\n" + // wrong field count (3, not 5): skipped
+		"personal\t\t-\t-\t1700000001\n" + // empty Source field: skipped
+		"personal\thttps://github.com/me/dotfiles\t-\tdef456\t1700000002\n"
+	writeFile(t, dir, "sources.tsv", content)
+
+	got := ReadSources(p)
+	want := []SourceRow{
+		{Layer: "project", Source: "https://github.com/owner/repo", Ref: "main", Commit: "abc123", Epoch: "1700000000"},
+		{Layer: "personal", Source: "https://github.com/me/dotfiles", Ref: "-", Commit: "def456", Epoch: "1700000002"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ReadSources: got %d rows, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("row %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestReadSourcesMissing(t *testing.T) {
+	dir := t.TempDir()
+	if got := ReadSources(filepath.Join(dir, "nope.tsv")); got != nil {
+		t.Errorf("ReadSources(missing) = %+v, want nil", got)
+	}
+}
+
+func TestReadSourcesSkipsRowWithTooManyFields(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sources.tsv")
+	// A 6th field is NOT absorbed the way ReadPlaced absorbs a 6th tab into
+	// Enabled -- ReadSources requires EXACTLY 5 fields and drops anything else.
+	writeFile(t, dir, "sources.tsv", "project\towner/repo\t-\t-\t1\textra\n")
+
+	if got := ReadSources(p); got != nil {
+		t.Errorf("ReadSources(6 fields) = %+v, want nil (dropped)", got)
+	}
+}
+
+// ---------------------------------------------------------------- WriteSources
+
+func TestWriteSourcesHappyPathExactBytes(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sources.tsv")
+	rows := []SourceRow{
+		{Layer: "project", Source: "https://github.com/owner/repo", Ref: "main", Commit: "abc123", Epoch: "1700000000"},
+		{Layer: "personal", Source: "https://github.com/me/dotfiles", Ref: "-", Commit: "-", Epoch: "1700000002"},
+	}
+	if err := WriteSources(p, rows); err != nil {
+		t.Fatalf("WriteSources: %v", err)
+	}
+
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Hand-computed literal per the frozen format (design §5): one row bottom-to-top.
+	want := "project\thttps://github.com/owner/repo\tmain\tabc123\t1700000000\n" +
+		"personal\thttps://github.com/me/dotfiles\t-\t-\t1700000002\n"
+	if string(got) != want {
+		t.Errorf("WriteSources bytes = %q, want %q", got, want)
+	}
+}
+
+func TestWriteSourcesPersonalOffRowExactBytes(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sources.tsv")
+	rows := []SourceRow{{Layer: "personal", Source: "off", Ref: "-", Commit: "-", Epoch: "1700000003"}}
+	if err := WriteSources(p, rows); err != nil {
+		t.Fatalf("WriteSources: %v", err)
+	}
+
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "personal\toff\t-\t-\t1700000003\n"
+	if string(got) != want {
+		t.Errorf("WriteSources(personal off) bytes = %q, want %q", got, want)
+	}
+}
+
+func TestWriteSourcesEmptyRowsTruncates(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sources.tsv")
+	writeFile(t, dir, "sources.tsv", "stale\trow\tfrom\tprior\trun\n")
+
+	if err := WriteSources(p, nil); err != nil {
+		t.Fatalf("WriteSources(nil): %v", err)
+	}
+
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("WriteSources(nil) left %d stale bytes, want a truncated (empty) file: %q", len(got), got)
+	}
+}
+
+func TestWriteSourcesRefusesEmptyField(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sources.tsv")
+	rows := []SourceRow{{Layer: "project", Source: "", Ref: "-", Commit: "-", Epoch: "1700000000"}}
+	if err := WriteSources(p, rows); err == nil {
+		t.Error("WriteSources with an empty field: want error, got nil")
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Error("WriteSources refused an invalid row but still wrote a file")
+	}
+}
+
+func TestWriteSourcesRefusesTabInField(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sources.tsv")
+	rows := []SourceRow{{Layer: "project", Source: "owner/re\tpo", Ref: "-", Commit: "-", Epoch: "1700000000"}}
+	if err := WriteSources(p, rows); err == nil {
+		t.Error("WriteSources with a tab embedded in a field: want error, got nil")
+	}
+}
+
+func TestWriteSourcesRefusesNewlineInField(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sources.tsv")
+	rows := []SourceRow{{Layer: "project", Source: "owner/repo", Ref: "-", Commit: "abc\ndef", Epoch: "1700000000"}}
+	if err := WriteSources(p, rows); err == nil {
+		t.Error("WriteSources with a newline embedded in a field: want error, got nil")
+	}
+}
+
+func TestWriteSourcesRefusesUnknownLayer(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sources.tsv")
+	rows := []SourceRow{{Layer: "base", Source: "owner/repo", Ref: "-", Commit: "-", Epoch: "1700000000"}}
+	if err := WriteSources(p, rows); err == nil {
+		t.Error(`WriteSources with Layer="base": want error, got nil`)
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Error("WriteSources refused an unknown layer but still wrote a file")
+	}
+}
+
+func TestWriteSourcesRefusalLeavesNoPartialWriteAcrossMultipleRows(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sources.tsv")
+	rows := []SourceRow{
+		{Layer: "project", Source: "owner/repo", Ref: "-", Commit: "-", Epoch: "1700000000"}, // valid
+		{Layer: "personal", Source: "", Ref: "-", Commit: "-", Epoch: "1700000001"},          // invalid: empty Source
+	}
+	if err := WriteSources(p, rows); err == nil {
+		t.Fatal("WriteSources: want error for the malformed second row, got nil")
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Error("a later invalid row must not leave an earlier valid row written (validate before writing)")
+	}
+}
+
+func TestWriteSourcesRefusalLeavesPreexistingFileUntouched(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sources.tsv")
+	original := "project\towner/repo\t-\t-\t1700000000\n"
+	writeFile(t, dir, "sources.tsv", original)
+
+	rows := []SourceRow{{Layer: "personal", Source: "", Ref: "-", Commit: "-", Epoch: "1700000001"}} // invalid
+	if err := WriteSources(p, rows); err == nil {
+		t.Fatal("WriteSources: want error for the malformed row, got nil")
+	}
+
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Errorf("a failed WriteSources call must leave a pre-existing file byte-identical; got %q, want %q", got, original)
+	}
+}
+
+func TestWriteSourcesOverwritesExistingFileWholesale(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sources.tsv")
+	writeFile(t, dir, "sources.tsv", "old1\told2\told3\told4\told5\nsecondstale\tk\ts\th\t1\n")
+
+	rows := []SourceRow{{Layer: "project", Source: "owner/new", Ref: "-", Commit: "-", Epoch: "1700000099"}}
+	if err := WriteSources(p, rows); err != nil {
+		t.Fatalf("WriteSources: %v", err)
+	}
+
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "project\towner/new\t-\t-\t1700000099\n"
+	if string(got) != want {
+		t.Errorf("WriteSources bytes = %q, want %q (must regenerate wholesale, not append)", got, want)
+	}
+}
+
+// TestWriteSourcesModeMatchesFreshInodeViaRename proves WriteSources goes
+// through the tmp+rename discipline (Global Constraint 3), not os.WriteFile
+// over an existing path -- which only applies its mode argument at file
+// CREATION, silently preserving whatever mode the file already had. Mirrors
+// overlay's TestExcludeWriteModeMatchesBashFreshInode: seed the file at 0600
+// (deliberately not 0666&^umask) and require the post-write mode to be the
+// fresh-inode value regardless.
+func TestWriteSourcesModeMatchesFreshInodeViaRename(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sources.tsv")
+	writeFile(t, dir, "sources.tsv", "stale\n")
+	if err := os.Chmod(p, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rows := []SourceRow{{Layer: "project", Source: "owner/repo", Ref: "-", Commit: "-", Epoch: "1700000000"}}
+	if err := WriteSources(p, rows); err != nil {
+		t.Fatalf("WriteSources: %v", err)
+	}
+
+	info, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := os.FileMode(0o666) &^ currentUmaskT(t)
+	if info.Mode().Perm() != want {
+		t.Errorf("mode after WriteSources = %o, want %o (0666 &^ umask -- the original seeded 0600 must NOT survive)", info.Mode().Perm(), want)
+	}
+}
+
+// currentUmaskT reads the process umask without permanently changing it --
+// local twin of overlay's currentUmask (unexported there too; duplicated
+// here rather than imported, to keep this test self-contained).
+func currentUmaskT(t *testing.T) os.FileMode {
+	t.Helper()
+	u := syscall.Umask(0)
+	syscall.Umask(u)
+	return os.FileMode(u)
+}
+
+// ---------------------------------------------------------------- PersonalOff
+
+func TestPersonalOffTrue(t *testing.T) {
+	rows := []SourceRow{
+		{Layer: "project", Source: "owner/repo", Ref: "-", Commit: "-", Epoch: "1"},
+		{Layer: "personal", Source: "off", Ref: "-", Commit: "-", Epoch: "2"},
+	}
+	if !PersonalOff(rows) {
+		t.Error("PersonalOff = false, want true")
+	}
+}
+
+func TestPersonalOffFalseNoRows(t *testing.T) {
+	if PersonalOff(nil) {
+		t.Error("PersonalOff(nil) = true, want false")
+	}
+}
+
+func TestPersonalOffFalseDifferentSource(t *testing.T) {
+	rows := []SourceRow{{Layer: "personal", Source: "owner/dotfiles", Ref: "-", Commit: "-", Epoch: "1"}}
+	if PersonalOff(rows) {
+		t.Error("PersonalOff = true, want false (personal layer present but not off)")
+	}
+}
+
+// ---------------------------------------------------------------- SynthesizeSources
+
+func TestSynthesizeSourcesFromV1Source(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "source", "owner/repo\n")
+
+	rows, ok := SynthesizeSources(dir, "1700000000")
+	if !ok {
+		t.Fatal("SynthesizeSources = false, want true")
+	}
+	want := SourceRow{Layer: "project", Source: "owner/repo", Ref: "-", Commit: "-", Epoch: "1700000000"}
+	if len(rows) != 1 || rows[0] != want {
+		t.Errorf("SynthesizeSources = %+v, want [%+v]", rows, want)
+	}
+}
+
+func TestSynthesizeSourcesSplitsRef(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "source", "https://github.com/owner/repo#v1.2.3\n")
+
+	rows, ok := SynthesizeSources(dir, "1700000000")
+	if !ok {
+		t.Fatal("SynthesizeSources = false, want true")
+	}
+	want := SourceRow{Layer: "project", Source: "https://github.com/owner/repo", Ref: "v1.2.3", Commit: "-", Epoch: "1700000000"}
+	if len(rows) != 1 || rows[0] != want {
+		t.Errorf("SynthesizeSources = %+v, want [%+v]", rows, want)
+	}
+}
+
+func TestSynthesizeSourcesFirstHashOnlySplits(t *testing.T) {
+	// expandSource's split rule is the FIRST '#': a source string with more
+	// than one '#' (pathological, but the split rule must match exactly)
+	// keeps every subsequent '#' inside Ref.
+	dir := t.TempDir()
+	writeFile(t, dir, "source", "owner/repo#v1#extra\n")
+
+	rows, ok := SynthesizeSources(dir, "1700000000")
+	if !ok {
+		t.Fatal("SynthesizeSources = false, want true")
+	}
+	want := SourceRow{Layer: "project", Source: "owner/repo", Ref: "v1#extra", Commit: "-", Epoch: "1700000000"}
+	if len(rows) != 1 || rows[0] != want {
+		t.Errorf("SynthesizeSources = %+v, want [%+v]", rows, want)
+	}
+}
+
+func TestSynthesizeSourcesAbsentBoth(t *testing.T) {
+	dir := t.TempDir()
+	rows, ok := SynthesizeSources(dir, "1700000000")
+	if ok || rows != nil {
+		t.Errorf("SynthesizeSources(neither present) = (%+v,%v), want (nil,false)", rows, ok)
+	}
+}
+
+func TestSynthesizeSourcesAbsentWhenSourcesTSVPresent(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "source", "owner/repo\n")
+	writeFile(t, dir, "sources.tsv", "project\towner/repo\t-\t-\t1\n")
+
+	rows, ok := SynthesizeSources(dir, "1700000000")
+	if ok || rows != nil {
+		t.Errorf("SynthesizeSources(sources.tsv present) = (%+v,%v), want (nil,false)", rows, ok)
+	}
+}
+
+func TestSynthesizeSourcesAbsentWhenSourceFileMissing(t *testing.T) {
+	dir := t.TempDir()
+	rows, ok := SynthesizeSources(dir, "1700000000")
+	if ok || rows != nil {
+		t.Errorf("SynthesizeSources(no $OMK/source) = (%+v,%v), want (nil,false)", rows, ok)
+	}
+}
+
+func TestSynthesizeSourcesAbsentWhenSourceFileEmpty(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "source", "")
+	rows, ok := SynthesizeSources(dir, "1700000000")
+	if ok || rows != nil {
+		t.Errorf("SynthesizeSources(empty $OMK/source) = (%+v,%v), want (nil,false)", rows, ok)
+	}
+}
+
+func TestSynthesizeSourcesNeverWrites(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "source", "owner/repo\n")
+	if _, ok := SynthesizeSources(dir, "1700000000"); !ok {
+		t.Fatal("SynthesizeSources = false, want true")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "sources.tsv")); !os.IsNotExist(err) {
+		t.Error("SynthesizeSources must never write sources.tsv itself")
 	}
 }
