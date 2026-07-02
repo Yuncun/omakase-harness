@@ -441,6 +441,33 @@ func TestReadSourcesMissing(t *testing.T) {
 	}
 }
 
+// TestReadSourcesSkipsAnyEmptyField extends TestReadSources's single
+// empty-Source case to every field: ReadSources's any-empty-field skip
+// (state.go's `fields[0] == "" || fields[1] == "" || ...` check) must drop
+// a row whose Layer, Ref, Commit, or Epoch is empty, not just its Source.
+func TestReadSourcesSkipsAnyEmptyField(t *testing.T) {
+	cases := []struct {
+		name string
+		row  string
+	}{
+		{"empty Layer", "\thttps://github.com/owner/repo\tmain\tabc123\t1700000000\n"},
+		{"empty Source", "project\t\tmain\tabc123\t1700000000\n"},
+		{"empty Ref", "project\thttps://github.com/owner/repo\t\tabc123\t1700000000\n"},
+		{"empty Commit", "project\thttps://github.com/owner/repo\tmain\t\t1700000000\n"},
+		{"empty Epoch", "project\thttps://github.com/owner/repo\tmain\tabc123\t\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			p := filepath.Join(dir, "sources.tsv")
+			writeFile(t, dir, "sources.tsv", tc.row)
+			if got := ReadSources(p); got != nil {
+				t.Errorf("ReadSources(%s) = %+v, want nil (skipped)", tc.name, got)
+			}
+		})
+	}
+}
+
 func TestReadSourcesSkipsRowWithTooManyFields(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "sources.tsv")
@@ -756,6 +783,50 @@ func TestSynthesizeSourcesAbsentWhenSourceFileEmpty(t *testing.T) {
 	rows, ok := SynthesizeSources(dir, "1700000000")
 	if ok || rows != nil {
 		t.Errorf("SynthesizeSources(empty $OMK/source) = (%+v,%v), want (nil,false)", rows, ok)
+	}
+}
+
+// TestSynthesizeSourcesLocalPathWithHashNotSplit mirrors expandSource's
+// local-path guard (internal/overlay/source.go): a remembered $OMK/source
+// value that IS itself an existing path must never be '#'-split, even if
+// its name contains a literal '#' — init absolutizes a local-dir source
+// before remembering it, so a path like ".../my#project" is exactly the
+// kind of string this guards against corrupting into Source ".../my",
+// Ref "project".
+func TestSynthesizeSourcesLocalPathWithHashNotSplit(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "my#project")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "source", sub+"\n")
+
+	rows, ok := SynthesizeSources(dir, "1700000000")
+	if !ok {
+		t.Fatal("SynthesizeSources = false, want true")
+	}
+	want := SourceRow{Layer: "project", Source: sub, Ref: "-", Commit: "-", Epoch: "1700000000"}
+	if len(rows) != 1 || rows[0] != want {
+		t.Errorf("SynthesizeSources(local path containing '#') = %+v, want [%+v]", rows, want)
+	}
+}
+
+// TestSynthesizeSourcesNonexistentPathLookingStringStillSplits is the
+// inverse of the above: a string that merely LOOKS like a path (has
+// slashes, and even a literal '#') but does not name anything that exists
+// on disk is not a local-path source at all — it still splits on '#',
+// parity with expandSource's own behavior on an absent path.
+func TestSynthesizeSourcesNonexistentPathLookingStringStillSplits(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "source", "/no/such/dir/my#project\n")
+
+	rows, ok := SynthesizeSources(dir, "1700000000")
+	if !ok {
+		t.Fatal("SynthesizeSources = false, want true")
+	}
+	want := SourceRow{Layer: "project", Source: "/no/such/dir/my", Ref: "project", Commit: "-", Epoch: "1700000000"}
+	if len(rows) != 1 || rows[0] != want {
+		t.Errorf("SynthesizeSources(nonexistent path-looking string) = %+v, want [%+v]", rows, want)
 	}
 }
 

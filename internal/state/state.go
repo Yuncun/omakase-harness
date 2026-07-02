@@ -512,14 +512,25 @@ func PersonalOff(rows []SourceRow) bool {
 // source[i+1:]` / `source = source[:i]` for the first strings.IndexByte
 // match) — into the returned row's Source (the pre-# part) and Ref (the
 // post-# part, or "-" if there was no '#' at all, or if the '#' was the
-// last byte). Unlike expandSource itself, this never re-applies the
-// local-path guard (expandSource skips the split entirely when the raw
-// input names an existing path): $OMK/source holds an already-fully-
-// resolved remembered string — bin/init.sh:600's
-// `$SOURCE${SOURCE_REF:+#$SOURCE_REF}` (the same value as SOURCE_LABEL,
-// placed.tsv's column 3): the post-expansion source plus an optional
-// "#"+ref — not raw user input, so re-guarding it here would be
+// last byte). $OMK/source holds an already-fully-resolved remembered
+// string — bin/init.sh:600's `$SOURCE${SOURCE_REF:+#$SOURCE_REF}` (the
+// same value as SOURCE_LABEL, placed.tsv's column 3): the post-expansion
+// source plus an optional "#"+ref — not raw user input, so re-applying
+// expandSource's owner/repo-shorthand and URL rewrites here would be
 // re-litigating a decision init.sh already made once.
+//
+// The one expandSource guard THIS function DOES mirror is the local-path
+// guard: expandSource skips the '#'-split entirely when the whole raw
+// input names an existing path (its pathExists, `os.Stat` success — file
+// or dir). A remembered local-path source containing a literal '#' (e.g.
+// init absolutized "/Users/eric/my#project") is stored in $OMK/source
+// verbatim, with no ref — splitting it here would corrupt the path into
+// Source "/Users/eric/my", Ref "project". So: if the whole line names an
+// existing path, skip the split and return it whole with Ref "-". This
+// has the same time-of-check nuance as expandSource's own guard — a
+// remembered local path that has since been deleted no longer exists,
+// won't os.Stat successfully, and so WILL be split (exactly as a fresh
+// expandSource call against that same now-absent string would do).
 //
 // The returned row's Commit is always "-": a v1 repo never recorded a
 // resolved sha, and this function only reads back what is on disk, never
@@ -536,10 +547,12 @@ func SynthesizeSources(omk string, epoch string) ([]SourceRow, bool) {
 	}
 
 	source, ref := line, "-"
-	if i := strings.IndexByte(line, '#'); i >= 0 {
-		source = line[:i]
-		if rest := line[i+1:]; rest != "" {
-			ref = rest
+	if _, err := os.Stat(line); err != nil { // mirrors expandSource's pathExists guard
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			source = line[:i]
+			if rest := line[i+1:]; rest != "" {
+				ref = rest
+			}
 		}
 	}
 
