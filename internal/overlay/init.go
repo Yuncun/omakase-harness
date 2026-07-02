@@ -38,8 +38,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Yuncun/omakase-harness/internal/harness"
 	"github.com/Yuncun/omakase-harness/internal/lefthook"
@@ -78,6 +80,7 @@ const usageText = "usage: init.sh [<owner/repo[#ref]> | --source <git-url|path>]
 	"               exactly what it will untrack and the consequences, then REFUSES\n" +
 	"               unless OMAKASE_CUTOVER_CONFIRM=1 is set. You review and commit the\n" +
 	"               staged deletions yourself.\n" +
+	"  --no-personal  skip the global personal harness in this repo (remembered; re-run without it to keep skipping).\n" +
 	"  -h, --help   show this help.\n"
 
 // Regexes ported from bin/init.sh, compiled once.
@@ -107,12 +110,15 @@ var (
 func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// ---- arg parse (bin/init.sh:44-59) ----
 	cutover := false
+	noPersonal := false
 	source := ""
 	for i := 0; i < len(argv); i++ {
 		a := argv[i]
 		switch {
 		case a == "--cut-over":
 			cutover = true
+		case a == "--no-personal":
+			noPersonal = true
 		case a == "--source":
 			i++
 			if i >= len(argv) {
@@ -178,6 +184,23 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// crypto/sha256, so that "need shasum" error is unreachable (Global
 	// Constraint 9) and omitted.
 
+	// ---- personal-layer opt-out state (design §5) ----
+	// Read the prior sources.tsv (ABSENT in v1 repos — tolerated, ReadSources
+	// returns nil): a persisted personal|off row keeps the personal layer skipped
+	// until re-enabled (the row is the memory, not the flag), and an already-present
+	// file is rewritten faithfully at the end of a run. Migration synthesis of this
+	// file is Task 6's job — this only READS what is on disk.
+	sourcesPath := filepath.Join(omk, "sources.tsv")
+	sourcesExisted := fileRegular(sourcesPath)
+	priorSources := state.ReadSources(sourcesPath)
+	priorOff := state.PersonalOff(priorSources)
+	priorOffEpoch := ""
+	for _, r := range priorSources {
+		if r.Layer == "personal" && r.Source == "off" {
+			priorOffEpoch = r.Epoch
+		}
+	}
+
 	// ---- source precedence (bin/init.sh:152-154) ----
 	// Payload precedence: --source flag > OMAKASE_PAYLOAD env > remembered
 	// source ($OMK/source) > the ../payload default. A remembered source only
@@ -197,44 +220,149 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	if source != "" {
 		source, sourceRef = expandSource(source)
 	}
+	projectActive := source != ""
 
-	// ---- payload resolution: --source merge, or the plain default ----
-	// A non-empty (post-expansion) source fetches into the disposable cache and
-	// merges the base payload UNDER the source delta (bin/init.sh:172-197);
-	// otherwise PAYLOAD is OMAKASE_PAYLOAD or the binary-relative default
-	// (bin/init.sh:199). sourceLabel (placed.tsv column 3), rememberedSource
-	// ($OMK/source) and recommends (the summary) are source-only; a plain install
-	// leaves them at their neutral defaults, matching v1's SOURCE_LABEL=payload
-	// and empty SOURCE/recommends.
+	// resolveBase resolves the BASE-layer payload dir the plain-install way
+	// (bin/init.sh:199): OMAKASE_PAYLOAD overrides, else the binary-relative
+	// ../payload default. Used for a base-only install AND as the bottom of a
+	// personal-only stack. Returns (dir, true) or prints the "payload dir not
+	// found" line and returns (_, false). The single trailing slash is stripped
+	// so ${f#"$PAYLOAD"/} derives clean rel values (a pathological
+	// OMAKASE_PAYLOAD=/ collapses to "" and is rejected).
+	resolveBase := func() (string, bool) {
+		b := os.Getenv("OMAKASE_PAYLOAD")
+		if b == "" {
+			b = defaultPayload()
+		}
+		b = strings.TrimSuffix(b, "/")
+		if info, statErr := os.Stat(b); statErr != nil || !info.IsDir() {
+			fmt.Fprintf(stderr, "omakase: payload dir not found at %s\n", b)
+			return "", false
+		}
+		return b, true
+	}
+
+	// ---- project layer: fetch + base-under-delta merge (bin/init.sh:172-197) ----
+	// The project layer SUBSUMES the base machinery exactly as v1's --source merge
+	// did: runSource stages the base (defaultPayload — NOT OMAKASE_PAYLOAD, a v1
+	// invariance) UNDER the source delta, labelled with the source string, so every
+	// placed row carries that one label (sources.test.sh / I9 parity). A plain
+	// install instead leaves the bottom as the base layer (label "payload").
+	// sourceLabel (placed.tsv column 3 for the project layer), rememberedSource
+	// ($OMK/source) and recommends (the summary) are project-only; a plain install
+	// leaves them at their neutral defaults, matching v1's SOURCE_LABEL=payload and
+	// empty SOURCE/recommends.
 	sourceLabel := "payload" // bin/init.sh:103 (the source arm overrides this)
 	rememberedSource := ""
 	recommends := ""
-	var payload string
-	if source != "" {
+	var projectPayloadDir string
+	if projectActive {
 		res, code := runSource(source, sourceRef, defaultPayload(), stdout, stderr)
 		if code != 0 {
 			return code // runSource printed the message + cleaned any staging dir
 		}
 		defer os.RemoveAll(res.merged) // v1's EXIT-trap cleanup (bin/init.sh:63-68)
-		payload = res.payload
+		projectPayloadDir = res.payload
 		sourceLabel = res.label
 		rememberedSource = res.remembered
 		recommends = res.recommends
-	} else {
-		// OMAKASE_PAYLOAD overrides; otherwise the binary-relative ../payload
-		// default (dist/omakase => repo root => payload/, same as bin/../payload).
-		payload = os.Getenv("OMAKASE_PAYLOAD")
-		if payload == "" {
-			payload = defaultPayload()
+	}
+
+	// ---- personal layer: the one global per-user setting, on top (design §4/§5) ----
+	// Skipped iff --no-personal is given OR a prior personal|off row is remembered;
+	// otherwise the first line of ${XDG_CONFIG_HOME:-$HOME/.config}/omakase/personal
+	// (absent/empty ⇒ no personal layer, silently) is resolved through the SAME
+	// expandSource + fetchSource machinery as a project source (shared cache slug
+	// namespace). A personal-source failure is fail-closed with the byte-identical
+	// message a project-source failure would print (nothing placed).
+	personalActive := false
+	personalOff := noPersonal || priorOff
+	personalLabel := ""
+	personalSourceForRow := ""
+	personalRefForRow := ""
+	var personalPayloadDir string
+	if !personalOff {
+		if line := state.FirstLine(personalConfigPath()); line != "" {
+			ps, pref := expandSource(line)
+			if ps != "" {
+				pDir, _, code := fetchSource(ps, pref, stdout, stderr)
+				if code != 0 {
+					return code
+				}
+				personalPayloadDir = pDir
+				personalSourceForRow = ps
+				personalRefForRow = pref
+				personalLabel = ps
+				if pref != "" {
+					personalLabel = ps + "#" + pref
+				}
+				personalActive = true
+			}
 		}
 	}
-	// Strip ONE trailing slash so ${f#"$PAYLOAD"/} derives clean rel values (a
-	// pathological OMAKASE_PAYLOAD=/ collapses to "" and is rejected below). A
-	// no-op for the merge staging dir / cache (trailing-slash-free by construction).
-	payload = strings.TrimSuffix(payload, "/")
-	if info, statErr := os.Stat(payload); statErr != nil || !info.IsDir() {
-		fmt.Fprintf(stderr, "omakase: payload dir not found at %s\n", payload)
-		return 1
+
+	// ---- assemble the layer stack (bottom-to-top) and its placement tree ----
+	// A base-only install (no project source, no personal layer) takes the v1 path
+	// VERBATIM — no merged staging, no layers/, no sources.tsv (GC2 invariance). Any
+	// other stack routes through buildMergedStaging: base OR project at the bottom,
+	// personal on top, higher-layer-wins whole-file replacement (design §4). The
+	// engine below is unchanged; it just places the merged tree and records per-row
+	// the WINNING layer's label (labelByRel) instead of one uniform SOURCE_LABEL.
+	layered := projectActive || personalActive
+	var payload string
+	var labelByRel map[string]string
+	var specs []layerSpec
+	if layered {
+		if projectActive {
+			specs = append(specs, layerSpec{layer: LayerProject, label: sourceLabel, payloadDir: projectPayloadDir})
+		} else {
+			base, ok := resolveBase()
+			if !ok {
+				return 1
+			}
+			specs = append(specs, layerSpec{layer: LayerBase, label: "payload", payloadDir: base})
+		}
+		if personalActive {
+			specs = append(specs, layerSpec{layer: LayerPersonal, label: personalLabel, payloadDir: personalPayloadDir})
+		}
+		// §7 bridge (project-layer only): a CLAUDE.md -> AGENTS.md symlink, decided
+		// from the full stack's post-mapping sets + whether the repo tracks CLAUDE.md.
+		postSets := make(map[LayerName][]string, len(specs))
+		for _, s := range specs {
+			rels, werr := walkPayload(s.payloadDir)
+			if werr != nil {
+				return 1
+			}
+			mapped := make([]string, 0, len(rels))
+			for _, rel := range rels {
+				mapped = append(mapped, MapLayerPath(s.layer, rel))
+			}
+			postSets[s.layer] = mapped
+		}
+		if BridgeWanted(LayerProject, postSets, gitTracked(root, "CLAUDE.md")) {
+			for i := range specs {
+				if specs[i].layer == LayerProject {
+					specs[i].bridge = true
+				}
+			}
+		}
+		staging, lbl, merr := buildMergedStaging(specs)
+		if merr != nil {
+			// Fail-closed BEFORE any guard or placement: two payload files fight over
+			// one destination (the §7 personal AGENTS.md + explicit CLAUDE.local.md
+			// case). No store touched, nothing placed.
+			fmt.Fprintf(stderr, "omakase: refusing to install — %s (two payload files map to one path; nothing was placed).\n", merr)
+			return 1
+		}
+		defer os.RemoveAll(staging)
+		payload = staging
+		labelByRel = lbl
+	} else {
+		base, ok := resolveBase()
+		if !ok {
+			return 1
+		}
+		payload = base
 	}
 
 	// ---- walk the payload (Global Constraint 6, the one sanctioned divergence)
@@ -426,6 +554,21 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "  init --cut-over (guarded) to untrack the file and let the injected copy take over.")
 	}
 
+	// ---- persist each stack layer's store (design §4/§5: $OMK/layers/<layer>/) ----
+	// Built tmp+rename HERE — after every refusal-capable guard has passed (wiring,
+	// lefthook, incumbent, cut-over) and before the place loop's and the orphan
+	// sweep's working-tree mutations. So a refusal above leaves $OMK/layers/
+	// untouched, and a post-checkout heal racing a removal never observes a partial
+	// store (design §4 rebuild ordering / GC3). A base-only install has no specs and
+	// builds NOTHING (GC2). Each store is the layer's FULL post-mapping file set —
+	// the shadow-restore source `omakase personal off` / project replacement need.
+	for _, s := range specs {
+		if _, blErr := BuildLayerStore(omk, s.layer, s.label, s.payloadDir, s.bridge); blErr != nil {
+			fmt.Fprintln(stderr, blErr.Error())
+			return 1
+		}
+	}
+
 	umask := currentUmask()
 
 	// ---- place loop (bin/init.sh:455-497) ----
@@ -596,6 +739,54 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
+
+	// ---- sources.tsv: the layer stack, bottom-to-top (design §5/§9) ----
+	// Rows for the project + personal layers only (base has none). A --no-personal
+	// or a remembered personal|off is recorded as a personal|off row. commit is "-"
+	// throughout: this task ships the FORMAT (design §5: "only the format ships
+	// now"); the resolved-sha pin is Phase 4's `update`/pin-semantics — never
+	// guessed here. epoch = current unix time. Written only when there is a row to
+	// record OR the file already exists (then rewritten faithfully); a bare
+	// base-only install with no prior sources.tsv writes nothing (GC2).
+	epoch := strconv.FormatInt(time.Now().Unix(), 10)
+	var srcRows []state.SourceRow
+	if projectActive {
+		srcRows = append(srcRows, state.SourceRow{Layer: "project", Source: source, Ref: refField(sourceRef), Commit: "-", Epoch: epoch})
+	}
+	if personalOff {
+		// --no-personal freshly given REFRESHES the epoch; a remembered off-row
+		// re-run WITHOUT the flag keeps its epoch (the row is the memory).
+		offEpoch := epoch
+		if priorOff && !noPersonal && priorOffEpoch != "" {
+			offEpoch = priorOffEpoch
+		}
+		srcRows = append(srcRows, state.SourceRow{Layer: "personal", Source: "off", Ref: "-", Commit: "-", Epoch: offEpoch})
+	} else if personalActive {
+		srcRows = append(srcRows, state.SourceRow{Layer: "personal", Source: personalSourceForRow, Ref: refField(personalRefForRow), Commit: "-", Epoch: epoch})
+	}
+	if len(srcRows) > 0 || sourcesExisted {
+		rowsToWrite := srcRows
+		if len(rowsToWrite) == 0 {
+			rowsToWrite = priorSources // faithful rewrite of an existing file we add nothing to
+		}
+		if err := state.WriteSources(sourcesPath, rowsToWrite); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+	}
+
+	// labelFor is placed.tsv column 3: the WINNING layer's label for a layered
+	// install (base "payload", project/personal the source string), else the
+	// base-only sourceLabel ("payload"). Every layered placed rel is in labelByRel;
+	// the fallback covers the base-only path (labelByRel is nil).
+	labelFor := func(rel string) string {
+		if labelByRel != nil {
+			if l, ok := labelByRel[rel]; ok {
+				return l
+			}
+		}
+		return sourceLabel
+	}
 	var rows []state.PlacedRow
 	for _, rel := range placed {
 		if rel == "" {
@@ -617,7 +808,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		rows = append(rows, state.PlacedRow{
 			Rel:     rel,
 			Kind:    harness.KindOf(rel),
-			Src:     sourceLabel,
+			Src:     labelFor(rel),
 			Hash:    state.HashOf(filepath.Join(root, rel)),
 			Enabled: "1",
 		})
@@ -663,6 +854,15 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 
 	// ---- summary (bin/init.sh:652-685) ----
 	fmt.Fprintf(stdout, "omakase: placed %d file(s), overwrote %d to match payload, skipped %d committed path(s).\n", len(placed), len(overwrote), len(skipped))
+	// The personal layer's one-line notice (design §5), printed immediately after
+	// the count line. Layered: announce it. Skipped only because of a REMEMBERED
+	// off-row (not a freshly-given --no-personal): remind why. --no-personal given
+	// this run prints neither (the user just typed it).
+	if personalActive {
+		fmt.Fprintf(stdout, "omakase: personal harness layered on top (%s) — omakase personal off to remove it everywhere.\n", personalLabel)
+	} else if priorOff && !noPersonal {
+		fmt.Fprintln(stdout, "omakase: personal harness skipped in this repo (init --no-personal was set; re-init after 'omakase personal' changes to reconsider).")
+	}
 	for _, p := range placed {
 		if p != "" {
 			fmt.Fprintf(stdout, "  + %s\n", p)
