@@ -960,38 +960,10 @@ func TestPayloadNotFound(t *testing.T) {
 	eq(t, "stderr", stderr.String(), "omakase: payload dir not found at "+missing+"\n")
 }
 
-// ---------------------------------------------------- source stub (Task 4)
-
-func TestSourceFlagStubbed(t *testing.T) {
-	initRepo(t)
-	stubLefthook(t)
-	var stdout, stderr strings.Builder
-	code := RunInit([]string{"--source", "/some/local/harness"}, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("exit = %d, want 1", code)
-	}
-	eq(t, "source stub stderr", stderr.String(), "omakase: --source is not yet ported\n")
-	eq(t, "source stub stdout", stdout.String(), "")
-}
-
-// A remembered $OMK/source (no flag, no OMAKASE_PAYLOAD override) also routes to
-// the Task 4 stub — the bare-init-refresh precedence (bin/init.sh:152-154).
-func TestRememberedSourceStubbed(t *testing.T) {
-	_, repo := initRepo(t)
-	stubLefthook(t)
-	os.Unsetenv("OMAKASE_PAYLOAD") // ensure no env override
-	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(repo.OMK, "source"), "you/harness\n")
-
-	var stdout, stderr strings.Builder
-	code := RunInit(nil, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("exit = %d, want 1", code)
-	}
-	eq(t, "remembered source stub", stderr.String(), "omakase: --source is not yet ported\n")
-}
+// ---------------------------------------------------- source precedence
+// (The full --source flow — cache, manifest, ref pin, base+delta merge, source
+// memory — is exercised in source_test.go. These two pin the precedence edges
+// the engine owns.)
 
 // OMAKASE_PAYLOAD set alongside a remembered $OMK/source: the env override wins,
 // so the source is NOT taken and a plain payload install proceeds (precedence:
