@@ -411,6 +411,13 @@ func TestPersonalListGlobSemantics(t *testing.T) {
 	if err := os.Symlink(filepath.Join(home, ".claude/skills/realskill"), filepath.Join(home, ".claude/skills/linkedskill")); err != nil {
 		t.Fatal(err)
 	}
+	// bash's default glob (dotglob unset, confirmed against bash 3.2/5.x: a
+	// bare `*.md` or `*/ ` never matches a leading-dot name) must exclude a
+	// dotfile *.md and a dot-directory under skills/.
+	writeFile(t, home, ".claude/rules/.hidden.md", "x\n")
+	if err := os.MkdirAll(filepath.Join(home, ".claude/skills/.hiddenskill"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	got := PersonalList(home)
 	byPath := map[string]string{}
@@ -429,5 +436,11 @@ func TestPersonalListGlobSemantics(t *testing.T) {
 	}
 	if kind, ok := byPath["~/.claude/skills/linkedskill/"]; !ok || kind != "skill" {
 		t.Errorf("symlink-to-dir skill: want row kind %q, got ok=%v kind=%q", "skill", ok, kind)
+	}
+	if _, ok := byPath["~/.claude/rules/.hidden.md"]; ok {
+		t.Errorf("dotfile *.md: want no row (bash glob without dotglob never matches it), got one")
+	}
+	if _, ok := byPath["~/.claude/skills/.hiddenskill/"]; ok {
+		t.Errorf("dot-directory under skills/: want no row (bash glob without dotglob never matches it), got one")
 	}
 }
