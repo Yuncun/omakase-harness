@@ -298,6 +298,43 @@ else fail "P9 fallback: stdout DIFFERS from a direct legacy run"; sed 's/^/     
 if [ "$P9RC" -eq 0 ]; then pass "P9 fallback: exit 0"
 else fail "P9 fallback: exit $P9RC (want 0)"; fi
 
+# ---------- P10: HOME unset entirely (not just an empty home dir) ----------
+# bash builds the personal roots as "${HOME:-}/.claude" — with HOME UNSET that is the
+# ABSOLUTE "/.claude" (which almost never exists), so Global renders (none). A Go port
+# using filepath.Join(home, ".claude") would instead produce the RELATIVE ".claude",
+# resolving against the cwd — and R1's repo root carries a committed .claude/, so the
+# broken binary lists the repo's OWN files under GLOBAL (ultrareview bug_002). The Go
+# side runs via OMAKASE_BIN pointed at the prebuilt binary (not via the shim's rebuild):
+# with HOME unset, `go build` itself dies (no GOCACHE) — resolution is under test here,
+# not the rebuild. P8 covers the empty-but-existing home dir; this covers unset.
+echo "== P10: unset HOME =="
+if [ -d /.claude ] || [ -d /.copilot ]; then
+  skip "P10: this machine has a root-level /.claude or /.copilot — the unset-HOME contrast is not testable here"
+else
+  [ -d "$R1/.claude" ] && pass "P10: fixture repo carries .claude/ in its root (cwd-relative trap armed)" \
+                       || fail "P10: fixture repo lost its .claude/ dir — scenario no longer exercises the trap"
+  for mode in "" "--markdown"; do
+    tag=term; [ -n "$mode" ] && tag=md
+    ( cd "$R1" && env -u OMAKASE_ICON -u NO_COLOR -u OMAKASE_BIN -u HOME PATH="$P_PATH" LEFTHOOK_BIN="$P_LH" \
+        OMAKASE_NOW="$NOW" bash "$LEGACY" $mode ) >"$TMP/p10-leg.out" 2>"$TMP/p10-leg.err"
+    P10LRC=$?
+    ( cd "$R1" && env -u OMAKASE_ICON -u NO_COLOR -u HOME PATH="$P_PATH" LEFTHOOK_BIN="$P_LH" \
+        OMAKASE_NOW="$NOW" OMAKASE_BIN="$BIN" bash "$SHIM" $mode ) >"$TMP/p10-shim.out" 2>"$TMP/p10-shim.err"
+    P10SRC=$?
+    if grep -qF "$NOTICE" "$TMP/p10-shim.err"; then
+      fail "P10 unset HOME [$tag]: shim fell back to legacy bash (the Go binary did not run)"
+      continue
+    fi
+    if diff "$TMP/p10-leg.out" "$TMP/p10-shim.out" >"$TMP/p10d" 2>&1; then pass "P10 unset HOME [$tag]: stdout byte-identical"
+    else fail "P10 unset HOME [$tag]: stdout DIFFERS"; sed 's/^/      /' "$TMP/p10d"; fi
+    if diff "$TMP/p10-leg.err" "$TMP/p10-shim.err" >"$TMP/p10de" 2>&1; then pass "P10 unset HOME [$tag]: stderr byte-identical"
+    else fail "P10 unset HOME [$tag]: stderr DIFFERS"; sed 's/^/      /' "$TMP/p10de"; fi
+    [ "$P10LRC" -eq "$P10SRC" ] && pass "P10 unset HOME [$tag]: exit codes equal ($P10LRC)" \
+                                || fail "P10 unset HOME [$tag]: exit codes differ (legacy=$P10LRC shim=$P10SRC)"
+    expect_global_empty "P10 unset HOME [$tag]" "$TMP/p10-leg.out" "$tag"
+  done
+fi
+
 rm -rf "$TMP"
 echo ""
 [ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }

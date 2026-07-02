@@ -59,10 +59,16 @@ func CommittedList(root string) []string {
 // each, then ~/.copilot/skills/*/ directories (classified like a .github
 // skill — deliberate, matching bash's kind_of ".github/skills/$b/"). A
 // missing ~/.claude or ~/.copilot yields no rows for that host.
+//
+// The roots are built like bash's `ch="${HOME:-}/.claude"` — plain string
+// concatenation, NOT filepath.Join: with home empty (HOME unset or empty),
+// bash yields the ABSOLUTE "/.claude" (which almost never exists), while
+// Join drops the empty element and yields the RELATIVE ".claude", resolving
+// against the cwd and mislabeling a repo's own .claude/ as GLOBAL.
 func PersonalList(home string) [][2]string {
 	var rows [][2]string
 
-	ch := filepath.Join(home, ".claude")
+	ch := home + "/.claude"
 	if isDir(ch) {
 		if exists(filepath.Join(ch, "CLAUDE.md")) {
 			rows = append(rows, [2]string{"~/.claude/CLAUDE.md", harness.KindOf("CLAUDE.md")})
@@ -84,7 +90,7 @@ func PersonalList(home string) [][2]string {
 		}
 	}
 
-	co := filepath.Join(home, ".copilot")
+	co := home + "/.copilot" // concat, not Join — see the PersonalList doc comment
 	if isDir(co) {
 		for _, b := range globDirs(filepath.Join(co, "skills")) {
 			rows = append(rows, [2]string{"~/.copilot/skills/" + b + "/", harness.KindOf(".github/skills/" + b + "/")})

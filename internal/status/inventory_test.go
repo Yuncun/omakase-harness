@@ -386,6 +386,29 @@ func TestPersonalListNoHome(t *testing.T) {
 	}
 }
 
+// TestPersonalListUnsetHome pins the unset-HOME contract (ultrareview
+// bug_002): with home == "" the roots must be the ABSOLUTE "/.claude" and
+// "/.copilot" — bash's `${HOME:-}/.claude` — never the cwd-relative
+// ".claude". The cwd is set to a directory that DOES carry .claude/rules/,
+// so a regression to filepath.Join (which drops the empty element and goes
+// relative) would surface those files and fail here.
+func TestPersonalListUnsetHome(t *testing.T) {
+	if isDir("/.claude") || isDir("/.copilot") {
+		t.Skip("machine has a root-level /.claude or /.copilot — the unset-HOME contrast is not testable here")
+	}
+	trap := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(trap, ".claude", "rules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(trap, ".claude", "rules", "team.md"), []byte("rule\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(trap)
+	if got := PersonalList(""); len(got) != 0 {
+		t.Errorf("PersonalList(\"\") = %v, want empty (roots must be /.claude and /.copilot, not cwd-relative)", got)
+	}
+}
+
 // TestPersonalListGlobSemantics locks the two glob-edge-case rules the brief
 // calls out (not bash-capturable in isolation, so this is a semantics test,
 // not a contract-capture golden): "*/ " matches dirs AND symlinks-to-dirs
