@@ -6,10 +6,10 @@ import (
 )
 
 // run(argv, stdout, stderr) is the pure dispatch function main() wraps with
-// os.Exit. These tests pin the two behaviors this task must produce: the
+// os.Exit. These tests pin the two behaviors dispatch must produce: the
 // bare-invocation usage message and the unknown-command error — both with
-// exit code 2. "status" is asserted to dispatch to the unknown-command path
-// since it is not registered in this task (Task 4 adds it to verbs).
+// exit code 2. ("status" is now registered — Task 4 — so it no longer takes
+// the unknown-command path; an unregistered verb name is used here instead.)
 
 func TestRunNoArgs(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -33,7 +33,7 @@ func TestRunUnknownCommand(t *testing.T) {
 		argv []string
 	}{
 		{"nope", []string{"omakase", "nope"}},
-		{"status not yet registered", []string{"omakase", "status"}},
+		{"unregistered verb", []string{"omakase", "bogus"}},
 	}
 
 	for _, tc := range cases {

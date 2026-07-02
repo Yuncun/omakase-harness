@@ -7,11 +7,18 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/Yuncun/omakase-harness/internal/status"
 )
 
-// verbs maps a command name to its handler. Empty in this task; later tasks
-// register verbs here (Task 4 adds "status").
-var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{}
+// verbs maps a command name to its handler. The handler receives the FULL argv
+// (argv[0]="omakase", argv[1]=the verb); each entry forwards the args AFTER the
+// verb (argv[2:]) to its implementation.
+var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
+	"status": func(argv []string, stdout, stderr io.Writer) int {
+		return status.Run(argv[2:], stdout, stderr)
+	},
+}
 
 // run is the pure dispatch function: no I/O beyond the given writers, no
 // process exit. main() wraps it with os.Exit so it stays testable.
