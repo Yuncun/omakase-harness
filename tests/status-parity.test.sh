@@ -105,6 +105,23 @@ expect_global_empty(){
   else fail "$label: Global group is NOT empty right after its header — fixture may not exercise empty-HOME"; fi
 }
 
+# expect_injected_empty <label> <file> <mode>: the Injected twin of the check above,
+# pinning that the INJECTED group renders (none) even though placed.tsv is present and
+# non-empty (every row was skipped — omakase's own .omakase/* machinery, per
+# bin/legacy/status.sh:110,152). A bare "(none)" would be satisfied by the Committed
+# or Global section, so require the line right AFTER the Injected header to be that
+# mode's empty-group marker.
+expect_injected_empty(){
+  local label="$1" file="$2" mode="$3" hdr empty
+  if [ "$mode" = md ]; then hdr='^### Injected '; empty='- _(none)_'
+  else                       hdr='^INJECTED ';     empty='    (none)'; fi
+  if awk -v hdr="$hdr" -v empty="$empty" \
+      '$0 ~ hdr { g = NR } g && NR == g + 1 && $0 == empty { ok = 1 } END { exit ok ? 0 : 1 }' \
+      "$file"
+  then pass "$label: Injected group renders empty (line after the header is '$empty')"
+  else fail "$label: Injected group is NOT empty right after its header — fixture may not exercise the all-rows-skipped state"; fi
+}
+
 # parity <label> <cwd> <home> <flag-or-empty> [marker...]: run both impls, compare
 # stdout/stderr/exit, assert non-empty legacy stdout on an exit-0 run, and (when markers
 # are given) assert the legacy capture contains them — see expect_marker above.
@@ -333,6 +350,51 @@ else
                                 || fail "P10 unset HOME [$tag]: exit codes differ (legacy=$P10LRC shim=$P10SRC)"
     expect_global_empty "P10 unset HOME [$tag]" "$TMP/p10-leg.out" "$tag"
   done
+fi
+
+# ---------- P11: placed.tsv present but EVERY row is skipped (.omakase/* machinery) ----------
+# The provenance ledger exists and is non-empty, yet the INJECTED inventory must render
+# (none): the render loop drops omakase's own .omakase/* machinery rows (bin/legacy/
+# status.sh:110,152). Paired with an empty HOME so GLOBAL renders (none) too. The hand-built
+# install carries no lefthook.yml, so the guards chart degrades to the "not resolved" note
+# identically on both sides — P11 is therefore NOT gated on lefthook. Hashes are a valid
+# 64-hex shape (never read: these rows are skipped before any drift check).
+echo "== P11: placed.tsv all-rows-skipped => Injected (none) =="
+HE11="$TMP/home-empty-p11"; rm -rf "$HE11"; mkdir -p "$HE11"
+R11="$TMP/p11"; newrepo "$R11"
+COMMON11="$(cd "$R11" && cd "$(git rev-parse --git-common-dir)" && pwd)"; mkdir -p "$COMMON11/omakase"
+{ printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/bin/omakase-gate.sh' guard payload 0000000000000000000000000000000000000000000000000000000000000000 1
+  printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/gates/example.sh'     guard payload 1111111111111111111111111111111111111111111111111111111111111111 1
+} > "$COMMON11/omakase/placed.tsv"
+parity "P11 all-skipped [term]" "$R11" "$HE11" ""
+expect_injected_empty "P11 all-skipped [term]" "$TMP/leg.out" term
+expect_global_empty   "P11 all-skipped [term]" "$TMP/leg.out" term
+parity "P11 all-skipped [md]"   "$R11" "$HE11" "--markdown"
+expect_injected_empty "P11 all-skipped [md]"   "$TMP/leg.out" md
+
+# ---------- P12: an INJECTED symlink row that is ALSO drifted ----------
+# Drift for a symlink is a change to the LINK TARGET STRING, not the target's content:
+# omakase_hash_of / state.HashOf hash the readlink string (bin/legacy/status.sh:38-40).
+# Seed the ledger with the hash of the ORIGINAL target, then repoint the symlink at a
+# DIFFERENT path — the current readlink hash then differs from the ledger, so the row must
+# render as an arrow row (-> term / → md) carrying the DRIFTED marker, byte-identically on
+# both impls. The symlink is left untracked (is_drifted returns false for a tracked path)
+# and may dangle (drift never dereferences it).
+echo "== P12: drifted symlink row =="
+if command -v shasum >/dev/null 2>&1; then p12sha(){ shasum -a 256; }
+elif command -v sha256sum >/dev/null 2>&1; then p12sha(){ sha256sum; }
+else p12sha(){ echo nodigest; }; fi
+if [ "$(printf x | p12sha | awk '{print $1}')" = nodigest ]; then
+  skip "P12: no shasum/sha256sum on PATH — symlink drift cannot be computed"
+else
+  R12="$TMP/p12"; newrepo "$R12"
+  COMMON12="$(cd "$R12" && cd "$(git rev-parse --git-common-dir)" && pwd)"; mkdir -p "$COMMON12/omakase"
+  H12ORIG="$(printf '%s' 'orig-target.md' | p12sha | awk '{print $1}')"   # ledger records the ORIGINAL link-target-string hash
+  printf '%s\t%s\t%s\t%s\t%s\n' '.claude/rules/link.md' rule payload "$H12ORIG" 1 > "$COMMON12/omakase/placed.tsv"
+  mkdir -p "$R12/.claude/rules"
+  ( cd "$R12/.claude/rules" && ln -s changed-target.md link.md )   # repointed => readlink 'changed-target.md' != ledger's 'orig-target.md' => DRIFTED
+  parity "P12 drifted symlink [term]" "$R12" "$H1" ""           "DRIFTED" "->"
+  parity "P12 drifted symlink [md]"   "$R12" "$H1" "--markdown" "DRIFTED" "→"
 fi
 
 rm -rf "$TMP"
