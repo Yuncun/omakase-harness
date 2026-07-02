@@ -32,6 +32,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Yuncun/omakase-harness/internal/harness"
@@ -235,13 +236,44 @@ func personalUnlayer(root, common, omk string, personalRow state.SourceRow, rema
 	}
 	lowerDir := filepath.Join(omk, "layers", string(lowerLayer))
 	lowerFilesDir := filepath.Join(lowerDir, "files")
-	// The lower store's placed.tsv IS the post-unlayer merged view: after personal
-	// is gone the stack is a SINGLE layer, so its store (labels, hashes, kinds, and
-	// lexical order) already equals what a fresh init of just that layer produces.
+	// The lower store's placed.tsv is the lower layer's FULL post-mapping payload set
+	// (BuildLayerStore applies NO git-tracking filter). A fresh no-personal init of
+	// just that layer, by contrast, only ever places the UNTRACKED subset — its place
+	// loop SKIPs every dest the repo already commits ("SKIP (already tracked)"). So the
+	// post-unlayer live view is NOT the whole lower store: it is the lower store minus
+	// every path the repo tracks. Rebuilding directly from the store would resurrect a
+	// committed path a fresh init omits (leaking it into placed.tsv / the snapshot / the
+	// exclude block, over-excluding its top dir). Filter through the SAME gitTracked
+	// check init uses.
+	isTracked := func(rel string) bool { return gitTracked(root, rel) }
 	lowerRows := state.ReadPlaced(filepath.Join(lowerDir, "placed.tsv"))
-	lowerHas := make(map[string]bool, len(lowerRows))
+	lowerHas := make(map[string]bool, len(lowerRows)) // FULL set — the restore-source lookup
+	var liveLowerRows []state.PlacedRow               // UNTRACKED subset — the post-unlayer live view
 	for _, r := range lowerRows {
 		lowerHas[r.Rel] = true
+		if !isTracked(r.Rel) {
+			liveLowerRows = append(liveLowerRows, r)
+		}
+	}
+
+	// ---- re-derive the §7 bridge exactly as a fresh no-personal init would (mapping.go's
+	// BridgeWanted, mirrored — its signature fits as-is). With personal gone the stack is
+	// a single layer, so BridgeWanted sees only the lower layer's set: if the lower layer
+	// is the project, ships a root AGENTS.md, no CLAUDE.md is present anywhere, and the
+	// repo does not track CLAUDE.md, a fresh init WOULD place the CLAUDE.md -> AGENTS.md
+	// symlink. The original stack may have built the project store with bridge=false (a
+	// personal-layer CLAUDE.md suppressed it), so the lower store need not carry the
+	// bridge — add it here so `off` matches a fresh init. (When the store already carries
+	// the bridge, its CLAUDE.md row makes BridgeWanted false, so no duplicate is added and
+	// that row flows through liveLowerRows untouched. The base layer never bridges, so a
+	// personal-over-base stack takes addBridge=false naturally.) The bridge is hashed off
+	// the symlink itself (state.HashOf of a symlink digests its target string "AGENTS.md",
+	// exactly as BuildLayerStore records it). ----
+	lowerRels := placedRels(lowerRows) // FULL set — the membership input init's BridgeWanted uses
+	addBridge := BridgeWanted(lowerLayer, map[LayerName][]string{lowerLayer: lowerRels}, isTracked("CLAUDE.md"))
+	lowerLabel := "payload"
+	if len(lowerRows) > 0 {
+		lowerLabel = lowerRows[0].Src // every store row carries the one layer label
 	}
 
 	// Read the LIVE placed.tsv BEFORE rebuilding it — the personal-won set is every
@@ -250,8 +282,9 @@ func personalUnlayer(root, common, omk string, personalRow state.SourceRow, rema
 
 	// ---- rebuild snapshot + placed.tsv to the post-unlayer view, BEFORE any
 	// working-tree deletion (design §4 rebuild ordering: a racing post-checkout heal
-	// never observes a stale mix). The snapshot becomes exactly the lower store's
-	// files — NO personal files remain, so ensure-present can never resurrect one. ----
+	// never observes a stale mix). The snapshot becomes exactly the post-unlayer live
+	// files (untracked lower subset + the re-derived bridge) — NO personal files remain,
+	// and NO tracked path leaks in, so ensure-present can never resurrect one. ----
 	snap := filepath.Join(omk, "payload-snapshot")
 	if err := os.RemoveAll(snap); err != nil {
 		return 1
@@ -259,26 +292,46 @@ func personalUnlayer(root, common, omk string, personalRow state.SourceRow, rema
 	if err := os.MkdirAll(snap, 0o755); err != nil {
 		return 1
 	}
-	if isDir(lowerFilesDir) {
-		if err := copyTree(lowerFilesDir, snap); err != nil {
+	for _, r := range liveLowerRows {
+		src := filepath.Join(lowerFilesDir, r.Rel)
+		dst := filepath.Join(snap, r.Rel)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return 1
+		}
+		if err := CopyEntry(src, dst); err != nil {
 			return 1
 		}
 	}
-	if err := state.WritePlaced(filepath.Join(omk, "placed.tsv"), lowerRows); err != nil {
+	if addBridge {
+		if err := os.Symlink("AGENTS.md", filepath.Join(snap, "CLAUDE.md")); err != nil {
+			return 1
+		}
+		liveLowerRows = append(liveLowerRows, state.PlacedRow{
+			Rel:     "CLAUDE.md",
+			Kind:    harness.KindOf("CLAUDE.md"),
+			Src:     lowerLabel,
+			Hash:    state.HashOf(filepath.Join(snap, "CLAUDE.md")),
+			Enabled: "1",
+		})
+	}
+	// Lexical by dest rel (Global Constraint 6 discipline) — the untracked subset already
+	// arrives lexical from the store, but the appended bridge must sort into place so
+	// placed.tsv / the exclude block match a fresh init's lexical walk order.
+	sort.Slice(liveLowerRows, func(i, j int) bool { return liveLowerRows[i].Rel < liveLowerRows[j].Rel })
+	if err := state.WritePlaced(filepath.Join(omk, "placed.tsv"), liveLowerRows); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
 
 	// ---- re-derive the exclude + .worktreeinclude blocks from the post-unlayer
-	// placed set, so entries a personal-only path contributed (e.g. CLAUDE.local.md)
-	// are dropped. ----
-	if code := rewriteExcludeWtinc(root, common, placedRels(lowerRows), stderr); code != 0 {
+	// live set, so entries a personal-only path contributed (e.g. CLAUDE.local.md) are
+	// dropped and a committed path never over-excludes its top dir. ----
+	if code := rewriteExcludeWtinc(root, common, placedRels(liveLowerRows), stderr); code != 0 {
 		return code
 	}
 
 	// ---- working-tree unlayer ----
 	umask := currentUmask()
-	isTracked := func(rel string) bool { return gitTracked(root, rel) }
 	restored, deleted := 0, 0
 	for _, row := range liveRows {
 		if row.Src != personalLabel {
@@ -313,24 +366,48 @@ func personalUnlayer(root, common, omk string, personalRow state.SourceRow, rema
 		}
 	}
 
+	// ---- place the re-derived bridge into the working tree (a fresh no-personal init
+	// would). It is an ADDITION, not a restore/delete, so it does not touch the counts.
+	// Skip when an identical symlink is already present (idempotent re-run). ----
+	if addBridge {
+		bridgeDest := filepath.Join(root, "CLAUDE.md")
+		already := false
+		if isSymlink(bridgeDest) {
+			if tgt, err := os.Readlink(bridgeDest); err == nil && tgt == "AGENTS.md" {
+				already = true
+			}
+		}
+		if !already {
+			if code := placeFile(filepath.Join(snap, "CLAUDE.md"), "CLAUDE.md", root, umask, stderr); code != 0 {
+				return code
+			}
+		}
+	}
+
 	// ---- sources.tsv: drop the personal row. When nothing remains (a
 	// personal-over-base stack), remove the file so the repo matches a base-only
 	// install (GC2: base-only has no sources.tsv); otherwise rewrite the survivors. ----
 	sourcesPath := filepath.Join(omk, "sources.tsv")
 	if len(remaining) == 0 {
 		removeF(sourcesPath)
+		// With no source rows left the stack is base-only, and a base-only install has
+		// NO layers/ at all (GC2 shape). Drop the whole layers/ tree — the base store is
+		// rebuildable from the embedded payload — rather than leaving layers/base behind.
+		if err := os.RemoveAll(filepath.Join(omk, "layers")); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
 	} else {
 		if err := state.WriteSources(sourcesPath, remaining); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-	}
-
-	// ---- remove the personal store (tolerates an already-missing one, healing the
-	// stale seam). ----
-	if err := RemoveLayerDir(omk, LayerPersonal); err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
+		// ---- remove only the personal store (a lower source survives; tolerates an
+		// already-missing store, healing the stale seam). ----
+		if err := RemoveLayerDir(omk, LayerPersonal); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
 	}
 
 	fmt.Fprintf(stdout, "omakase: personal layer removed from this repo (restored %d file(s), deleted %d).\n", restored, deleted)

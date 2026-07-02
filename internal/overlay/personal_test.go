@@ -1,6 +1,7 @@
 package overlay
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -142,6 +143,13 @@ func TestPersonalSetAppliesToInitializedRepo(t *testing.T) {
 	si, ai := strings.Index(out, setLine), strings.Index(out, applyLine)
 	if si < 0 || ai < 0 || si > ai {
 		t.Fatalf("set line must precede the apply line:\n%s", out)
+	}
+	// The apply ANNOUNCE ("applying to this repo now (bare init).") must precede the
+	// bare init's own summary — the verb owns the announce line, the engine's summary
+	// follows (Task 5 ordering).
+	summaryLine := "omakase: placed "
+	if smi := strings.Index(out, summaryLine); smi < 0 || ai > smi {
+		t.Fatalf("apply announce must precede the init summary:\n%s", out)
 	}
 	// The personal layer actually landed.
 	eq(t, "CLAUDE.local.md applied", readFileT(t, filepath.Join(dir, "CLAUDE.local.md")), "personal doctrine\n")
@@ -458,6 +466,216 @@ func TestPersonalOffGC8Refusal(t *testing.T) {
 	if _, err := os.Stat(cfg); err == nil {
 		t.Error("global config not cleared before the GC8 refusal")
 	}
+}
+
+// ---------------------------------------------------------------- twin-diff (the invariant)
+
+// The design §4 invariant: after `personal off`, the repo's live state must equal
+// what a fresh init WITHOUT the personal layer would produce. These two tests prove
+// it the STRONGEST way — a TWIN repo runs a fresh no-personal init from the SAME
+// project source over the SAME committed files, and the two repos' placed.tsv bytes,
+// exclude-block bytes, and payload-snapshot trees are asserted byte-equal. They are
+// the regression catchers for the two leaks: a committed harness path resurrected by
+// the store→live rebuild, and a bridge the fresh init would place but off omitted.
+
+// TestPersonalOffTwinDiffCommittedPath (Finding 1): an adopter COMMITS a
+// harness-shipped path both project and personal ship. A fresh no-personal init SKIPs
+// it (tracked); `off` must too — never resurrect it into placed.tsv / the snapshot /
+// the exclude block from the (unfiltered) lower store.
+func TestPersonalOffTwinDiffCommittedPath(t *testing.T) {
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t) // empty base folded under the project
+
+	proj := newSourceRepo(t)
+	writeFile(t, filepath.Join(proj, "omakase.manifest"), "name: proj\n")
+	writeFile(t, filepath.Join(proj, "payload", ".claude", "rules", "r.md"), "proj rule\n")
+	writeFile(t, filepath.Join(proj, "payload", ".omakase", "gates", "shared.sh"), "PROJECT\n")
+	commitAll(t, proj, "proj")
+
+	// The personal source ALSO ships the committed path (won at init but tracked ⇒
+	// skipped), plus a sole-personal file (placed then deleted at off).
+	psrc := newPersonalSource(t, map[string]string{
+		".omakase/gates/shared.sh": "PERSONAL\n",
+		".omakase/gates/ponly.sh":  "P ONLY\n",
+	})
+
+	// ---- twin A: commit the harness path, stack project+personal, then `off`.
+	dirA, repoA := initRepo(t)
+	writeFile(t, filepath.Join(dirA, ".omakase", "gates", "shared.sh"), "COMMITTED\n")
+	commitAll(t, dirA, "adopt")
+	setPersonalConfig(t, psrc)
+	var oa, ea strings.Builder
+	if code := RunInit([]string{"--source", proj}, &oa, &ea); code != 0 {
+		t.Fatalf("A stack init exit = %d; stderr=%q", code, ea.String())
+	}
+	var offo, offe strings.Builder
+	if code := RunPersonal([]string{"off"}, &offo, &offe); code != 0 {
+		t.Fatalf("A off exit = %d; stderr=%q", code, offe.String())
+	}
+
+	// ---- twin B: SAME committed path, fresh no-personal init.
+	dirB, repoB := initRepo(t)
+	writeFile(t, filepath.Join(dirB, ".omakase", "gates", "shared.sh"), "COMMITTED\n")
+	commitAll(t, dirB, "adopt")
+	isolatePersonalConfig(t)
+	var ob, eb strings.Builder
+	if code := RunInit([]string{"--source", proj}, &ob, &eb); code != 0 {
+		t.Fatalf("B fresh no-personal init exit = %d; stderr=%q", code, eb.String())
+	}
+
+	// The committed path must NOT be in A's post-off placed.tsv (a fresh init omits it).
+	for _, r := range state.ReadPlaced(filepath.Join(repoA.OMK, "placed.tsv")) {
+		if r.Rel == ".omakase/gates/shared.sh" {
+			t.Errorf("off resurrected the committed path into placed.tsv: %+v", r)
+		}
+	}
+	assertTwinsEqual(t, repoA, repoB, dirA, dirB)
+}
+
+// TestPersonalOffTwinDiffPersonalCLAUDEmd (Finding 2): the personal layer ships an
+// explicit CLAUDE.md, suppressing the §7 bridge at stack-init time. A fresh
+// no-personal init WOULD place the bridge (project ships AGENTS.md, nothing else
+// provides CLAUDE.md); `off` must re-derive it into the working tree, the snapshot,
+// placed.tsv, and the exclude block.
+func TestPersonalOffTwinDiffPersonalCLAUDEmd(t *testing.T) {
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	proj := newSourceRepo(t)
+	writeFile(t, filepath.Join(proj, "omakase.manifest"), "name: proj\n")
+	writeFile(t, filepath.Join(proj, "payload", "AGENTS.md"), "project agents\n")
+	writeFile(t, filepath.Join(proj, "payload", ".claude", "rules", "r.md"), "proj rule\n")
+	commitAll(t, proj, "proj")
+
+	// personal ships an explicit CLAUDE.md (bridge suppressed) + a sole-personal file.
+	psrc := newPersonalSource(t, map[string]string{
+		"CLAUDE.md":               "personal claude\n",
+		".omakase/gates/ponly.sh": "P ONLY\n",
+	})
+
+	// ---- twin A: stack project+personal (bridge suppressed), then `off`.
+	dirA, repoA := initRepo(t)
+	setPersonalConfig(t, psrc)
+	var oa, ea strings.Builder
+	if code := RunInit([]string{"--source", proj}, &oa, &ea); code != 0 {
+		t.Fatalf("A stack init exit = %d; stderr=%q", code, ea.String())
+	}
+	// Precondition: the personal CLAUDE.md won, so it is a regular file, NOT a bridge.
+	eq(t, "A: personal CLAUDE.md won at stack-init", readFileT(t, filepath.Join(dirA, "CLAUDE.md")), "personal claude\n")
+	var offo, offe strings.Builder
+	if code := RunPersonal([]string{"off"}, &offo, &offe); code != 0 {
+		t.Fatalf("A off exit = %d; stderr=%q", code, offe.String())
+	}
+
+	// ---- twin B: fresh no-personal init — the bridge IS placed.
+	dirB, repoB := initRepo(t)
+	isolatePersonalConfig(t)
+	var ob, eb strings.Builder
+	if code := RunInit([]string{"--source", proj}, &ob, &eb); code != 0 {
+		t.Fatalf("B fresh no-personal init exit = %d; stderr=%q", code, eb.String())
+	}
+	if tgt, err := os.Readlink(filepath.Join(dirB, "CLAUDE.md")); err != nil || tgt != "AGENTS.md" {
+		t.Fatalf("B fresh init did not place the bridge: tgt=%q err=%v", tgt, err)
+	}
+
+	// A's CLAUDE.md must now be the re-derived bridge symlink, NOT the deleted file.
+	if tgt, err := os.Readlink(filepath.Join(dirA, "CLAUDE.md")); err != nil || tgt != "AGENTS.md" {
+		t.Fatalf("A off did not re-derive the bridge: tgt=%q err=%v", tgt, err)
+	}
+	assertTwinsEqual(t, repoA, repoB, dirA, dirB)
+}
+
+// assertTwinsEqual pins the §4 invariant: the off'd repo and the fresh no-personal
+// twin agree on placed.tsv bytes, the exclude block bytes, and the payload-snapshot
+// tree, and both working trees are git-clean.
+func assertTwinsEqual(t *testing.T, a, b *state.Repo, dirA, dirB string) {
+	t.Helper()
+	eq(t, "placed.tsv (off vs fresh no-personal)",
+		readFileT(t, filepath.Join(a.OMK, "placed.tsv")),
+		readFileT(t, filepath.Join(b.OMK, "placed.tsv")))
+	eq(t, "exclude block (off vs fresh no-personal)",
+		excludeBlock(t, filepath.Join(a.CommonDir, "info", "exclude")),
+		excludeBlock(t, filepath.Join(b.CommonDir, "info", "exclude")))
+	assertTreeEqual(t, filepath.Join(a.OMK, "payload-snapshot"), filepath.Join(b.OMK, "payload-snapshot"))
+	if out := gitStdout(dirA, "status", "--porcelain"); out != "" {
+		t.Errorf("twin A (off) status not clean: %q", out)
+	}
+	if out := gitStdout(dirB, "status", "--porcelain"); out != "" {
+		t.Errorf("twin B (fresh) status not clean: %q", out)
+	}
+}
+
+// excludeBlock returns the omakase marked block (markers inclusive) from an exclude
+// file — the frozen `# >>> … >>>` / `# <<< … <<<` region, so the twin comparison is
+// of the block bytes, not the whole file.
+func excludeBlock(t *testing.T, path string) string {
+	t.Helper()
+	const begin = "# >>> omakase-harness >>>"
+	const end = "# <<< omakase-harness <<<"
+	content := readFileT(t, path)
+	bi := strings.Index(content, begin)
+	ei := strings.Index(content, end)
+	if bi < 0 || ei < 0 {
+		t.Fatalf("no omakase block in %s:\n%s", path, content)
+	}
+	return content[bi : ei+len(end)]
+}
+
+// assertTreeEqual walks two directory trees and asserts they hold the same set of
+// files with the same content (regular files byte-equal; symlinks target-equal).
+func assertTreeEqual(t *testing.T, aRoot, bRoot string) {
+	t.Helper()
+	da, db := treeDescriptors(t, aRoot), treeDescriptors(t, bRoot)
+	for rel, av := range da {
+		bv, ok := db[rel]
+		if !ok {
+			t.Errorf("snapshot A has %q, B is missing it", rel)
+			continue
+		}
+		if av != bv {
+			t.Errorf("snapshot entry %q differs:\n A=%q\n B=%q", rel, av, bv)
+		}
+	}
+	for rel := range db {
+		if _, ok := da[rel]; !ok {
+			t.Errorf("snapshot B has %q, A is missing it", rel)
+		}
+	}
+}
+
+// treeDescriptors maps each non-dir entry under root to a type-tagged descriptor:
+// "L:<target>" for a symlink, "F:<content>" for a regular file.
+func treeDescriptors(t *testing.T, root string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, rerr := filepath.Rel(root, p)
+		if rerr != nil {
+			return rerr
+		}
+		if rel == "." || d.IsDir() {
+			return nil
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			tgt, lerr := os.Readlink(p)
+			if lerr != nil {
+				return lerr
+			}
+			out[rel] = "L:" + tgt
+			return nil
+		}
+		out[rel] = "F:" + readFileT(t, p)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	return out
 }
 
 // ---------------------------------------------------------------- usage arm
