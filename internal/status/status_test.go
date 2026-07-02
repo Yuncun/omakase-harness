@@ -143,6 +143,42 @@ func TestStatusRunTermBanner(t *testing.T) {
 	}
 }
 
+// TestStatusRunTermBannerCwd pins the banner-exec contract precisely
+// (bin/status.sh:341, `bash "$BANNER" 2>/dev/null || true`): the banner
+// script inherits the INVOCATION cwd, not repo.Root, because the bash
+// reference never `cd`s before running it. A cwd-sensitive fake banner
+// (prints `pwd`) run from a subdirectory of the repo must see that
+// subdirectory, proving Run does not force cmd.Dir = repo.Root.
+func TestStatusRunTermBannerCwd(t *testing.T) {
+	repo, home, lh := buildStatusFixture(t)
+	writeFile(t, repo.Root, ".omakase/bin/omakase-banner.sh", "#!/usr/bin/env bash\npwd\n")
+	pinStatusEnv(t, repo, home, lh)
+
+	// buildStatusFixture already created src/ (tracked non-harness file); reuse it
+	// as an invocation cwd that is inside the repo but distinct from repo.Root.
+	sub := filepath.Join(repo.Root, "src")
+	t.Chdir(sub)
+
+	var stdout, stderr bytes.Buffer
+	code := Run(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (stderr: %s)", code, stderr.String())
+	}
+
+	wantCwd, err := filepath.EvalSymlinks(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotLine := strings.SplitN(stdout.String(), "\n", 2)[0]
+	gotCwd, err := filepath.EvalSymlinks(gotLine)
+	if err != nil {
+		t.Fatalf("banner printed %q, not a real path: %v", gotLine, err)
+	}
+	if gotCwd != wantCwd {
+		t.Errorf("banner ran with cwd = %q, want invocation cwd %q (not repo.Root %q)", gotCwd, wantCwd, repo.Root)
+	}
+}
+
 func TestStatusNotARepo(t *testing.T) {
 	t.Chdir(t.TempDir()) // not a git repo
 
