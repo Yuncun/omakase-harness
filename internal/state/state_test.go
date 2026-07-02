@@ -367,6 +367,26 @@ func TestWritePlacedRefusalLeavesNoPartialWriteAcrossMultipleRows(t *testing.T) 
 	}
 }
 
+func TestWritePlacedRefusalLeavesPreexistingFileUntouched(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "placed.tsv")
+	original := "AGENTS.md\tdoc\tpayload\tabc\t1\n"
+	writeFile(t, dir, "placed.tsv", original)
+
+	rows := []PlacedRow{{Rel: "CLAUDE.md", Kind: "doc", Src: "payload", Hash: "", Enabled: "1"}} // invalid: empty Hash
+	if err := WritePlaced(p, rows); err == nil {
+		t.Fatal("WritePlaced: want error for the malformed row, got nil")
+	}
+
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Errorf("a failed WritePlaced call must leave a pre-existing file byte-identical; got %q, want %q", got, original)
+	}
+}
+
 func TestWritePlacedOverwritesExistingFileWholesale(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "placed.tsv")
