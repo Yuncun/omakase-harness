@@ -271,3 +271,118 @@ func TestFirstLineMissing(t *testing.T) {
 		t.Errorf("FirstLine(missing) = %q, want \"\"", got)
 	}
 }
+
+// ---------------------------------------------------------------- WritePlaced
+
+func TestWritePlacedHappyPathExactBytes(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "placed.tsv")
+	rows := []PlacedRow{
+		{Rel: ".claude/rules/a.md", Kind: "rule", Src: "payload", Hash: "abc123", Enabled: "1"},
+		{Rel: "AGENTS.md", Kind: "doc", Src: "payload", Hash: "def456", Enabled: "1"},
+	}
+
+	if err := WritePlaced(p, rows); err != nil {
+		t.Fatalf("WritePlaced: %v", err)
+	}
+
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Hand-computed literal: printf '%s\t%s\t%s\t%s\t%s\n' per row (init.sh:608).
+	want := ".claude/rules/a.md\trule\tpayload\tabc123\t1\n" +
+		"AGENTS.md\tdoc\tpayload\tdef456\t1\n"
+	if string(got) != want {
+		t.Errorf("WritePlaced bytes = %q, want %q", got, want)
+	}
+}
+
+func TestWritePlacedEmptyRowsTruncates(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "placed.tsv")
+	writeFile(t, dir, "placed.tsv", "stale\trow\tfrom\tprior\trun\n")
+
+	if err := WritePlaced(p, nil); err != nil {
+		t.Fatalf("WritePlaced(nil): %v", err)
+	}
+
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("WritePlaced(nil) left %d stale bytes, want a truncated (empty) file: %q", len(got), got)
+	}
+}
+
+func TestWritePlacedRefusesEmptyField(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "placed.tsv")
+	rows := []PlacedRow{
+		{Rel: "AGENTS.md", Kind: "", Src: "payload", Hash: "abc", Enabled: "1"},
+	}
+	if err := WritePlaced(p, rows); err == nil {
+		t.Error("WritePlaced with an empty field: want error, got nil")
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Error("WritePlaced refused an invalid row but still wrote a file")
+	}
+}
+
+func TestWritePlacedRefusesTabInField(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "placed.tsv")
+	rows := []PlacedRow{
+		{Rel: "AGENTS.md", Kind: "doc", Src: "pay\tload", Hash: "abc", Enabled: "1"},
+	}
+	if err := WritePlaced(p, rows); err == nil {
+		t.Error("WritePlaced with a tab embedded in a field: want error, got nil")
+	}
+}
+
+func TestWritePlacedRefusesNewlineInField(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "placed.tsv")
+	rows := []PlacedRow{
+		{Rel: "AGENTS.md", Kind: "doc", Src: "payload", Hash: "abc\ndef", Enabled: "1"},
+	}
+	if err := WritePlaced(p, rows); err == nil {
+		t.Error("WritePlaced with a newline embedded in a field: want error, got nil")
+	}
+}
+
+func TestWritePlacedRefusalLeavesNoPartialWriteAcrossMultipleRows(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "placed.tsv")
+	rows := []PlacedRow{
+		{Rel: "AGENTS.md", Kind: "doc", Src: "payload", Hash: "abc", Enabled: "1"}, // valid
+		{Rel: "CLAUDE.md", Kind: "doc", Src: "payload", Hash: "", Enabled: "1"},    // invalid: empty Hash
+	}
+	if err := WritePlaced(p, rows); err == nil {
+		t.Fatal("WritePlaced: want error for the malformed second row, got nil")
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Error("a later invalid row must not leave an earlier valid row written (validate before writing)")
+	}
+}
+
+func TestWritePlacedOverwritesExistingFileWholesale(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "placed.tsv")
+	writeFile(t, dir, "placed.tsv", "old1\told2\told3\told4\told5\nsecondstale\tk\ts\th\t1\n")
+
+	rows := []PlacedRow{{Rel: "new.md", Kind: "doc", Src: "payload", Hash: "xyz", Enabled: "1"}}
+	if err := WritePlaced(p, rows); err != nil {
+		t.Fatalf("WritePlaced: %v", err)
+	}
+
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "new.md\tdoc\tpayload\txyz\t1\n"
+	if string(got) != want {
+		t.Errorf("WritePlaced bytes = %q, want %q (must regenerate wholesale, not append)", got, want)
+	}
+}
