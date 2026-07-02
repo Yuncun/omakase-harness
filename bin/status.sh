@@ -14,5 +14,5 @@ fi
 if [ -x "$BIN" ]; then
   exec "$BIN" status "$@"
 fi
-echo "omakase: Go binary unavailable — using legacy bash status" >&2
+echo "omakase: Go binary not present — running the bundled v1 status script" >&2
 exec bash "$HERE/legacy/status.sh" "$@"
