@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/Yuncun/omakase-harness/internal/overlay"
 	"github.com/Yuncun/omakase-harness/internal/status"
 )
 
@@ -17,6 +18,9 @@ import (
 var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 	"status": func(argv []string, stdout, stderr io.Writer) int {
 		return status.Run(argv[2:], stdout, stderr)
+	},
+	"init": func(argv []string, stdout, stderr io.Writer) int {
+		return overlay.RunInit(argv[2:], stdout, stderr)
 	},
 }
 
