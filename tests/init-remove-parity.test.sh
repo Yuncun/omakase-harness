@@ -86,8 +86,24 @@ go_remove(){ local cwd="$1" out="$2" err="$3"; shift 3
 # --- comparison helpers ------------------------------------------------------
 # norm <file> <repo-given-path>: rewrite BOTH the given and the physically-resolved
 # repo path (macOS /var vs /private/var) to @R@ — the sole absolute path that varies
-# between twins. Any other differing byte survives the rewrite and fails the diff.
-norm(){ local rp; rp="$(resolvep "$2" 2>/dev/null || echo "$2")"; sed -e "s|$rp|@R@|g" -e "s|$2|@R@|g" "$1"; }
+# between twins — then canonicalize lefthook's own nondeterministic install banner.
+# `lefthook install` prints `sync hooks: ✔️(hookA, hookB)` listing the synced hook names
+# in map-iteration order, which flips run-to-run; both impls exec the SAME lefthook binary,
+# so that ordering is lefthook-internal noise, not an omakase difference. We sort the names
+# inside the parens (a differing hook SET still fails; only the order is neutralized). Any
+# OTHER differing byte survives both rewrites and fails the diff.
+norm(){ local rp; rp="$(resolvep "$2" 2>/dev/null || echo "$2")"
+  sed -e "s|$rp|@R@|g" -e "s|$2|@R@|g" "$1" | awk '
+    /sync hooks:/ && /\(.*\)/ {
+      pre=$0;    sub(/\(.*/,"",pre)                       # up to and excluding "("
+      inside=$0; sub(/^[^(]*\(/,"",inside); sub(/\).*$/,"",inside)   # between ( )
+      post=$0;   sub(/^.*\)/,"",post)                     # after ")"
+      n=split(inside,a,/, /)
+      for(i=1;i<=n;i++)for(j=i+1;j<=n;j++)if(a[j]<a[i]){t=a[i];a[i]=a[j];a[j]=t}
+      s=a[1]; for(i=2;i<=n;i++)s=s ", " a[i]
+      print pre "(" s ")" post; next
+    }
+    { print }'; }
 
 # guard: the Go side must not have fallen back to legacy bash (else the diff would be
 # bash-vs-bash — a false green). Called on every Go-side stderr except F1.
