@@ -250,6 +250,22 @@ if ran_go "L1-A" "$TMP/L1a.err" "$NOTICE_INIT" && ran_go "L1-B" "$TMP/L1b.err" "
   cmp_exact "L1: layers/2 reroute sidecar = CLAUDE.local.md<TAB>AGENTS.md" "$OMK1/layers/2/rerouted" "$TMP/L1.reroute.exp"
   gone "$OMK1/layers/1/rerouted" "L1: bottom layer (root owner) has NO reroute sidecar"
   clean_tree "$R1" "L1: git status clean after the stack"
+  # --- Fix I pin: TODAY's `status` rendering of a 2-stack repo. status.go is
+  # v1-byte-parity and renders NOTHING from sources.tsv (design §3/§8/§12 note
+  # this as design intent, not shipped): identity names ONLY the bottom layer's
+  # source (A) — no commit suffix, no second/top harness named there. The
+  # stacked top harness (B) is visible ONLY through the per-file Injected rows'
+  # `from <label>` tag naming each row's WINNING layer. Any future change to
+  # this rendering must touch this pin deliberately.
+  st "$R1" "$TMP/L1st.out" "$TMP/L1st.err"; r1st=$?
+  ran_go "L1-status" "$TMP/L1st.err" "$NOTICE_STATUS" && is_exit "$r1st" 0 "L1-status: status on a 2-stack repo exits 0"
+  grep 'base omakase' "$TMP/L1st.out" > "$TMP/L1.identity" 2>/dev/null
+  have "$TMP/L1.identity" "l1-a — ${L1AA} " "L1-status: identity names ONLY the bottom source (A)"
+  hasnt "$TMP/L1.identity" "$L1BB" "L1-status: identity line does NOT name the top/second harness (live-stack-order rendering not yet built)"
+  hasnt "$TMP/L1.identity" "@" "L1-status: identity line carries no commit suffix (source@short-commit not yet built)"
+  have "$TMP/L1st.out" "    + .claude/rules/a.md   (rule, from ${L1AA})" "L1-status: A-only file's Injected row is tagged from A"
+  have "$TMP/L1st.out" "    + AGENTS.md   (doc, from ${L1AA})" "L1-status: root AGENTS.md's Injected row is tagged from A"
+  have "$TMP/L1st.out" "    + CLAUDE.local.md   (doc, from ${L1BB})" "L1-status: B's rerouted CLAUDE.local.md row is tagged from B (this per-file row is how the 2nd harness is visible today)"
 fi
 
 # ============================================================================
