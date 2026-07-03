@@ -389,6 +389,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// them). Only a FRESH owner adds the bridge; a reused store already carries its own.
 	if rootOwnerIdx >= 0 && !specs[rootOwnerIdx].preMapped {
 		bridgeSets := make(map[LayerName][]string, len(specs))
+		var ownerMapped []string
 		for i := range specs {
 			rels, werr := walkPayload(specs[i].payloadDir)
 			if werr != nil {
@@ -407,11 +408,24 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			key := specs[i].layer
 			if i == rootOwnerIdx {
 				key = LayerProject
+				ownerMapped = mapped
 			}
 			bridgeSets[key] = mapped
 		}
-		if BridgeWanted(LayerProject, bridgeSets, gitTracked(root, "CLAUDE.md")) {
+		tracksCLAUDE := gitTracked(root, "CLAUDE.md")
+		// LIVE/merged bridge (all-layers rule): a higher layer's explicit CLAUDE.md
+		// suppresses the bridge in the working tree, so the live CLAUDE.md is that
+		// explicit file, not a bridge symlink.
+		if BridgeWanted(LayerProject, bridgeSets, tracksCLAUDE) {
 			specs[rootOwnerIdx].bridge = true
+		}
+		// PERSISTED store bridge (Fix E — single-layer rule): what a fresh install
+		// of the root-owner's OWN payload alone would produce, exactly as
+		// RemoveLayer's re-fold derives it. Never suppressed by ANOTHER layer's
+		// CLAUDE.md — the stored bottom layer must carry its own bridge so a later
+		// top-removal (which carries layers/1 through verbatim) restores it.
+		if BridgeWanted(LayerProject, map[LayerName][]string{LayerProject: ownerMapped}, tracksCLAUDE) {
+			specs[rootOwnerIdx].storeBridge = true
 		}
 	}
 
@@ -647,7 +661,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		if s.preMapped {
 			continue // reused store already persisted
 		}
-		if _, blErr := BuildLayerStore(omk, s.layer, s.label, s.payloadDir, s.rootSlotFree, s.bridge); blErr != nil {
+		if _, blErr := BuildLayerStore(omk, s.layer, s.label, s.payloadDir, s.rootSlotFree, s.storeBridge); blErr != nil {
 			fmt.Fprintln(stderr, blErr.Error())
 			return 1
 		}

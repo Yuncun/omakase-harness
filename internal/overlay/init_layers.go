@@ -41,7 +41,16 @@ type layerSpec struct {
 	payloadDir   string
 	rootSlotFree bool
 	preMapped    bool
-	bridge       bool
+	// bridge is the LIVE/merged bridge decision (all-layers rule: a higher
+	// layer's explicit CLAUDE.md suppresses it), driving buildMergedStaging's
+	// working-tree placement. storeBridge is the PERSISTED bottom-store bridge
+	// decision (single-layer rule: what a fresh install of THIS layer alone
+	// produces), driving BuildLayerStore. They differ exactly when another layer
+	// ships an explicit CLAUDE.md: the live view shows that CLAUDE.md winning, but
+	// the stored bottom layer keeps its own bridge so a later top-removal restores
+	// the survivor's bridge verbatim (Fix E).
+	bridge      bool
+	storeBridge bool
 }
 
 // layerPlan is one resolved entry of the target stack RunInit builds from the
