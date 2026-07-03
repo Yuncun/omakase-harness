@@ -313,36 +313,41 @@ src_commit "$S5" s5; S5A="$(resolvep "$S5")"
 set_personal "$S5A"
 R5="$TMP/l5repo"; newrepo "$R5"; OMK5="$(omk_of "$R5")"
 gi "$R5" "$TMP/l5i.out" "$TMP/l5i.err" --source "$P5A"; r5i=$?
-if ran_go "L5-init" "$TMP/l5i.err" "$NOTICE_INIT" && [ "$r5i" -eq 0 ]; then
-  want "L5" "$TMP/l5i.out" "omakase: personal harness layered on top (${S5A}) — omakase personal off to remove it everywhere."
-  ok "$(cat "$R5/.omakase/gates/shared.sh")" "PERSONAL" "L5: precheck personal won shared.sh"
-  ok "$(cat "$R5/CLAUDE.local.md")" "personal doctrine" "L5: precheck CLAUDE.local.md present"
-  printf 'MY EDIT\n' > "$R5/.omakase/gates/pedit.sh"   # user edits a sole-personal file before unlayering
-  pers "$R5" "$TMP/l5o.out" "$TMP/l5o.err" off; r5o=$?
-  is_exit "$r5o" 0 "L5: personal off exit 0"
-  # stdout EXACTLY the two lines; stderr EXACTLY the keep-warn line
-  { printf '%s\n' "$CLEARED_LINE"; printf '%s\n' "omakase: personal layer removed from this repo (restored 1 file(s), deleted 2)."; } > "$TMP/l5.exp.out"
-  cmp -s "$TMP/l5o.out" "$TMP/l5.exp.out" && pass "L5: off stdout is exactly the cleared+removed lines" || { fail "L5: off stdout differs"; diff "$TMP/l5.exp.out" "$TMP/l5o.out" | sed 's/^/      /'; }
-  printf '%s\n' "omakase: WARNING — '.omakase/gates/pedit.sh' was placed by your personal layer, has no lower-layer copy to restore, and differs from what omakase placed (a local edit?). Leaving it; delete it yourself if unwanted." > "$TMP/l5.exp.err"
-  cmp -s "$TMP/l5o.err" "$TMP/l5.exp.err" && pass "L5: off stderr is exactly the edited-orphan keep-warn line" || { fail "L5: off stderr differs"; diff "$TMP/l5.exp.err" "$TMP/l5o.err" | sed 's/^/      /'; }
-  # working tree
-  ok "$(cat "$R5/.omakase/gates/shared.sh")" "PROJECT" "L5: overlap restored to the project copy byte-exact"
-  ok "$(cat "$R5/.omakase/gates/pedit.sh")" "MY EDIT" "L5: edited sole-personal file kept"
-  [ ! -e "$R5/.omakase/gates/ponly.sh" ] && pass "L5: clean sole-personal file deleted" || fail "L5: ponly.sh survived"
-  [ ! -e "$R5/CLAUDE.local.md" ] && pass "L5: rerouted CLAUDE.local.md deleted" || fail "L5: CLAUDE.local.md survived"
-  ok "$(cat "$R5/.claude/rules/r.md")" "proj rule" "L5: project-only file untouched"
-  # placed.tsv rewritten to the project view (label + hash)
-  ok "$(placed_col "$OMK5/placed.tsv" ".omakase/gates/shared.sh" 3)" "$P5A" "L5: shared.sh row rewritten to project label"
-  ok "$(placed_col "$OMK5/placed.tsv" ".omakase/gates/shared.sh" 4)" "$(digest_file "$P5/payload/.omakase/gates/shared.sh")" "L5: shared.sh row hash = project bytes"
-  for gone in CLAUDE.local.md .omakase/gates/ponly.sh .omakase/gates/pedit.sh; do
-    placed_has "$OMK5/placed.tsv" "$gone" && fail "L5: placed.tsv still lists personal path $gone" || pass "L5: placed.tsv dropped $gone"
-  done
-  # state: personal row gone, layers/personal gone, exclude drops CLAUDE.local.md
-  ok "$(src_field "$OMK5/sources.tsv" 1 1)" "project" "L5: sources.tsv left with one project row"
-  awk -F'\t' 'END{exit (NR==1)?0:1}' "$OMK5/sources.tsv" && pass "L5: sources.tsv has exactly one row" || fail "L5: sources.tsv row count wrong"
-  [ ! -e "$OMK5/layers/personal" ] && pass "L5: layers/personal removed" || fail "L5: layers/personal survived"
-  hasnt "$(common_of "$R5")/info/exclude" "CLAUDE.local.md" "L5: exclude block dropped the CLAUDE.local.md entry"
-  [ ! -e "$XDGC/omakase/personal" ] && pass "L5: global personal config cleared" || fail "L5: global config survived off"
+if ran_go "L5-init" "$TMP/l5i.err" "$NOTICE_INIT"; then
+  is_exit "$r5i" 0 "L5: init succeeded"
+  if [ "$r5i" -eq 0 ]; then
+    want "L5" "$TMP/l5i.out" "omakase: personal harness layered on top (${S5A}) — omakase personal off to remove it everywhere."
+    ok "$(cat "$R5/.omakase/gates/shared.sh")" "PERSONAL" "L5: precheck personal won shared.sh"
+    ok "$(cat "$R5/CLAUDE.local.md")" "personal doctrine" "L5: precheck CLAUDE.local.md present"
+    printf 'MY EDIT\n' > "$R5/.omakase/gates/pedit.sh"   # user edits a sole-personal file before unlayering
+    pers "$R5" "$TMP/l5o.out" "$TMP/l5o.err" off; r5o=$?
+    is_exit "$r5o" 0 "L5: personal off exit 0"
+    # stdout EXACTLY the two lines; stderr EXACTLY the keep-warn line
+    { printf '%s\n' "$CLEARED_LINE"; printf '%s\n' "omakase: personal layer removed from this repo (restored 1 file(s), deleted 2)."; } > "$TMP/l5.exp.out"
+    cmp -s "$TMP/l5o.out" "$TMP/l5.exp.out" && pass "L5: off stdout is exactly the cleared+removed lines" || { fail "L5: off stdout differs"; diff "$TMP/l5.exp.out" "$TMP/l5o.out" | sed 's/^/      /'; }
+    printf '%s\n' "omakase: WARNING — '.omakase/gates/pedit.sh' was placed by your personal layer, has no lower-layer copy to restore, and differs from what omakase placed (a local edit?). Leaving it; delete it yourself if unwanted." > "$TMP/l5.exp.err"
+    cmp -s "$TMP/l5o.err" "$TMP/l5.exp.err" && pass "L5: off stderr is exactly the edited-orphan keep-warn line" || { fail "L5: off stderr differs"; diff "$TMP/l5.exp.err" "$TMP/l5o.err" | sed 's/^/      /'; }
+    # working tree
+    ok "$(cat "$R5/.omakase/gates/shared.sh")" "PROJECT" "L5: overlap restored to the project copy byte-exact"
+    ok "$(cat "$R5/.omakase/gates/pedit.sh")" "MY EDIT" "L5: edited sole-personal file kept"
+    [ ! -e "$R5/.omakase/gates/ponly.sh" ] && pass "L5: clean sole-personal file deleted" || fail "L5: ponly.sh survived"
+    [ ! -e "$R5/CLAUDE.local.md" ] && pass "L5: rerouted CLAUDE.local.md deleted" || fail "L5: CLAUDE.local.md survived"
+    ok "$(cat "$R5/.claude/rules/r.md")" "proj rule" "L5: project-only file untouched"
+    # placed.tsv rewritten to the project view (label + hash)
+    ok "$(placed_col "$OMK5/placed.tsv" ".omakase/gates/shared.sh" 3)" "$P5A" "L5: shared.sh row rewritten to project label"
+    ok "$(placed_col "$OMK5/placed.tsv" ".omakase/gates/shared.sh" 4)" "$(digest_file "$P5/payload/.omakase/gates/shared.sh")" "L5: shared.sh row hash = project bytes"
+    for gone in CLAUDE.local.md .omakase/gates/ponly.sh .omakase/gates/pedit.sh; do
+      placed_has "$OMK5/placed.tsv" "$gone" && fail "L5: placed.tsv still lists personal path $gone" || pass "L5: placed.tsv dropped $gone"
+    done
+    # state: personal row gone, layers/personal gone, exclude drops CLAUDE.local.md
+    ok "$(src_field "$OMK5/sources.tsv" 1 1)" "project" "L5: sources.tsv left with one project row"
+    awk -F'\t' 'END{exit (NR==1)?0:1}' "$OMK5/sources.tsv" && pass "L5: sources.tsv has exactly one row" || fail "L5: sources.tsv row count wrong"
+    [ ! -e "$OMK5/layers/personal" ] && pass "L5: layers/personal removed" || fail "L5: layers/personal survived"
+    hasnt "$(common_of "$R5")/info/exclude" "CLAUDE.local.md" "L5: exclude block dropped the CLAUDE.local.md entry"
+    [ ! -e "$XDGC/omakase/personal" ] && pass "L5: global personal config cleared" || fail "L5: global config survived off"
+  else
+    fail "L5: skipping rest of L5 — init did not exit 0"
+  fi
 fi
 clear_personal
 
@@ -412,21 +417,26 @@ src_commit "$P8b" p8b; P8bA="$(resolvep "$P8b")"
 clear_personal
 R8="$TMP/l8repo"; newrepo "$R8"; OMK8="$(omk_of "$R8")"
 gi "$R8" "$TMP/l8i.out" "$TMP/l8i.err" --source "$P8aA"; r8i=$?
-if ran_go "L8-init" "$TMP/l8i.err" "$NOTICE_INIT" && [ "$r8i" -eq 0 ]; then
-  ok "$(src_field "$OMK8/sources.tsv" 1 2)" "$P8aA" "L8: install recorded src1 in sources.tsv"
-  printf '%s\n' "$P8bA" > "$OMK8/source"   # the "v1 tool": repoint $OMK/source out from under sources.tsv
-  st "$R8" "$TMP/l8s.out" "$TMP/l8s.err"; r8s=$?
-  if ran_go "L8-status" "$TMP/l8s.err" "$NOTICE_STATUS"; then
-    have "$TMP/l8s.err" "$MIXED_AXIS1" "L8: status warns mixed-era (axis 1 parenthetical)"
-    have "$TMP/l8s.err" "run omakase init to reheal" "L8: status warning names the reheal path"
-  fi
-  gi "$R8" "$TMP/l8r.out" "$TMP/l8r.err"; r8r=$?
-  if ran_go "L8-reheal" "$TMP/l8r.err" "$NOTICE_INIT"; then
-    is_exit "$r8r" 0 "L8: reheal init exit 0"
-    n="$(grep -cF "a pre-layers omakase run changed this repo's source" "$TMP/l8r.err")"
-    ok "$n" "1" "L8: reheal init prints the mixed-era warning exactly once"
-    ok "$(src_field "$OMK8/sources.tsv" 1 2)" "$P8bA" "L8: sources.tsv re-recorded to src2 (reheal)"
-    c8="$(src_field "$OMK8/sources.tsv" 1 4)"; echo "$c8" | grep -qE '^[0-9a-f]{40}$' && pass "L8: reheal recorded a fresh resolved commit" || fail "L8: reheal commit = '$c8'"
+if ran_go "L8-init" "$TMP/l8i.err" "$NOTICE_INIT"; then
+  is_exit "$r8i" 0 "L8: init succeeded"
+  if [ "$r8i" -eq 0 ]; then
+    ok "$(src_field "$OMK8/sources.tsv" 1 2)" "$P8aA" "L8: install recorded src1 in sources.tsv"
+    printf '%s\n' "$P8bA" > "$OMK8/source"   # the "v1 tool": repoint $OMK/source out from under sources.tsv
+    st "$R8" "$TMP/l8s.out" "$TMP/l8s.err"; r8s=$?
+    if ran_go "L8-status" "$TMP/l8s.err" "$NOTICE_STATUS"; then
+      have "$TMP/l8s.err" "$MIXED_AXIS1" "L8: status warns mixed-era (axis 1 parenthetical)"
+      have "$TMP/l8s.err" "run omakase init to reheal" "L8: status warning names the reheal path"
+    fi
+    gi "$R8" "$TMP/l8r.out" "$TMP/l8r.err"; r8r=$?
+    if ran_go "L8-reheal" "$TMP/l8r.err" "$NOTICE_INIT"; then
+      is_exit "$r8r" 0 "L8: reheal init exit 0"
+      n="$(grep -cF "a pre-layers omakase run changed this repo's source" "$TMP/l8r.err")"
+      ok "$n" "1" "L8: reheal init prints the mixed-era warning exactly once"
+      ok "$(src_field "$OMK8/sources.tsv" 1 2)" "$P8bA" "L8: sources.tsv re-recorded to src2 (reheal)"
+      c8="$(src_field "$OMK8/sources.tsv" 1 4)"; echo "$c8" | grep -qE '^[0-9a-f]{40}$' && pass "L8: reheal recorded a fresh resolved commit" || fail "L8: reheal commit = '$c8'"
+    fi
+  else
+    fail "L8: skipping rest of L8 — init did not exit 0"
   fi
 fi
 
@@ -452,6 +462,7 @@ if ran_go "L9A" "$TMP/l9A.err" "$NOTICE_INIT" && ran_go "L9B" "$TMP/l9B.err" "$N
     [ ! -e "$omk/layers" ] && pass "L9($lbl): no layers/" || fail "L9($lbl): layers/ created for a base-only install"
     bad="$(awk -F'\t' '$3!="payload"{print; exit}' "$omk/placed.tsv")"
     [ -z "$bad" ] && pass "L9($lbl): every placed.tsv col3 stays 'payload'" || fail "L9($lbl): a col3 diverged: $bad"
+    placed_has "$omk/placed.tsv" ".omakase/gates/ex.sh" && pass "L9($lbl): base payload file actually placed (.omakase/gates/ex.sh in placed.tsv col1)" || fail "L9($lbl): base payload file MISSING from placed.tsv"
   done
   hasnt "$TMP/l9A.out" "personal harness" "L9: base-only stdout carries no personal line"
   # self-consistency across twins (path-free artifacts compared byte-for-byte)
@@ -479,18 +490,23 @@ R10="$TMP/l10repo"; newrepo "$R10"; OMK10="$(omk_of "$R10")"
 printf 'my notes\n' > "$R10/notes-user.txt"   # an untracked user file the roundtrip must preserve
 snap_tree "$R10" > "$TMP/l10.pretree"
 gi "$R10" "$TMP/l10i.out" "$TMP/l10i.err" --source "$P10A"; r10i=$?
-if ran_go "L10-init" "$TMP/l10i.err" "$NOTICE_INIT" && [ "$r10i" -eq 0 ]; then
-  [ -L "$R10/CLAUDE.md" ] && pass "L10: bridge symlink placed by the layered install" || fail "L10: no bridge symlink to tear down"
-  ok "$(cat "$R10/CLAUDE.local.md" 2>/dev/null)" "personal doctrine" "L10: CLAUDE.local.md placed by the layered install"
-  rmv "$R10" "$TMP/l10r.out" "$TMP/l10r.err"; r10r=$?
-  if ran_go "L10-remove" "$TMP/l10r.err" "$NOTICE_REMOVE"; then
-    is_exit "$r10r" 0 "L10: remove exit 0"
-    have "$TMP/l10r.out" "omakase: removed." "L10: remove prints its done line"
-    [ ! -L "$R10/CLAUDE.md" ] && [ ! -e "$R10/CLAUDE.md" ] && pass "L10: bridge symlink gone" || fail "L10: CLAUDE.md survived remove"
-    [ ! -e "$R10/CLAUDE.local.md" ] && pass "L10: CLAUDE.local.md gone" || fail "L10: CLAUDE.local.md survived remove"
-    [ ! -e "$OMK10" ] && pass "L10: \$OMK deleted" || fail "L10: \$OMK survived remove"
-    snap_tree "$R10" > "$TMP/l10.posttree"
-    cmp -s "$TMP/l10.pretree" "$TMP/l10.posttree" && pass "L10: repo byte-restored to its pre-init tree" || { fail "L10: tree not restored"; diff "$TMP/l10.pretree" "$TMP/l10.posttree" | sed 's/^/      /'; }
+if ran_go "L10-init" "$TMP/l10i.err" "$NOTICE_INIT"; then
+  is_exit "$r10i" 0 "L10: init succeeded"
+  if [ "$r10i" -eq 0 ]; then
+    [ -L "$R10/CLAUDE.md" ] && pass "L10: bridge symlink placed by the layered install" || fail "L10: no bridge symlink to tear down"
+    ok "$(cat "$R10/CLAUDE.local.md" 2>/dev/null)" "personal doctrine" "L10: CLAUDE.local.md placed by the layered install"
+    rmv "$R10" "$TMP/l10r.out" "$TMP/l10r.err"; r10r=$?
+    if ran_go "L10-remove" "$TMP/l10r.err" "$NOTICE_REMOVE"; then
+      is_exit "$r10r" 0 "L10: remove exit 0"
+      have "$TMP/l10r.out" "omakase: removed." "L10: remove prints its done line"
+      [ ! -L "$R10/CLAUDE.md" ] && [ ! -e "$R10/CLAUDE.md" ] && pass "L10: bridge symlink gone" || fail "L10: CLAUDE.md survived remove"
+      [ ! -e "$R10/CLAUDE.local.md" ] && pass "L10: CLAUDE.local.md gone" || fail "L10: CLAUDE.local.md survived remove"
+      [ ! -e "$OMK10" ] && pass "L10: \$OMK deleted" || fail "L10: \$OMK survived remove"
+      snap_tree "$R10" > "$TMP/l10.posttree"
+      cmp -s "$TMP/l10.pretree" "$TMP/l10.posttree" && pass "L10: repo byte-restored to its pre-init tree" || { fail "L10: tree not restored"; diff "$TMP/l10.pretree" "$TMP/l10.posttree" | sed 's/^/      /'; }
+    fi
+  else
+    fail "L10: skipping rest of L10 — init did not exit 0"
   fi
 fi
 clear_personal
