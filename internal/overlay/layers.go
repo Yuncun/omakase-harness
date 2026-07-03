@@ -430,6 +430,23 @@ func RemoveLayer(root, common, omk string, recorded []state.SourceRow, removeIdx
 		return 1
 	}
 
+	// Fix G (#11): the install-time wiring guard runs only on init, against the
+	// MERGED tree — so a merge init blesses a lefthook-local.yml from one layer that
+	// references a .omakase/*.sh script shipped only by the OTHER layer. Removing the
+	// script-supplying layer would delete the script but keep the wiring, and every
+	// commit would then fail exit 127 (and a bare init REFUSES to heal, the guard
+	// re-running against the single-source tree) — stranding the repo. Run the same
+	// wiring check against the POST-removal survivor tree BEFORE any mutation and
+	// refuse if the survivor's own wiring would be stranded, keeping the repo
+	// committable. TOP removal carries layers/1 through as the survivor, so its tree
+	// is layers/1/files here; BOTTOM removal's survivor tree is the re-folded dir,
+	// checked in the removeIdx == 0 block below (before its BuildLayerStore mutation).
+	if removeIdx == 1 {
+		if missing := wiringStrandedRefs(filepath.Join(survivorDir, "files")); missing != "" {
+			return refuseStrandedWiring(stderr, removedLabel, missing)
+		}
+	}
+
 	if removeIdx == 0 {
 		// ---- BOTTOM removal: re-fold the embedded base under the survivor's delta
 		// (layers/2/files) into a fresh layers/1 store. ----
@@ -461,6 +478,14 @@ func RemoveLayer(root, common, omk string, recorded []state.SourceRow, removeIdx
 				fmt.Fprintf(stderr, "omakase: failed to restore rerouted payload file '%s' to '%s'\n", m.dest, m.orig)
 				return 1
 			}
+		}
+
+		// Fix G (#11): refuse before mutation if the re-folded survivor tree's own
+		// wiring would be stranded (its lefthook-local.yml references a script neither
+		// the base nor the survivor's delta ships). `folded` is a temp dir and layers/1
+		// is not touched until BuildLayerStore below, so this refusal mutates nothing.
+		if missing := wiringStrandedRefs(folded); missing != "" {
+			return refuseStrandedWiring(stderr, removedLabel, missing)
 		}
 
 		// Re-derive the slot-fallback + §7 bridge for the now-single survivor layer,
@@ -658,6 +683,16 @@ func RemoveLayer(root, common, omk string, recorded []state.SourceRow, removeIdx
 		fmt.Fprint(stdout, b)
 	}
 	return 0
+}
+
+// refuseStrandedWiring prints the Fix G (#11) refuse-before-mutation message —
+// removing removedLabel would strand the surviving harness's hook wiring, which
+// references the named script(s) the survivor does not ship — and returns exit 1.
+// missing is wiringStrandedRefs's leading-space-joined list.
+func refuseStrandedWiring(stderr io.Writer, removedLabel, missing string) int {
+	fmt.Fprintf(stderr, "omakase: refusing to remove %s — the surviving harness's hook wiring references script(s) it does not ship:%s\n", removedLabel, missing)
+	fmt.Fprintln(stderr, "  Removing it would strand these at commit time (exit 127). Nothing was changed. Remove the other harness first, or re-init to reconcile the wiring.")
+	return 1
 }
 
 // foldBaseUnder stages the embedded base payload with deltaDir overlaid on top

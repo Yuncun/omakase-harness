@@ -1136,6 +1136,28 @@ func walkPayload(payload string) ([]string, error) {
 	return rels, err
 }
 
+// wiringStrandedRefs reports the .omakase/*.sh scripts filesDir's
+// lefthook-local.yml references but that filesDir does not itself ship — the same
+// fail-closed wiring check init runs (wiringRefs + a per-ref existence test),
+// applied to a SURVIVOR tree so `remove <source>` can refuse before mutation when
+// unlayering would leave the surviving wiring pointing at a script only the
+// removed layer supplied (which would fail every commit with exit 127). Returns a
+// leading-space-joined list of the missing refs, or "" when nothing is stranded
+// (including no lefthook-local.yml at all). Mirrors init.go's install-time guard.
+func wiringStrandedRefs(filesDir string) string {
+	wiring := filepath.Join(filesDir, "lefthook-local.yml")
+	if !fileRegular(wiring) {
+		return ""
+	}
+	missing := ""
+	for _, ref := range wiringRefs(wiring) {
+		if !fileRegular(filepath.Join(filesDir, ref)) {
+			missing += " " + ref
+		}
+	}
+	return missing
+}
+
 // wiringRefs reproduces the wiring scan (bin/init.sh:218): from lefthook-local.yml,
 // keep lines NOT matching `^[[:space:]]*#`, extract every `.omakase/….sh`
 // reference from the kept lines, then `sort -u`.

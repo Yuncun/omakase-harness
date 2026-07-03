@@ -11,6 +11,7 @@ package overlay
 
 import (
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -246,5 +247,73 @@ func TestCutOverUntracksCommittedAGENTS(t *testing.T) {
 	}
 	if !sawRoot {
 		t.Error("placed.tsv has no root AGENTS.md row")
+	}
+}
+
+// ---------------------------------------------------------------- Fix G (#11)
+
+// TestRemoveRefusesWhenItStrandsSurvivorWiring pins Fix G: srcA ships a gate
+// script; srcE ships ONLY a lefthook-local.yml that runs that script. A merge
+// init blesses the pair (the wiring guard runs against the MERGED tree, where the
+// script is present). Removing A (the script supplier) would delete the script
+// but keep E's wiring — every commit would then fail exit 127. `remove A` must
+// refuse before any mutation, naming the stranded script; the repo stays
+// committable. Removing E instead strands nothing and works.
+func TestRemoveRefusesWhenItStrandsSurvivorWiring(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t) // empty base — the script comes only from A
+
+	srcA := newHarnessSource(t, "a", map[string]string{
+		".omakase/gates/gate-a.sh": "#!/bin/sh\ntrue\n",
+	})
+	srcE := newHarnessSource(t, "e", map[string]string{
+		"lefthook-local.yml": "pre-commit:\n  jobs:\n    - run: bash .omakase/gates/gate-a.sh\n",
+	})
+
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init A failed")
+	}
+	// The merged wiring guard passes: gate-a.sh (from A) satisfies E's wiring.
+	if code := RunInit([]string{"--source", srcE}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init E failed — the merged wiring guard should pass (gate-a.sh present)")
+	}
+	before := snapshotTree(t, repo.OMK)
+
+	// remove A: the survivor E's wiring references gate-a.sh, which only A ships →
+	// refuse before mutation.
+	var stdout, stderr strings.Builder
+	code := RunRemove([]string{srcA}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("remove A exit = %d, want 1 (strands survivor wiring); stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(), "")
+	if !strings.Contains(stderr.String(), ".omakase/gates/gate-a.sh") {
+		t.Errorf("refusal must name the stranded script:\n%s", stderr.String())
+	}
+	if !strings.HasPrefix(stderr.String(), "omakase:") {
+		t.Errorf("refusal must be omakase:-prefixed:\n%s", stderr.String())
+	}
+	// Zero mutation: $OMK byte-identical, the script still present, tree committable.
+	if after := snapshotTree(t, repo.OMK); !maps.Equal(before, after) {
+		t.Errorf("stranded-wiring refusal mutated $OMK")
+	}
+	eq(t, "gate-a.sh still present", readFileT(t, filepath.Join(dir, ".omakase", "gates", "gate-a.sh")), "#!/bin/sh\ntrue\n")
+	if o := gitStdout(dir, "status", "--porcelain"); o != "" {
+		t.Errorf("stranded-wiring refusal dirtied the tree: %q", o)
+	}
+
+	// remove E instead: the survivor A has no lefthook-local.yml, so nothing is
+	// stranded — the removal works.
+	if code := RunRemove([]string{srcE}, io.Discard, io.Discard); code != 0 {
+		t.Fatalf("remove E exit = %d, want 0 (strands nothing)", code)
+	}
+	rows := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
+	if len(rows) != 1 || rows[0].Source != srcA {
+		t.Errorf("after remove E, sources.tsv = %+v, want the sole A row", rows)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".omakase", "gates", "gate-a.sh")); err != nil {
+		t.Errorf("gate-a.sh missing after remove E: %v", err)
 	}
 }
