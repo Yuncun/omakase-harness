@@ -440,20 +440,24 @@ func hasStalePersonalRow(rows []state.SourceRow) bool {
 	return false
 }
 
-// TestPersonalOffGC8Refusal: `off` in an INITIALIZED repo that predates layers
-// (no $OMK/layers/) refuses with the GC8 bytes, exit 1 — AFTER the global clear
-// (per the plan's ordering).
+// TestPersonalOffGC8Refusal: `off` in a repo that RECORDS a personal layer but has
+// NO layer store ($OMK/layers/ absent) — a repo that predates layered state — refuses
+// with the GC8 bytes, exit 1, AFTER the global clear (per the plan's ordering). The
+// personal-row check runs first (Finding 2): the refusal is reserved for a repo that
+// DOES carry a personal row yet cannot be unlayered, never any store-less repo.
 func TestPersonalOffGC8Refusal(t *testing.T) {
 	_, repo := initRepo(t)
 	cfg := personalCfgPath(t)
 	writeFile(t, cfg, "you/harness\n")
-	// Hand-build a v1-era $OMK: placed.tsv + source, NO layers/, NO sources.tsv.
+	// Hand-build a store-less $OMK that STILL records a personal row: placed.tsv +
+	// a personal sources.tsv row, but NO layers/ — the one shape GC8 must refuse.
 	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(repo.OMK, "placed.tsv"),
 		".omakase/gates/example.sh\tgate\tpayload\t"+sha256hex([]byte(gateContent))+"\t1\n")
-	writeFile(t, filepath.Join(repo.OMK, "source"), "you/harness\n")
+	writeFile(t, filepath.Join(repo.OMK, "sources.tsv"),
+		"personal\tyou/harness\t-\tabc123\t1\n")
 
 	var stdout, stderr strings.Builder
 	code := RunPersonal([]string{"off"}, &stdout, &stderr)
@@ -466,6 +470,82 @@ func TestPersonalOffGC8Refusal(t *testing.T) {
 	if _, err := os.Stat(cfg); err == nil {
 		t.Error("global config not cleared before the GC8 refusal")
 	}
+}
+
+// TestPersonalOffDoubleOff (re-review Finding 2): `off` is idempotent. The first
+// off removes the personal-over-base layer, which drops sources.tsv AND layers/; a
+// SECOND off then finds no personal row and is a global-clear-only no-op — exit 0,
+// NOT the GC8 refusal (which the last wave's layers/ removal wrongly triggered).
+func TestPersonalOffDoubleOff(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	base := useBasePayloadDir(t)
+	writeFile(t, filepath.Join(base, ".omakase", "gates", "base.sh"), "base gate\n")
+	t.Setenv("OMAKASE_PAYLOAD", base)
+
+	psrc := newPersonalSource(t, map[string]string{"AGENTS.md": "personal doctrine\n"})
+	setPersonalConfig(t, psrc)
+
+	// personal-over-base install (sources.tsv = one personal row, plus layers/).
+	var oi, ei strings.Builder
+	if code := RunInit(nil, &oi, &ei); code != 0 {
+		t.Fatalf("personal-over-base init exit = %d; stderr=%q", code, ei.String())
+	}
+	eq(t, "CLAUDE.local.md placed", readFileT(t, filepath.Join(dir, "CLAUDE.local.md")), "personal doctrine\n")
+
+	// first off: removes the personal layer, dropping sources.tsv + layers/.
+	var o1, e1 strings.Builder
+	if code := RunPersonal([]string{"off"}, &o1, &e1); code != 0 {
+		t.Fatalf("first off exit = %d; stderr=%q", code, e1.String())
+	}
+	if _, err := os.Stat(filepath.Join(repo.OMK, "layers")); !os.IsNotExist(err) {
+		t.Fatalf("first off left layers/ behind (second-off precondition unmet)")
+	}
+
+	// second off: no personal row, layers/ gone — must still exit 0, NOT GC8-refuse.
+	var o2, e2 strings.Builder
+	if code := RunPersonal([]string{"off"}, &o2, &e2); code != 0 {
+		t.Fatalf("second off exit = %d, want 0; stderr=%q", code, e2.String())
+	}
+	eq(t, "second off stdout", o2.String(), "omakase: personal harness cleared.\n")
+	eq(t, "second off stderr", e2.String(), "")
+}
+
+// TestPersonalOffBaseOnly (re-review Finding 2): `off` in a base-only v2 install
+// (GC2 shape: no sources.tsv, no layers/) records no personal layer, so it is a
+// global-clear-only no-op — exit 0, not the GC8 refusal.
+func TestPersonalOffBaseOnly(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	base := useBasePayloadDir(t)
+	writeFile(t, filepath.Join(base, ".omakase", "gates", "base.sh"), "base gate\n")
+	t.Setenv("OMAKASE_PAYLOAD", base)
+	isolatePersonalConfig(t) // no personal setting → base-only install
+
+	var oi, ei strings.Builder
+	if code := RunInit(nil, &oi, &ei); code != 0 {
+		t.Fatalf("base-only init exit = %d; stderr=%q", code, ei.String())
+	}
+	// GC2: a base-only install carries no layers/ at all.
+	if _, err := os.Stat(filepath.Join(repo.OMK, "layers")); !os.IsNotExist(err) {
+		t.Fatalf("base-only install unexpectedly has layers/ (precondition unmet)")
+	}
+
+	cfg := personalConfigPath()
+	writeFile(t, cfg, "you/harness\n") // a global setting to clear
+
+	var stdout, stderr strings.Builder
+	if code := RunPersonal([]string{"off"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("off exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(), "omakase: personal harness cleared.\n")
+	eq(t, "stderr", stderr.String(), "")
+	if _, err := os.Stat(cfg); err == nil {
+		t.Error("global config not cleared")
+	}
+	eq(t, "base gate intact", readFileT(t, filepath.Join(dir, ".omakase", "gates", "base.sh")), "base gate\n")
 }
 
 // ---------------------------------------------------------------- twin-diff (the invariant)
@@ -584,6 +664,82 @@ func TestPersonalOffTwinDiffPersonalCLAUDEmd(t *testing.T) {
 	if tgt, err := os.Readlink(filepath.Join(dirA, "CLAUDE.md")); err != nil || tgt != "AGENTS.md" {
 		t.Fatalf("A off did not re-derive the bridge: tgt=%q err=%v", tgt, err)
 	}
+	assertTwinsEqual(t, repoA, repoB, dirA, dirB)
+}
+
+// TestPersonalOffBridgeBacksUpEditedCLAUDEmd (re-review Finding 1): personal ships an
+// explicit CLAUDE.md (bridge suppressed), the user EDITS the working-tree CLAUDE.md,
+// then `personal off`. The re-derived §7 bridge occupies CLAUDE.md, so it must NOT be
+// treated as a sole-personal deletion — the pre-fix code warned "leaving it" and then
+// silently clobbered the edit with the bridge symlink. Instead it follows init's
+// overwrite discipline: back the edit up to $OMK/clobbered/CLAUDE.md byte-exact, print
+// the overwrote message, place the bridge, and NEVER print the warn-keep line for
+// CLAUDE.md. The §4 twin-diff invariant still holds (clobbered/ is intentionally not
+// compared across twins — twin B has no pre-existing CLAUDE.md to back up).
+func TestPersonalOffBridgeBacksUpEditedCLAUDEmd(t *testing.T) {
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	proj := newSourceRepo(t)
+	writeFile(t, filepath.Join(proj, "omakase.manifest"), "name: proj\n")
+	writeFile(t, filepath.Join(proj, "payload", "AGENTS.md"), "project agents\n")
+	writeFile(t, filepath.Join(proj, "payload", ".claude", "rules", "r.md"), "proj rule\n")
+	commitAll(t, proj, "proj")
+
+	// personal ships an explicit CLAUDE.md (bridge suppressed) + a sole-personal file.
+	psrc := newPersonalSource(t, map[string]string{
+		"CLAUDE.md":               "personal claude\n",
+		".omakase/gates/ponly.sh": "P ONLY\n",
+	})
+
+	// ---- twin A: stack project+personal (personal CLAUDE.md wins), EDIT it, then `off`.
+	dirA, repoA := initRepo(t)
+	setPersonalConfig(t, psrc)
+	var oa, ea strings.Builder
+	if code := RunInit([]string{"--source", proj}, &oa, &ea); code != 0 {
+		t.Fatalf("A stack init exit = %d; stderr=%q", code, ea.String())
+	}
+	eq(t, "A: personal CLAUDE.md won at stack-init", readFileT(t, filepath.Join(dirA, "CLAUDE.md")), "personal claude\n")
+
+	const editedBody = "MY EDITED CLAUDE\n"
+	writeFile(t, filepath.Join(dirA, "CLAUDE.md"), editedBody)
+
+	var offo, offe strings.Builder
+	if code := RunPersonal([]string{"off"}, &offo, &offe); code != 0 {
+		t.Fatalf("A off exit = %d; stderr=%q", code, offe.String())
+	}
+
+	// The kept edit is preserved byte-exact under $OMK/clobbered/, NOT destroyed.
+	clob := filepath.Join(repoA.OMK, "clobbered", "CLAUDE.md")
+	eq(t, "edited CLAUDE.md preserved at clobbered/", readFileT(t, clob), editedBody)
+
+	// CLAUDE.md is now the re-derived bridge symlink, replacing the edit.
+	if tgt, err := os.Readlink(filepath.Join(dirA, "CLAUDE.md")); err != nil || tgt != "AGENTS.md" {
+		t.Fatalf("A off did not re-derive the bridge over the edit: tgt=%q err=%v", tgt, err)
+	}
+
+	// stderr: the overwrote message fired (with the preserved-at path); the warn-keep
+	// "Leaving it" line did NOT fire for CLAUDE.md.
+	wantOverwrote := "omakase: overwrote CLAUDE.md to match payload (prior copy preserved at " + clob + ")\n"
+	if !strings.Contains(offe.String(), wantOverwrote) {
+		t.Errorf("overwrote message missing/wrong:\n got=%q\n want substr=%q", offe.String(), wantOverwrote)
+	}
+	if strings.Contains(offe.String(), "'CLAUDE.md' was placed by your personal layer") {
+		t.Errorf("warn-keep line fired for the bridge-occupied CLAUDE.md:\n%s", offe.String())
+	}
+
+	// ---- twin B: fresh no-personal init — the bridge IS placed.
+	dirB, repoB := initRepo(t)
+	isolatePersonalConfig(t)
+	var ob, eb strings.Builder
+	if code := RunInit([]string{"--source", proj}, &ob, &eb); code != 0 {
+		t.Fatalf("B fresh no-personal init exit = %d; stderr=%q", code, eb.String())
+	}
+	if tgt, err := os.Readlink(filepath.Join(dirB, "CLAUDE.md")); err != nil || tgt != "AGENTS.md" {
+		t.Fatalf("B fresh init did not place the bridge: tgt=%q err=%v", tgt, err)
+	}
+
 	assertTwinsEqual(t, repoA, repoB, dirA, dirB)
 }
 

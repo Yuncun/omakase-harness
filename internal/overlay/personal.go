@@ -181,16 +181,13 @@ func personalOff(stdout, stderr io.Writer) int {
 	if !fileRegular(filepath.Join(omk, "placed.tsv")) {
 		return 0 // uninitialized cwd → global clear only
 	}
-	// An initialized repo IS per-repo work: it must have a layer store to unlayer
-	// from. A repo that predates layers cannot be unlayered — GC8 refuse (design §9)
-	// rather than guess.
-	if !isDir(filepath.Join(omk, "layers")) {
-		fmt.Fprintln(stderr, "omakase: this repo predates layered state — run omakase init once first")
-		return 1
-	}
 
 	// Split off the personal row (a real one, NOT the personal|off opt-out sentinel,
-	// which off never touches — that is init --no-personal's memory).
+	// which off never touches — that is init --no-personal's memory). This runs BEFORE
+	// the layer-store check: a repo carrying NO personal row has nothing to unlayer
+	// here, so a second `off` (the first off already removed layers/ + sources.tsv) or
+	// `off` in a base-only v2 install (GC2 shape: no sources.tsv, no layers/) is a
+	// global-clear-only no-op, exit 0 — never the GC8 refusal.
 	sources := state.ReadSources(filepath.Join(omk, "sources.tsv"))
 	var personalRow *state.SourceRow
 	var remaining []state.SourceRow
@@ -204,7 +201,15 @@ func personalOff(stdout, stderr io.Writer) int {
 		remaining = append(remaining, r)
 	}
 	if personalRow == nil {
-		return 0 // layered repo with no personal layer → global clear only
+		return 0 // no personal layer to unlayer → global clear only
+	}
+
+	// A personal row exists but there is no layer store to restore from — a repo that
+	// predates layered state, the one shape we cannot unlayer. GC8 refuse (design §9)
+	// rather than guess.
+	if !isDir(filepath.Join(omk, "layers")) {
+		fmt.Fprintln(stderr, "omakase: this repo predates layered state — run omakase init once first")
+		return 1
 	}
 
 	return personalUnlayer(repo.Root, repo.CommonDir, omk, *personalRow, remaining, stdout, stderr)
@@ -338,6 +343,16 @@ func personalUnlayer(root, common, omk string, personalRow state.SourceRow, rema
 			continue // not personal-won — a lower layer owns it, working tree untouched
 		}
 		rel := row.Rel
+		if addBridge && rel == "CLAUDE.md" {
+			// The re-derived §7 bridge will occupy this dest (a fresh no-personal init
+			// places CLAUDE.md -> AGENTS.md here). That makes CLAUDE.md NOT a sole-personal
+			// deletion: the bridge block below installs it under init's overwrite-with-backup
+			// discipline. Running the sole-personal warn-keep arm here would promise to keep
+			// a local edit the bridge then destroys — so skip the rel entirely and let the
+			// bridge block own it. (addBridge implies the repo does not track CLAUDE.md —
+			// BridgeWanted returns false for a tracked path — so the bridge placement is safe.)
+			continue
+		}
 		if isTracked(rel) {
 			continue // never touch a tracked path (upstream owns it)
 		}
@@ -368,9 +383,13 @@ func personalUnlayer(root, common, omk string, personalRow state.SourceRow, rema
 
 	// ---- place the re-derived bridge into the working tree (a fresh no-personal init
 	// would). It is an ADDITION, not a restore/delete, so it does not touch the counts.
-	// Skip when an identical symlink is already present (idempotent re-run). ----
+	// It follows init's place-loop discipline for the CLAUDE.md dest exactly (init.go
+	// differing-untracked-dest arm), so a fresh no-personal init and this off produce the
+	// same working tree AND the same clobbered-backup behavior. ----
 	if addBridge {
 		bridgeDest := filepath.Join(root, "CLAUDE.md")
+		// An already-correct bridge symlink is left untouched (idempotent re-run) — no
+		// backup, no message.
 		already := false
 		if isSymlink(bridgeDest) {
 			if tgt, err := os.Readlink(bridgeDest); err == nil && tgt == "AGENTS.md" {
@@ -378,8 +397,32 @@ func personalUnlayer(root, common, omk string, personalRow state.SourceRow, rema
 			}
 		}
 		if !already {
-			if code := placeFile(filepath.Join(snap, "CLAUDE.md"), "CLAUDE.md", root, umask, stderr); code != 0 {
+			// A pre-existing dest that DIFFERS (the personal CLAUDE.md — edited or not — or
+			// a symlink pointing elsewhere) is overwritten under init's exact discipline: back
+			// it up to $OMK/clobbered/CLAUDE.md first (rm-first cp -P via tryClobberBackup; a
+			// REAL directory dest is skipped and left for placeFile to refuse), then place the
+			// bridge and print init's byte-identical overwrote message. A backup failure WARNS
+			// rather than aborting. When nothing is there it is a fresh placement — no backup,
+			// no message — matching a fresh no-personal init's bridge over an empty slot.
+			const rel = "CLAUDE.md"
+			overwrite := lexists(bridgeDest)
+			saved := ""
+			if overwrite && (!isDir(bridgeDest) || isSymlink(bridgeDest)) {
+				if tryClobberBackup(bridgeDest, rel, omk) {
+					saved = filepath.Join(omk, "clobbered", rel)
+				} else {
+					fmt.Fprintf(stderr, "omakase: WARNING — could not back up pre-existing '%s' before overwriting it\n", rel)
+				}
+			}
+			if code := placeFile(filepath.Join(snap, "CLAUDE.md"), rel, root, umask, stderr); code != 0 {
 				return code
+			}
+			if overwrite {
+				if saved != "" {
+					fmt.Fprintf(stderr, "omakase: overwrote %s to match payload (prior copy preserved at %s)\n", rel, saved)
+				} else {
+					fmt.Fprintf(stderr, "omakase: overwrote %s to match payload (any local edit was replaced)\n", rel)
+				}
 			}
 		}
 	}
