@@ -942,7 +942,14 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "omakase: stacked %s on top of %s\n", stackLabelB, stackLabelA)
 		var overrides []string
 		for _, rel := range priorPaths {
-			if rel != "" && labelByRel[rel] == stackLabelB {
+			// Fix D: an override line asserts the new top layer's copy is now IN
+			// EFFECT at a live path. A rel that the merged view says B wins
+			// (labelByRel==stackLabelB) but that the place loop did NOT actually
+			// write this run — because the repo has since COMMITTED it, so the
+			// committed file wins and B's copy was skipped (printed as `~ skipped
+			// (committed…)`) — must NOT be narrated as overridden. Require the rel
+			// to be in the run's actually-placed set, never merely in the merged view.
+			if rel != "" && labelByRel[rel] == stackLabelB && contains(placed, rel) {
 				overrides = append(overrides, rel)
 			}
 		}
