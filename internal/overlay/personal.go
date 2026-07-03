@@ -149,7 +149,7 @@ func personalSet(raw string, stdout, stderr io.Writer) int {
 	if !fileRegular(filepath.Join(repo.OMK, "placed.tsv")) {
 		return 0 // uninitialized cwd
 	}
-	if state.PersonalOff(state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))) {
+	if state.PersonalOff(EnsureSources(repo.OMK, stderr)) {
 		// A persisted per-repo opt-out (init --no-personal) wins over the fresh
 		// global setting here — do NOT apply.
 		fmt.Fprintln(stdout, "omakase: this repo has personal layering off (init --no-personal); not applied here.")
@@ -188,7 +188,7 @@ func personalOff(stdout, stderr io.Writer) int {
 	// here, so a second `off` (the first off already removed layers/ + sources.tsv) or
 	// `off` in a base-only v2 install (GC2 shape: no sources.tsv, no layers/) is a
 	// global-clear-only no-op, exit 0 — never the GC8 refusal.
-	sources := state.ReadSources(filepath.Join(omk, "sources.tsv"))
+	sources := EnsureSources(omk, stderr)
 	var personalRow *state.SourceRow
 	var remaining []state.SourceRow
 	for i := range sources {
@@ -206,9 +206,8 @@ func personalOff(stdout, stderr io.Writer) int {
 
 	// A personal row exists but there is no layer store to restore from — a repo that
 	// predates layered state, the one shape we cannot unlayer. GC8 refuse (design §9)
-	// rather than guess.
-	if !isDir(filepath.Join(omk, "layers")) {
-		fmt.Fprintln(stderr, "omakase: this repo predates layered state — run omakase init once first")
+	// rather than guess: RequireLayers (migrate.go) prints the byte-frozen refusal.
+	if !RequireLayers(omk, stderr) {
 		return 1
 	}
 

@@ -184,15 +184,22 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// crypto/sha256, so that "need shasum" error is unreachable (Global
 	// Constraint 9) and omitted.
 
-	// ---- personal-layer opt-out state (design §5) ----
-	// Read the prior sources.tsv (ABSENT in v1 repos — tolerated, ReadSources
-	// returns nil): a persisted personal|off row keeps the personal layer skipped
-	// until re-enabled (the row is the memory, not the flag), and an already-present
-	// file is rewritten faithfully at the end of a run. Migration synthesis of this
-	// file is Task 6's job — this only READS what is on disk.
+	// ---- personal-layer opt-out state (design §5) + v1→v2 migration (design §9) ----
+	// EnsureSources (migrate.go) reads the prior sources.tsv and, for a still-v1 repo
+	// ($OMK/source present, no sources.tsv), synthesizes + writes it once, silently —
+	// and prints the mixed-era warning when a v1 tool rewrote $OMK/source out from
+	// under a v2 sources.tsv (init REHEALS below via the normal remembered-source
+	// flow: precedence reads $OMK/source, and the end-of-run write re-records
+	// sources.tsv with resolved commits — no extra output beyond that warning). A
+	// persisted personal|off row keeps the personal layer skipped until re-enabled
+	// (the row is the memory, not the flag); an already-present file is rewritten
+	// faithfully at the end of a run. sourcesExisted is captured BEFORE EnsureSources
+	// so it reflects the TRUE pre-run on-disk state — the faithful-rewrite branch's
+	// existing semantics are unchanged, and GC2 (a base-only repo has no $OMK/source,
+	// so EnsureSources synthesizes nothing and writes no file) holds.
 	sourcesPath := filepath.Join(omk, "sources.tsv")
 	sourcesExisted := fileRegular(sourcesPath)
-	priorSources := state.ReadSources(sourcesPath)
+	priorSources := EnsureSources(omk, stderr)
 	priorOff := state.PersonalOff(priorSources)
 	priorOffEpoch := ""
 	for _, r := range priorSources {

@@ -199,6 +199,55 @@ func TestEnsureSourcesConsistentSilent(t *testing.T) {
 	}
 }
 
+// TestInitRehealsMixedEraAxis1 is the design §9 init reheal outcome: a v2 project
+// install, then a "v1 tool" repoints $OMK/source at a DIFFERENT valid source out
+// from under sources.tsv (mixed-era axis 1). A bare init must (a) print the axis-1
+// warning EXACTLY once, and (b) reheal — re-record sources.tsv to match the new
+// $OMK/source, with a freshly resolved commit — through its normal
+// remembered-source flow, with no extra output beyond that one warning.
+func TestInitRehealsMixedEraAxis1(t *testing.T) {
+	_, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	isolatePersonalConfig(t)
+	useBasePayloadDir(t)
+
+	src1 := newSourceRepo(t)
+	writeFile(t, filepath.Join(src1, "omakase.manifest"), "name: proj1\n")
+	writeFile(t, filepath.Join(src1, "payload", ".omakase", "gates", "g.sh"), "g1\n")
+	commitAll(t, src1, "src1")
+
+	var o0, e0 strings.Builder
+	if code := RunInit([]string{"--source", src1}, &o0, &e0); code != 0 {
+		t.Fatalf("install exit = %d; stderr=%q", code, e0.String())
+	}
+
+	// The "v1 tool": a second valid source, and $OMK/source repointed at it while
+	// sources.tsv still names src1 → mixed-era axis 1 on the next run.
+	src2 := newSourceRepo(t)
+	writeFile(t, filepath.Join(src2, "omakase.manifest"), "name: proj2\n")
+	writeFile(t, filepath.Join(src2, "payload", ".omakase", "gates", "g.sh"), "g2\n")
+	commitAll(t, src2, "src2")
+	writeFile(t, filepath.Join(repo.OMK, "source"), src2+"\n")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("reheal init exit = %d; stderr=%q", code, stderr.String())
+	}
+	if n := strings.Count(stderr.String(), "a pre-layers omakase run changed this repo's source"); n != 1 {
+		t.Errorf("mixed-era warning count = %d, want exactly 1; stderr=%q", n, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "($OMK/source disagrees with sources.tsv)") {
+		t.Errorf("stderr missing the axis-1 parenthetical; stderr=%q", stderr.String())
+	}
+	// Reheal outcome: sources.tsv now names src2 with a resolved commit.
+	rows := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
+	if len(rows) != 1 || rows[0].Layer != "project" || rows[0].Source != src2 {
+		t.Fatalf("post-reheal sources.tsv = %+v, want one {project %s -} row", rows, src2)
+	}
+	eq(t, "reheal commit", rows[0].Commit, wantResolvedCommit(t, src2))
+}
+
 // TestRequireLayers: the GC8 guard returns true (silent) when $OMK/layers/ exists,
 // and false with the byte-frozen refusal when it does not.
 func TestRequireLayers(t *testing.T) {
