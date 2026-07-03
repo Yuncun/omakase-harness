@@ -199,8 +199,18 @@ func TestPersonalSetOffRowNotApplied(t *testing.T) {
 		t.Error("personal layer applied despite the off-row")
 	}
 	// sources.tsv still carries the off-row, unchanged.
+	// state.PersonalOff no longer exists (Task 1, Phase 3.5 deleted it along with
+	// the "project"/"personal" role vocabulary) -- inlined mechanically here to
+	// keep this file compiling.
 	rows := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
-	if !state.PersonalOff(rows) {
+	off := false
+	for _, r := range rows {
+		if r.Layer == "personal" && r.Source == "off" {
+			off = true
+			break
+		}
+	}
+	if !off {
 		t.Errorf("off-row lost: %+v", rows)
 	}
 }

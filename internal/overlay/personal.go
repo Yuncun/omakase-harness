@@ -149,7 +149,18 @@ func personalSet(raw string, stdout, stderr io.Writer) int {
 	if !fileRegular(filepath.Join(repo.OMK, "placed.tsv")) {
 		return 0 // uninitialized cwd
 	}
-	if state.PersonalOff(EnsureSources(repo.OMK, stderr)) {
+	// Task 1 (Phase 3.5) deleted state.PersonalOff along with the "project"/
+	// "personal" role vocabulary; this is the same personal|off row check,
+	// inlined mechanically to keep this file compiling until Task 4 deletes
+	// this whole file outright.
+	priorOff := false
+	for _, r := range EnsureSources(repo.OMK, stderr) {
+		if r.Layer == "personal" && r.Source == "off" {
+			priorOff = true
+			break
+		}
+	}
+	if priorOff {
 		// A persisted per-repo opt-out (init --no-personal) wins over the fresh
 		// global setting here — do NOT apply.
 		fmt.Fprintln(stdout, "omakase: this repo has personal layering off (init --no-personal); not applied here.")

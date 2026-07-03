@@ -200,10 +200,15 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	sourcesPath := filepath.Join(omk, "sources.tsv")
 	sourcesExisted := fileRegular(sourcesPath)
 	priorSources := EnsureSources(omk, stderr)
-	priorOff := state.PersonalOff(priorSources)
+	// Task 1 (Phase 3.5) deleted state.PersonalOff along with the "project"/
+	// "personal" role vocabulary; this is the same personal|off row check,
+	// inlined mechanically to keep this file compiling until Task 3 deletes
+	// this whole region's personal machinery outright.
+	priorOff := false
 	priorOffEpoch := ""
 	for _, r := range priorSources {
 		if r.Layer == "personal" && r.Source == "off" {
+			priorOff = true
 			priorOffEpoch = r.Epoch
 		}
 	}

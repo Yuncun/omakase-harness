@@ -343,14 +343,17 @@ func WritePlaced(path string, rows []PlacedRow) error {
 // ---------------------------------------------------------------- sources.tsv (Phase 3, design §5/§9)
 
 // SourceRow is one row of $OMK/sources.tsv (design §5): the layer stack,
-// bottom-to-top (base has NO row — only project and personal, the two
-// layers a source string can ever name). Frozen format (Global Constraint
-// 4): layer<TAB>source<TAB>ref<TAB>commit<TAB>installed_epoch. Layer is
-// "project" or "personal". Ref is the requested #ref, or "-" if none was
-// given. Commit is the full resolved sha at install/update time, or "-" for
-// a non-git local path — never guessed. The persisted --no-personal /
-// `omakase personal off` opt-out is recorded as its own row:
-// personal<TAB>off<TAB>-<TAB>-<TAB><epoch> (see PersonalOff).
+// bottom-to-top (base has NO row of its own). Frozen format (Global
+// Constraint 6): layer<TAB>source<TAB>ref<TAB>commit<TAB>installed_epoch.
+// Layer is an ordinal string — "1" for the bottom row, "2" for the top row,
+// and so on — assigned by WRITE-side slice position (see WriteSources) and
+// treated as fully opaque by every reader in this package: nothing here
+// interprets a Layer value semantically (Phase 3.5 deleted the old
+// "project"/"personal" role vocabulary, the personal|off sentinel row
+// convention, and the PersonalOff helper that read it — zero back-compat,
+// zero users of that era's state). Ref is the requested #ref, or "-" if
+// none was given. Commit is the full resolved sha at install/update time,
+// or "-" for a non-git local path — never guessed.
 type SourceRow struct {
 	Layer  string
 	Source string
@@ -406,14 +409,18 @@ func ReadSources(path string) []SourceRow {
 
 // WriteSources regenerates $OMK/sources.tsv wholesale: frozen format
 // layer<TAB>source<TAB>ref<TAB>commit<TAB>installed_epoch (Global Constraint
-// 4), one row per non-base layer, bottom-to-top, exactly as given (the
-// caller controls ordering). Refuses — returns an error and writes nothing
-// at all — if any row's Layer is not exactly "project" or "personal", or any
-// field is empty ("-" is a valid placeholder value and counts as present;
-// only a truly empty string refuses), or a field contains an embedded tab or
-// newline. Every row is validated BEFORE any of them is written, mirroring
-// WritePlaced's discipline — this is the writer-side format test the design
-// requires (§5).
+// 6), one row per layer, bottom-to-top, exactly as given (the caller
+// controls ordering — and, as of Phase 3.5, also controls each row's Layer
+// ordinal string; "1" for the bottom row, "2" for the top row, by that row's
+// position in the stack). WriteSources no longer restricts Layer to a closed
+// set of role names — that vocabulary ("project"/"personal") is gone — it is
+// an opaque field validated by the SAME rule as every other column: refuses,
+// returning an error and writing nothing at all, if any field is empty ("-"
+// is a valid placeholder value and counts as present; only a truly empty
+// string refuses) or contains an embedded tab or newline. Every row is
+// validated BEFORE any of them is written, mirroring WritePlaced's
+// discipline — this is the writer-side format test the design requires
+// (§5).
 //
 // Written via the tmp+rename discipline (see writeAtomic's doc comment
 // immediately below for the underlying rationale, ported from
@@ -425,9 +432,6 @@ func ReadSources(path string) []SourceRow {
 func WriteSources(path string, rows []SourceRow) error {
 	var buf bytes.Buffer
 	for i, row := range rows {
-		if row.Layer != "project" && row.Layer != "personal" {
-			return fmt.Errorf("state.WriteSources: row %d: layer %q is not \"project\" or \"personal\"", i, row.Layer)
-		}
 		fields := [...]string{row.Layer, row.Source, row.Ref, row.Commit, row.Epoch}
 		for j, f := range fields {
 			if f == "" {
@@ -485,18 +489,6 @@ func writeAtomic(path string, content []byte) error {
 		return fmt.Errorf("state: writeAtomic: rename %q -> %q: %w", tmp, path, err)
 	}
 	return nil
-}
-
-// PersonalOff reports whether rows contains the persisted --no-personal /
-// `omakase personal off` opt-out row: a row with Layer == "personal" &&
-// Source == "off" (design §5).
-func PersonalOff(rows []SourceRow) bool {
-	for _, r := range rows {
-		if r.Layer == "personal" && r.Source == "off" {
-			return true
-		}
-	}
-	return false
 }
 
 // SynthesizeSources implements the design §9 lazy, read-only migration: the
@@ -557,7 +549,7 @@ func SynthesizeSources(omk string, epoch string) ([]SourceRow, bool) {
 	}
 
 	return []SourceRow{{
-		Layer:  "project",
+		Layer:  "1", // the synthesized row is always the bottom (and, pre-Phase-3.5, only) row
 		Source: source,
 		Ref:    ref,
 		Commit: "-",

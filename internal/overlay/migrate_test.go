@@ -50,15 +50,15 @@ func TestEnsureSourcesSynthesizesFromV1(t *testing.T) {
 		t.Fatalf("rows = %d, want 1: %+v", len(rows), rows)
 	}
 	r := rows[0]
-	if r.Layer != "project" || r.Source != "acme/harness" || r.Ref != "-" || r.Commit != "-" {
-		t.Errorf("row = %+v, want {project acme/harness - - <epoch>}", r)
+	if r.Layer != "1" || r.Source != "acme/harness" || r.Ref != "-" || r.Commit != "-" {
+		t.Errorf("row = %+v, want {1 acme/harness - - <epoch>}", r)
 	}
 	if !allDigits(r.Epoch) {
 		t.Errorf("epoch = %q, want unix digits", r.Epoch)
 	}
 	// The file was written; its non-epoch prefix is byte-frozen.
 	got := readFileT(t, filepath.Join(omk, "sources.tsv"))
-	wantPrefix := "project\tacme/harness\t-\t-\t"
+	wantPrefix := "1\tacme/harness\t-\t-\t"
 	if !strings.HasPrefix(got, wantPrefix) || !strings.HasSuffix(got, "\n") {
 		t.Errorf("sources.tsv = %q, want prefix %q + epoch + newline", got, wantPrefix)
 	}
