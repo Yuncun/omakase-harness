@@ -64,6 +64,14 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	omk := repo.OMK
 	isTracked := func(rel string) bool { return gitTracked(root, rel) }
 
+	// v1→v2 migration for uniformity (design §9): EnsureSources synthesizes
+	// sources.tsv (and warns on mixed-era) on the first v2 run when $OMK exists. It
+	// is a silent no-op when $OMK is absent, so the "nothing installed here"
+	// early-out below stays byte-identical; when $OMK IS present, remove wipes it
+	// wholesale moments later (os.RemoveAll below), so this write is momentary. The
+	// return value is unused — remove reads no layer stack, it just tears down.
+	EnsureSources(omk, stderr)
+
 	const begin = "# >>> omakase-harness >>>"
 	const end = "# <<< omakase-harness <<<"
 	// The exclude file + hooks dir live in the SHARED git dir, so a linked

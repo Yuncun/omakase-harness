@@ -63,6 +63,11 @@ A FIXED three-role stack — this is the entire mental model:
     project harness  (the one remembered source; `init other/src` replaces it)
     personal harness (the one global setting; on top)
 
+On a `--source` install, the base payload folds INTO the project layer (base+delta
+= the project store; there is no separate base store), so `$OMK/layers/` holds
+project(+personal) — the three-role stack above is the MENTAL model, not always
+three physical stores.
+
 - Overlap = **whole-file replacement, higher layer wins**. Never content merging —
   not for instructions, not for `lefthook-local.yml`.
 - One exception, owned by the instruction mapping table (§8): a personal layer's
@@ -74,9 +79,16 @@ A FIXED three-role stack — this is the entire mental model:
   (from `$OMK/layers/<layer>/files/`), rewriting the placed.tsv row (source + sha256);
   delete the path if nothing below ships it (untracked + hash-match rule; local edits
   warned and kept). Deterministic, offline.
-- Layer rebuild ordering (worktree race): `$OMK/layers/` and `payload-snapshot/` are
-  rebuilt (tmp + rename) BEFORE any working-tree deletions, so a post-checkout hook
-  racing a removal never heals from a stale mix.
+- Layer rebuild ordering (worktree race): only `$OMK/layers/<layer>/` is rebuilt
+  tmp + rename; `payload-snapshot/` is RemoveAll'd and rebuilt in place (no tmp
+  dir). The safety property lives in the READER instead: ensure-present.sh skips
+  a placed row whose snapshot copy is missing, so a hook racing a mid-rebuild
+  snapshot can only skip a heal, never heal from wrong bytes. The
+  rebuilt-before-deletions ordering itself holds for `personal off` (snapshot
+  rebuilt before any working-tree deletion). init's de-layer path (`--no-personal`
+  over an already-layered repo) does the reverse — it sweeps the personal-only
+  files from the working tree, THEN rebuilds the snapshot — a seconds-wide
+  benign window, covered by the same reader mitigation.
 - The fail-closed wiring guard runs against the MERGED tree.
 
 ## 5. State under `$GIT_COMMON_DIR/omakase` (`$OMK`)
@@ -85,7 +97,7 @@ A FIXED three-role stack — this is the entire mental model:
 
 | Artifact | Frozen contract |
 |---|---|
-| `placed.tsv` | Exactly 5 columns `path<TAB>kind<TAB>source<TAB>sha256<TAB>enabled`, one row per LIVE placed file (the merged winning view). **No 6th column, ever**: the sh readers (`ensure-present.sh:28`, `verify-overlay.sh:12`, `remove.sh:55`) parse `read -r rel kind src hash enabled` — an appended column is absorbed into `$enabled` and flips verification fail-open. A writer-side format test must enforce ≤5 columns. Layer identity rides in the EXISTING col 3 (`base`, or the layer's source string) — display-only, no sh reader parses it. |
+| `placed.tsv` | Exactly 5 columns `path<TAB>kind<TAB>source<TAB>sha256<TAB>enabled`, one row per LIVE placed file (the merged winning view). **No 6th column, ever**: the sh readers (`ensure-present.sh:28`, `verify-overlay.sh:12`, `remove.sh:55`) parse `read -r rel kind src hash enabled` — an appended column is absorbed into `$enabled` and flips verification fail-open. A writer-side format test must enforce ≤5 columns. Layer identity rides in the EXISTING col 3 (`payload` (the v1 label, pinned by placed.test.sh), or the layer's source string) — display-only, no sh reader parses it. |
 | exclude block | `# >>> omakase-harness >>>` / `# <<< omakase-harness <<<` markers, verbatim. |
 | sha256 semantics | A symlink hashes its readlink TARGET STRING; digest tool = shasum (macOS) / sha256sum (elsewhere), identical output required. |
 | `payload-snapshot/` | Still the MERGED effective tree ensure-present heals from. |
@@ -137,7 +149,7 @@ AGENTS.md standard converges — data, not a subsystem) fans it out:
 |---|---|---|---|
 | `AGENTS.md` | project | placed as-is + bridge `CLAUDE.md → AGENTS.md` (symlink; **only if** no layer and no committed file provides CLAUDE.md) | reads root AGENTS.md natively — nothing extra placed |
 | `CLAUDE.md` (shipped explicitly) | any | as-is; whole-file, later layer wins; committed copy skipped as always | reads root CLAUDE.md natively |
-| `AGENTS.md` | personal | **rerouted to `CLAUDE.local.md`** — Claude's additive gitignored slot; personal instructions ADD to the project's, never replace | **OPEN DECISION — §8** |
+| `AGENTS.md` | personal | **rerouted to `CLAUDE.local.md`** — Claude's additive gitignored slot; personal instructions ADD to the project's, never replace | **honest gap — DECIDED, §8** |
 | `.github/copilot-instructions.md` | any | — | as-is (file-level exclude under the shared `.github` topdir) |
 
 Every slot is a normal omakase placement: excluded via `.git/info/exclude`, healed by
@@ -173,7 +185,8 @@ never does.
   placed.tsv (same frozen 5 columns, layer labels in col 3), regenerates hook scripts
   (same reader contracts + the disabled-gates check).
 - **Refuse-don't-guess:** any operation needing `$OMK/layers/` before it exists
-  (`personal off` in an unmigrated repo) errors with "run omakase init once first".
+  (`personal off` with a personal row recorded but no `$OMK/layers/` store) errors with
+  "run omakase init once first".
 - **Mixed-era detection:** v2 notices `sources.tsv` disagreeing with `$OMK/source` +
   `placed.tsv` (a v1 tool ran after a v2 layered install and orphan-swept the personal
   layer) and reports/reheals on the next run. Window is real (plugin-dist one-session

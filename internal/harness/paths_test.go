@@ -1,6 +1,11 @@
 package harness
 
-import "testing"
+import (
+	"os"
+	"regexp"
+	"strings"
+	"testing"
+)
 
 // TestKindOf copies the exact classification vectors of
 // tests/harness-paths.test.sh:17-46 (all 24 eq lines) — the bash suite's
@@ -83,18 +88,38 @@ func TestKindOfAntiDrift(t *testing.T) {
 	}
 }
 
-// TestSharedTopdirs pins SharedTopdirs to bin/lib-harness-paths.sh:72's
-// HARNESS_SHARED_TOPDIRS (.github). The exclude-block derivation
-// (overlay.DerivePrefixes) hands this list in, so a drift here would change
-// whether .github is excluded wholesale or file-by-file.
+// TestSharedTopdirs pins SharedTopdirs to bin/lib-harness-paths.sh's
+// HARNESS_SHARED_TOPDIRS array by PARSING the bash source -- the lockstep
+// pattern of internal/lefthook's TestVersionAndChecksumsMatchBash, which
+// parses bin/lib-lefthook.sh's LEFTHOOK_VERSION/checksum lines instead of
+// hardcoding them a second time -- rather than hardcoding ".github" here,
+// which could silently drift from the bash array if it ever changed. The
+// exclude-block derivation (overlay.DerivePrefixes) hands this list in, so a
+// drift here would change whether .github is excluded wholesale or
+// file-by-file.
 func TestSharedTopdirs(t *testing.T) {
-	want := []string{".github"}
+	data, err := os.ReadFile("../../bin/lib-harness-paths.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(data)
+
+	re := regexp.MustCompile(`(?m)^HARNESS_SHARED_TOPDIRS=\(([^)]*)\)$`)
+	m := re.FindStringSubmatch(src)
+	if m == nil {
+		t.Fatal(`HARNESS_SHARED_TOPDIRS=(...) not found in bin/lib-harness-paths.sh`)
+	}
+	want := strings.Fields(m[1])
+	if len(want) == 0 {
+		t.Fatal("HARNESS_SHARED_TOPDIRS parsed to zero entries")
+	}
+
 	if len(SharedTopdirs) != len(want) {
-		t.Fatalf("len(SharedTopdirs) = %d, want %d: %v", len(SharedTopdirs), len(want), SharedTopdirs)
+		t.Fatalf("len(SharedTopdirs) = %d, want %d (parsed from bash: %v): %v", len(SharedTopdirs), len(want), want, SharedTopdirs)
 	}
 	for i := range want {
 		if SharedTopdirs[i] != want[i] {
-			t.Errorf("SharedTopdirs[%d] = %q, want %q", i, SharedTopdirs[i], want[i])
+			t.Errorf("SharedTopdirs[%d] = %q, want %q (bash HARNESS_SHARED_TOPDIRS: %v)", i, SharedTopdirs[i], want[i], want)
 		}
 	}
 }

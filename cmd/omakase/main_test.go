@@ -69,6 +69,27 @@ func TestRunRemoveDispatch(t *testing.T) {
 	}
 }
 
+// TestRunPersonalDispatch proves the registry wires "personal" to
+// overlay.RunPersonal: a no-arg `omakase personal` reaches the show arm and
+// prints the setting (here "(none)", since XDG_CONFIG_HOME points at an empty
+// temp dir) with exit 0 — never the dispatcher's unknown-command path.
+func TestRunPersonalDispatch(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"omakase", "personal"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	if got, want := stdout.String(), "personal harness: (none)\n"; got != want {
+		t.Errorf("stdout = %q, want %q", got, want)
+	}
+	if got := stderr.String(); got != "" {
+		t.Errorf("stderr = %q, want empty", got)
+	}
+}
+
 func TestRunUnknownCommand(t *testing.T) {
 	cases := []struct {
 		name string

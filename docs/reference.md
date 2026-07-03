@@ -75,6 +75,26 @@ lines.
 | `version` | no | harness version |
 | `recommends` | no | free-text companion-tool hint, printed once at install |
 
+## Instruction file mapping
+
+A harness ships ONE instruction file, `payload/AGENTS.md`. This table is the per-layer,
+per-path fan-out `init` applies to it (and to an explicitly shipped `CLAUDE.md` or
+`.github/copilot-instructions.md`) — the mirror of the literal data table in the binary
+(v2 design §7); swap rows here and there together when the AGENTS.md standard converges.
+`rel` is matched as a repo-root-relative path, never a basename (`AGENTS.md` is the ROOT
+one only; `docs/AGENTS.md` falls through to "as-is"). Overlap between layers is whole-file,
+higher layer wins — never a content merge.
+
+| Payload file | Layer | Claude Code | Copilot CLI |
+|---|---|---|---|
+| `AGENTS.md` | project | placed as-is + bridge `CLAUDE.md → AGENTS.md` (symlink; **only if** no layer and no committed file provides `CLAUDE.md`) | reads root `AGENTS.md` natively — nothing extra placed |
+| `CLAUDE.md` (shipped explicitly) | any | as-is; whole-file, later layer wins; committed copy skipped as always | reads root `CLAUDE.md` natively |
+| `AGENTS.md` | personal | **rerouted to `CLAUDE.local.md`** — Claude's additive gitignored slot; personal instructions ADD to the project's, never replace | **honest gap — DECIDED, §8** (Copilot has no per-repo gitignored personal slot; personal instructions are Claude-only for now) |
+| `.github/copilot-instructions.md` | any | — | as-is (file-level exclude under the shared `.github` topdir) |
+
+The bridge symlink hashes its target string (`AGENTS.md`), is a normal placed row owned by
+the project layer, and is reversed by `remove` like any other placement.
+
 ## Path classification
 
 `init` decides how to exclude a placed file by its top directory. A shared top directory

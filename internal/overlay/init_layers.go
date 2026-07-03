@@ -1,0 +1,125 @@
+// This file (init_layers.go) holds the layering additions RunInit (init.go)
+// wires in on top of the byte-parity Phase 2 engine: the per-user personal-config
+// path resolution (design §5 / GC10), the sources.tsv ref-field placeholder, and
+// buildMergedStaging — the TRANSIENT higher-layer-wins merge (design §4) the engine
+// places from and the wiring guard validates against.
+//
+// buildMergedStaging is deliberately SEPARATE from BuildLayerStore (layers.go): it
+// assembles the merged tree the engine mutates the working tree from WITHOUT
+// persisting any $OMK/layers/ store, so it can run BEFORE the refusal-capable guards
+// (the wiring guard needs the merged tree) while the persistent stores are built
+// LATER, after those guards pass (init.go's rebuild-ordering slot). The two share
+// the same §7 mapping (MapLayerPath) and the same fail-closed collision rule, applied
+// to their two different outputs.
+package overlay
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+// layerSpec is one entry of the resolved layer stack RunInit assembles
+// (bottom-to-top): which of the three fixed roles it is, the placed.tsv column-3
+// label every file it wins is recorded with, the payload dir its files come from
+// (the base dir, the runSource base+delta merge, or a personal source's payload/),
+// and whether it also places the §7 CLAUDE.md -> AGENTS.md bridge.
+type layerSpec struct {
+	layer      LayerName
+	label      string
+	payloadDir string
+	bridge     bool
+}
+
+// personalConfigPath is ${XDG_CONFIG_HOME:-$HOME/.config}/omakase/personal
+// (design §5, GC10): the per-user global one-line personal-source setting. Built by
+// string concatenation to match the shell expansion byte-for-byte; the caller reads
+// its first line via state.FirstLine (absent/empty ⇒ no personal layer, silently).
+func personalConfigPath() string {
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		base = os.Getenv("HOME") + "/.config"
+	}
+	return base + "/omakase/personal"
+}
+
+// refField is the sources.tsv `ref` column value: the requested #ref, or "-" when
+// none was given (design §5 — "-" is a present placeholder, never an empty field,
+// which state.WriteSources would refuse).
+func refField(ref string) string {
+	if ref == "" {
+		return "-"
+	}
+	return ref
+}
+
+// buildMergedStaging assembles the design §4 higher-layer-wins merged tree from the
+// given layer specs (bottom-to-top) into a fresh MkdirTemp staging dir, WITHOUT
+// persisting any $OMK/layers/ store (BuildLayerStore does that later). It returns
+// the staging dir (the caller RemoveAlls it on every exit path, matching v1's
+// EXIT-trap merge cleanup), a map from each placed dest rel to the WINNING layer's
+// label (placed.tsv column 3), and an error.
+//
+// Each layer's payload paths route through MapLayerPath(layer, rel); a higher layer
+// overwrites a lower layer's file at the same dest (CopyEntry rm-firsts, so a symlink
+// cleanly replaces a regular file and vice versa) and its label wins. Two SOURCE rels
+// WITHIN ONE layer mapping to the same dest is a fail-closed collision (the §7
+// personal AGENTS.md + explicit CLAUDE.local.md case) — never a silent
+// last-writer-wins; the error names both contributors and the shared dest. A project
+// layer's bridge places a CLAUDE.md -> AGENTS.md symlink (subject to the same
+// within-layer collision check).
+func buildMergedStaging(specs []layerSpec) (staging string, labelByRel map[string]string, err error) {
+	staging, err = os.MkdirTemp(os.TempDir(), "omakase-merge.")
+	if err != nil {
+		return "", nil, fmt.Errorf("could not create a temp dir to merge the layer payloads")
+	}
+	fail := func(e error) (string, map[string]string, error) {
+		os.RemoveAll(staging)
+		return "", nil, e
+	}
+
+	labelByRel = make(map[string]string)
+	for _, spec := range specs {
+		rels, werr := walkPayload(spec.payloadDir)
+		if werr != nil {
+			return fail(werr)
+		}
+		// origin tracks, PER LAYER, what produced each dest rel — only so a
+		// collision error can name both contributors. Reset each layer: the same
+		// dest across layers is an OVERLAP (higher wins), not a collision.
+		origin := make(map[string]string, len(rels)+1)
+		place := func(sourceDescr, dest string, doCopy func(dst string) error) error {
+			if prev, dup := origin[dest]; dup {
+				return fmt.Errorf("layer %q: %q and %q both map to %q", spec.layer, prev, sourceDescr, dest)
+			}
+			origin[dest] = sourceDescr
+			dst := filepath.Join(staging, dest)
+			if e := os.MkdirAll(filepath.Dir(dst), 0o755); e != nil {
+				return e
+			}
+			if e := doCopy(dst); e != nil {
+				return e
+			}
+			labelByRel[dest] = spec.label
+			return nil
+		}
+		for _, rel := range rels {
+			dest := MapLayerPath(spec.layer, rel)
+			src := filepath.Join(spec.payloadDir, rel)
+			if e := place(rel, dest, func(dst string) error { return CopyEntry(src, dst) }); e != nil {
+				return fail(e)
+			}
+		}
+		if spec.bridge {
+			if e := place("<bridge CLAUDE.md -> AGENTS.md>", "CLAUDE.md", func(dst string) error {
+				if rmErr := os.Remove(dst); rmErr != nil && !os.IsNotExist(rmErr) {
+					return rmErr
+				}
+				return os.Symlink("AGENTS.md", dst)
+			}); e != nil {
+				return fail(e)
+			}
+		}
+	}
+	return staging, labelByRel, nil
+}
