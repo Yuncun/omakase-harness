@@ -176,3 +176,75 @@ func TestBottomRepairKeepsStoredBridgeUnderCLAUDEtop(t *testing.T) {
 	}
 	assertStoreBridge(t, repo.OMK, "after bottom repair (init A)")
 }
+
+// ---------------------------------------------------------------- Fix F (#6)
+
+// TestCutOverUntracksCommittedAGENTS pins Fix F: a repo COMMITS its own AGENTS.md
+// and installs a source that ALSO ships AGENTS.md, with --cut-over. The cut must
+// untrack the committed AGENTS.md (the canonical path the payload ships, not the
+// CLAUDE.local.md its slot-fallback would reroute to), which frees the root slot
+// so the payload's AGENTS.md lands at the ROOT — matching legacy
+// (bin/legacy/init.sh --cut-over). Before the fix the committed AGENTS.md was
+// already rerouted to CLAUDE.local.md before the cut list was built, so it was
+// never cut, the payload's doctrine landed at CLAUDE.local.md, and the root slot
+// stayed taken forever.
+func TestCutOverUntracksCommittedAGENTS(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+	t.Setenv("OMAKASE_CUTOVER_CONFIRM", "1")
+
+	// The repo commits its own AGENTS.md.
+	writeFile(t, filepath.Join(dir, "AGENTS.md"), "TEAM AGENTS\n")
+	runGitT(t, dir, "add", "AGENTS.md")
+	runGitT(t, dir, "commit", "-q", "-m", "team AGENTS.md")
+
+	src := newHarnessSource(t, "s", map[string]string{
+		"AGENTS.md":           "S doctrine\n",
+		".omakase/gates/s.sh": "s gate\n",
+	})
+
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", src, "--cut-over"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("init --cut-over exit = %d; stderr=%q", code, stderr.String())
+	}
+
+	// The committed AGENTS.md is untracked (git rm --cached staged its deletion).
+	if gitTracked(dir, "AGENTS.md") {
+		t.Error("AGENTS.md is still tracked — --cut-over did not untrack it")
+	}
+	// The payload's AGENTS.md landed at the ROOT (not rerouted to CLAUDE.local.md).
+	eq(t, "payload AGENTS.md at root", readFileT(t, filepath.Join(dir, "AGENTS.md")), "S doctrine\n")
+	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.local.md")); err == nil {
+		t.Error("CLAUDE.local.md exists — the payload AGENTS.md should own the freed root slot, not reroute")
+	}
+	// The prior committed copy is preserved under $OMK/clobbered/ (init's overwrite
+	// discipline), matching legacy's clobbered/ backup.
+	eq(t, "prior committed copy backed up", readFileT(t, filepath.Join(repo.OMK, "clobbered", "AGENTS.md")), "TEAM AGENTS\n")
+	// The cut-over narration named AGENTS.md and staged the deletion.
+	out := stdout.String()
+	if !strings.Contains(out, "    AGENTS.md\n") || !strings.Contains(out, "cut-over staged 1 deletion") {
+		t.Errorf("cut-over narration did not report untracking AGENTS.md:\n%s", out)
+	}
+	// The index shows exactly the staged AGENTS.md deletion (user commits it).
+	if staged := gitStdout(dir, "diff", "--cached", "--name-status"); !strings.Contains(staged, "D\tAGENTS.md") {
+		t.Errorf("staged index does not show AGENTS.md deletion: %q", staged)
+	}
+	// placed.tsv records AGENTS.md at the root (col1), sourced from S.
+	var sawRoot bool
+	for _, r := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
+		if r.Rel == "AGENTS.md" {
+			sawRoot = true
+			if r.Src != src {
+				t.Errorf("AGENTS.md row src = %q, want %q", r.Src, src)
+			}
+		}
+		if r.Rel == "CLAUDE.local.md" {
+			t.Error("placed.tsv has a CLAUDE.local.md row — AGENTS.md should own the root slot")
+		}
+	}
+	if !sawRoot {
+		t.Error("placed.tsv has no root AGENTS.md row")
+	}
+}

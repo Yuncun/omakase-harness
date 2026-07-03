@@ -313,39 +313,47 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	sourceLabel := "payload" // placed.tsv col3 fallback for the base-only path
 	rememberedSource := ""
 	recommends := ""
-	committedInstr := gitTracked(root, "AGENTS.md") || gitTracked(root, "CLAUDE.md")
-	rootTaken := committedInstr
-	rootOwnerIdx := -1
-	var specs []layerSpec
-	var stackRows []state.SourceRow
-	var fellBackLabels []string
+
+	// ---- Pass 1: fetch/reuse each layer, resolving its payloadDir + metadata,
+	// WITHOUT deciding the root slot yet. The slot decision below is cut-over-aware
+	// (Fix F): a committed instruction file --cut-over will untrack must NOT count
+	// as taking the slot, and that depends on what the payload SHIPS — which is only
+	// known after the fetch. Fetching does not depend on the slot decision (rootSlotFree
+	// is only USED in the spec/mapping pass), so this split is behavior-preserving. ----
+	type fetchedLayer struct {
+		ordinal    LayerName
+		source     string // plan source string (sources.tsv col2)
+		ref        string // plan ref ("" = none), for the sources.tsv ref column
+		label      string // displayLabel / runSource label (spec + fellBack narration)
+		payloadDir string
+		preMapped  bool
+		rowEpoch   string
+		rowCommit  string
+	}
+	var fetched []fetchedLayer
 	for i := range plan {
 		ordinal := LayerName(strconv.Itoa(i + 1))
 		pl := plan[i]
 		storeDir := filepath.Join(omk, "layers", string(ordinal))
 		refetch := pl.refetch || !isDir(storeDir) // a missing store must be (re)built
-		rootSlotFree := !rootTaken
-		label := displayLabel(pl.source, pl.ref)
-		rowEpoch := pl.epoch
-		if rowEpoch == "" {
-			rowEpoch = epoch
+		fl := fetchedLayer{ordinal: ordinal, source: pl.source, ref: pl.ref, label: displayLabel(pl.source, pl.ref)}
+		fl.rowEpoch = pl.epoch
+		if fl.rowEpoch == "" {
+			fl.rowEpoch = epoch
 		}
-		rowCommit := pl.commit
-		if rowCommit == "" {
-			rowCommit = "-"
+		fl.rowCommit = pl.commit
+		if fl.rowCommit == "" {
+			fl.rowCommit = "-"
 		}
-
-		var spec layerSpec
 		if refetch {
-			var payloadDir string
 			if i == 0 {
 				res, code := runSource(pl.source, pl.ref, defaultPayload(), stdout, stderr)
 				if code != 0 {
 					return code // runSource printed the message + cleaned any staging dir
 				}
 				defer os.RemoveAll(res.merged) // v1's EXIT-trap cleanup (bin/init.sh:63-68)
-				payloadDir = res.payload
-				label = res.label
+				fl.payloadDir = res.payload
+				fl.label = res.label
 				rememberedSource = res.remembered
 				recommends = res.recommends
 			} else {
@@ -353,16 +361,56 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 				if code != 0 {
 					return code
 				}
-				payloadDir = pDir
+				fl.payloadDir = pDir
 			}
-			rowCommit = resolvedCommit(pl.source)
-			spec = layerSpec{layer: ordinal, label: label, payloadDir: payloadDir, rootSlotFree: rootSlotFree}
-			if !rootSlotFree && lexists(filepath.Join(payloadDir, "AGENTS.md")) {
-				fellBackLabels = append(fellBackLabels, label) // GC5 slot-fallback narration
-			}
+			fl.rowCommit = resolvedCommit(pl.source)
 		} else {
 			// Reuse the persisted store's post-mapping files/ tree (preMapped).
-			spec = layerSpec{layer: ordinal, label: label, payloadDir: filepath.Join(storeDir, "files"), preMapped: true}
+			fl.payloadDir = filepath.Join(storeDir, "files")
+			fl.preMapped = true
+		}
+		fetched = append(fetched, fl)
+	}
+
+	// ---- cut-over slot awareness (Fix F) ----
+	// A committed root instruction file the payload ALSO ships is untracked by
+	// --cut-over below (the cut runs before the place loop, exactly as legacy does),
+	// freeing the root slot — so it must NOT count as taking the slot here. Whether
+	// the payload ships that canonical path is read from the fetched payload dirs
+	// (pre-mapping rels: a canonical AGENTS.md, not the CLAUDE.local.md its fallback
+	// would reroute to). With the slot freed, the payload's AGENTS.md is placed at the
+	// root and the cut set (built from the merged staging below, which now carries
+	// AGENTS.md at the root rather than a reroute) untracks it — matching legacy.
+	committedInstr := gitTracked(root, "AGENTS.md") || gitTracked(root, "CLAUDE.md")
+	if cutover {
+		payloadShips := func(want string) bool {
+			for _, fl := range fetched {
+				rels, _ := walkPayload(fl.payloadDir)
+				for _, rel := range rels {
+					if rel == want {
+						return true
+					}
+				}
+			}
+			return false
+		}
+		committedAGENTS := gitTracked(root, "AGENTS.md") && !payloadShips("AGENTS.md")
+		committedCLAUDE := gitTracked(root, "CLAUDE.md") && !payloadShips("CLAUDE.md")
+		committedInstr = committedAGENTS || committedCLAUDE
+	}
+
+	// ---- Pass 2: decide the root slot bottom-to-top, assemble specs + sources.tsv rows. ----
+	rootTaken := committedInstr
+	rootOwnerIdx := -1
+	var specs []layerSpec
+	var stackRows []state.SourceRow
+	var fellBackLabels []string
+	for i := range fetched {
+		fl := fetched[i]
+		rootSlotFree := !rootTaken
+		spec := layerSpec{layer: fl.ordinal, label: fl.label, payloadDir: fl.payloadDir, rootSlotFree: rootSlotFree, preMapped: fl.preMapped}
+		if !fl.preMapped && !rootSlotFree && lexists(filepath.Join(fl.payloadDir, "AGENTS.md")) {
+			fellBackLabels = append(fellBackLabels, fl.label) // GC5 slot-fallback narration
 		}
 
 		// Root-slot ownership: a fresh layer owns it iff it placed a root AGENTS.md
@@ -379,7 +427,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		}
 
 		specs = append(specs, spec)
-		stackRows = append(stackRows, state.SourceRow{Layer: string(ordinal), Source: pl.source, Ref: refField(pl.ref), Commit: rowCommit, Epoch: rowEpoch})
+		stackRows = append(stackRows, state.SourceRow{Layer: string(fl.ordinal), Source: fl.source, Ref: refField(fl.ref), Commit: fl.rowCommit, Epoch: fl.rowEpoch})
 	}
 
 	// §7 bridge: the root-slot-owning layer may ALSO place a CLAUDE.md -> AGENTS.md
