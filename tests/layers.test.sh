@@ -159,13 +159,33 @@ wt_manifest(){ local root="$1" omk="$2" out="$3"; : > "$out"; local rel full
     else printf 'MISSING\t%s\n' "$rel" >> "$out"; fi
   done; }
 
+# full_wt_manifest: the FULL working-tree content of a repo — every regular
+# file's bytes and every symlink's target, for the WHOLE tree — skipping ONLY
+# the top-level .git dir (two independently created repos never share .git
+# bytes). Unlike wt_manifest (placed.tsv column 1 only), this walks EVERY
+# path, so a leftover file a removal failed to sweep is caught even when it
+# sits under an omakase-owned dir that the exclude block hides wholesale from
+# `git status --porcelain` (e.g. a stray file under .omakase/), or when it is
+# a wiring file that is never a placed row at all (.worktreeinclude,
+# lefthook.yml — those are otherwise compared only via the byte-checked
+# .git/info/exclude block). No normalization: the working tree has none of
+# $OMK's epoch/clobbered exemptions.
+full_wt_manifest(){ local root="$1" out="$2"; : > "$out"; local rel full
+  ( cd "$root" && find . -mindepth 1 \( -path './.git' -o -path './.git/*' \) -prune -o \( -type f -o -type l \) -print ) \
+    | sed 's|^\./||' | LC_ALL=C sort | while IFS= read -r rel; do
+      [ -z "$rel" ] && continue; full="$root/$rel"
+      if [ -L "$full" ]; then printf 'SYMLINK\t%s\t%s\n' "$rel" "$(readlink "$full")" >> "$out"
+      elif [ -f "$full" ]; then printf 'FILE\t%s\n' "$rel" >> "$out"; cat "$full" >> "$out"; printf '\037\n' >> "$out"; fi
+    done; }
+
 # excl_block: the omakase marked block of an exclude file (markers inclusive),
 # path-free by construction (every entry is a repo-relative prefix).
 excl_block(){ awk '/^# >>> omakase-harness >>>$/{p=1} p{print} /^# <<< omakase-harness <<<$/{p=0}' "$1" 2>/dev/null; }
 
 # twin_equal: the GC7 twin-diff — an unlayered repo (A) and a fresh single-source
 # install (B) agree byte-for-byte on the FULL $OMK tree + the exclude block + every
-# placed working-tree file, and both working trees are git-clean.
+# placed working-tree file + the ENTIRE working tree (any file, anywhere, placed
+# or not), and both working trees are git-clean.
 twin_equal(){ local lbl="$1" ra="$2" rb="$3"; local oa ob; oa="$(omk_of "$ra")"; ob="$(omk_of "$rb")"
   omk_manifest "$oa" "$TMP/$lbl.omkA"; omk_manifest "$ob" "$TMP/$lbl.omkB"
   same "$lbl: \$OMK tree byte-equal (epoch-normalized, clobbered excluded)" "$TMP/$lbl.omkA" "$TMP/$lbl.omkB"
@@ -174,6 +194,8 @@ twin_equal(){ local lbl="$1" ra="$2" rb="$3"; local oa ob; oa="$(omk_of "$ra")";
   same "$lbl: exclude block byte-identical" "$TMP/$lbl.exA" "$TMP/$lbl.exB"
   wt_manifest "$ra" "$oa" "$TMP/$lbl.wtA"; wt_manifest "$rb" "$ob" "$TMP/$lbl.wtB"
   same "$lbl: placed working-tree files byte-identical" "$TMP/$lbl.wtA" "$TMP/$lbl.wtB"
+  full_wt_manifest "$ra" "$TMP/$lbl.fullA"; full_wt_manifest "$rb" "$TMP/$lbl.fullB"
+  same "$lbl: FULL working tree byte-equal (entire repo, .git excluded, no normalization)" "$TMP/$lbl.fullA" "$TMP/$lbl.fullB"
   clean_tree "$ra" "$lbl: unlayered repo git-clean"; clean_tree "$rb" "$lbl: fresh repo git-clean"; }
 
 # ============================================================================

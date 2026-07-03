@@ -622,11 +622,71 @@ func omkTreeForTwin(t *testing.T, omk string) map[string]string {
 	return tree
 }
 
+// workingTreeForTwin snapshots the FULL working tree of a repo — every
+// regular file's content and every symlink's target, keyed by repo-relative
+// path — skipping ONLY the top-level ".git" directory (two independently
+// created repos never share .git bytes: different object hashes, different
+// hook-install timestamps, etc.). Unlike a placed.tsv-column-1 walk, this
+// covers the ENTIRE tree, so a file a removal failed to sweep is caught even
+// when it sits under an omakase-owned directory that DerivePrefixes excludes
+// wholesale from `git status --porcelain` (e.g. a stray file left behind
+// under .omakase/), or when it is a wiring file that is never a placed row
+// at all (.worktreeinclude, lefthook.yml — those are compared today only via
+// the byte-checked .git/info/exclude block and, for lefthook.yml, indirectly
+// via hook behavior — never via a direct twin byte-compare). There is no
+// sanctioned normalization for the working tree (unlike $OMK's
+// epoch/clobbered exemptions, which apply only to the $OMK-tree half of this
+// comparison): any difference found here is a genuine defect.
+func workingTreeForTwin(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := make(map[string]string)
+	var walk func(d, rel string)
+	walk = func(d, rel string) {
+		ents, err := os.ReadDir(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range ents {
+			if rel == "" && e.Name() == ".git" {
+				continue
+			}
+			p := filepath.Join(d, e.Name())
+			r := e.Name()
+			if rel != "" {
+				r = rel + "/" + e.Name()
+			}
+			info, err := os.Lstat(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				target, err := os.Readlink(p)
+				if err != nil {
+					t.Fatal(err)
+				}
+				out["symlink:"+r] = target
+			} else if info.IsDir() {
+				walk(p, r)
+			} else {
+				content, err := os.ReadFile(p)
+				if err != nil {
+					t.Fatal(err)
+				}
+				out["file:"+r] = string(content)
+			}
+		}
+	}
+	walk(dir, "")
+	return out
+}
+
 // assertRemoveTwinEqual pins the GC7 twin-diff invariant: an unlayered repo and a
 // fresh single-source install agree BYTE-FOR-BYTE on the FULL $OMK tree (see
-// omkTreeForTwin for the two justified normalizations) and the exclude block,
-// and both working trees are git-clean. placed.tsv is also asserted directly
-// first, only for a readable failure message — the full-tree compare covers it.
+// omkTreeForTwin for the two justified normalizations), the exclude block,
+// and the FULL working tree (see workingTreeForTwin — no normalization, no
+// placed.tsv filter), and both working trees are git-clean. placed.tsv is
+// also asserted directly first, only for a readable failure message — the
+// full-tree compares cover it.
 func assertRemoveTwinEqual(t *testing.T, a, b *state.Repo, dirA, dirB string) {
 	t.Helper()
 	eq(t, "placed.tsv (unlayered vs fresh)",
@@ -648,6 +708,22 @@ func assertRemoveTwinEqual(t *testing.T, a, b *state.Repo, dirA, dirB string) {
 		for k, vb := range tb {
 			if _, ok := ta[k]; !ok {
 				t.Errorf("$OMK entry %q: fresh has it, unlayered does not (%q)", k, vb)
+			}
+		}
+	}
+	wa, wb := workingTreeForTwin(t, dirA), workingTreeForTwin(t, dirB)
+	if !maps.Equal(wa, wb) {
+		for k, va := range wa {
+			vb, ok := wb[k]
+			if !ok {
+				t.Errorf("working tree entry %q: unlayered has it, fresh does not (%q)", k, va)
+			} else if va != vb {
+				t.Errorf("working tree entry %q differs:\n unlayered=%q\n fresh=%q", k, va, vb)
+			}
+		}
+		for k, vb := range wb {
+			if _, ok := wa[k]; !ok {
+				t.Errorf("working tree entry %q: fresh has it, unlayered does not (%q)", k, vb)
 			}
 		}
 	}
