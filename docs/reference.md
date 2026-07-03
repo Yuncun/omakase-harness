@@ -40,7 +40,7 @@ the payload no longer ships, unless it was edited locally.
 ### `status.sh [--markdown]`
 
 Prints the installed harness: the inventory grouped by origin (committed, injected,
-personal), the hook wiring, the run ledger, and the paths hidden via `.git/info/exclude`.
+global), the hook wiring, the run ledger, and the paths hidden via `.git/info/exclude`.
 `--markdown` emits formatted Markdown. Read-only.
 
 ### `remove.sh [<source>]`
