@@ -1,20 +1,25 @@
 // This file (layers.go) ports the design §4/§5 layer store: building each
 // stack layer's own on-disk copy under $OMK/layers/<layer>/ (the "shadow
-// restore" record removing one layer needs later) and the pure
-// higher-layer-wins merge computation §4 describes as the whole-file overlap
-// rule. No git, no hook wiring, no host process here — this is the
-// building-block layer Task 4 (init) and Task 5 (personal off) wire into the
-// live verbs.
+// restore" record removing one layer needs later), the pure higher-layer-wins
+// merge computation §4 describes as the whole-file overlap rule, and — the
+// live verb built on those primitives — RemoveLayer, `omakase remove
+// <source>`'s single-layer unlayering (design §4 layer removal / GC7). The
+// pure primitives (BuildLayerStore/MergeLayers/RemoveLayerDir) do no git or
+// host I/O; RemoveLayer does, mutating the working tree and the marked blocks
+// exactly as init's reverse.
 package overlay
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/Yuncun/omakase-harness/internal/harness"
 	"github.com/Yuncun/omakase-harness/internal/state"
+	"github.com/Yuncun/omakase-harness/internal/textblock"
 )
 
 // LayerSet is the in-memory result of building (or re-describing) one
@@ -230,14 +235,313 @@ func MergeLayers(sets []*LayerSet) *MergedView {
 }
 
 // RemoveLayerDir deletes a layer's entire on-disk store,
-// "<omk>/layers/<layer>/" (files/ + placed.tsv), used by `omakase personal
-// off`'s teardown (Task 5) once its shadow-restore pass has finished
-// consulting it. A missing store is not an error — os.RemoveAll on an
-// absent path already succeeds silently, matching "removing something
-// that's already gone is fine."
+// "<omk>/layers/<layer>/" (files/ + placed.tsv), used by RemoveLayer once its
+// shadow-restore pass has finished consulting it. A missing store is not an
+// error — os.RemoveAll on an absent path already succeeds silently, matching
+// "removing something that's already gone is fine."
 func RemoveLayerDir(omk string, layer LayerName) error {
 	if err := os.RemoveAll(filepath.Join(omk, "layers", string(layer))); err != nil {
 		return fmt.Errorf("overlay: RemoveLayerDir: removing layer %q: %w", layer, err)
 	}
 	return nil
+}
+
+// RemoveLayer unlayers ONE source from a two-layer stack (design §4 layer
+// removal), leaving the other as the sole bottom layer (ordinal "1") and
+// rebuilding the live merged view to equal a fresh single-source install of the
+// survivor (the GC7 twin-diff invariant). recorded is the current stack,
+// bottom-to-top ("1" then "2"); removeIdx is 0 (bottom) or 1 (top).
+//
+// Two directions, differing only in how the survivor's FINAL store at layers/1
+// is prepared:
+//
+//   - TOP removal (removeIdx == 1): the survivor is already the base-folded
+//     bottom store at layers/1 — carried through untouched (a stacking init
+//     never rebuilt it, so it is byte-identical to what a fresh install of the
+//     survivor alone produced, bridge and all).
+//   - BOTTOM removal (removeIdx == 0): the survivor is layers/2, a DELTA with no
+//     base folded under it. The embedded base is re-folded under it into a fresh
+//     layers/1 store — offline, from base + layers/2/files only (GC10) — exactly
+//     the fold a fresh init of the survivor performs, with the slot-fallback and
+//     §7 bridge re-derived for the now-single layer.
+//
+// After the survivor's final store is at layers/1, both directions share one
+// tail: rebuild the snapshot + placed.tsv + exclude/wtinc to the survivor-only
+// view BEFORE any working-tree deletion (design §4 rebuild ordering), then
+// restore each removed-won path the survivor also ships (byte-exact) and delete
+// the sole-removed ones (untracked + hash-match; a local edit is warned + kept),
+// renumber sources.tsv to the single survivor row, drop the stale layers/2, and
+// print the GC5 summary + per-file narration.
+//
+// KNOWN LIMITATION (bottom removal, flagged for the controller): when the
+// survivor shipped a root AGENTS.md that the removed bottom layer's root-slot
+// ownership had rerouted to CLAUDE.local.md in the stack, that reroute is NOT
+// reversed here — layers/2/files persists the post-mapping dest ("CLAUDE.local.md"),
+// indistinguishable from an explicitly shipped CLAUDE.local.md, and un-rerouting
+// it would need the survivor's raw payload (its source cache), which GC10 forbids.
+// A fresh init of the survivor would instead place that AGENTS.md at the root
+// (+ bridge). Every other bottom-removal shape reproduces a fresh install exactly.
+func RemoveLayer(root, common, omk string, recorded []state.SourceRow, removeIdx int, stdout, stderr io.Writer) int {
+	survivorIdx := 1 - removeIdx
+	removedLabel := reassembleSource(recorded[removeIdx])
+	survivorRow := recorded[survivorIdx]
+	survivorLabel := reassembleSource(survivorRow)
+	isTracked := func(rel string) bool { return gitTracked(root, rel) }
+
+	// The survivor's FINAL store always lands at layers/1 (the sole bottom layer).
+	survivorDir := filepath.Join(omk, "layers", "1")
+
+	if removeIdx == 0 {
+		// ---- BOTTOM removal: re-fold the embedded base under the survivor's delta
+		// (layers/2/files) into a fresh layers/1 store. ----
+		folded, code := foldBaseUnder(filepath.Join(omk, "layers", "2", "files"), stderr)
+		if code != 0 {
+			return code
+		}
+		defer os.RemoveAll(folded)
+
+		// Re-derive the slot-fallback + §7 bridge for the now-single survivor layer,
+		// exactly as a fresh init of the survivor would: a committed root instruction
+		// file takes the slot, else the survivor owns it (and may bridge).
+		rootSlotFree := !(isTracked("AGENTS.md") || isTracked("CLAUDE.md"))
+		foldedRels, werr := walkPayload(folded)
+		if werr != nil {
+			fmt.Fprintln(stderr, werr.Error())
+			return 1
+		}
+		mapped := make([]string, 0, len(foldedRels))
+		for _, rel := range foldedRels {
+			dest, _ := MapInstruction(rel, rootSlotFree)
+			mapped = append(mapped, dest)
+		}
+		bridge := BridgeWanted(LayerProject, map[LayerName][]string{LayerProject: mapped}, isTracked("CLAUDE.md"))
+
+		// BuildLayerStore RemoveAll's + replaces layers/1 (the removed bottom store)
+		// with the re-folded survivor store; the stale layers/2 is dropped in the
+		// shared tail below.
+		if _, blErr := BuildLayerStore(omk, LayerName("1"), survivorLabel, folded, rootSlotFree, bridge); blErr != nil {
+			fmt.Fprintln(stderr, blErr.Error())
+			return 1
+		}
+	}
+
+	survivorFilesDir := filepath.Join(survivorDir, "files")
+
+	// The survivor store's placed.tsv is its FULL post-mapping set. A fresh init of
+	// just the survivor places only the UNTRACKED subset (it SKIPs every dest the
+	// repo already commits), so the post-unlayer live view is the store minus every
+	// path the repo tracks — filter through the same gitTracked check init uses, so
+	// a committed harness path is never resurrected into placed.tsv / the snapshot /
+	// the exclude block.
+	survivorRows := state.ReadPlaced(filepath.Join(survivorDir, "placed.tsv"))
+	survivorHas := make(map[string]bool, len(survivorRows)) // restore-source lookup (FULL set)
+	var liveSurvivorRows []state.PlacedRow                  // UNTRACKED subset (post-unlayer live view)
+	for _, r := range survivorRows {
+		survivorHas[r.Rel] = true
+		if !isTracked(r.Rel) {
+			liveSurvivorRows = append(liveSurvivorRows, r)
+		}
+	}
+
+	// Read the LIVE placed.tsv BEFORE rebuilding it — the removed-won set is every
+	// live row whose column-3 label is the removed layer's label.
+	liveRows := state.ReadPlaced(filepath.Join(omk, "placed.tsv"))
+
+	// ---- rebuild snapshot + placed.tsv to the survivor-only view, BEFORE any
+	// working-tree deletion (design §4 rebuild ordering: a racing post-checkout heal
+	// never observes a stale mix). ----
+	snap := filepath.Join(omk, "payload-snapshot")
+	if err := os.RemoveAll(snap); err != nil {
+		return 1
+	}
+	if err := os.MkdirAll(snap, 0o755); err != nil {
+		return 1
+	}
+	for _, r := range liveSurvivorRows {
+		dst := filepath.Join(snap, r.Rel)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return 1
+		}
+		if err := CopyEntry(filepath.Join(survivorFilesDir, r.Rel), dst); err != nil {
+			return 1
+		}
+	}
+	// Lexical by dest rel (Global Constraint 6 discipline) — the untracked subset
+	// already arrives lexical from the store, but sort defensively so placed.tsv /
+	// the exclude block match a fresh init's lexical walk order.
+	sort.Slice(liveSurvivorRows, func(i, j int) bool { return liveSurvivorRows[i].Rel < liveSurvivorRows[j].Rel })
+	if err := state.WritePlaced(filepath.Join(omk, "placed.tsv"), liveSurvivorRows); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if code := rewriteExcludeWtinc(root, common, placedRels(liveSurvivorRows), stderr); code != 0 {
+		return code
+	}
+
+	// ---- working-tree unlayer ----
+	umask := currentUmask()
+	restored, deleted := 0, 0
+	var bullets []string
+	for _, row := range liveRows {
+		if row.Src != removedLabel {
+			continue // survivor owns it — working tree untouched
+		}
+		rel := row.Rel
+		if isTracked(rel) {
+			continue // never touch a tracked path (upstream owns it)
+		}
+		if survivorHas[rel] {
+			// The survivor ships this dest: re-place its copy (byte-exact restore).
+			if code := placeFile(filepath.Join(survivorFilesDir, rel), rel, root, umask, stderr); code != 0 {
+				return code
+			}
+			restored++
+			bullets = append(bullets, "  ^ restored: "+rel+"\n")
+			continue
+		}
+		// Sole to the removed layer: delete under the untracked + hash-match rule (the
+		// orphan-sweep discipline); a local edit is warned and kept.
+		full := filepath.Join(root, rel)
+		if !lexists(full) {
+			continue // already gone
+		}
+		if state.HashOf(full) == row.Hash {
+			if err := DeletePlaced(root, rel, isTracked); err != nil {
+				return 1
+			}
+			deleted++
+			bullets = append(bullets, "  - deleted: "+rel+"\n")
+		} else {
+			fmt.Fprintf(stderr, "omakase: WARNING — '%s' was placed by the removed harness, has no lower-layer copy to restore, and differs from what omakase placed (a local edit?). Leaving it; delete it yourself if unwanted.\n", rel)
+		}
+	}
+
+	// ---- sources.tsv: the sole survivor, renumbered to the bottom ("1"). ----
+	survivorRow.Layer = "1"
+	if err := state.WriteSources(filepath.Join(omk, "sources.tsv"), []state.SourceRow{survivorRow}); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	// Drop the removed layer's store (TOP: the removed top; BOTTOM: the stale delta,
+	// whose content was re-folded into layers/1 above) — always layers/2.
+	if err := RemoveLayerDir(omk, LayerName("2")); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+
+	// ---- GC5 summary + per-file narration (bullets in live-row lexical order). ----
+	fmt.Fprintf(stdout, "omakase: removed %s — %d file(s) deleted, %d restored from %s\n", removedLabel, deleted, restored, survivorLabel)
+	for _, b := range bullets {
+		fmt.Fprint(stdout, b)
+	}
+	return 0
+}
+
+// foldBaseUnder stages the embedded base payload with deltaDir overlaid on top
+// (REPLACE semantics — the delta wins any overlap), the same base+delta merge
+// runSource performs for a fresh install, minus the fetch. deltaDir is a
+// surviving layer store's post-mapping files/ tree; the returned staging dir is
+// the caller's to os.RemoveAll on every exit path. On failure it has written the
+// byte-appropriate message and returns a non-zero code.
+func foldBaseUnder(deltaDir string, stderr io.Writer) (string, int) {
+	base := defaultPayload()
+	if info, err := os.Stat(base); err != nil || !info.IsDir() {
+		fmt.Fprintf(stderr, "omakase: payload dir not found at %s\n", base)
+		return "", 1
+	}
+	merged, err := os.MkdirTemp(os.TempDir(), "omakase-refold.")
+	if err != nil {
+		fmt.Fprintln(stderr, "omakase: could not create a temp dir to re-fold the base + surviving payload")
+		return "", 1
+	}
+	if err := copyTree(base, merged); err != nil {
+		os.RemoveAll(merged)
+		fmt.Fprintln(stderr, "omakase: failed to copy the base payload into the re-fold staging dir")
+		return "", 1
+	}
+	rels, err := walkPayload(deltaDir)
+	if err != nil {
+		os.RemoveAll(merged)
+		fmt.Fprintln(stderr, err.Error())
+		return "", 1
+	}
+	for _, rel := range rels {
+		dst := filepath.Join(merged, rel)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			os.RemoveAll(merged)
+			return "", 1
+		}
+		if err := os.RemoveAll(dst); err != nil { // rm -rf: also clears a base DIR at this path
+			os.RemoveAll(merged)
+			return "", 1
+		}
+		if err := CopyEntry(filepath.Join(deltaDir, rel), dst); err != nil {
+			os.RemoveAll(merged)
+			fmt.Fprintf(stderr, "omakase: failed to overlay surviving payload file '%s' onto the base payload\n", rel)
+			return "", 1
+		}
+	}
+	return merged, 0
+}
+
+// placedRels projects a placed-row slice to its rel column (order preserved),
+// the input DerivePrefixes and the exclude/wtinc rewrite expect.
+func placedRels(rows []state.PlacedRow) []string {
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.Rel)
+	}
+	return out
+}
+
+// rewriteExcludeWtinc re-derives and rewrites the exclude + .worktreeinclude
+// marked blocks for the given placed set — the exact derivation init.go performs
+// (DerivePrefixes over harness.SharedTopdirs, strip-then-append via textblock,
+// the .worktreeinclude-entry skip). Kept in lockstep with init's two blocks; a
+// small, documented duplication so RemoveLayer's edits stay off the byte-frozen
+// init engine.
+func rewriteExcludeWtinc(root, common string, placed []string, stderr io.Writer) int {
+	const begin = "# >>> omakase-harness >>>"
+	const end = "# <<< omakase-harness <<<"
+	exclude := filepath.Join(common, "info", "exclude")
+
+	lefthookTracked := gitTracked(root, "lefthook.yml")
+	wtincTracked := gitTracked(root, ".worktreeinclude")
+	if wtincTracked {
+		fmt.Fprintln(stderr, "omakase: .worktreeinclude is tracked — leaving it untouched (re-run omakase init inside a new manual worktree to install it there).")
+	}
+	isDirRoot := func(p string) bool { return isDir(filepath.Join(root, p)) }
+	prefixes := DerivePrefixes(placed, harness.SharedTopdirs, isDirRoot, lefthookTracked, wtincTracked)
+
+	if err := os.MkdirAll(filepath.Dir(exclude), 0o755); err != nil {
+		return 1
+	}
+	if err := touch(exclude); err != nil {
+		return 1
+	}
+	excludeContent, _ := os.ReadFile(exclude)
+	excludeOut := textblock.AppendBlock(textblock.Strip(excludeContent, begin, end), begin, prefixes, end)
+	if err := rewriteFile(exclude, excludeOut); err != nil {
+		return 1
+	}
+
+	if !wtincTracked && len(placed) > 0 {
+		wtinc := filepath.Join(root, ".worktreeinclude")
+		if err := touch(wtinc); err != nil {
+			return 1
+		}
+		var wtEntries []string
+		for _, p := range prefixes {
+			if strings.TrimSuffix(p, "/") == ".worktreeinclude" {
+				continue
+			}
+			wtEntries = append(wtEntries, p)
+		}
+		wtContent, _ := os.ReadFile(wtinc)
+		wtOut := textblock.AppendBlock(textblock.Strip(wtContent, begin, end), begin, wtEntries, end)
+		if err := rewriteFile(wtinc, wtOut); err != nil {
+			return 1
+		}
+	}
+	return 0
 }

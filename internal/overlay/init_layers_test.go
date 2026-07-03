@@ -69,34 +69,12 @@ func wantResolvedCommit(t *testing.T, src string) string {
 // gitStdout, sha256hex, snapshotTree) live in init_test.go / source_test.go /
 // overlay_test.go / layers_test.go.
 
-// setPersonalConfig isolates XDG_CONFIG_HOME to a fresh temp dir and writes the
-// personal-source setting (one line) there. Retained for the legacy personal.go
-// tests (Task 4 removes them); `init` no longer reads this file.
-func setPersonalConfig(t *testing.T, line string) {
-	t.Helper()
-	cfg := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", cfg)
-	writeFile(t, filepath.Join(cfg, "omakase", "personal"), line+"\n")
-}
-
 // isolatePersonalConfig points XDG_CONFIG_HOME at an EMPTY temp dir so a test is
-// deterministic regardless of the real machine's ~/.config/omakase/personal.
+// deterministic regardless of the real machine's per-user config. Retained
+// because migrate_test.go isolates the environment through it.
 func isolatePersonalConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-}
-
-// newPersonalSource builds a valid harness source repo (manifest + payload) and
-// returns its absolute path. Retained for the legacy personal.go tests.
-func newPersonalSource(t *testing.T, payload map[string]string) string {
-	t.Helper()
-	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: personal-harness\n")
-	for rel, content := range payload {
-		writeFile(t, filepath.Join(src, "payload", rel), content)
-	}
-	commitAll(t, src, "personal")
-	return src
 }
 
 // newHarnessSource builds a valid harness source repo shipping the given payload

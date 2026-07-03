@@ -1,9 +1,7 @@
 // This file (init_layers.go) holds the layering additions RunInit (init.go)
 // wires in on top of the byte-parity Phase 2 engine: the sources.tsv ref-field
-// placeholder, personalConfigPath (still read by the legacy personal.go verb
-// pending its Task-4 removal), and buildMergedStaging — the TRANSIENT
-// higher-layer-wins merge (design §4) the engine places from and the wiring
-// guard validates against.
+// placeholder and buildMergedStaging — the TRANSIENT higher-layer-wins merge
+// (design §4) the engine places from and the wiring guard validates against.
 //
 // buildMergedStaging is deliberately SEPARATE from BuildLayerStore (layers.go): it
 // assembles the merged tree the engine mutates the working tree from WITHOUT
@@ -79,18 +77,6 @@ func unRefField(ref string) string {
 		return ""
 	}
 	return ref
-}
-
-// personalConfigPath is ${XDG_CONFIG_HOME:-$HOME/.config}/omakase/personal —
-// read only by the legacy personal.go verb (Phase 3), which Task 4 deletes. It
-// no longer participates in `init` (Phase 3.5 removed the per-repo personal
-// layer). Kept here until personal.go is removed so the package compiles.
-func personalConfigPath() string {
-	base := os.Getenv("XDG_CONFIG_HOME")
-	if base == "" {
-		base = os.Getenv("HOME") + "/.config"
-	}
-	return base + "/omakase/personal"
 }
 
 // refField is the sources.tsv `ref` column value: the requested #ref, or "-" when

@@ -1,10 +1,14 @@
 package overlay
 
 import (
+	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
 // These are the RunRemove integration tests. Every byte-exact expectation
@@ -160,16 +164,14 @@ func TestHookStubSubstringGateQuirk(t *testing.T) {
 // ---------------------------------------------------------------- no-op paths
 
 // TestNeverInstalledNoSentinelIsANoOp: a repo omakase never touched has no
-// ledger, no exclude block, no $OMK -- RunRemove must report the "nothing
-// installed" line on stderr and exit 0 without touching anything. A stray
-// argv is also passed here to pin that RunRemove ignores its argv entirely
-// (bin/remove.sh has no arg-parsing at all).
+// ledger, no exclude block, no $OMK -- a bare RunRemove must report the
+// "nothing installed" line on stderr and exit 0 without touching anything.
 func TestNeverInstalledNoSentinelIsANoOp(t *testing.T) {
 	initRepo(t)
 	stubLefthook(t)
 
 	var stdout, stderr strings.Builder
-	code := RunRemove([]string{"stray", "--args", "ignored"}, &stdout, &stderr)
+	code := RunRemove(nil, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
@@ -548,4 +550,374 @@ func TestSkeletonLefthookYmlRemovalFailurePropagates(t *testing.T) {
 	if code != 1 {
 		t.Errorf("exit = %d, want 1 (rm -f failure must abort, matching set -e); stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
+}
+
+// ---------------------------------------------------------------- remove <source> (Task 4, Phase 3.5)
+//
+// These pin the `remove <source>` surface: unlayer ONE harness from a 2-stack
+// (top or bottom), the one-source==total-teardown equivalence, the unknown-arg
+// and pre-layer refusals, the GC5 summary/narration bytes, and the GC7 twin-diff
+// invariants (a removed-then state must equal a fresh single-source install).
+// There is no v1 oracle for any of this — it is a NEW v2 surface — so the
+// summary line's exact bytes are pinned here per the controller's GC5 spec and
+// the per-file narration per this port's own house style (init's +/^/- bullets).
+//
+// Shared source helpers (srcTestEnv, useBasePayloadDir, newHarnessSource,
+// commitAll, newSourceRepo, sha256hex, gitStdout, snapshotTree) live in
+// source_test.go / init_layers_test.go / init_test.go / layers_test.go.
+
+// excludeBlockOf returns the omakase marked block (markers inclusive) from an
+// exclude file, so a twin comparison is of the frozen block bytes, not the whole
+// file (which carries the caller's own pre-seeded ignores).
+func excludeBlockOf(t *testing.T, path string) string {
+	t.Helper()
+	const begin = "# >>> omakase-harness >>>"
+	const end = "# <<< omakase-harness <<<"
+	content := readFileT(t, path)
+	bi := strings.Index(content, begin)
+	ei := strings.Index(content, end)
+	if bi < 0 || ei < 0 {
+		t.Fatalf("no omakase block in %s:\n%s", path, content)
+	}
+	return content[bi : ei+len(end)]
+}
+
+// assertRemoveTwinEqual pins the GC7 twin-diff invariant: an unlayered repo and a
+// fresh single-source install agree BYTE-FOR-BYTE on the live placed.tsv, the
+// exclude block, the payload-snapshot tree, and the surviving layers/1 store tree,
+// and both working trees are git-clean. (sources.tsv is excluded — its epoch
+// column is a wall-clock stamp that differs between two installs; its shape is
+// asserted separately by the caller.)
+func assertRemoveTwinEqual(t *testing.T, a, b *state.Repo, dirA, dirB string) {
+	t.Helper()
+	eq(t, "placed.tsv (unlayered vs fresh)",
+		readFileT(t, filepath.Join(a.OMK, "placed.tsv")),
+		readFileT(t, filepath.Join(b.OMK, "placed.tsv")))
+	eq(t, "exclude block (unlayered vs fresh)",
+		excludeBlockOf(t, filepath.Join(a.CommonDir, "info", "exclude")),
+		excludeBlockOf(t, filepath.Join(b.CommonDir, "info", "exclude")))
+	if sa, sb := snapshotTree(t, filepath.Join(a.OMK, "payload-snapshot")), snapshotTree(t, filepath.Join(b.OMK, "payload-snapshot")); !maps.Equal(sa, sb) {
+		t.Errorf("payload-snapshot trees differ:\n unlayered=%v\n fresh=%v", sa, sb)
+	}
+	if la, lb := snapshotTree(t, filepath.Join(a.OMK, "layers")), snapshotTree(t, filepath.Join(b.OMK, "layers")); !maps.Equal(la, lb) {
+		t.Errorf("layers/ store trees differ:\n unlayered=%v\n fresh=%v", la, lb)
+	}
+	if out := gitStdout(dirA, "status", "--porcelain"); out != "" {
+		t.Errorf("unlayered repo status not clean: %q", out)
+	}
+	if out := gitStdout(dirB, "status", "--porcelain"); out != "" {
+		t.Errorf("fresh repo status not clean: %q", out)
+	}
+}
+
+// ---------------------------------------------------------------- dispatch guards
+
+// TestRemoveUnknownSource: `remove <bogus>` in a 2-stack refuses with the GC5
+// no-match line naming the installed harnesses, exit 1, mutating nothing.
+func TestRemoveUnknownSource(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	srcA := newHarnessSource(t, "a", map[string]string{".omakase/gates/a.sh": "a\n"})
+	srcB := newHarnessSource(t, "b", map[string]string{".omakase/gates/b.sh": "b\n"})
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init A failed")
+	}
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init B failed")
+	}
+	before := snapshotTree(t, repo.OMK)
+
+	var stdout, stderr strings.Builder
+	code := RunRemove([]string{"nope/nope"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(), "")
+	eq(t, "stderr", stderr.String(),
+		"omakase: no harness 'nope/nope' installed here (installed: "+srcA+", "+srcB+")\n")
+	if after := snapshotTree(t, repo.OMK); !maps.Equal(before, after) {
+		t.Errorf("unknown-source refusal mutated $OMK")
+	}
+	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
+		t.Errorf("unknown-source refusal dirtied the tree: %q", out)
+	}
+}
+
+// TestRemoveArgPreLayerRefusal: `remove <arg>` against a repo that predates
+// layered state ($OMK with placed.tsv but no layers/) refuses with the frozen
+// RequireLayers message, exit 1.
+func TestRemoveArgPreLayerRefusal(t *testing.T) {
+	_, repo := initRepo(t)
+	stubLefthook(t)
+	// Hand-build a pre-layers $OMK: a placed ledger but NO layers/ and NO sources.tsv.
+	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo.OMK, "placed.tsv"),
+		".omakase/gates/example.sh\tgate\tpayload\t"+sha256hex([]byte(gateContent))+"\t1\n")
+
+	var stdout, stderr strings.Builder
+	code := RunRemove([]string{"you/harness"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(), "")
+	eq(t, "stderr", stderr.String(),
+		"omakase: this repo predates layered state — run omakase init once first\n")
+}
+
+// TestRemoveUsageArm: an unparseable remove invocation (two positionals, an
+// unknown flag) prints the usage to stderr and exits 2; -h prints it to stdout,
+// exit 0.
+func TestRemoveUsageArm(t *testing.T) {
+	initRepo(t)
+	stubLefthook(t)
+
+	for _, argv := range [][]string{{"a/b", "c/d"}, {"--bogus"}} {
+		var stdout, stderr strings.Builder
+		if code := RunRemove(argv, &stdout, &stderr); code != 2 {
+			t.Errorf("argv %v: exit = %d, want 2", argv, code)
+		}
+		eq(t, "stdout", stdout.String(), "")
+		eq(t, "stderr", stderr.String(), removeUsageText)
+	}
+	var so, se strings.Builder
+	if code := RunRemove([]string{"-h"}, &so, &se); code != 0 {
+		t.Errorf("-h exit = %d, want 0", code)
+	}
+	eq(t, "help stdout", so.String(), removeUsageText)
+	eq(t, "help stderr", se.String(), "")
+}
+
+// ---------------------------------------------------------------- one source == total teardown
+
+// TestRemoveOneSourceIsTotalTeardown: with exactly ONE source installed, `remove
+// <that source>` is byte-identical to a bare `remove` — full teardown, the bare
+// removed line, and $OMK gone (the decided edge case; no third state).
+func TestRemoveOneSourceIsTotalTeardown(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	src := newHarnessSource(t, "solo", map[string]string{".omakase/gates/g.sh": "g\n"})
+	if code := RunInit([]string{"--source", src}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init failed")
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove([]string{src}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout is the bare-remove line", stdout.String(), removedLine)
+	eq(t, "stderr", stderr.String(), "")
+	if _, err := os.Lstat(repo.OMK); !os.IsNotExist(err) {
+		t.Errorf("$OMK still exists after single-source teardown: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, ".omakase")); !os.IsNotExist(err) {
+		t.Errorf(".omakase not pruned away: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------- top-layer removal (GC5 + restore/delete)
+
+// TestRemoveTopLayerSummaryAndMatrix: A+B stack, `remove B`. A B-won-over-A path
+// is restored to A's copy; a sole-B path is deleted; an A-only path is untouched.
+// Pins the exact GC5 summary line + per-file narration bytes.
+func TestRemoveTopLayerSummaryAndMatrix(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t) // empty base
+
+	srcA := newHarnessSource(t, "a", map[string]string{
+		".omakase/gates/shared.sh": "A\n",
+		".omakase/gates/aonly.sh":  "A only\n",
+	})
+	srcB := newHarnessSource(t, "b", map[string]string{
+		".omakase/gates/shared.sh": "B\n",
+		".omakase/gates/bonly.sh":  "B only\n",
+	})
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init A failed")
+	}
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init B failed")
+	}
+	eq(t, "B won shared.sh", readFileT(t, filepath.Join(dir, ".omakase", "gates", "shared.sh")), "B\n")
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove([]string{srcB}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(),
+		"omakase: removed "+srcB+" — 1 file(s) deleted, 1 restored from "+srcA+"\n"+
+			"  - deleted: .omakase/gates/bonly.sh\n"+
+			"  ^ restored: .omakase/gates/shared.sh\n")
+	eq(t, "stderr", stderr.String(), "")
+
+	eq(t, "shared.sh restored to A", readFileT(t, filepath.Join(dir, ".omakase", "gates", "shared.sh")), "A\n")
+	eq(t, "aonly.sh untouched", readFileT(t, filepath.Join(dir, ".omakase", "gates", "aonly.sh")), "A only\n")
+	if _, err := os.Lstat(filepath.Join(dir, ".omakase", "gates", "bonly.sh")); !os.IsNotExist(err) {
+		t.Errorf("sole-B bonly.sh not deleted: %v", err)
+	}
+	rows := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
+	if len(rows) != 1 || rows[0].Layer != "1" || rows[0].Source != srcA {
+		t.Errorf("sources.tsv = %+v, want one {1 %s} row", rows, srcA)
+	}
+	if _, err := os.Stat(filepath.Join(repo.OMK, "layers", "2")); !os.IsNotExist(err) {
+		t.Error("layers/2 not removed after top-layer removal")
+	}
+	for _, r := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
+		if r.Rel == ".omakase/gates/shared.sh" && (r.Src != srcA || r.Hash != sha256hex([]byte("A\n"))) {
+			t.Errorf("shared.sh row = %+v, want {src=%s hash=sha256(A)}", r, srcA)
+		}
+		if r.Rel == ".omakase/gates/bonly.sh" {
+			t.Error("placed.tsv still lists the deleted sole-B path")
+		}
+	}
+	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
+		t.Errorf("git status not clean: %q", out)
+	}
+}
+
+// TestRemoveTopLayerEditedSolePathKept: a sole-B path the user EDITED is warned
+// and KEPT (never silently deleted), matching init's orphan-sweep discipline.
+func TestRemoveTopLayerEditedSolePathKept(t *testing.T) {
+	dir, _ := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	srcA := newHarnessSource(t, "a", map[string]string{".omakase/gates/a.sh": "a\n"})
+	srcB := newHarnessSource(t, "b", map[string]string{".omakase/gates/bedit.sh": "B ORIG\n"})
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init A failed")
+	}
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init B failed")
+	}
+	writeFile(t, filepath.Join(dir, ".omakase", "gates", "bedit.sh"), "MY EDIT\n")
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove([]string{srcB}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d; stderr=%q", code, stderr.String())
+	}
+	eq(t, "edited sole path kept", readFileT(t, filepath.Join(dir, ".omakase", "gates", "bedit.sh")), "MY EDIT\n")
+	if !strings.Contains(stderr.String(), ".omakase/gates/bedit.sh") || !strings.Contains(stderr.String(), "Leaving it") {
+		t.Errorf("expected a warn-keep line for the edited sole path:\n%s", stderr.String())
+	}
+	eq(t, "summary (0 deleted, 0 restored)", stdout.String(),
+		"omakase: removed "+srcB+" — 0 file(s) deleted, 0 restored from "+srcA+"\n")
+}
+
+// ---------------------------------------------------------------- GC7(a): top removal ≡ fresh init A
+
+// TestRemoveTopLayerTwinDiff: init A; init B; remove B  ≡  fresh init A only.
+// A ships a root AGENTS.md (owns the slot + a bridge); B overrides a shared gate,
+// ships a sole gate, and its own AGENTS.md reroutes to CLAUDE.local.md. After
+// removing B every trace of B is gone and the repo is byte-identical to a repo
+// that only ever installed A.
+func TestRemoveTopLayerTwinDiff(t *testing.T) {
+	srcTestEnv(t)
+	stubLefthook(t)
+	base := useBasePayloadDir(t)
+	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
+
+	srcA := newHarnessSource(t, "a", map[string]string{
+		"AGENTS.md":                "A doctrine\n",
+		".claude/rules/a.md":       "A rule\n",
+		".omakase/gates/shared.sh": "A\n",
+	})
+	srcB := newHarnessSource(t, "b", map[string]string{
+		"AGENTS.md":                "B doctrine\n", // -> CLAUDE.local.md, sole-B, deleted on remove
+		".omakase/gates/shared.sh": "B\n",          // overrides A, restored on remove
+		".omakase/gates/bonly.sh":  "B only\n",     // sole-B, deleted on remove
+	})
+
+	// twin A: install both, remove the top.
+	dirA, repoA := initRepo(t)
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("A: init A failed")
+	}
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("A: init B failed")
+	}
+	var ro, re strings.Builder
+	if code := RunRemove([]string{srcB}, &ro, &re); code != 0 {
+		t.Fatalf("A: remove B exit = %d; stderr=%q", code, re.String())
+	}
+	// B's rerouted CLAUDE.local.md must be gone; A's root AGENTS.md + bridge stay.
+	if _, err := os.Lstat(filepath.Join(dirA, "CLAUDE.local.md")); !os.IsNotExist(err) {
+		t.Error("A: CLAUDE.local.md (B's reroute) survived remove B")
+	}
+
+	// twin B: only ever install A.
+	dirB, repoB := initRepo(t)
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("B: fresh init A failed")
+	}
+
+	assertRemoveTwinEqual(t, repoA, repoB, dirA, dirB)
+}
+
+// ---------------------------------------------------------------- GC7(b): bottom removal ≡ fresh init B
+
+// TestRemoveBottomLayerTwinDiff: init A; init B; remove A  ≡  fresh init B only.
+// A (bottom, base-folded) owns the root AGENTS.md + bridge; B ships only gates.
+// Removing A re-folds the embedded base into B's surviving layer (new layers/1),
+// so the repo becomes byte-identical to one that only ever installed B — the
+// base-folded gates, no root AGENTS.md, no bridge.
+func TestRemoveBottomLayerTwinDiff(t *testing.T) {
+	srcTestEnv(t)
+	stubLefthook(t)
+	base := useBasePayloadDir(t)
+	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
+
+	srcA := newHarnessSource(t, "a", map[string]string{
+		"AGENTS.md":                "A doctrine\n", // root + bridge, sole-A, deleted on remove
+		".claude/rules/a.md":       "A rule\n",     // sole-A, deleted on remove
+		".omakase/gates/shared.sh": "A\n",          // overridden by B (B wins), untouched on remove
+	})
+	srcB := newHarnessSource(t, "b", map[string]string{
+		".omakase/gates/shared.sh": "B\n",      // B wins in the stack
+		".omakase/gates/bonly.sh":  "B only\n", // sole-B
+	})
+
+	// twin A: install both, remove the bottom.
+	dirA, repoA := initRepo(t)
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("A: init A failed")
+	}
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("A: init B failed")
+	}
+	var ro, re strings.Builder
+	if code := RunRemove([]string{srcA}, &ro, &re); code != 0 {
+		t.Fatalf("A: remove A exit = %d; stderr=%q", code, re.String())
+	}
+	// A's root AGENTS.md, bridge, and A-only rule are gone; B's gates remain.
+	for _, gone := range []string{"AGENTS.md", "CLAUDE.md", ".claude/rules/a.md"} {
+		if _, err := os.Lstat(filepath.Join(dirA, gone)); !os.IsNotExist(err) {
+			t.Errorf("A: %q survived remove A (bottom)", gone)
+		}
+	}
+	eq(t, "A: base folded under B", readFileT(t, filepath.Join(dirA, ".omakase", "bin", "base.sh")), "base\n")
+	eq(t, "A: B's gate remains", readFileT(t, filepath.Join(dirA, ".omakase", "gates", "shared.sh")), "B\n")
+
+	rows := state.ReadSources(filepath.Join(repoA.OMK, "sources.tsv"))
+	if len(rows) != 1 || rows[0].Layer != "1" || rows[0].Source != srcB {
+		t.Errorf("A: sources.tsv = %+v, want one {1 %s} row (B renumbered to the bottom)", rows, srcB)
+	}
+
+	// twin B: only ever install B.
+	dirB, repoB := initRepo(t)
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("B: fresh init B failed")
+	}
+
+	assertRemoveTwinEqual(t, repoA, repoB, dirA, dirB)
 }

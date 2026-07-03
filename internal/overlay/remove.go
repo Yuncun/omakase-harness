@@ -27,14 +27,38 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/textblock"
 )
 
-// RunRemove is the `omakase remove` verb. bin/remove.sh has no arg-parsing
-// at all — every token after the verb is simply never inspected — so argv
-// is accepted only to match the shape every other verb's Run function has
-// (Global Constraint 2) and is otherwise ignored entirely. It writes to
-// stdout/stderr and returns the process exit code: 1 for a not-a-repo
+// RunRemove is the `omakase remove` verb, now `remove [<source>]` (Phase 3.5).
+// A BARE `remove` is the v1 total teardown — the reverse of init, byte-identical
+// to bin/remove.sh (GC1); its every token was historically ignored, and the arg
+// parse below preserves that no-op shape only for zero args. A `remove <source>`
+// UNLAYERS one harness from a two-source stack (RemoveLayer), or — with just one
+// source installed — is that source's total teardown (the decided edge case).
+// Returns the process exit code: 2 for a usage error, 1 for a refusal / not-a-repo
 // environment error, 0 on success including the "nothing installed" no-op
 // (remove.sh:67-69).
 func RunRemove(argv []string, stdout, stderr io.Writer) int {
+	// ---- arg parse: remove [<source>] ----
+	// A single optional positional (the source to unlayer). -h/--help prints the
+	// usage; any other flag, or a second positional, is a usage error (exit 2).
+	source := ""
+	for i := 0; i < len(argv); i++ {
+		a := argv[i]
+		switch {
+		case a == "-h" || a == "--help":
+			fmt.Fprint(stdout, removeUsageText)
+			return 0
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprint(stderr, removeUsageText)
+			return 2
+		default:
+			if source != "" {
+				fmt.Fprint(stderr, removeUsageText)
+				return 2
+			}
+			source = a
+		}
+	}
+
 	// ---- payload default/normalize (remove.sh:8-9) ----
 	// The identical rule to init's plain-install default (Task 4):
 	// OMAKASE_PAYLOAD overrides; otherwise the binary-relative ../payload
@@ -63,6 +87,29 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	common := repo.CommonDir
 	omk := repo.OMK
 	isTracked := func(rel string) bool { return gitTracked(root, rel) }
+
+	// ---- remove <source>: unlayer one harness (design §4 layer removal, Phase 3.5) ----
+	// A named source unlayers just that harness. Guarded by RequireLayers (a
+	// pre-layers v1 repo has no store to restore from — GC8 refuse, not guess). No
+	// match → the GC5 not-installed line. One source recorded and it matched → the
+	// total teardown below (the decided edge case, byte-identical to a bare remove).
+	// Two sources → RemoveLayer, which returns here. Offline throughout (GC10).
+	if source != "" {
+		recorded := EnsureSources(omk, stderr)
+		if !RequireLayers(omk, stderr) {
+			return 1
+		}
+		idx := matchRecorded(recorded, source)
+		if idx < 0 {
+			fmt.Fprintf(stderr, "omakase: no harness '%s' installed here (installed: %s)\n", source, installedLabels(recorded))
+			return 1
+		}
+		if len(recorded) >= 2 {
+			return RemoveLayer(root, common, omk, recorded, idx, stdout, stderr)
+		}
+		// Exactly one source, and it matched: fall through to the total-teardown
+		// path below (bin/remove.sh's own bytes — no third state invented).
+	}
 
 	// v1→v2 migration for uniformity (design §9): EnsureSources synthesizes
 	// sources.tsv (and warns on mixed-era) on the first v2 run when $OMK exists. It
@@ -246,6 +293,39 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 
 	fmt.Fprintln(stdout, "omakase: removed. Hooks uninstalled, placed files deleted, worktree snapshot + exclude block stripped.")
 	return 0
+}
+
+// removeUsageText is the byte-exact usage for `remove [<source>]` (Phase 3.5).
+// bin/remove.sh had none; this Go verb goes live at Task 6's shim cutover.
+const removeUsageText = "usage: omakase remove [<source>]\n" +
+	"\n" +
+	"  (no argument)  remove the whole omakase harness from this repo (uninstall).\n" +
+	"  <source>       remove just that harness, restoring what it overrode.\n"
+
+// matchRecorded returns the index of the recorded stack row the arg names — by
+// exact source string, exact display label (source#ref), or the shorthand-
+// expanded form of either (the same expandSource init matches a source arg
+// through) — or -1 if none match.
+func matchRecorded(recorded []state.SourceRow, arg string) int {
+	exp, ref := expandSource(arg)
+	wantLabel := displayLabel(exp, ref)
+	for i := range recorded {
+		r := recorded[i]
+		if arg == r.Source || arg == reassembleSource(r) || exp == r.Source || wantLabel == reassembleSource(r) {
+			return i
+		}
+	}
+	return -1
+}
+
+// installedLabels renders the recorded stack's display labels, comma-separated,
+// for the GC5 not-installed line's "(installed: …)" list.
+func installedLabels(recorded []state.SourceRow) string {
+	labels := make([]string, 0, len(recorded))
+	for _, r := range recorded {
+		labels = append(labels, reassembleSource(r))
+	}
+	return strings.Join(labels, ", ")
 }
 
 // fileContains collapses remove.sh's two grep gates to a single whole-file

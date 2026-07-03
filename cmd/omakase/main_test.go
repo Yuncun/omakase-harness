@@ -69,24 +69,21 @@ func TestRunRemoveDispatch(t *testing.T) {
 	}
 }
 
-// TestRunPersonalDispatch proves the registry wires "personal" to
-// overlay.RunPersonal: a no-arg `omakase personal` reaches the show arm and
-// prints the setting (here "(none)", since XDG_CONFIG_HOME points at an empty
-// temp dir) with exit 0 — never the dispatcher's unknown-command path.
-func TestRunPersonalDispatch(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-
+// TestPersonalVerbDeregistered proves Phase 3.5 removed the `personal` verb: it
+// is no longer in the registry, so `omakase personal` falls through to the
+// dispatcher's unknown-command path (exit 2), never a handler.
+func TestPersonalVerbDeregistered(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"omakase", "personal"}, &stdout, &stderr)
 
-	if code != 0 {
-		t.Errorf("exit code = %d, want 0", code)
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
 	}
-	if got, want := stdout.String(), "personal harness: (none)\n"; got != want {
-		t.Errorf("stdout = %q, want %q", got, want)
+	if got := stdout.String(); got != "" {
+		t.Errorf("stdout = %q, want empty", got)
 	}
-	if got := stderr.String(); got != "" {
-		t.Errorf("stderr = %q, want empty", got)
+	if got, want := stderr.String(), "omakase: unknown command \"personal\"\n"; got != want {
+		t.Errorf("stderr = %q, want %q", got, want)
 	}
 }
 
