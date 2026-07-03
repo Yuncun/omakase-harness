@@ -346,7 +346,8 @@ func WritePlaced(path string, rows []PlacedRow) error {
 // bottom-to-top (base has NO row of its own). Frozen format (Global
 // Constraint 6): layer<TAB>source<TAB>ref<TAB>commit<TAB>installed_epoch.
 // Layer is an ordinal string — "1" for the bottom row, "2" for the top row,
-// and so on — assigned by WRITE-side slice position (see WriteSources) and
+// and so on — assigned by the CALLER to match each row's position in the
+// slice it hands WriteSources (WriteSources passes it through verbatim) and
 // treated as fully opaque by every reader in this package: nothing here
 // interprets a Layer value semantically (Phase 3.5 deleted the old
 // "project"/"personal" role vocabulary, the personal|off sentinel row
