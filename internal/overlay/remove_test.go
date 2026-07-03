@@ -582,12 +582,51 @@ func excludeBlockOf(t *testing.T, path string) string {
 	return content[bi : ei+len(end)]
 }
 
+// omkTreeForTwin snapshots the FULL $OMK tree (every regular file's bytes and
+// every symlink's target, via snapshotTree) for the twin comparison, with
+// exactly two justified normalizations:
+//
+//   - sources.tsv epoch column (field 5) -> "EPOCH": a fresh init records a new
+//     wall-clock epoch while remove preserves the survivor's — the one
+//     controller-sanctioned normalization. Every OTHER column of every row is
+//     compared exactly.
+//   - clobbered/ entries are EXCLUDED: $OMK/clobbered/ is the backup area for
+//     user data (a locally-edited file overwritten by a restore is preserved
+//     there — the Fix-3 mandate), so it CANNOT be twin-equal by construction:
+//     the fresh twin never had a pre-existing file to back up, and deleting the
+//     backups to equalize the trees would destroy the only copy of a user's
+//     edit. Same documented exemption personal_test.go's assertTwinsEqual
+//     carried ("clobbered/ is intentionally not compared across twins").
+//
+// NO other normalization: any other $OMK byte difference between the twins is
+// a defect the comparison must catch ($OMK/source was exactly such a defect).
+func omkTreeForTwin(t *testing.T, omk string) map[string]string {
+	t.Helper()
+	tree := snapshotTree(t, omk)
+	for k := range tree {
+		if strings.HasPrefix(k, "file:clobbered/") || strings.HasPrefix(k, "symlink:clobbered/") {
+			delete(tree, k)
+		}
+	}
+	if s, ok := tree["file:sources.tsv"]; ok {
+		var out []string
+		for _, line := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
+			f := strings.Split(line, "\t")
+			if len(f) == 5 {
+				f[4] = "EPOCH"
+			}
+			out = append(out, strings.Join(f, "\t"))
+		}
+		tree["file:sources.tsv"] = strings.Join(out, "\n") + "\n"
+	}
+	return tree
+}
+
 // assertRemoveTwinEqual pins the GC7 twin-diff invariant: an unlayered repo and a
-// fresh single-source install agree BYTE-FOR-BYTE on the live placed.tsv, the
-// exclude block, the payload-snapshot tree, and the surviving layers/1 store tree,
-// and both working trees are git-clean. (sources.tsv is excluded — its epoch
-// column is a wall-clock stamp that differs between two installs; its shape is
-// asserted separately by the caller.)
+// fresh single-source install agree BYTE-FOR-BYTE on the FULL $OMK tree (see
+// omkTreeForTwin for the two justified normalizations) and the exclude block,
+// and both working trees are git-clean. placed.tsv is also asserted directly
+// first, only for a readable failure message — the full-tree compare covers it.
 func assertRemoveTwinEqual(t *testing.T, a, b *state.Repo, dirA, dirB string) {
 	t.Helper()
 	eq(t, "placed.tsv (unlayered vs fresh)",
@@ -596,11 +635,21 @@ func assertRemoveTwinEqual(t *testing.T, a, b *state.Repo, dirA, dirB string) {
 	eq(t, "exclude block (unlayered vs fresh)",
 		excludeBlockOf(t, filepath.Join(a.CommonDir, "info", "exclude")),
 		excludeBlockOf(t, filepath.Join(b.CommonDir, "info", "exclude")))
-	if sa, sb := snapshotTree(t, filepath.Join(a.OMK, "payload-snapshot")), snapshotTree(t, filepath.Join(b.OMK, "payload-snapshot")); !maps.Equal(sa, sb) {
-		t.Errorf("payload-snapshot trees differ:\n unlayered=%v\n fresh=%v", sa, sb)
-	}
-	if la, lb := snapshotTree(t, filepath.Join(a.OMK, "layers")), snapshotTree(t, filepath.Join(b.OMK, "layers")); !maps.Equal(la, lb) {
-		t.Errorf("layers/ store trees differ:\n unlayered=%v\n fresh=%v", la, lb)
+	ta, tb := omkTreeForTwin(t, a.OMK), omkTreeForTwin(t, b.OMK)
+	if !maps.Equal(ta, tb) {
+		for k, va := range ta {
+			vb, ok := tb[k]
+			if !ok {
+				t.Errorf("$OMK entry %q: unlayered has it, fresh does not (%q)", k, va)
+			} else if va != vb {
+				t.Errorf("$OMK entry %q differs:\n unlayered=%q\n fresh=%q", k, va, vb)
+			}
+		}
+		for k, vb := range tb {
+			if _, ok := ta[k]; !ok {
+				t.Errorf("$OMK entry %q: fresh has it, unlayered does not (%q)", k, vb)
+			}
+		}
 	}
 	if out := gitStdout(dirA, "status", "--porcelain"); out != "" {
 		t.Errorf("unlayered repo status not clean: %q", out)
@@ -917,6 +966,211 @@ func TestRemoveBottomLayerTwinDiff(t *testing.T) {
 	dirB, repoB := initRepo(t)
 	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
 		t.Fatal("B: fresh init B failed")
+	}
+
+	assertRemoveTwinEqual(t, repoA, repoB, dirA, dirB)
+}
+
+// ---------------------------------------------------------------- GC7(b): the un-reroute shape (fix wave 1)
+
+// TestRemoveBottomUnreroutesSurvivorInstructions: A owns the root AGENTS.md (+
+// bridge); B's canonical AGENTS.md was rerouted to CLAUDE.local.md at stack time
+// (root slot taken). remove A must UN-reroute the survivor's instructions: the
+// working tree ends with B's AGENTS.md at the ROOT (+ the §7 bridge), the old
+// CLAUDE.local.md is swept, and the repo is byte-equal to a fresh `init B`
+// (which places B's AGENTS.md at the then-free root). Driven by the reroute
+// sidecar marker B's store recorded at build time.
+func TestRemoveBottomUnreroutesSurvivorInstructions(t *testing.T) {
+	srcTestEnv(t)
+	stubLefthook(t)
+	base := useBasePayloadDir(t)
+	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
+
+	srcA := newHarnessSource(t, "a", map[string]string{
+		"AGENTS.md":           "A doctrine\n",
+		".omakase/gates/a.sh": "a gate\n",
+	})
+	srcB := newHarnessSource(t, "b", map[string]string{
+		"AGENTS.md":           "B doctrine\n", // rerouted to CLAUDE.local.md in the stack
+		".omakase/gates/b.sh": "b gate\n",
+	})
+
+	// twin A: stack, then remove the bottom.
+	dirA, repoA := initRepo(t)
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("A: init A failed")
+	}
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("A: init B failed")
+	}
+	eq(t, "A: B rerouted at stack time", readFileT(t, filepath.Join(dirA, "CLAUDE.local.md")), "B doctrine\n")
+
+	var ro, re strings.Builder
+	if code := RunRemove([]string{srcA}, &ro, &re); code != 0 {
+		t.Fatalf("A: remove A exit = %d; stderr=%q", code, re.String())
+	}
+	eq(t, "A: summary", strings.SplitN(ro.String(), "\n", 2)[0]+"\n",
+		"omakase: removed "+srcA+" — 2 file(s) deleted, 3 restored from "+srcB+"\n")
+
+	// The survivor's instructions moved back to the root slot.
+	eq(t, "A: B's AGENTS.md un-rerouted to the root", readFileT(t, filepath.Join(dirA, "AGENTS.md")), "B doctrine\n")
+	if tgt, err := os.Readlink(filepath.Join(dirA, "CLAUDE.md")); err != nil || tgt != "AGENTS.md" {
+		t.Fatalf("A: bridge missing after un-reroute: tgt=%q err=%v", tgt, err)
+	}
+	if _, err := os.Lstat(filepath.Join(dirA, "CLAUDE.local.md")); !os.IsNotExist(err) {
+		t.Error("A: stale CLAUDE.local.md survived the un-reroute")
+	}
+	// The rebuilt survivor store carries NO reroute marker (nothing fell back).
+	if _, err := os.Lstat(filepath.Join(repoA.OMK, "layers", "1", "rerouted")); !os.IsNotExist(err) {
+		t.Error("A: rebuilt layers/1 carries a stale reroute marker")
+	}
+
+	// twin B: only ever install B (root slot free -> AGENTS.md at the root).
+	dirB, repoB := initRepo(t)
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("B: fresh init B failed")
+	}
+	if got := readFileT(t, filepath.Join(dirB, "AGENTS.md")); got != "B doctrine\n" {
+		t.Fatalf("B: fresh init did not place root AGENTS.md: %q", got)
+	}
+
+	assertRemoveTwinEqual(t, repoA, repoB, dirA, dirB)
+}
+
+// TestRemoveBottomUnrerouteSuppressedByCommittedCLAUDEmd: same shape but the
+// repo COMMITS a root CLAUDE.md, so the root slot is taken by the repo itself —
+// the un-reroute must be SUPPRESSED (MapInstruction re-falls-back with the
+// recomputed rootSlotFree=false): CLAUDE.local.md survives carrying B's
+// doctrine, no root AGENTS.md appears, no bridge, the rebuilt store re-records
+// the reroute marker, and the twin (fresh `init B` under the same committed
+// CLAUDE.md, which also falls back) is byte-equal.
+func TestRemoveBottomUnrerouteSuppressedByCommittedCLAUDEmd(t *testing.T) {
+	srcTestEnv(t)
+	stubLefthook(t)
+	base := useBasePayloadDir(t)
+	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
+
+	srcA := newHarnessSource(t, "a", map[string]string{
+		"AGENTS.md":           "A doctrine\n",
+		".omakase/gates/a.sh": "a gate\n",
+	})
+	srcB := newHarnessSource(t, "b", map[string]string{
+		"AGENTS.md":           "B doctrine\n",
+		".omakase/gates/b.sh": "b gate\n",
+	})
+
+	// twin A: committed CLAUDE.md, stack, remove the bottom.
+	dirA, repoA := initRepo(t)
+	writeFile(t, filepath.Join(dirA, "CLAUDE.md"), "TEAM CLAUDE\n")
+	runGitT(t, dirA, "add", "CLAUDE.md")
+	runGitT(t, dirA, "commit", "-q", "-m", "team")
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("A: init A failed")
+	}
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("A: init B failed")
+	}
+	eq(t, "A: B won the fallback slot at stack time", readFileT(t, filepath.Join(dirA, "CLAUDE.local.md")), "B doctrine\n")
+
+	var ro, re strings.Builder
+	if code := RunRemove([]string{srcA}, &ro, &re); code != 0 {
+		t.Fatalf("A: remove A exit = %d; stderr=%q", code, re.String())
+	}
+
+	// Suppressed: instructions STAY at CLAUDE.local.md; no root AGENTS.md; the
+	// committed CLAUDE.md untouched; the rebuilt store re-records the marker.
+	eq(t, "A: CLAUDE.local.md survives (suppressed un-reroute)", readFileT(t, filepath.Join(dirA, "CLAUDE.local.md")), "B doctrine\n")
+	if _, err := os.Lstat(filepath.Join(dirA, "AGENTS.md")); !os.IsNotExist(err) {
+		t.Error("A: root AGENTS.md appeared despite a committed root CLAUDE.md")
+	}
+	eq(t, "A: committed CLAUDE.md untouched", readFileT(t, filepath.Join(dirA, "CLAUDE.md")), "TEAM CLAUDE\n")
+	eq(t, "A: rebuilt layers/1 re-records the reroute marker",
+		readFileT(t, filepath.Join(repoA.OMK, "layers", "1", "rerouted")), "CLAUDE.local.md\tAGENTS.md\n")
+
+	// twin B: committed CLAUDE.md, fresh init B (also falls back).
+	dirB, repoB := initRepo(t)
+	writeFile(t, filepath.Join(dirB, "CLAUDE.md"), "TEAM CLAUDE\n")
+	runGitT(t, dirB, "add", "CLAUDE.md")
+	runGitT(t, dirB, "commit", "-q", "-m", "team")
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("B: fresh init B failed")
+	}
+	eq(t, "B: fresh init also falls back", readFileT(t, filepath.Join(dirB, "CLAUDE.local.md")), "B doctrine\n")
+
+	assertRemoveTwinEqual(t, repoA, repoB, dirA, dirB)
+}
+
+// ---------------------------------------------------------------- restore arm: tryClobberBackup discipline (fix wave 1)
+
+// TestRemoveTopBacksUpEditedRestoreTarget: B ships an explicit CLAUDE.md that
+// suppressed A's §7 bridge; the user EDITS the working-tree CLAUDE.md; then
+// `remove B`. CLAUDE.md is a restore target (A's store carries the bridge), so
+// the edit must NOT be silently clobbered: it is backed up to
+// $OMK/clobbered/CLAUDE.md byte-exact under init's overwrite discipline, the
+// overwrote-warning line fires (with the preserved-at path), the bridge symlink
+// is placed, and the warn-keep line never fires for CLAUDE.md. The GC7(a) twin
+// still holds (clobbered/ is the documented exemption — the fresh twin has no
+// pre-existing edit to back up).
+func TestRemoveTopBacksUpEditedRestoreTarget(t *testing.T) {
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	srcA := newHarnessSource(t, "a", map[string]string{
+		"AGENTS.md":          "project agents\n",
+		".claude/rules/r.md": "a rule\n",
+	})
+	srcB := newHarnessSource(t, "b", map[string]string{
+		"CLAUDE.md":               "B claude\n", // suppresses A's bridge in the stack
+		".omakase/gates/bonly.sh": "B only\n",
+	})
+
+	// twin A: stack (B's CLAUDE.md wins over the bridge), EDIT it, remove B.
+	dirA, repoA := initRepo(t)
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("A: init A failed")
+	}
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("A: init B failed")
+	}
+	eq(t, "A: B's CLAUDE.md won at stack time", readFileT(t, filepath.Join(dirA, "CLAUDE.md")), "B claude\n")
+
+	const editedBody = "MY EDITED CLAUDE\n"
+	writeFile(t, filepath.Join(dirA, "CLAUDE.md"), editedBody)
+
+	var ro, re strings.Builder
+	if code := RunRemove([]string{srcB}, &ro, &re); code != 0 {
+		t.Fatalf("A: remove B exit = %d; stderr=%q", code, re.String())
+	}
+
+	// The edit is preserved byte-exact under $OMK/clobbered/, never destroyed.
+	clob := filepath.Join(repoA.OMK, "clobbered", "CLAUDE.md")
+	eq(t, "edited CLAUDE.md preserved at clobbered/", readFileT(t, clob), editedBody)
+
+	// CLAUDE.md is now the restored bridge symlink.
+	if tgt, err := os.Readlink(filepath.Join(dirA, "CLAUDE.md")); err != nil || tgt != "AGENTS.md" {
+		t.Fatalf("A: bridge not restored over the edit: tgt=%q err=%v", tgt, err)
+	}
+
+	// stderr: the overwrote message fired with the preserved-at path; the
+	// warn-keep "Leaving it" line did NOT fire for CLAUDE.md.
+	wantOverwrote := "omakase: overwrote CLAUDE.md to match payload (prior copy preserved at " + clob + ")\n"
+	if !strings.Contains(re.String(), wantOverwrote) {
+		t.Errorf("overwrote message missing/wrong:\n got=%q\n want substr=%q", re.String(), wantOverwrote)
+	}
+	if strings.Contains(re.String(), "'CLAUDE.md'") {
+		t.Errorf("a warn line fired for the restore-target CLAUDE.md:\n%s", re.String())
+	}
+	eq(t, "summary", strings.SplitN(ro.String(), "\n", 2)[0]+"\n",
+		"omakase: removed "+srcB+" — 1 file(s) deleted, 1 restored from "+srcA+"\n")
+
+	// twin B: only ever install A — the bridge is placed fresh.
+	dirB, repoB := initRepo(t)
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("B: fresh init A failed")
+	}
+	if tgt, err := os.Readlink(filepath.Join(dirB, "CLAUDE.md")); err != nil || tgt != "AGENTS.md" {
+		t.Fatalf("B: fresh init did not place the bridge: tgt=%q err=%v", tgt, err)
 	}
 
 	assertRemoveTwinEqual(t, repoA, repoB, dirA, dirB)

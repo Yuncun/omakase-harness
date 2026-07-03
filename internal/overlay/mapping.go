@@ -1,20 +1,19 @@
 package overlay
 
-// LayerName identifies which of the three fixed stack roles (design §4) a
-// placement belongs to: base (embedded in the binary), project (the one
-// remembered source), or personal (the one global per-user setting, on top).
-// state.SourceRow (internal/state/state.go) carries the same two non-base
-// layer names as plain strings ("project" / "personal") in its Layer field —
-// these constants are overlay-side only, deliberately not a shared type: they
-// are string-assignable and string-comparable (e.g. `string(LayerProject) ==
-// row.Layer`), so no conversion helper or shared type is needed to bridge the
-// two packages.
+// LayerName identifies one layer of the stack (design §4). Since Phase 3.5
+// the live identity is an opaque ORDINAL string ("1" bottom, "2" top —
+// state.SourceRow.Layer carries the same strings); LayerName is a plain
+// string type, string-assignable and string-comparable, so no conversion
+// helper is needed to bridge packages. The two named constants below survive
+// only as internal keys/labels: LayerProject keys BridgeWanted's
+// project-only bridge rule (callers present the root-slot-owning layer under
+// this key), LayerBase labels the embedded base. The old LayerPersonal
+// constant died with the personal role surface (Task 4, Phase 3.5).
 type LayerName string
 
 const (
-	LayerBase     LayerName = "base"
-	LayerProject  LayerName = "project"
-	LayerPersonal LayerName = "personal"
+	LayerBase    LayerName = "base"
+	LayerProject LayerName = "project"
 )
 
 // MapInstruction is the pure, role-free §7 instruction-routing rule (Phase

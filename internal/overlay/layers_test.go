@@ -222,15 +222,17 @@ func TestBuildLayerStore_PlacedTsvColumns(t *testing.T) {
 
 // ---------------------------------------------------------------- BuildLayerStore: reroute
 
-// TestBuildLayerStore_PersonalRerouteAGENTSmd pins the one §7 reroute end to
-// end through the store: a personal-layer payload's root AGENTS.md lands at
-// files/CLAUDE.local.md, not files/AGENTS.md.
-func TestBuildLayerStore_PersonalRerouteAGENTSmd(t *testing.T) {
-	payload := mkPayload(t, map[string]string{"AGENTS.md": "personal additions\n"}, nil)
+// TestBuildLayerStore_FallbackRerouteAGENTSmd pins the one §7 reroute end to
+// end through the store: with the root slot taken (rootSlotFree=false), a
+// layer payload's canonical root AGENTS.md lands at files/CLAUDE.local.md,
+// not files/AGENTS.md — and the store records the reroute sidecar marker
+// (dest<TAB>orig, NEXT TO files/) RemoveLayer's bottom-removal re-fold reads.
+func TestBuildLayerStore_FallbackRerouteAGENTSmd(t *testing.T) {
+	payload := mkPayload(t, map[string]string{"AGENTS.md": "stacked additions\n"}, nil)
 	omk := t.TempDir()
 
 	// rootSlotFree=false: this layer's canonical root AGENTS.md reroutes to CLAUDE.local.md.
-	set, err := BuildLayerStore(omk, LayerPersonal, "~/.config/omakase/personal", payload, false, false)
+	set, err := BuildLayerStore(omk, LayerName("2"), "you/harness", payload, false, false)
 	if err != nil {
 		t.Fatalf("BuildLayerStore: %v", err)
 	}
@@ -238,13 +240,43 @@ func TestBuildLayerStore_PersonalRerouteAGENTSmd(t *testing.T) {
 	if !slices.Equal(set.Rels, []string{"CLAUDE.local.md"}) {
 		t.Fatalf("Rels = %v, want [CLAUDE.local.md]", set.Rels)
 	}
-	filesDir := filepath.Join(omk, "layers", "personal", "files")
+	filesDir := filepath.Join(omk, "layers", "2", "files")
 	if _, err := os.Stat(filepath.Join(filesDir, "AGENTS.md")); err == nil {
-		t.Error("files/AGENTS.md exists — personal AGENTS.md must be rerouted, never placed as-is")
+		t.Error("files/AGENTS.md exists — a fallen-back AGENTS.md must be rerouted, never placed as-is")
 	}
 	got, err := os.ReadFile(filepath.Join(filesDir, "CLAUDE.local.md"))
-	if err != nil || string(got) != "personal additions\n" {
+	if err != nil || string(got) != "stacked additions\n" {
 		t.Errorf("files/CLAUDE.local.md = %q, %v", got, err)
+	}
+	marker, err := os.ReadFile(filepath.Join(omk, "layers", "2", "rerouted"))
+	if err != nil || string(marker) != "CLAUDE.local.md\tAGENTS.md\n" {
+		t.Errorf("rerouted marker = %q, %v; want %q", marker, err, "CLAUDE.local.md\tAGENTS.md\n")
+	}
+}
+
+// TestBuildLayerStore_NoFallbackNoMarker: a slot-free build reroutes nothing
+// and must write NO marker — and a rebuild over a store that HAD one drops it
+// (the wholesale RemoveAll+Rename replaces the store dir, stale marker included).
+func TestBuildLayerStore_NoFallbackNoMarker(t *testing.T) {
+	payload := mkPayload(t, map[string]string{"AGENTS.md": "doctrine\n"}, nil)
+	omk := t.TempDir()
+
+	// Seed a store WITH a marker (rootSlotFree=false)...
+	if _, err := BuildLayerStore(omk, LayerName("1"), "you/harness", payload, false, false); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(omk, "layers", "1", "rerouted")); err != nil {
+		t.Fatalf("seed store missing its marker: %v", err)
+	}
+	// ...then rebuild slot-free: the marker must be gone.
+	if _, err := BuildLayerStore(omk, LayerName("1"), "you/harness", payload, true, false); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(omk, "layers", "1", "rerouted")); !os.IsNotExist(err) {
+		t.Errorf("stale rerouted marker survived a slot-free rebuild: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(omk, "layers", "1", "files", "AGENTS.md")); err != nil {
+		t.Errorf("slot-free rebuild did not place AGENTS.md at the root rel: %v", err)
 	}
 }
 
@@ -353,12 +385,12 @@ func TestBuildLayerStore_FailedRebuildLeavesPriorStoreIntact(t *testing.T) {
 
 // ---------------------------------------------------------------- BuildLayerStore: collision
 
-// TestBuildLayerStore_PersonalCollisionAGENTSmdAndCLAUDElocal pins the one
-// reachable collision the current §7 table admits: a personal payload
-// shipping BOTH a root AGENTS.md (rerouted to CLAUDE.local.md) and an
+// TestBuildLayerStore_FallbackCollisionAGENTSmdAndCLAUDElocal pins the one
+// reachable collision the current §7 table admits: a payload shipping BOTH a
+// root AGENTS.md (rerouted to CLAUDE.local.md, root slot taken) and an
 // explicit CLAUDE.local.md of its own. Must fail closed, naming both source
 // rels and the shared dest — never silently pick a winner.
-func TestBuildLayerStore_PersonalCollisionAGENTSmdAndCLAUDElocal(t *testing.T) {
+func TestBuildLayerStore_FallbackCollisionAGENTSmdAndCLAUDElocal(t *testing.T) {
 	payload := mkPayload(t, map[string]string{
 		"AGENTS.md":       "rerouted to CLAUDE.local.md\n",
 		"CLAUDE.local.md": "explicit, same dest\n",
@@ -366,9 +398,9 @@ func TestBuildLayerStore_PersonalCollisionAGENTSmdAndCLAUDElocal(t *testing.T) {
 	omk := t.TempDir()
 
 	// rootSlotFree=false: AGENTS.md reroutes to CLAUDE.local.md, colliding with the explicit one.
-	_, err := BuildLayerStore(omk, LayerPersonal, "payload", payload, false, false)
+	_, err := BuildLayerStore(omk, LayerName("2"), "payload", payload, false, false)
 	if err == nil {
-		t.Fatal("BuildLayerStore succeeded on a colliding personal payload — want a fail-closed error")
+		t.Fatal("BuildLayerStore succeeded on a colliding payload — want a fail-closed error")
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, "AGENTS.md") || !strings.Contains(msg, "CLAUDE.local.md") {
@@ -386,17 +418,17 @@ func TestBuildLayerStore_PersonalCollisionAGENTSmdAndCLAUDElocal(t *testing.T) {
 
 // ---------------------------------------------------------------- MergeLayers
 
-// TestMergeLayers_OverlapMatrix covers the design §4 overlap rule across the
-// full base/project/personal stack: a rel only base ships stays base's; a
-// rel base and project both ship is won by project; a rel all three ship is
-// won by personal (topmost); and a personal-only CLAUDE.local.md never
-// collides with a project-only AGENTS.md — both survive independently.
+// TestMergeLayers_OverlapMatrix covers the design §4 overlap rule across a
+// three-set bottom-to-top stack: a rel only the bottom ships stays the
+// bottom's; a rel two sets ship is won by the higher; a rel all three ship is
+// won by the topmost; and a top-only CLAUDE.local.md never collides with a
+// middle-only AGENTS.md — both survive independently.
 func TestMergeLayers_OverlapMatrix(t *testing.T) {
-	base := &LayerSet{Layer: LayerBase, Label: "base", Rels: []string{"base-only.md", "lefthook.yml", "shared-by-all.md"}}
-	project := &LayerSet{Layer: LayerProject, Label: "acme/harness", Rels: []string{"AGENTS.md", "lefthook.yml", "shared-by-all.md"}}
-	personal := &LayerSet{Layer: LayerPersonal, Label: "personal", Rels: []string{"CLAUDE.local.md", "shared-by-all.md"}}
+	bottom := &LayerSet{Layer: LayerName("1"), Label: "base", Rels: []string{"base-only.md", "lefthook.yml", "shared-by-all.md"}}
+	middle := &LayerSet{Layer: LayerName("2"), Label: "acme/harness", Rels: []string{"AGENTS.md", "lefthook.yml", "shared-by-all.md"}}
+	top := &LayerSet{Layer: LayerName("3"), Label: "you/harness", Rels: []string{"CLAUDE.local.md", "shared-by-all.md"}}
 
-	view := MergeLayers([]*LayerSet{base, project, personal})
+	view := MergeLayers([]*LayerSet{bottom, middle, top})
 
 	wantRels := []string{"AGENTS.md", "CLAUDE.local.md", "base-only.md", "lefthook.yml", "shared-by-all.md"}
 	if !slices.Equal(view.Rels, wantRels) {
@@ -407,11 +439,11 @@ func TestMergeLayers_OverlapMatrix(t *testing.T) {
 		rel  string
 		want *LayerSet
 	}{
-		{"base-only.md", base},         // only base ships it
-		{"lefthook.yml", project},      // base + project overlap: project (higher) wins
-		{"shared-by-all.md", personal}, // all three overlap: personal (topmost) wins
-		{"AGENTS.md", project},         // project-only
-		{"CLAUDE.local.md", personal},  // personal-only — must NOT collide with AGENTS.md
+		{"base-only.md", bottom},  // only the bottom ships it
+		{"lefthook.yml", middle},  // bottom + middle overlap: the higher wins
+		{"shared-by-all.md", top}, // all three overlap: the topmost wins
+		{"AGENTS.md", middle},     // middle-only
+		{"CLAUDE.local.md", top},  // top-only — must NOT collide with AGENTS.md
 	}
 	for _, c := range cases {
 		got := view.Winner[c.rel]
@@ -445,15 +477,15 @@ func layerNameOf(s *LayerSet) string {
 func TestRemoveLayerDir_Present(t *testing.T) {
 	omk := t.TempDir()
 	payload := mkPayload(t, map[string]string{"AGENTS.md": "x\n"}, nil)
-	if _, err := BuildLayerStore(omk, LayerPersonal, "payload", payload, false, false); err != nil {
+	if _, err := BuildLayerStore(omk, LayerName("2"), "payload", payload, false, false); err != nil {
 		t.Fatalf("seeding: %v", err)
 	}
-	dir := filepath.Join(omk, "layers", "personal")
+	dir := filepath.Join(omk, "layers", "2")
 	if _, err := os.Stat(dir); err != nil {
 		t.Fatalf("setup: store not built: %v", err)
 	}
 
-	if err := RemoveLayerDir(omk, LayerPersonal); err != nil {
+	if err := RemoveLayerDir(omk, LayerName("2")); err != nil {
 		t.Fatalf("RemoveLayerDir: %v", err)
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
@@ -463,7 +495,7 @@ func TestRemoveLayerDir_Present(t *testing.T) {
 
 func TestRemoveLayerDir_Absent(t *testing.T) {
 	omk := t.TempDir() // layers/ never created
-	if err := RemoveLayerDir(omk, LayerPersonal); err != nil {
+	if err := RemoveLayerDir(omk, LayerName("2")); err != nil {
 		t.Errorf("RemoveLayerDir on an absent store: %v, want nil (missing is fine)", err)
 	}
 }

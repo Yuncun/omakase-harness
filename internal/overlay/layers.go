@@ -81,6 +81,15 @@ type LayerSet struct {
 //     the rename in step 6 succeeds, so there is no live reader for
 //     WritePlaced's truncate window to race.
 //
+//     5a. When any rel fell back through MapInstruction (step 2), write the
+//     reroute sidecar marker "<tmpdir>/rerouted" (see rerouteMarker) — next
+//     to files/, never inside it. Recomputed from this build's own fellBack
+//     results on EVERY rebuild (repair, bare-init refetch): a build with no
+//     fallback writes no marker, and the rename in step 6 replaces the whole
+//     store dir, dropping any stale marker. The store-REUSE path (init's
+//     preMapped branch) never rebuilds the store, so an existing marker is
+//     preserved there by construction.
+//
 //  6. Build-fully-then-rename (design §4's rebuild ordering, restated at
 //     §5's layers/ entry): os.RemoveAll the FINAL "<omk>/layers/<layer>"
 //     and os.Rename the fully-built tmp dir over it. A reader only ever
@@ -142,11 +151,17 @@ func BuildLayerStore(omk string, layer LayerName, label string, payloadDir strin
 		return nil
 	}
 
+	var reroutes []string
 	for _, rel := range rels {
 		// Phase 3.5: the caller passes the real slot-fallback decision. When
 		// rootSlotFree is false, this layer's canonical root AGENTS.md is
-		// rerouted to CLAUDE.local.md; every other rel passes through.
-		destRel, _ := MapInstruction(rel, rootSlotFree)
+		// rerouted to CLAUDE.local.md; every other rel passes through. Each
+		// reroute is recorded in the store's sidecar marker (step 5a) so a
+		// later bottom-removal re-fold can reverse it (RemoveLayer).
+		destRel, fellBack := MapInstruction(rel, rootSlotFree)
+		if fellBack {
+			reroutes = append(reroutes, destRel+"\t"+rel)
+		}
 		if err := place(rel, destRel, func(dst string) error {
 			return CopyEntry(filepath.Join(payloadDir, rel), dst)
 		}); err != nil {
@@ -180,6 +195,18 @@ func BuildLayerStore(omk string, layer LayerName, label string, payloadDir strin
 	}
 	if err := state.WritePlaced(filepath.Join(tmpDir, "placed.tsv"), rows); err != nil {
 		return fail(fmt.Errorf("overlay: BuildLayerStore: writing placed.tsv: %w", err))
+	}
+
+	// Step 5a: the reroute sidecar marker (see rerouteMarker's doc for the
+	// format). Written inside the tmp store — NEVER inside files/ (anything
+	// there would leak into the merged payload, placed.tsv, the exclude
+	// derivation, and the snapshot) — so the rename below publishes it
+	// atomically with the store. A rebuild without any fallback writes no
+	// marker, and the wholesale RemoveAll+Rename drops a stale one.
+	if len(reroutes) > 0 {
+		if err := os.WriteFile(filepath.Join(tmpDir, rerouteMarker), []byte(strings.Join(reroutes, "\n")+"\n"), 0o644); err != nil {
+			return fail(fmt.Errorf("overlay: BuildLayerStore: writing %s: %w", rerouteMarker, err))
+		}
 	}
 
 	if err := os.RemoveAll(finalDir); err != nil {
@@ -234,6 +261,45 @@ func MergeLayers(sets []*LayerSet) *MergedView {
 	return &MergedView{Rels: rels, Winner: winner}
 }
 
+// rerouteMarker is the name of the §7 slot-fallback sidecar file inside a
+// layer store dir — "$OMK/layers/<ord>/rerouted", a SIBLING of files/ and
+// placed.tsv, never inside files/ (anything under files/ leaks into the
+// merged payload, placed.tsv, the exclude derivation, and the snapshot).
+//
+// Frozen format (Task 6 records it in design §5): one line per rerouted
+// entry, "<destRel>\t<origRel>\n" — the rel as stored under files/ first,
+// then the canonical payload rel it came from. With the current
+// MapInstruction table it carries at most one line:
+// "CLAUDE.local.md\tAGENTS.md". Written by BuildLayerStore (step 5a) when a
+// rel fell back; read by RemoveLayer's bottom-removal re-fold to reverse the
+// reroute before re-mapping. A store built before this marker existed simply
+// has none and degrades to the stored (post-mapping) shape unchanged —
+// acceptable, zero users of that era's state.
+const rerouteMarker = "rerouted"
+
+// rerouteEntry is one parsed line of a store's reroute marker.
+type rerouteEntry struct {
+	dest, orig string
+}
+
+// readRerouted parses a layer store's reroute marker. A missing or unreadable
+// marker (including every pre-marker store) yields nil — no un-reroute.
+// Malformed lines (wrong field count, empty field) are skipped.
+func readRerouted(storeDir string) []rerouteEntry {
+	content, err := os.ReadFile(filepath.Join(storeDir, rerouteMarker))
+	if err != nil {
+		return nil
+	}
+	var out []rerouteEntry
+	for _, line := range strings.Split(strings.TrimRight(string(content), "\n"), "\n") {
+		f := strings.SplitN(line, "\t", 2)
+		if len(f) == 2 && f[0] != "" && f[1] != "" {
+			out = append(out, rerouteEntry{dest: f[0], orig: f[1]})
+		}
+	}
+	return out
+}
+
 // RemoveLayerDir deletes a layer's entire on-disk store,
 // "<omk>/layers/<layer>/" (files/ + placed.tsv), used by RemoveLayer once its
 // shadow-restore pass has finished consulting it. A missing store is not an
@@ -265,22 +331,29 @@ func RemoveLayerDir(omk string, layer LayerName) error {
 //     the fold a fresh init of the survivor performs, with the slot-fallback and
 //     §7 bridge re-derived for the now-single layer.
 //
+// Bottom removal also reverses the survivor's §7 slot-fallback reroute when its
+// store carries the sidecar marker (rerouteMarker): the stored CLAUDE.local.md is
+// moved back to its original AGENTS.md rel in the re-fold staging, and
+// MapInstruction then RE-decides with the recomputed rootSlotFree — never an
+// unconditional rename. Under a committed root instruction file the re-map falls
+// back again (the rebuilt store re-records its own marker); with the slot free
+// the restored root AGENTS.md gets its bridge through the normal BridgeWanted
+// path. A pre-marker store has no marker and keeps its stored shape.
+//
 // After the survivor's final store is at layers/1, both directions share one
 // tail: rebuild the snapshot + placed.tsv + exclude/wtinc to the survivor-only
 // view BEFORE any working-tree deletion (design §4 rebuild ordering), then
-// restore each removed-won path the survivor also ships (byte-exact) and delete
-// the sole-removed ones (untracked + hash-match; a local edit is warned + kept),
-// renumber sources.tsv to the single survivor row, drop the stale layers/2, and
-// print the GC5 summary + per-file narration.
-//
-// KNOWN LIMITATION (bottom removal, flagged for the controller): when the
-// survivor shipped a root AGENTS.md that the removed bottom layer's root-slot
-// ownership had rerouted to CLAUDE.local.md in the stack, that reroute is NOT
-// reversed here — layers/2/files persists the post-mapping dest ("CLAUDE.local.md"),
-// indistinguishable from an explicitly shipped CLAUDE.local.md, and un-rerouting
-// it would need the survivor's raw payload (its source cache), which GC10 forbids.
-// A fresh init of the survivor would instead place that AGENTS.md at the root
-// (+ bridge). Every other bottom-removal shape reproduces a fresh install exactly.
+// reconcile the working tree against the OLD live rows: a removed-won path the
+// survivor also ships is restored byte-exact (a locally-EDITED file at that
+// destination is first preserved to $OMK/clobbered/<rel> under init's exact
+// overwrite discipline — the plan's tryClobberBackup mandate); a sole-removed
+// path is deleted (untracked + hash-match; a local edit is warned + kept); a
+// SURVIVOR-won path no longer in the survivor's rebuilt set (the old
+// CLAUDE.local.md after an un-reroute) is swept under init's orphan discipline.
+// Then renumber sources.tsv to the single survivor row, point $OMK/source at
+// the new bottom (bottom removal only — the file a bare init re-derives the
+// bottom layer from; leaving the removed source there would resurrect it),
+// drop the stale layers/2, and print the GC5 summary + per-file narration.
 func RemoveLayer(root, common, omk string, recorded []state.SourceRow, removeIdx int, stdout, stderr io.Writer) int {
 	survivorIdx := 1 - removeIdx
 	removedLabel := reassembleSource(recorded[removeIdx])
@@ -299,6 +372,30 @@ func RemoveLayer(root, common, omk string, recorded []state.SourceRow, removeIdx
 			return code
 		}
 		defer os.RemoveAll(folded)
+
+		// Un-reroute: the survivor's store recorded a §7 slot-fallback reroute
+		// (its canonical AGENTS.md was stored as CLAUDE.local.md because the
+		// root slot was taken when the stack was built). Restore the ORIGINAL
+		// rel in the staging so MapInstruction re-decides against the
+		// RECOMPUTED rootSlotFree below — never an unconditional un-reroute:
+		// under a committed root instruction file the re-map falls back again
+		// (and BuildLayerStore re-records the marker). The rename may clobber
+		// the base's own copy of the original rel — correct, the survivor's
+		// delta wins that overlap exactly as a fresh init's fold would.
+		for _, m := range readRerouted(filepath.Join(omk, "layers", "2")) {
+			from := filepath.Join(folded, m.dest)
+			if !lexists(from) {
+				continue
+			}
+			to := filepath.Join(folded, m.orig)
+			if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+				return 1
+			}
+			if err := os.Rename(from, to); err != nil {
+				fmt.Fprintf(stderr, "omakase: failed to restore rerouted payload file '%s' to '%s'\n", m.dest, m.orig)
+				return 1
+			}
+		}
 
 		// Re-derive the slot-fallback + §7 bridge for the now-single survivor layer,
 		// exactly as a fresh init of the survivor would: a committed root instruction
@@ -383,17 +480,62 @@ func RemoveLayer(root, common, omk string, recorded []state.SourceRow, removeIdx
 	restored, deleted := 0, 0
 	var bullets []string
 	for _, row := range liveRows {
-		if row.Src != removedLabel {
-			continue // survivor owns it — working tree untouched
-		}
 		rel := row.Rel
 		if isTracked(rel) {
 			continue // never touch a tracked path (upstream owns it)
 		}
+		full := filepath.Join(root, rel)
+		if row.Src != removedLabel {
+			// Survivor-won live row: normally still in the survivor's rebuilt set
+			// and left untouched (its bytes already are the winner's). A
+			// bottom-removal un-reroute MOVES the survivor's instruction rel
+			// (CLAUDE.local.md -> AGENTS.md), orphaning the old dest — sweep it
+			// under init's exact orphan discipline (hash-match delete + empty-dir
+			// prune; a local edit is warned and kept, init's own wording).
+			if survivorHas[rel] {
+				continue
+			}
+			if !lexists(full) {
+				continue
+			}
+			if state.HashOf(full) == row.Hash {
+				if err := DeletePlaced(root, rel, isTracked); err != nil {
+					return 1
+				}
+				deleted++
+				bullets = append(bullets, "  - deleted: "+rel+"\n")
+			} else {
+				fmt.Fprintf(stderr, "omakase: WARNING — '%s' was placed by a prior init, is no longer in the payload, and differs from what init placed (a local edit?). Leaving it; delete it yourself if unwanted.\n", rel)
+			}
+			continue
+		}
 		if survivorHas[rel] {
 			// The survivor ships this dest: re-place its copy (byte-exact restore).
-			if code := placeFile(filepath.Join(survivorFilesDir, rel), rel, root, umask, stderr); code != 0 {
+			// A LOCALLY-EDITED file here (bytes differ from what omakase placed,
+			// per the live row's hash) is preserved to $OMK/clobbered/<rel> first,
+			// under init's exact overwrite discipline (tryClobberBackup + the
+			// overwrote line) — the plan's mandate, generalizing personal off's
+			// bridge arm. Unedited removed-layer bytes are replaced silently: the
+			// restore IS the operation the user asked for, nothing is lost.
+			src := filepath.Join(survivorFilesDir, rel)
+			edited := lexists(full) && state.HashOf(full) != row.Hash && !SameFile(full, src)
+			saved := ""
+			if edited && (!isDir(full) || isSymlink(full)) {
+				if tryClobberBackup(full, rel, omk) {
+					saved = filepath.Join(omk, "clobbered", rel)
+				} else {
+					fmt.Fprintf(stderr, "omakase: WARNING — could not back up pre-existing '%s' before overwriting it\n", rel)
+				}
+			}
+			if code := placeFile(src, rel, root, umask, stderr); code != 0 {
 				return code
+			}
+			if edited {
+				if saved != "" {
+					fmt.Fprintf(stderr, "omakase: overwrote %s to match payload (prior copy preserved at %s)\n", rel, saved)
+				} else {
+					fmt.Fprintf(stderr, "omakase: overwrote %s to match payload (any local edit was replaced)\n", rel)
+				}
 			}
 			restored++
 			bullets = append(bullets, "  ^ restored: "+rel+"\n")
@@ -401,7 +543,6 @@ func RemoveLayer(root, common, omk string, recorded []state.SourceRow, removeIdx
 		}
 		// Sole to the removed layer: delete under the untracked + hash-match rule (the
 		// orphan-sweep discipline); a local edit is warned and kept.
-		full := filepath.Join(root, rel)
 		if !lexists(full) {
 			continue // already gone
 		}
@@ -421,6 +562,19 @@ func RemoveLayer(root, common, omk string, recorded []state.SourceRow, removeIdx
 	if err := state.WriteSources(filepath.Join(omk, "sources.tsv"), []state.SourceRow{survivorRow}); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
+	}
+	// ---- $OMK/source: the v1 remembered-bottom-source file must name the NEW
+	// bottom after a bottom removal — a bare init re-derives the bottom layer
+	// from this file (init.go's bottomRemembered), so leaving the REMOVED
+	// source here would resurrect it and drop the survivor on the next bare
+	// init, and detectMixedEra would warn on every verb. Written exactly as a
+	// fresh init of the survivor writes it (label + "\n", init.go's
+	// rememberedSource write). Top removal leaves it untouched — the bottom
+	// source did not change. ----
+	if removeIdx == 0 {
+		if err := os.WriteFile(filepath.Join(omk, "source"), []byte(survivorLabel+"\n"), 0o644); err != nil {
+			return 1
+		}
 	}
 	// Drop the removed layer's store (TOP: the removed top; BOTTOM: the stale delta,
 	// whose content was re-folded into layers/1 above) — always layers/2.

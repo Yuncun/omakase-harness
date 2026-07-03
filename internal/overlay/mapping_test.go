@@ -74,17 +74,18 @@ func TestBridgeWanted_Positive(t *testing.T) {
 	}
 }
 
-// TestBridgeWanted_PersonalNeverBridges pins the negative arm the brief names
-// explicitly: personal AGENTS.md never bridges. Even holding every OTHER
-// condition in the qualifying shape (a project set that itself has AGENTS.md,
-// no CLAUDE.md anywhere, untracked), asking BridgeWanted for the PERSONAL layer
-// must return false — the bridge is a project-layer feature only.
-func TestBridgeWanted_PersonalNeverBridges(t *testing.T) {
+// TestBridgeWanted_NonOwningLayerNeverBridges pins the negative arm the brief
+// names explicitly: a stacked (non-root-slot-owning) layer's AGENTS.md never
+// bridges. Even holding every OTHER condition in the qualifying shape (a
+// project-keyed set that itself has AGENTS.md, no CLAUDE.md anywhere,
+// untracked), asking BridgeWanted for an ORDINAL (non-project) layer key must
+// return false — the bridge belongs to the root-slot owner only.
+func TestBridgeWanted_NonOwningLayerNeverBridges(t *testing.T) {
 	sets := map[LayerName][]string{
 		LayerProject: {"AGENTS.md"},
 	}
-	if BridgeWanted(LayerPersonal, sets, false) {
-		t.Error("BridgeWanted(LayerPersonal, ...) = true, want false — bridge is project-layer only")
+	if BridgeWanted(LayerName("2"), sets, false) {
+		t.Error("BridgeWanted(\"2\", ...) = true, want false — bridge belongs to the root-slot owner only")
 	}
 }
 
@@ -114,10 +115,10 @@ func TestBridgeWanted_ExplicitCLAUDEmdSuppresses(t *testing.T) {
 			map[LayerName][]string{LayerProject: {"AGENTS.md", "CLAUDE.md"}},
 		},
 		{
-			"CLAUDE.md in the personal set",
+			"CLAUDE.md in a stacked layer's set",
 			map[LayerName][]string{
-				LayerProject:  {"AGENTS.md"},
-				LayerPersonal: {"CLAUDE.md"},
+				LayerProject:   {"AGENTS.md"},
+				LayerName("2"): {"CLAUDE.md"},
 			},
 		},
 		{
@@ -138,19 +139,19 @@ func TestBridgeWanted_ExplicitCLAUDEmdSuppresses(t *testing.T) {
 	}
 }
 
-// TestBridgeWanted_PersonalCLAUDElocalDoesNotSuppress is the regression
-// catcher for the "CLAUDE.md anywhere suppresses" check in BridgeWanted: a
-// personal-layer CLAUDE.local.md is a DIFFERENT filename than CLAUDE.md and
-// must NOT trip that check. If the exact-match comparison in contains ever
-// degrades to a substring/prefix check, CLAUDE.local.md would wrongly match
-// "CLAUDE.md" and this test would catch it.
-func TestBridgeWanted_PersonalCLAUDElocalDoesNotSuppress(t *testing.T) {
+// TestBridgeWanted_CLAUDElocalDoesNotSuppress is the regression catcher for
+// the "CLAUDE.md anywhere suppresses" check in BridgeWanted: a stacked
+// layer's CLAUDE.local.md is a DIFFERENT filename than CLAUDE.md and must NOT
+// trip that check. If the exact-match comparison in contains ever degrades to
+// a substring/prefix check, CLAUDE.local.md would wrongly match "CLAUDE.md"
+// and this test would catch it.
+func TestBridgeWanted_CLAUDElocalDoesNotSuppress(t *testing.T) {
 	sets := map[LayerName][]string{
-		LayerProject:  {"AGENTS.md"},
-		LayerPersonal: {"CLAUDE.local.md"},
+		LayerProject:   {"AGENTS.md"},
+		LayerName("2"): {"CLAUDE.local.md"},
 	}
 	if !BridgeWanted(LayerProject, sets, false) {
-		t.Error("BridgeWanted = false, want true — CLAUDE.local.md in the personal set must not suppress the bridge")
+		t.Error("BridgeWanted = false, want true — CLAUDE.local.md in a stacked layer's set must not suppress the bridge")
 	}
 }
 
@@ -178,7 +179,7 @@ func TestBridgeWanted_NoRootAGENTSmd(t *testing.T) {
 	}{
 		{"project set has no AGENTS.md at all", map[LayerName][]string{LayerProject: {"lefthook.yml"}}},
 		{"project set has only a nested docs/AGENTS.md", map[LayerName][]string{LayerProject: {"docs/AGENTS.md"}}},
-		{"project layer missing from the map entirely", map[LayerName][]string{LayerPersonal: {"CLAUDE.local.md"}}},
+		{"project layer missing from the map entirely", map[LayerName][]string{LayerName("2"): {"CLAUDE.local.md"}}},
 		{"nil map", nil},
 	}
 
