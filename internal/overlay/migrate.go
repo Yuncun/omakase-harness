@@ -78,50 +78,52 @@ func mixedEraWarn(detail string) string {
 // $OMK/source + placed.tsv"). At most ONE line is printed (axis 1 takes
 // precedence) — either symptom is cured by the SAME `omakase init` reheal.
 // WARNING ONLY: no reheal here. init reheals through its normal remembered-source
-// flow; status/remove/personal warn and move on.
+// flow; status/remove warn and move on.
+//
+// Layers are ordinal strings (Phase 3.5): "1" is the bottom layer — the one
+// $OMK/source remembers — and "2" is the stacked layer on top.
 func detectMixedEra(omk string, rows []state.SourceRow, stderr io.Writer) {
 	srcLine := state.FirstLine(filepath.Join(omk, "source"))
 	if srcLine == "" {
 		return // no $OMK/source → not the mixed-era shape (§9 gates on BOTH files)
 	}
 
-	// Axis 1: the project row, reassembled as "source[#ref]" exactly as
+	// Axis 1: the bottom row (layer "1"), reassembled as "source[#ref]" exactly as
 	// $OMK/source stores it, disagrees with $OMK/source — a v1 tool rewrote the
 	// remembered source out from under sources.tsv.
 	for _, r := range rows {
-		if r.Layer != "project" {
+		if r.Layer != "1" {
 			continue
 		}
 		if reassembleSource(r) != srcLine {
 			fmt.Fprintln(stderr, mixedEraWarn("$OMK/source disagrees with sources.tsv"))
 			return
 		}
-		break // exactly one project row ever
+		break // exactly one bottom row ever
 	}
 
-	// Axis 2: a personal row is recorded but NO placed.tsv row carries its label
-	// (col 3) — a v1 orphan sweep ate the personal layer's files.
+	// Axis 2: a stacked layer (any row above the bottom) is recorded but NO
+	// placed.tsv row carries its label (col 3) — a v1 orphan sweep ate that
+	// layer's files.
 	//
-	// Two known caveats, both accepted (triaged, not fixed): (a) false-positive
-	// if EVERY personal path is git-tracked — placement skips a tracked dest, so
-	// no placed.tsv row ever carries the personal label and this fires on a repo
-	// no v1 tool touched; init doesn't cure it either (contrived in practice:
-	// CLAUDE.local.md is essentially never tracked). (b) both axes are gated on
-	// $OMK/source existing (the loop above returns early when it's absent), so
-	// axis 2 can never fire for a personal-over-base stack (no project layer ->
-	// no $OMK/source) — a no-project repo self-heals via init/off instead.
+	// Known caveat, accepted (triaged, not fixed): a false-positive if EVERY
+	// path a stacked layer owns is git-tracked — placement skips a tracked dest,
+	// so no placed.tsv row ever carries its label and this fires on a repo no v1
+	// tool touched; init doesn't cure it either (contrived in practice: a
+	// stacked layer's instructions land at CLAUDE.local.md, essentially never
+	// tracked).
 	for _, r := range rows {
-		if r.Layer != "personal" || r.Source == "off" {
+		if r.Layer == "1" {
 			continue
 		}
 		label := reassembleSource(r)
 		for _, p := range state.ReadPlaced(filepath.Join(omk, "placed.tsv")) {
 			if p.Src == label {
-				return // the personal layer is still placed — no mismatch
+				return // the stacked layer is still placed — no mismatch
 			}
 		}
-		fmt.Fprintln(stderr, mixedEraWarn("personal layer missing from placed.tsv"))
-		return // at most one personal row ever
+		fmt.Fprintln(stderr, mixedEraWarn("a stacked layer is missing from placed.tsv"))
+		return // at most one stacked layer ever (cap 2)
 	}
 }
 

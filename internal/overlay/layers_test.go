@@ -60,7 +60,7 @@ func TestBuildLayerStore_MirrorsPayloadIncludingSymlink(t *testing.T) {
 	)
 	omk := t.TempDir()
 
-	set, err := BuildLayerStore(omk, LayerProject, "payload", payload, false)
+	set, err := BuildLayerStore(omk, LayerProject, "payload", payload, true, false)
 	if err != nil {
 		t.Fatalf("BuildLayerStore: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestBuildLayerStore_Bridge(t *testing.T) {
 	payload := mkPayload(t, map[string]string{"AGENTS.md": "project instructions\n"}, nil)
 	omk := t.TempDir()
 
-	set, err := BuildLayerStore(omk, LayerProject, "payload", payload, true)
+	set, err := BuildLayerStore(omk, LayerProject, "payload", payload, true, true)
 	if err != nil {
 		t.Fatalf("BuildLayerStore: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestBuildLayerStore_PlacedTsvColumns(t *testing.T) {
 	omk := t.TempDir()
 
 	label := "github.com/acme/harness@abc123"
-	set, err := BuildLayerStore(omk, LayerProject, label, payload, false)
+	set, err := BuildLayerStore(omk, LayerProject, label, payload, true, false)
 	if err != nil {
 		t.Fatalf("BuildLayerStore: %v", err)
 	}
@@ -229,7 +229,8 @@ func TestBuildLayerStore_PersonalRerouteAGENTSmd(t *testing.T) {
 	payload := mkPayload(t, map[string]string{"AGENTS.md": "personal additions\n"}, nil)
 	omk := t.TempDir()
 
-	set, err := BuildLayerStore(omk, LayerPersonal, "~/.config/omakase/personal", payload, false)
+	// rootSlotFree=false: this layer's canonical root AGENTS.md reroutes to CLAUDE.local.md.
+	set, err := BuildLayerStore(omk, LayerPersonal, "~/.config/omakase/personal", payload, false, false)
 	if err != nil {
 		t.Fatalf("BuildLayerStore: %v", err)
 	}
@@ -308,7 +309,7 @@ func TestBuildLayerStore_FailedRebuildLeavesPriorStoreIntact(t *testing.T) {
 		"AGENTS.md":    "v1 instructions\n",
 		"lefthook.yml": "v1 gates\n",
 	}, nil)
-	if _, err := BuildLayerStore(omk, LayerProject, "payload", goodPayload, false); err != nil {
+	if _, err := BuildLayerStore(omk, LayerProject, "payload", goodPayload, true, false); err != nil {
 		t.Fatalf("seeding the prior store: %v", err)
 	}
 	before := snapshotTree(t, filepath.Join(omk, "layers", "project"))
@@ -326,7 +327,7 @@ func TestBuildLayerStore_FailedRebuildLeavesPriorStoreIntact(t *testing.T) {
 	}
 	defer os.Chmod(unreadable, 0o644) // let TempDir cleanup remove it
 
-	_, err := BuildLayerStore(omk, LayerProject, "payload", badPayload, false)
+	_, err := BuildLayerStore(omk, LayerProject, "payload", badPayload, true, false)
 	if err == nil {
 		t.Fatal("BuildLayerStore succeeded reading an unreadable source file — want an error")
 	}
@@ -364,7 +365,8 @@ func TestBuildLayerStore_PersonalCollisionAGENTSmdAndCLAUDElocal(t *testing.T) {
 	}, nil)
 	omk := t.TempDir()
 
-	_, err := BuildLayerStore(omk, LayerPersonal, "payload", payload, false)
+	// rootSlotFree=false: AGENTS.md reroutes to CLAUDE.local.md, colliding with the explicit one.
+	_, err := BuildLayerStore(omk, LayerPersonal, "payload", payload, false, false)
 	if err == nil {
 		t.Fatal("BuildLayerStore succeeded on a colliding personal payload — want a fail-closed error")
 	}
@@ -443,7 +445,7 @@ func layerNameOf(s *LayerSet) string {
 func TestRemoveLayerDir_Present(t *testing.T) {
 	omk := t.TempDir()
 	payload := mkPayload(t, map[string]string{"AGENTS.md": "x\n"}, nil)
-	if _, err := BuildLayerStore(omk, LayerPersonal, "payload", payload, false); err != nil {
+	if _, err := BuildLayerStore(omk, LayerPersonal, "payload", payload, false, false); err != nil {
 		t.Fatalf("seeding: %v", err)
 	}
 	dir := filepath.Join(omk, "layers", "personal")

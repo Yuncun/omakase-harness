@@ -1,16 +1,23 @@
 // This file (init_layers.go) holds the layering additions RunInit (init.go)
-// wires in on top of the byte-parity Phase 2 engine: the per-user personal-config
-// path resolution (design §5 / GC10), the sources.tsv ref-field placeholder, and
-// buildMergedStaging — the TRANSIENT higher-layer-wins merge (design §4) the engine
-// places from and the wiring guard validates against.
+// wires in on top of the byte-parity Phase 2 engine: the sources.tsv ref-field
+// placeholder, personalConfigPath (still read by the legacy personal.go verb
+// pending its Task-4 removal), and buildMergedStaging — the TRANSIENT
+// higher-layer-wins merge (design §4) the engine places from and the wiring
+// guard validates against.
 //
 // buildMergedStaging is deliberately SEPARATE from BuildLayerStore (layers.go): it
 // assembles the merged tree the engine mutates the working tree from WITHOUT
 // persisting any $OMK/layers/ store, so it can run BEFORE the refusal-capable guards
 // (the wiring guard needs the merged tree) while the persistent stores are built
 // LATER, after those guards pass (init.go's rebuild-ordering slot). The two share
-// the same §7 mapping (MapLayerPath) and the same fail-closed collision rule, applied
-// to their two different outputs.
+// the same §7 slot-fallback mapping (MapInstruction) and the same fail-closed
+// collision rule, applied to their two different outputs.
+//
+// A spec is either FRESH (payloadDir is a raw payload whose rels are mapped through
+// MapInstruction with spec.rootSlotFree) or PRE-MAPPED (payloadDir is an already-
+// built layer store's files/ dir whose rels are already dest rels — copied as-is,
+// no re-mapping). Pre-mapped specs let a stacking init reuse a lower layer's persisted
+// store without re-fetching its source (Phase 3.5).
 package overlay
 
 import (
@@ -20,21 +27,64 @@ import (
 )
 
 // layerSpec is one entry of the resolved layer stack RunInit assembles
-// (bottom-to-top): which of the three fixed roles it is, the placed.tsv column-3
-// label every file it wins is recorded with, the payload dir its files come from
-// (the base dir, the runSource base+delta merge, or a personal source's payload/),
-// and whether it also places the §7 CLAUDE.md -> AGENTS.md bridge.
+// (bottom-to-top): its ordinal identity (LayerName "1"/"2", also the
+// $OMK/layers/<layer>/ store dir name), the placed.tsv column-3 label every
+// file it wins is recorded with, and the payload dir its files come from.
+//
+// payloadDir is EITHER a raw payload (rootSlotFree feeds MapInstruction; the
+// bottom layer's runSource base+delta merge, or a top layer's fetched payload)
+// or, when preMapped is true, an already-built store's files/ dir whose entries
+// are already dest rels (a lower layer reused across a stacking init). bridge
+// requests the §7 CLAUDE.md -> AGENTS.md symlink (a fresh root-slot-owning layer
+// only; a pre-mapped store already carries its own bridge, if any).
 type layerSpec struct {
-	layer      LayerName
-	label      string
-	payloadDir string
-	bridge     bool
+	layer        LayerName
+	label        string
+	payloadDir   string
+	rootSlotFree bool
+	preMapped    bool
+	bridge       bool
 }
 
-// personalConfigPath is ${XDG_CONFIG_HOME:-$HOME/.config}/omakase/personal
-// (design §5, GC10): the per-user global one-line personal-source setting. Built by
-// string concatenation to match the shell expansion byte-for-byte; the caller reads
-// its first line via state.FirstLine (absent/empty ⇒ no personal layer, silently).
+// layerPlan is one resolved entry of the target stack RunInit builds from the
+// recorded sources.tsv + the CLI source arg (Phase 3.5 decision table),
+// bottom-to-top. source/ref are the expanded source string and its pin ("" =
+// none). refetch true rebuilds this layer's store from a fresh fetch (a new,
+// repaired, or bare-init layer); false reuses the persisted store as-is (a
+// lower layer left untouched under a stacking init). epoch/commit carry the
+// prior sources.tsv row's values, preserved for a recorded layer (epoch "" =
+// stamp now; commit "" = re-resolved after a fetch).
+type layerPlan struct {
+	source  string
+	ref     string
+	refetch bool
+	epoch   string
+	commit  string
+}
+
+// displayLabel is a source's status/placed.tsv label: the source string, plus
+// "#ref" only when a ref was pinned (the same grammar runSource/fetchSource and
+// status render).
+func displayLabel(source, ref string) string {
+	if ref != "" {
+		return source + "#" + ref
+	}
+	return source
+}
+
+// unRefField is the inverse of refField: a sources.tsv ref column ("-" for no
+// pin) back to the bare ref ("" for no pin).
+func unRefField(ref string) string {
+	if ref == "-" {
+		return ""
+	}
+	return ref
+}
+
+// personalConfigPath is ${XDG_CONFIG_HOME:-$HOME/.config}/omakase/personal —
+// read only by the legacy personal.go verb (Phase 3), which Task 4 deletes. It
+// no longer participates in `init` (Phase 3.5 removed the per-repo personal
+// layer). Kept here until personal.go is removed so the package compiles.
 func personalConfigPath() string {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
@@ -60,14 +110,15 @@ func refField(ref string) string {
 // EXIT-trap merge cleanup), a map from each placed dest rel to the WINNING layer's
 // label (placed.tsv column 3), and an error.
 //
-// Each layer's payload paths route through MapLayerPath(layer, rel); a higher layer
-// overwrites a lower layer's file at the same dest (CopyEntry rm-firsts, so a symlink
-// cleanly replaces a regular file and vice versa) and its label wins. Two SOURCE rels
-// WITHIN ONE layer mapping to the same dest is a fail-closed collision (the §7
-// personal AGENTS.md + explicit CLAUDE.local.md case) — never a silent
-// last-writer-wins; the error names both contributors and the shared dest. A project
-// layer's bridge places a CLAUDE.md -> AGENTS.md symlink (subject to the same
-// within-layer collision check).
+// A FRESH spec's payload paths route through MapInstruction(rel, spec.rootSlotFree);
+// a PRE-MAPPED spec's paths (a reused store's files/ tree) are already dest rels and
+// are copied as-is. A higher layer overwrites a lower layer's file at the same dest
+// (CopyEntry rm-firsts, so a symlink cleanly replaces a regular file and vice versa)
+// and its label wins. Two SOURCE rels WITHIN ONE fresh layer mapping to the same
+// dest is a fail-closed collision (the §7 AGENTS.md + explicit CLAUDE.local.md case)
+// — never a silent last-writer-wins; the error names both contributors and the
+// shared dest. A fresh layer's bridge places a CLAUDE.md -> AGENTS.md symlink
+// (subject to the same within-layer collision check).
 func buildMergedStaging(specs []layerSpec) (staging string, labelByRel map[string]string, err error) {
 	staging, err = os.MkdirTemp(os.TempDir(), "omakase-merge.")
 	if err != nil {
@@ -104,13 +155,12 @@ func buildMergedStaging(specs []layerSpec) (staging string, labelByRel map[strin
 			return nil
 		}
 		for _, rel := range rels {
-			// Task 2 (Phase 3.5) mechanical compile fix, NOT a redesign: MapLayerPath
-			// is gone, replaced by the role-free MapInstruction(rel, rootSlotFree).
-			// `spec.layer != LayerPersonal` reproduces MapLayerPath's exact old
-			// behavior (only LayerPersonal ever rerouted AGENTS.md), so this staged
-			// tree stays byte-identical to before. Task 3 owns replacing this
-			// whole layer-role merge with real rootSlotFree computation.
-			dest, _ := MapInstruction(rel, spec.layer != LayerPersonal)
+			dest := rel
+			if !spec.preMapped {
+				// FRESH layer: route the one canonical root AGENTS.md through the
+				// §7 slot-fallback rule; everything else passes through.
+				dest, _ = MapInstruction(rel, spec.rootSlotFree)
+			}
 			src := filepath.Join(spec.payloadDir, rel)
 			if e := place(rel, dest, func(dst string) error { return CopyEntry(src, dst) }); e != nil {
 				return fail(e)

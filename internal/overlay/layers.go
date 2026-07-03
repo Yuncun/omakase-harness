@@ -40,11 +40,13 @@ type LayerSet struct {
 //  1. Walk payloadDir lexically (files + symlinks; walkPayload, the same
 //     GC6-lexical helper init.go's payload walk uses).
 //
-//  2. Map each source rel through MapLayerPath(layer, rel) to its dest rel,
-//     and CopyEntry it (cp -P semantics: a symlink source is recreated as a
-//     symlink with the identical target string, never dereferenced; a
-//     regular file is byte-copied) to
-//     "<omk>/layers/<layer>.tmp-<pid>/files/<destRel>".
+//  2. Map each source rel through MapInstruction(rel, rootSlotFree) to its
+//     dest rel, and CopyEntry it (cp -P semantics: a symlink source is
+//     recreated as a symlink with the identical target string, never
+//     dereferenced; a regular file is byte-copied) to
+//     "<omk>/layers/<layer>.tmp-<pid>/files/<destRel>". rootSlotFree is the
+//     caller's slot-fallback decision (init.go, Phase 3.5): when false, this
+//     layer's canonical root AGENTS.md is rerouted to CLAUDE.local.md.
 //
 //  3. If two source rels map to the SAME dest rel, refuse: return an error
 //     naming both source rels and the colliding dest, and clean up the tmp
@@ -65,7 +67,7 @@ type LayerSet struct {
 //  5. Write "<tmpdir>/placed.tsv" via state.WritePlaced: one row per dest
 //     entry, {Rel: destRel, Kind: harness.KindOf(destRel), Src: label,
 //     Hash: state.HashOf(<file under files/>), Enabled: "1"}, in LEXICAL
-//     destRel order (not source-walk order — MapLayerPath's one reroute can
+//     destRel order (not source-walk order — MapInstruction's one reroute can
 //     move an entry out of the source walk's lexical position).
 //
 //     state.WritePlaced truncate-writes rather than tmp+rename internally —
@@ -83,7 +85,7 @@ type LayerSet struct {
 // On ANY error (including the collision refusal), the tmp dir is removed
 // and the function returns before step 6 ever runs — the prior store at
 // "<omk>/layers/<layer>" is left completely untouched byte-for-byte.
-func BuildLayerStore(omk string, layer LayerName, label string, payloadDir string, bridge bool) (*LayerSet, error) {
+func BuildLayerStore(omk string, layer LayerName, label string, payloadDir string, rootSlotFree, bridge bool) (*LayerSet, error) {
 	rels, err := walkPayload(payloadDir)
 	if err != nil {
 		return nil, fmt.Errorf("overlay: BuildLayerStore: walking payload %q: %w", payloadDir, err)
@@ -136,13 +138,10 @@ func BuildLayerStore(omk string, layer LayerName, label string, payloadDir strin
 	}
 
 	for _, rel := range rels {
-		// Task 2 (Phase 3.5) mechanical compile fix, NOT a redesign: MapLayerPath
-		// is gone, replaced by the role-free MapInstruction(rel, rootSlotFree).
-		// `layer != LayerPersonal` reproduces MapLayerPath's exact old behavior
-		// (only LayerPersonal ever rerouted AGENTS.md), so this store's contents
-		// stay byte-identical to before. Task 3/4 own replacing this per-layer
-		// store build with real rootSlotFree computation.
-		destRel, _ := MapInstruction(rel, layer != LayerPersonal)
+		// Phase 3.5: the caller passes the real slot-fallback decision. When
+		// rootSlotFree is false, this layer's canonical root AGENTS.md is
+		// rerouted to CLAUDE.local.md; every other rel passes through.
+		destRel, _ := MapInstruction(rel, rootSlotFree)
 		if err := place(rel, destRel, func(dst string) error {
 			return CopyEntry(filepath.Join(payloadDir, rel), dst)
 		}); err != nil {
@@ -160,8 +159,8 @@ func BuildLayerStore(omk string, layer LayerName, label string, payloadDir strin
 
 	// Lexical order by DEST rel (Global Constraint 6's discipline, applied
 	// here to the post-mapping set): the source walk is lexical in SOURCE
-	// rels, but MapLayerPath's one reroute (personal AGENTS.md ->
-	// CLAUDE.local.md) can move an entry out of that order.
+	// rels, but MapInstruction's one slot-fallback reroute (a canonical root
+	// AGENTS.md -> CLAUDE.local.md) can move an entry out of that order.
 	sort.Strings(set.Rels)
 
 	rows := make([]state.PlacedRow, 0, len(set.Rels))
@@ -202,12 +201,12 @@ type MergedView struct {
 
 // MergeLayers computes the design §4 overlap rule — whole-file replacement,
 // higher layer wins, never content merging — over an already-built stack of
-// LayerSets. sets must be ordered bottom-to-top (e.g. base, project,
-// personal): for any dest rel two or more layers place, the LAST set in the
+// LayerSets. sets must be ordered bottom-to-top (ordinal 1 at the bottom,
+// 2 on top): for any dest rel two or more layers place, the LAST set in the
 // slice that places it wins, because later entries simply overwrite earlier
-// ones in the winner map. A personal layer's CLAUDE.local.md never collides
-// with a project layer's AGENTS.md here — they are different dest rels
-// (MapLayerPath's reroute already made them so), so both survive
+// ones in the winner map. A higher layer's CLAUDE.local.md never collides
+// with a lower layer's AGENTS.md here — they are different dest rels
+// (MapInstruction's slot-fallback reroute already made them so), so both survive
 // independently with their own winners; this function does no
 // filename-aware reasoning of its own, only a plain per-rel overwrite.
 //

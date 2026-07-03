@@ -1,19 +1,15 @@
 package overlay
 
 import (
+	"io"
+	"maps"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
-
-// nowUnix is the current unix time, the clock RunInit stamps sources.tsv epochs
-// with — captured before a run so a refreshed epoch can be asserted as recent.
-func nowUnix() int64 { return time.Now().Unix() }
 
 // allDigits reports whether s is a non-empty run of decimal digits (a plausible
 // unix-time epoch field).
@@ -31,7 +27,7 @@ func allDigits(s string) bool {
 
 // isFullSHA reports whether s has the shape of a resolved git commit sha:
 // exactly 40 lowercase hex characters (the same shape-only check style as
-// allDigits, for sources.tsv column 4 post-Finding-1).
+// allDigits, for sources.tsv column 4).
 func isFullSHA(s string) bool {
 	if len(s) != 40 {
 		return false
@@ -60,24 +56,22 @@ func wantResolvedCommit(t *testing.T, src string) string {
 	return sha
 }
 
-// These are the Task 4 layering-integration tests. Discipline per scenario is
-// noted in each test's doc-comment: "invariance" = the assertion is the ABSENCE of
-// any layer artifact/output (the base-only guarantee GC2 — the pre-change binary
-// cannot be run, so the proof is absence here + every unmodified init/source test
-// still passing); "red-first" = the layered behavior is asserted directly and was
-// watched to fail before the engine change; "broken-variant" = a deliberately
-// malformed personal source drives the fail-closed arm. Path/epoch-bearing
-// expectations are CONSTRUCTED from known inputs at test time (repo.OMK, the source
-// string, the on-disk epoch), the same way init_test.go / source_test.go build
-// theirs — never hardcoded temp paths or a frozen clock.
+// These are the Phase 3.5 stacking-integration tests: the `init` decision table
+// (single source folds base into layer 1; a second `init` stacks a source on top,
+// cap 2; a re-init repairs a recorded layer without reorder; a third distinct
+// source errors). "invariance" = the assertion is the ABSENCE of any layer
+// artifact (the base-only guarantee GC2); "red-first" = the stacking behavior is
+// asserted directly. Path/epoch/commit-bearing expectations are CONSTRUCTED from
+// known inputs at test time, never hardcoded temp paths or a frozen clock.
 //
 // Shared helpers (initRepo, stubLefthook, singleGatePayload, srcTestEnv,
 // useBasePayloadDir, newSourceRepo, commitAll, writeFile, readFileT, eq, chdir,
-// gitStdout, sha256hex) live in init_test.go / source_test.go / overlay_test.go.
+// gitStdout, sha256hex, snapshotTree) live in init_test.go / source_test.go /
+// overlay_test.go / layers_test.go.
 
 // setPersonalConfig isolates XDG_CONFIG_HOME to a fresh temp dir and writes the
-// personal-source setting (one line) there, so a test controls exactly what
-// ${XDG_CONFIG_HOME:-$HOME/.config}/omakase/personal reads back.
+// personal-source setting (one line) there. Retained for the legacy personal.go
+// tests (Task 4 removes them); `init` no longer reads this file.
 func setPersonalConfig(t *testing.T, line string) {
 	t.Helper()
 	cfg := t.TempDir()
@@ -85,16 +79,15 @@ func setPersonalConfig(t *testing.T, line string) {
 	writeFile(t, filepath.Join(cfg, "omakase", "personal"), line+"\n")
 }
 
-// isolatePersonalConfig points XDG_CONFIG_HOME at an EMPTY temp dir, so a test that
-// must NOT see a personal layer is deterministic regardless of the real machine's
-// ~/.config/omakase/personal.
+// isolatePersonalConfig points XDG_CONFIG_HOME at an EMPTY temp dir so a test is
+// deterministic regardless of the real machine's ~/.config/omakase/personal.
 func isolatePersonalConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 }
 
-// newPersonalSource builds a valid personal harness source repo (manifest + payload)
-// and returns its absolute path — the string a test writes into the personal config.
+// newPersonalSource builds a valid harness source repo (manifest + payload) and
+// returns its absolute path. Retained for the legacy personal.go tests.
 func newPersonalSource(t *testing.T, payload map[string]string) string {
 	t.Helper()
 	src := newSourceRepo(t)
@@ -106,18 +99,29 @@ func newPersonalSource(t *testing.T, payload map[string]string) string {
 	return src
 }
 
+// newHarnessSource builds a valid harness source repo shipping the given payload
+// files (keyed by dest-relative path) and returns its absolute path — the string
+// a test passes to `init --source`.
+func newHarnessSource(t *testing.T, name string, payload map[string]string) string {
+	t.Helper()
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: "+name+"\n")
+	for rel, content := range payload {
+		writeFile(t, filepath.Join(src, "payload", rel), content)
+	}
+	commitAll(t, src, name)
+	return src
+}
+
 // ---------------------------------------------------------------- GC2 base-only invariance
 
 // TestBaseOnlyInstallWritesNoLayerArtifacts is the invariance proof: a plain
-// base-only install (no project source, no personal setting) creates NEITHER
-// sources.tsv NOR $OMK/layers/, and prints none of the new personal lines. Combined
-// with every unmodified init/source test still passing, this is the base-only
-// byte-invariance guarantee (GC2).
+// base-only install (no source) creates NEITHER sources.tsv NOR $OMK/layers/, and
+// keeps placed.tsv col 3 = the literal "payload".
 func TestBaseOnlyInstallWritesNoLayerArtifacts(t *testing.T) {
 	_, repo := initRepo(t)
 	stubLefthook(t)
 	singleGatePayload(t)
-	isolatePersonalConfig(t)
 
 	var stdout, stderr strings.Builder
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
@@ -129,10 +133,6 @@ func TestBaseOnlyInstallWritesNoLayerArtifacts(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo.OMK, "layers")); !os.IsNotExist(err) {
 		t.Errorf("base-only install created $OMK/layers/ (want absent): err=%v", err)
 	}
-	if strings.Contains(stdout.String(), "personal harness") {
-		t.Errorf("base-only stdout carries a personal line:\n%s", stdout.String())
-	}
-	// col 3 stays the literal "payload" (placed.test.sh:91 pins this).
 	for _, r := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
 		if r.Src != "payload" {
 			t.Errorf("placed.tsv col3 = %q for %q, want \"payload\"", r.Src, r.Rel)
@@ -140,17 +140,14 @@ func TestBaseOnlyInstallWritesNoLayerArtifacts(t *testing.T) {
 	}
 }
 
-// TestOmakasePayloadOverridesBaseInvariance: OMAKASE_PAYLOAD set (base override),
-// no source, no personal — still the base-only path, col3 "payload", and NO layer
-// artifacts. Pins that OMAKASE_PAYLOAD overrides the BASE layer without becoming a
-// project layer (GC2).
+// TestOmakasePayloadOverridesBaseInvariance: OMAKASE_PAYLOAD set, no source —
+// still the base-only path, col3 "payload", NO layer artifacts.
 func TestOmakasePayloadOverridesBaseInvariance(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
 	p := t.TempDir()
 	t.Setenv("OMAKASE_PAYLOAD", p)
 	writeFile(t, filepath.Join(p, ".omakase", "gates", "ex.sh"), "#!/bin/sh\ntrue\n")
-	isolatePersonalConfig(t)
 
 	var stdout, stderr strings.Builder
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
@@ -165,448 +162,81 @@ func TestOmakasePayloadOverridesBaseInvariance(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".omakase", "gates", "ex.sh")); err != nil {
 		t.Errorf("OMAKASE_PAYLOAD payload not installed: %v", err)
 	}
-	for _, r := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
-		if r.Src != "payload" {
-			t.Errorf("placed.tsv col3 = %q, want \"payload\"", r.Src)
-		}
-	}
 }
 
-// TestSourceOnlyWritesProjectRowNoPersonal (red-first): a --source install with NO
-// personal setting records a single project row in sources.tsv, builds
-// $OMK/layers/project/ but NOT layers/personal/, and every placed row keeps the
-// source label in col 3 (I9/sources parity that base files fold into the project).
-func TestSourceOnlyWritesProjectRow(t *testing.T) {
+// ---------------------------------------------------------------- single source (layer 1)
+
+// TestSingleSourceWritesOrdinalRow: a single `init --source` records ONE row with
+// ordinal layer "1", builds $OMK/layers/1/ (NOT a role-named dir), and every placed
+// row carries the source label in col 3 (base folds into layer 1).
+func TestSingleSourceWritesOrdinalRow(t *testing.T) {
 	_, repo := initRepo(t)
 	srcTestEnv(t)
 	stubLefthook(t)
-	isolatePersonalConfig(t)
 	base := useBasePayloadDir(t)
 	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
 
-	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: proj\n")
-	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "g.sh"), "g\n")
-	commitAll(t, src, "src")
+	src := newHarnessSource(t, "proj", map[string]string{".omakase/gates/g.sh": "g\n"})
 
 	var stdout, stderr strings.Builder
 	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	// Every placed row (base + delta) carries the source label (folded project).
 	for _, r := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
 		if r.Src != src {
 			t.Errorf("placed.tsv col3 = %q for %q, want %q", r.Src, r.Rel, src)
 		}
 	}
-	// sources.tsv: exactly one project row, bottom-of-stack.
 	rows := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
-	if len(rows) != 1 || rows[0].Layer != "project" || rows[0].Source != src || rows[0].Ref != "-" {
-		t.Fatalf("sources.tsv = %+v, want one {project %s -} row", rows, src)
+	if len(rows) != 1 || rows[0].Layer != "1" || rows[0].Source != src || rows[0].Ref != "-" {
+		t.Fatalf("sources.tsv = %+v, want one {1 %s -} row", rows, src)
 	}
 	if !isFullSHA(rows[0].Commit) {
-		t.Errorf("project row commit = %q, want a 40-hex sha", rows[0].Commit)
+		t.Errorf("row commit = %q, want a 40-hex sha", rows[0].Commit)
 	}
-	eq(t, "project row commit", rows[0].Commit, wantResolvedCommit(t, src))
+	eq(t, "row commit", rows[0].Commit, wantResolvedCommit(t, src))
 	if !allDigits(rows[0].Epoch) {
-		t.Errorf("project row epoch = %q, want a unix-time decimal", rows[0].Epoch)
+		t.Errorf("row epoch = %q, want a unix-time decimal", rows[0].Epoch)
 	}
-	// project store built; personal store not.
-	if _, err := os.Stat(filepath.Join(repo.OMK, "layers", "project", "placed.tsv")); err != nil {
-		t.Errorf("layers/project not built: %v", err)
+	if _, err := os.Stat(filepath.Join(repo.OMK, "layers", "1", "placed.tsv")); err != nil {
+		t.Errorf("layers/1 not built: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(repo.OMK, "layers", "personal")); !os.IsNotExist(err) {
-		t.Errorf("layers/personal built for a personal-less install")
+	if _, err := os.Stat(filepath.Join(repo.OMK, "layers", "project")); err == nil {
+		t.Error("role-named layers/project store exists (want ordinal layers/1 only)")
 	}
-	if strings.Contains(stdout.String(), "personal harness") {
-		t.Errorf("stdout carries a personal line for a personal-less install:\n%s", stdout.String())
+	// GC4: no `personal`/`add` tokens in the install output.
+	if strings.Contains(stdout.String(), "personal") {
+		t.Errorf("stdout carries a `personal` token:\n%s", stdout.String())
 	}
 }
 
-// ---------------------------------------------------------------- project + personal stack
+// ---------------------------------------------------------------- bridge (single source)
 
-// TestProjectPersonalStack (red-first): the full base<project<personal stack.
-// Verifies winners (personal shadows project on overlap; personal AGENTS.md reroutes
-// to CLAUDE.local.md), per-row col 3 labels, the two sources.tsv rows bottom-to-top,
-// both layer stores, and the personal-layered stdout line.
-func TestProjectPersonalStack(t *testing.T) {
+// TestBridgePlacedForSingleSourceAGENTS: a single source shipping a root AGENTS.md
+// but NO CLAUDE.md, in a repo that does not track CLAUDE.md, gets the §7 bridge — a
+// CLAUDE.md symlink -> AGENTS.md owned by layer 1, in both the working tree and the
+// layers/1 store.
+func TestBridgePlacedForSingleSourceAGENTS(t *testing.T) {
 	dir, repo := initRepo(t)
 	srcTestEnv(t)
 	stubLefthook(t)
-	base := useBasePayloadDir(t)
-	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
-
-	proj := newSourceRepo(t)
-	writeFile(t, filepath.Join(proj, "omakase.manifest"), "name: proj\n")
-	writeFile(t, filepath.Join(proj, "payload", ".claude", "rules", "r.md"), "proj rule\n")
-	writeFile(t, filepath.Join(proj, "payload", ".omakase", "gates", "shared.sh"), "PROJECT\n")
-	commitAll(t, proj, "proj")
-
-	psrc := newPersonalSource(t, map[string]string{
-		"AGENTS.md":                "personal doctrine\n", // -> CLAUDE.local.md
-		".omakase/gates/shared.sh": "PERSONAL\n",          // overlaps project -> personal wins
-	})
-	setPersonalConfig(t, psrc)
-
-	var stdout, stderr strings.Builder
-	if code := RunInit([]string{"--source", proj}, &stdout, &stderr); code != 0 {
-		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
-	}
-
-	// ---- winners on disk ----
-	eq(t, "base file (folded under project)", readFileT(t, filepath.Join(dir, ".omakase", "bin", "base.sh")), "base\n")
-	eq(t, "project rule", readFileT(t, filepath.Join(dir, ".claude", "rules", "r.md")), "proj rule\n")
-	eq(t, "personal wins overlap", readFileT(t, filepath.Join(dir, ".omakase", "gates", "shared.sh")), "PERSONAL\n")
-	eq(t, "personal AGENTS.md rerouted", readFileT(t, filepath.Join(dir, "CLAUDE.local.md")), "personal doctrine\n")
-	if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err == nil {
-		t.Error("personal AGENTS.md placed as-is (must reroute to CLAUDE.local.md)")
-	}
-
-	// ---- placed.tsv col 3 = winning layer's label ----
-	col3 := map[string]string{}
-	for _, r := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
-		col3[r.Rel] = r.Src
-	}
-	eq(t, "col3 base.sh", col3[".omakase/bin/base.sh"], proj)
-	eq(t, "col3 rule", col3[".claude/rules/r.md"], proj)
-	eq(t, "col3 shared.sh", col3[".omakase/gates/shared.sh"], psrc)
-	eq(t, "col3 CLAUDE.local.md", col3["CLAUDE.local.md"], psrc)
-
-	// ---- sources.tsv: project (bottom) then personal (top) ----
-	rows := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
-	if len(rows) != 2 {
-		t.Fatalf("sources.tsv rows = %d, want 2: %+v", len(rows), rows)
-	}
-	if rows[0].Layer != "project" || rows[0].Source != proj || rows[0].Ref != "-" {
-		t.Errorf("row0 = %+v, want project %s -", rows[0], proj)
-	}
-	if rows[1].Layer != "personal" || rows[1].Source != psrc || rows[1].Ref != "-" {
-		t.Errorf("row1 = %+v, want personal %s -", rows[1], psrc)
-	}
-	eq(t, "project row commit", rows[0].Commit, wantResolvedCommit(t, proj))
-	eq(t, "personal row commit", rows[1].Commit, wantResolvedCommit(t, psrc))
-	for _, r := range rows {
-		if !allDigits(r.Epoch) {
-			t.Errorf("row epoch = %q, want a unix-time decimal", r.Epoch)
-		}
-	}
-
-	// ---- both layer stores built (shadow-restore groundwork) ----
-	eq(t, "project store view of shared.sh", readFileT(t, filepath.Join(repo.OMK, "layers", "project", "files", ".omakase", "gates", "shared.sh")), "PROJECT\n")
-	eq(t, "personal store CLAUDE.local.md", readFileT(t, filepath.Join(repo.OMK, "layers", "personal", "files", "CLAUDE.local.md")), "personal doctrine\n")
-
-	// ---- stdout personal-layered line ----
-	wantLine := "omakase: personal harness layered on top (" + psrc + ") — omakase personal off to remove it everywhere.\n"
-	if !strings.Contains(stdout.String(), wantLine) {
-		t.Errorf("stdout missing personal-layered line:\n got:\n%s\nwant substr: %q", stdout.String(), wantLine)
-	}
-	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
-		t.Errorf("git status not clean: %q", out)
-	}
-}
-
-// TestPersonalOnlyStack (red-first): a personal setting with NO project source.
-// The bottom is the BASE layer (label "payload"); personal stacks on top. Pins that
-// base files keep col3 "payload", personal's CLAUDE.local.md carries the personal
-// label, both base + personal stores are built, and one personal sources.tsv row.
-func TestPersonalOnlyStack(t *testing.T) {
-	dir, repo := initRepo(t)
-	srcTestEnv(t)
-	stubLefthook(t)
-	base := useBasePayloadDir(t)
-	writeFile(t, filepath.Join(base, ".omakase", "gates", "base.sh"), "base gate\n")
-	t.Setenv("OMAKASE_PAYLOAD", base) // base-as-bottom resolves via OMAKASE_PAYLOAD
-
-	psrc := newPersonalSource(t, map[string]string{"AGENTS.md": "personal only\n"})
-	setPersonalConfig(t, psrc)
-
-	var stdout, stderr strings.Builder
-	if code := RunInit(nil, &stdout, &stderr); code != 0 {
-		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
-	}
-	eq(t, "base gate placed", readFileT(t, filepath.Join(dir, ".omakase", "gates", "base.sh")), "base gate\n")
-	eq(t, "personal CLAUDE.local.md", readFileT(t, filepath.Join(dir, "CLAUDE.local.md")), "personal only\n")
-
-	col3 := map[string]string{}
-	for _, r := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
-		col3[r.Rel] = r.Src
-	}
-	eq(t, "base col3", col3[".omakase/gates/base.sh"], "payload")
-	eq(t, "personal col3", col3["CLAUDE.local.md"], psrc)
-
-	rows := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
-	if len(rows) != 1 || rows[0].Layer != "personal" || rows[0].Source != psrc {
-		t.Fatalf("sources.tsv = %+v, want one personal %s row", rows, psrc)
-	}
-	eq(t, "personal row commit", rows[0].Commit, wantResolvedCommit(t, psrc))
-	// base + personal stores both built.
-	if _, err := os.Stat(filepath.Join(repo.OMK, "layers", "base", "placed.tsv")); err != nil {
-		t.Errorf("layers/base not built for a personal-only stack: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(repo.OMK, "layers", "personal", "placed.tsv")); err != nil {
-		t.Errorf("layers/personal not built: %v", err)
-	}
-}
-
-// ---------------------------------------------------------------- --no-personal persistence
-
-// TestNoPersonalRoundTrip (red-first): the persisted per-repo opt-out round trip.
-// (1) init --no-personal records a personal|off row and places NO personal layer,
-//
-//	printing no personal line (the flag was just typed).
-//
-// (2) a bare re-init keeps it off (the row is the memory, not the flag), prints the
-//
-//	skipped line, and preserves the off-row's epoch.
-func TestNoPersonalRoundTrip(t *testing.T) {
-	dir, repo := initRepo(t)
-	stubLefthook(t)
-	singleGatePayload(t)
-	// A personal config IS present — proving --no-personal / the off-row win over it.
-	setPersonalConfig(t, "you/would-be-personal")
-
-	// (1) init --no-personal
-	var o1, e1 strings.Builder
-	if code := RunInit([]string{"--no-personal"}, &o1, &e1); code != 0 {
-		t.Fatalf("init --no-personal exit = %d; stderr=%q", code, e1.String())
-	}
-	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.local.md")); err == nil {
-		t.Error("--no-personal placed a personal layer")
-	}
-	if strings.Contains(o1.String(), "personal harness") {
-		t.Errorf("--no-personal printed a personal line (should be silent when freshly given):\n%s", o1.String())
-	}
-	rows := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
-	if len(rows) != 1 || rows[0].Layer != "personal" || rows[0].Source != "off" || rows[0].Ref != "-" || rows[0].Commit != "-" {
-		t.Fatalf("after --no-personal, sources.tsv = %+v, want one {personal off - -} row", rows)
-	}
-	if !allDigits(rows[0].Epoch) {
-		t.Fatalf("off-row epoch = %q, want a unix-time decimal", rows[0].Epoch)
-	}
-	e1epoch := rows[0].Epoch
-
-	// (2) bare re-init: still off, skipped line printed, epoch preserved.
-	var o2, e2 strings.Builder
-	if code := RunInit(nil, &o2, &e2); code != 0 {
-		t.Fatalf("bare re-init exit = %d; stderr=%q", code, e2.String())
-	}
-	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.local.md")); err == nil {
-		t.Error("bare re-init placed a personal layer despite the remembered off-row")
-	}
-	wantSkip := "omakase: personal harness skipped in this repo (init --no-personal is remembered).\n"
-	if !strings.Contains(o2.String(), wantSkip) {
-		t.Errorf("bare re-init missing the skipped line:\n got:\n%s\nwant substr: %q", o2.String(), wantSkip)
-	}
-	rows2 := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
-	if len(rows2) != 1 || rows2[0].Source != "off" {
-		t.Fatalf("bare re-init off-row lost: %+v", rows2)
-	}
-	if rows2[0].Epoch != e1epoch {
-		t.Errorf("bare re-init changed the off-row epoch %q -> %q (the row is the memory; no flag = no refresh)", e1epoch, rows2[0].Epoch)
-	}
-}
-
-// TestNoPersonalFlagRefreshesEpoch (red-first): the flag REFRESHES the off-row's
-// epoch. Seed a known-stale epoch, re-run WITHOUT the flag (epoch preserved), then
-// WITH the flag (epoch refreshed to a recent unix time).
-func TestNoPersonalFlagRefreshesEpoch(t *testing.T) {
-	dir, repo := initRepo(t)
-	stubLefthook(t)
-	singleGatePayload(t)
-	isolatePersonalConfig(t)
-	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// Seed a stale off-row (epoch "1").
-	if err := state.WriteSources(filepath.Join(repo.OMK, "sources.tsv"),
-		[]state.SourceRow{{Layer: "personal", Source: "off", Ref: "-", Commit: "-", Epoch: "1"}}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Bare re-init: no flag => the stale epoch is preserved (the memory).
-	var o1, e1 strings.Builder
-	if code := RunInit(nil, &o1, &e1); code != 0 {
-		t.Fatalf("bare exit = %d; stderr=%q", code, e1.String())
-	}
-	if r := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv")); len(r) != 1 || r[0].Epoch != "1" {
-		t.Fatalf("bare re-init did not preserve the stale off-row epoch: %+v", r)
-	}
-
-	start := nowUnix()
-	// --no-personal => the epoch is refreshed to a recent unix time.
-	var o2, e2 strings.Builder
-	if code := RunInit([]string{"--no-personal"}, &o2, &e2); code != 0 {
-		t.Fatalf("--no-personal exit = %d; stderr=%q", code, e2.String())
-	}
-	r := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
-	if len(r) != 1 || r[0].Source != "off" {
-		t.Fatalf("off-row lost after refresh: %+v", r)
-	}
-	got, err := strconv.ParseInt(r[0].Epoch, 10, 64)
-	if err != nil {
-		t.Fatalf("refreshed epoch %q is not decimal: %v", r[0].Epoch, err)
-	}
-	if got < start {
-		t.Errorf("--no-personal did not refresh the epoch: got %d, want >= %d (the stale 1 must be replaced)", got, start)
-	}
-	_ = dir
-}
-
-// ---------------------------------------------------------------- personal fail-closed
-
-// TestPersonalFailClosedNoManifest (broken-variant): a personal source with no
-// omakase.manifest fails closed with the BYTE-IDENTICAL message a project source
-// with no manifest prints (both go through fetchSource) — nothing placed, no
-// sources.tsv, no layers/.
-func TestPersonalFailClosedNoManifest(t *testing.T) {
-	dir, repo := initRepo(t)
-	srcTestEnv(t)
-	stubLefthook(t)
-	useBasePayloadDir(t)
-
-	// A personal source that is a git repo but ships no manifest.
-	psrc := newSourceRepo(t)
-	writeFile(t, filepath.Join(psrc, "payload", "rule.md"), "a rule\n")
-	commitAll(t, psrc, "no-manifest")
-	setPersonalConfig(t, psrc)
-
-	var stdout, stderr strings.Builder
-	code := RunInit(nil, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
-	}
-	// Same wording as the project-source arm (source_test.go TestSourceMissingManifest).
-	if !strings.Contains(stderr.String(), "omakase: source '"+psrc+"' has no omakase.manifest at its root — not an omakase source\n") {
-		t.Errorf("personal manifest refusal not byte-identical to the project arm:\n%s", stderr.String())
-	}
-	if _, err := os.Stat(filepath.Join(dir, ".omakase")); err == nil {
-		t.Error("placed files despite a personal-source refusal")
-	}
-	if _, err := os.Stat(filepath.Join(repo.OMK, "sources.tsv")); err == nil {
-		t.Error("wrote sources.tsv despite a personal-source refusal")
-	}
-	if _, err := os.Stat(filepath.Join(repo.OMK, "layers")); err == nil {
-		t.Error("built a layer store despite a personal-source refusal")
-	}
-	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
-		t.Errorf("refusal left changes: %q", out)
-	}
-}
-
-// TestPersonalFailClosedEmptyPayload (broken-variant, mirrors
-// TestPersonalFailClosedNoManifest's shape): a personal source with a valid
-// manifest but NO payload/ tree fails closed with the BYTE-IDENTICAL message
-// the project-source arm prints for the same condition
-// (source_test.go TestSourceEmptyPayload) — both the personal and project arms
-// call fetchSource directly (personal) or via runSource (project), so this is
-// the SAME check, not a separate one the personal arm could skip; pinned here
-// as the personal-arm twin of that project-arm test.
-func TestPersonalFailClosedEmptyPayload(t *testing.T) {
-	dir, repo := initRepo(t)
-	srcTestEnv(t)
-	stubLefthook(t)
-	useBasePayloadDir(t)
-
-	// A personal source that is a git repo with a valid manifest but ships no
-	// payload/ tree at all (git cannot track an empty dir, so payload/ is
-	// simply absent from the clone).
-	psrc := newSourceRepo(t)
-	writeFile(t, filepath.Join(psrc, "omakase.manifest"), "name: empty\n")
-	commitAll(t, psrc, "no-payload")
-	setPersonalConfig(t, psrc)
-
-	var stdout, stderr strings.Builder
-	code := RunInit(nil, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
-	}
-	// Same wording as the project-source arm (source_test.go TestSourceEmptyPayload).
-	if !strings.Contains(stderr.String(), "omakase: source '"+psrc+"' has no non-empty payload/ tree — nothing to inject\n") {
-		t.Errorf("personal empty-payload refusal not byte-identical to the project arm:\n%s", stderr.String())
-	}
-	if _, err := os.Stat(filepath.Join(dir, ".omakase")); err == nil {
-		t.Error("placed files despite a personal-source refusal")
-	}
-	if _, err := os.Stat(filepath.Join(repo.OMK, "sources.tsv")); err == nil {
-		t.Error("wrote sources.tsv despite a personal-source refusal")
-	}
-	if _, err := os.Stat(filepath.Join(repo.OMK, "layers")); err == nil {
-		t.Error("built a layer store despite a personal-source refusal")
-	}
-	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
-		t.Errorf("refusal left changes: %q", out)
-	}
-}
-
-// TestPersonalCollisionFailClosed (broken-variant): a personal payload shipping BOTH
-// a root AGENTS.md (rerouted to CLAUDE.local.md) and an explicit CLAUDE.local.md
-// fights over one dest — buildMergedStaging refuses fail-closed BEFORE any placement,
-// naming both source rels; nothing is placed and no store is touched.
-func TestPersonalCollisionFailClosed(t *testing.T) {
-	dir, repo := initRepo(t)
-	srcTestEnv(t)
-	stubLefthook(t)
-	useBasePayloadDir(t)
-
-	psrc := newPersonalSource(t, map[string]string{
-		"AGENTS.md":       "rerouted\n",
-		"CLAUDE.local.md": "explicit, same dest\n",
-	})
-	setPersonalConfig(t, psrc)
-
-	var stdout, stderr strings.Builder
-	code := RunInit(nil, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "AGENTS.md") || !strings.Contains(stderr.String(), "CLAUDE.local.md") {
-		t.Errorf("collision refusal must name both source rels:\n%s", stderr.String())
-	}
-	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.local.md")); err == nil {
-		t.Error("placed a file despite a collision refusal")
-	}
-	if _, err := os.Stat(filepath.Join(repo.OMK, "layers")); err == nil {
-		t.Error("built a store despite a collision refusal")
-	}
-	if _, err := os.Stat(filepath.Join(repo.OMK, "sources.tsv")); err == nil {
-		t.Error("wrote sources.tsv despite a collision refusal")
-	}
-}
-
-// ---------------------------------------------------------------- bridge
-
-// TestBridgePlacedForProjectAGENTS (red-first): a project source shipping a root
-// AGENTS.md but NO CLAUDE.md, in a repo that does not track CLAUDE.md, gets the §7
-// bridge — a CLAUDE.md symlink whose target string is "AGENTS.md", owned by the
-// project layer (col3 = source label, hash = sha256 of the target string), present
-// in both the working tree and the project store.
-func TestBridgePlacedForProjectAGENTS(t *testing.T) {
-	dir, repo := initRepo(t)
-	srcTestEnv(t)
-	stubLefthook(t)
-	isolatePersonalConfig(t)
 	useBasePayloadDir(t) // empty base
 
-	proj := newSourceRepo(t)
-	writeFile(t, filepath.Join(proj, "omakase.manifest"), "name: bridge\n")
-	writeFile(t, filepath.Join(proj, "payload", "AGENTS.md"), "doctrine\n")
-	commitAll(t, proj, "proj")
+	src := newHarnessSource(t, "bridge", map[string]string{"AGENTS.md": "doctrine\n"})
 
 	var stdout, stderr strings.Builder
-	if code := RunInit([]string{"--source", proj}, &stdout, &stderr); code != 0 {
+	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	target, err := os.Readlink(filepath.Join(dir, "CLAUDE.md"))
-	if err != nil || target != "AGENTS.md" {
-		t.Fatalf("bridge CLAUDE.md not a symlink -> AGENTS.md: target=%q err=%v", target, err)
+	if tgt, err := os.Readlink(filepath.Join(dir, "CLAUDE.md")); err != nil || tgt != "AGENTS.md" {
+		t.Fatalf("bridge CLAUDE.md not a symlink -> AGENTS.md: target=%q err=%v", tgt, err)
 	}
-	// placed.tsv bridge row: project label, symlink-target-string digest.
 	var found bool
 	for _, r := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
 		if r.Rel == "CLAUDE.md" {
 			found = true
-			if r.Src != proj {
-				t.Errorf("bridge col3 = %q, want %q", r.Src, proj)
+			if r.Src != src {
+				t.Errorf("bridge col3 = %q, want %q", r.Src, src)
 			}
 			if r.Hash != sha256hex([]byte("AGENTS.md")) {
 				t.Errorf("bridge hash = %q, want sha256(\"AGENTS.md\")", r.Hash)
@@ -616,33 +246,29 @@ func TestBridgePlacedForProjectAGENTS(t *testing.T) {
 	if !found {
 		t.Error("no placed.tsv row for the bridge CLAUDE.md")
 	}
-	// The project store also carries the bridge.
-	if bt, err := os.Readlink(filepath.Join(repo.OMK, "layers", "project", "files", "CLAUDE.md")); err != nil || bt != "AGENTS.md" {
-		t.Errorf("project store bridge = %q err=%v, want AGENTS.md", bt, err)
+	if bt, err := os.Readlink(filepath.Join(repo.OMK, "layers", "1", "files", "CLAUDE.md")); err != nil || bt != "AGENTS.md" {
+		t.Errorf("layers/1 store bridge = %q err=%v, want AGENTS.md", bt, err)
 	}
 	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
 		t.Errorf("git status not clean: %q", out)
 	}
 }
 
-// TestBridgeSuppressedByShippedCLAUDEmd (red-first): a project source shipping an
-// EXPLICIT CLAUDE.md alongside AGENTS.md suppresses the bridge — CLAUDE.md is the
-// source's own file, not a bridge symlink.
+// TestBridgeSuppressedByShippedCLAUDEmd: a source shipping an EXPLICIT CLAUDE.md
+// alongside AGENTS.md suppresses the bridge — CLAUDE.md is the source's own file.
 func TestBridgeSuppressedByShippedCLAUDEmd(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
 	stubLefthook(t)
-	isolatePersonalConfig(t)
 	useBasePayloadDir(t)
 
-	proj := newSourceRepo(t)
-	writeFile(t, filepath.Join(proj, "omakase.manifest"), "name: explicit\n")
-	writeFile(t, filepath.Join(proj, "payload", "AGENTS.md"), "doctrine\n")
-	writeFile(t, filepath.Join(proj, "payload", "CLAUDE.md"), "explicit claude\n")
-	commitAll(t, proj, "proj")
+	src := newHarnessSource(t, "explicit", map[string]string{
+		"AGENTS.md": "doctrine\n",
+		"CLAUDE.md": "explicit claude\n",
+	})
 
 	var stdout, stderr strings.Builder
-	if code := RunInit([]string{"--source", proj}, &stdout, &stderr); code != 0 {
+	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
 	if isSymlink(filepath.Join(dir, "CLAUDE.md")) {
@@ -651,29 +277,22 @@ func TestBridgeSuppressedByShippedCLAUDEmd(t *testing.T) {
 	eq(t, "explicit CLAUDE.md content", readFileT(t, filepath.Join(dir, "CLAUDE.md")), "explicit claude\n")
 }
 
-// TestBridgeSuppressedByTrackedCLAUDEmd (red-first): a repo that COMMITS its own
-// CLAUDE.md suppresses the bridge (the universal "committed file is skipped, never
-// overwritten" rule) — the committed CLAUDE.md is left byte-untouched and no bridge
-// is placed.
+// TestBridgeSuppressedByTrackedCLAUDEmd: a repo that COMMITS its own CLAUDE.md
+// suppresses the bridge — the committed CLAUDE.md is left byte-untouched.
 func TestBridgeSuppressedByTrackedCLAUDEmd(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
 	stubLefthook(t)
-	isolatePersonalConfig(t)
 	useBasePayloadDir(t)
 
-	proj := newSourceRepo(t)
-	writeFile(t, filepath.Join(proj, "omakase.manifest"), "name: tracked\n")
-	writeFile(t, filepath.Join(proj, "payload", "AGENTS.md"), "doctrine\n")
-	commitAll(t, proj, "proj")
+	src := newHarnessSource(t, "tracked", map[string]string{"AGENTS.md": "doctrine\n"})
 
-	// The repo commits its own CLAUDE.md.
 	writeFile(t, filepath.Join(dir, "CLAUDE.md"), "TEAM CLAUDE\n")
 	runGitT(t, dir, "add", "CLAUDE.md")
 	runGitT(t, dir, "commit", "-q", "-m", "team")
 
 	var stdout, stderr strings.Builder
-	if code := RunInit([]string{"--source", proj}, &stdout, &stderr); code != 0 {
+	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
 	eq(t, "committed CLAUDE.md untouched", readFileT(t, filepath.Join(dir, "CLAUDE.md")), "TEAM CLAUDE\n")
@@ -682,5 +301,378 @@ func TestBridgeSuppressedByTrackedCLAUDEmd(t *testing.T) {
 	}
 	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
 		t.Errorf("git status not clean: %q", out)
+	}
+}
+
+// TestCommittedInstructionFallback (design §7 slot-fallback, plan L8): a repo that
+// commits its own CLAUDE.md leaves the root instruction slot TAKEN, so a single
+// source's canonical AGENTS.md reroutes to CLAUDE.local.md with the fallback
+// narration; the committed file is untouched and no root AGENTS.md is placed.
+func TestCommittedInstructionFallback(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	writeFile(t, filepath.Join(dir, "CLAUDE.md"), "TEAM\n")
+	runGitT(t, dir, "add", "CLAUDE.md")
+	runGitT(t, dir, "commit", "-q", "-m", "team")
+
+	src := newHarnessSource(t, "a", map[string]string{"AGENTS.md": "A doctrine\n"})
+
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "instructions rerouted to CLAUDE.local.md", readFileT(t, filepath.Join(dir, "CLAUDE.local.md")), "A doctrine\n")
+	if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err == nil {
+		t.Error("root AGENTS.md placed despite a committed root instruction file (must reroute)")
+	}
+	eq(t, "committed CLAUDE.md untouched", readFileT(t, filepath.Join(dir, "CLAUDE.md")), "TEAM\n")
+	wantFallback := "omakase: instructions from " + src + " -> CLAUDE.local.md (root slot taken)\n"
+	if !strings.Contains(stdout.String(), wantFallback) {
+		t.Errorf("stdout missing fallback line %q:\n%s", wantFallback, stdout.String())
+	}
+	for _, r := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
+		if r.Rel == "CLAUDE.local.md" && r.Src != src {
+			t.Errorf("CLAUDE.local.md col3 = %q, want %q", r.Src, src)
+		}
+	}
+	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
+		t.Errorf("git status not clean: %q", out)
+	}
+}
+
+// ---------------------------------------------------------------- two-source stack
+
+// TestTwoSourceStack (red-first): init A then init B stacks B on top. A (bottom,
+// base-folded) owns the root AGENTS.md and its bridge; B (top) wins the overlapping
+// gate and its AGENTS.md reroutes to CLAUDE.local.md. Asserts winners, per-row col3
+// labels, the two ordinal sources.tsv rows, both stores, and the GC5 narration.
+func TestTwoSourceStack(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	base := useBasePayloadDir(t)
+	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
+
+	srcA := newHarnessSource(t, "a", map[string]string{
+		"AGENTS.md":                "A doctrine\n",
+		".claude/rules/a.md":       "A rule\n",
+		".omakase/gates/shared.sh": "A\n",
+	})
+	srcB := newHarnessSource(t, "b", map[string]string{
+		"AGENTS.md":                "B doctrine\n",
+		".omakase/gates/shared.sh": "B\n",
+	})
+
+	var oA, eA strings.Builder
+	if code := RunInit([]string{"--source", srcA}, &oA, &eA); code != 0 {
+		t.Fatalf("init A exit = %d; stderr=%q", code, eA.String())
+	}
+	var oB, eB strings.Builder
+	if code := RunInit([]string{"--source", srcB}, &oB, &eB); code != 0 {
+		t.Fatalf("init B exit = %d; stderr=%q", code, eB.String())
+	}
+
+	// ---- winners on disk ----
+	eq(t, "base folded under A", readFileT(t, filepath.Join(dir, ".omakase", "bin", "base.sh")), "base\n")
+	eq(t, "A rule", readFileT(t, filepath.Join(dir, ".claude", "rules", "a.md")), "A rule\n")
+	eq(t, "A owns root AGENTS.md", readFileT(t, filepath.Join(dir, "AGENTS.md")), "A doctrine\n")
+	eq(t, "B rerouted to CLAUDE.local.md", readFileT(t, filepath.Join(dir, "CLAUDE.local.md")), "B doctrine\n")
+	eq(t, "B wins the overlap", readFileT(t, filepath.Join(dir, ".omakase", "gates", "shared.sh")), "B\n")
+	if tgt, err := os.Readlink(filepath.Join(dir, "CLAUDE.md")); err != nil || tgt != "AGENTS.md" {
+		t.Errorf("bridge CLAUDE.md -> AGENTS.md missing after stacking: tgt=%q err=%v", tgt, err)
+	}
+
+	// ---- placed.tsv col3 = winning layer's label ----
+	col3 := map[string]string{}
+	for _, r := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
+		col3[r.Rel] = r.Src
+	}
+	eq(t, "col3 base.sh", col3[".omakase/bin/base.sh"], srcA)
+	eq(t, "col3 a.md", col3[".claude/rules/a.md"], srcA)
+	eq(t, "col3 AGENTS.md", col3["AGENTS.md"], srcA)
+	eq(t, "col3 bridge CLAUDE.md", col3["CLAUDE.md"], srcA)
+	eq(t, "col3 shared.sh (B wins)", col3[".omakase/gates/shared.sh"], srcB)
+	eq(t, "col3 CLAUDE.local.md", col3["CLAUDE.local.md"], srcB)
+
+	// ---- sources.tsv: ordinal rows, bottom-to-top ----
+	rows := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
+	if len(rows) != 2 {
+		t.Fatalf("sources.tsv rows = %d, want 2: %+v", len(rows), rows)
+	}
+	if rows[0].Layer != "1" || rows[0].Source != srcA || rows[0].Ref != "-" {
+		t.Errorf("row0 = %+v, want {1 %s -}", rows[0], srcA)
+	}
+	if rows[1].Layer != "2" || rows[1].Source != srcB || rows[1].Ref != "-" {
+		t.Errorf("row1 = %+v, want {2 %s -}", rows[1], srcB)
+	}
+	eq(t, "row0 commit", rows[0].Commit, wantResolvedCommit(t, srcA))
+	eq(t, "row1 commit", rows[1].Commit, wantResolvedCommit(t, srcB))
+
+	// ---- both stores built, ordinal dirs only ----
+	if _, err := os.Stat(filepath.Join(repo.OMK, "layers", "1", "placed.tsv")); err != nil {
+		t.Errorf("layers/1 not built: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo.OMK, "layers", "2", "placed.tsv")); err != nil {
+		t.Errorf("layers/2 not built: %v", err)
+	}
+	for _, role := range []string{"project", "personal", "base"} {
+		if _, err := os.Stat(filepath.Join(repo.OMK, "layers", role)); err == nil {
+			t.Errorf("role-named layers/%s store exists (want ordinal dirs only)", role)
+		}
+	}
+
+	// ---- GC5 narration ----
+	wantStacked := "omakase: stacked " + srcB + " on top of " + srcA + "\n"
+	wantOverride := "  ^ overrides " + srcA + ": .omakase/gates/shared.sh\n"
+	wantFallback := "omakase: instructions from " + srcB + " -> CLAUDE.local.md (root slot taken)\n"
+	if !strings.Contains(oB.String(), wantStacked) {
+		t.Errorf("init B stdout missing stacked line %q:\n%s", wantStacked, oB.String())
+	}
+	if !strings.Contains(oB.String(), wantOverride) {
+		t.Errorf("init B stdout missing override line %q:\n%s", wantOverride, oB.String())
+	}
+	if !strings.Contains(oB.String(), wantFallback) {
+		t.Errorf("init B stdout missing fallback line %q:\n%s", wantFallback, oB.String())
+	}
+	if strings.Contains(oB.String(), "personal") {
+		t.Errorf("init B stdout carries a `personal` token:\n%s", oB.String())
+	}
+	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
+		t.Errorf("git status not clean: %q", out)
+	}
+}
+
+// ---------------------------------------------------------------- cap (GC8)
+
+// TestStackCapThirdSourceErrors (red-first): with two sources installed, a third
+// distinct source errors (exit 1) with the exact GC5 cap line and mutates NOTHING
+// — $OMK is byte-identical before and after, and no third source is even fetched.
+func TestStackCapThirdSourceErrors(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	srcA := newHarnessSource(t, "a", map[string]string{".omakase/gates/a.sh": "a\n"})
+	srcB := newHarnessSource(t, "b", map[string]string{".omakase/gates/b.sh": "b\n"})
+	srcC := newHarnessSource(t, "c", map[string]string{".omakase/gates/c.sh": "c\n"})
+
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init A failed")
+	}
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init B failed")
+	}
+
+	before := snapshotTree(t, repo.OMK)
+
+	var stdout, stderr strings.Builder
+	code := RunInit([]string{"--source", srcC}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("cap exit = %d, want 1", code)
+	}
+	wantErr := "omakase: this repo already has 2 harnesses (" + srcA + ", " + srcB + ") — remove one first: omakase remove <source>\n"
+	eq(t, "cap stderr", stderr.String(), wantErr)
+	eq(t, "cap stdout", stdout.String(), "")
+
+	if after := snapshotTree(t, repo.OMK); !maps.Equal(before, after) {
+		t.Errorf("cap attempt mutated $OMK:\nbefore=%v\nafter=%v", before, after)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".omakase", "gates", "c.sh")); err == nil {
+		t.Error("third source's gate was placed despite the cap error")
+	}
+	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
+		t.Errorf("cap attempt dirtied the tree: %q", out)
+	}
+}
+
+// ---------------------------------------------------------------- repair (no reorder)
+
+// TestReinitSameSourceRepairs: re-`init`-ing the one installed source repairs layer
+// 1 with v1-parity — no second layer, and sources.tsv + placed.tsv byte-identical.
+func TestReinitSameSourceRepairs(t *testing.T) {
+	_, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	src := newHarnessSource(t, "a", map[string]string{".omakase/gates/a.sh": "a\n"})
+
+	if code := RunInit([]string{"--source", src}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("first init failed")
+	}
+	sources1 := readFileT(t, filepath.Join(repo.OMK, "sources.tsv"))
+	placed1 := readFileT(t, filepath.Join(repo.OMK, "placed.tsv"))
+
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
+		t.Fatalf("re-init exit = %d; stderr=%q", code, stderr.String())
+	}
+	eq(t, "sources.tsv byte-identical after repair", readFileT(t, filepath.Join(repo.OMK, "sources.tsv")), sources1)
+	eq(t, "placed.tsv byte-identical after repair", readFileT(t, filepath.Join(repo.OMK, "placed.tsv")), placed1)
+	if _, err := os.Stat(filepath.Join(repo.OMK, "layers", "2")); err == nil {
+		t.Error("re-init of the same source created a second layer (want repair, no stack)")
+	}
+	if strings.Contains(stdout.String(), "stacked ") {
+		t.Errorf("re-init of the same source narrated a stack:\n%s", stdout.String())
+	}
+}
+
+// TestReinitBottomInTwoStackNoReorder (plan L2): with A+B installed, re-`init`-ing
+// A (the bottom) repairs it without reordering — sources.tsv stays byte-identical
+// (2 ordinal rows), B still wins the overlap, and no third layer appears.
+func TestReinitBottomInTwoStackNoReorder(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	srcA := newHarnessSource(t, "a", map[string]string{".omakase/gates/shared.sh": "A\n"})
+	srcB := newHarnessSource(t, "b", map[string]string{".omakase/gates/shared.sh": "B\n"})
+
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init A failed")
+	}
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init B failed")
+	}
+	sources2 := readFileT(t, filepath.Join(repo.OMK, "sources.tsv"))
+
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", srcA}, &stdout, &stderr); code != 0 {
+		t.Fatalf("re-init A exit = %d; stderr=%q", code, stderr.String())
+	}
+	eq(t, "sources.tsv byte-identical (no reorder)", readFileT(t, filepath.Join(repo.OMK, "sources.tsv")), sources2)
+	rows := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
+	if len(rows) != 2 || rows[0].Layer != "1" || rows[0].Source != srcA || rows[1].Layer != "2" || rows[1].Source != srcB {
+		t.Fatalf("sources.tsv reordered/changed: %+v", rows)
+	}
+	eq(t, "B still wins the overlap", readFileT(t, filepath.Join(dir, ".omakase", "gates", "shared.sh")), "B\n")
+	if _, err := os.Stat(filepath.Join(repo.OMK, "layers", "3")); err == nil {
+		t.Error("re-init of the bottom created a third layer")
+	}
+}
+
+// ---------------------------------------------------------------- bare re-init heals a stack
+
+// TestBareInitTwoStackHeals (plan L9): with A+B installed, deleting a B-won file
+// and an A-only file, a bare `init` re-places both from the merged view and leaves
+// sources.tsv byte-identical.
+func TestBareInitTwoStackHeals(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	srcA := newHarnessSource(t, "a", map[string]string{
+		".omakase/gates/shared.sh": "A\n",
+		".claude/rules/a.md":       "A rule\n",
+	})
+	srcB := newHarnessSource(t, "b", map[string]string{".omakase/gates/shared.sh": "B\n"})
+
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init A failed")
+	}
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init B failed")
+	}
+	sources2 := readFileT(t, filepath.Join(repo.OMK, "sources.tsv"))
+
+	// Delete a B-won file and an A-only file.
+	if err := os.Remove(filepath.Join(dir, ".omakase", "gates", "shared.sh")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, ".claude", "rules", "a.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("bare re-init exit = %d; stderr=%q", code, stderr.String())
+	}
+	eq(t, "B-won file re-placed", readFileT(t, filepath.Join(dir, ".omakase", "gates", "shared.sh")), "B\n")
+	eq(t, "A-only file re-placed", readFileT(t, filepath.Join(dir, ".claude", "rules", "a.md")), "A rule\n")
+	eq(t, "sources.tsv untouched by heal", readFileT(t, filepath.Join(repo.OMK, "sources.tsv")), sources2)
+}
+
+// ---------------------------------------------------------------- stacking fail-closed
+
+// TestStackFetchFailLeavesBottomIntact: stacking a broken source (no manifest)
+// fails closed with the byte-identical fetch refusal, exit 1 — the recorded stack
+// stays [1=A] with no layers/2, and A's files are untouched.
+func TestStackFetchFailLeavesBottomIntact(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	srcA := newHarnessSource(t, "a", map[string]string{".omakase/gates/a.sh": "a\n"})
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init A failed")
+	}
+
+	// A source repo with NO omakase.manifest.
+	badB := newSourceRepo(t)
+	writeFile(t, filepath.Join(badB, "payload", "rule.md"), "a rule\n")
+	commitAll(t, badB, "no-manifest")
+
+	var stdout, stderr strings.Builder
+	code := RunInit([]string{"--source", badB}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "omakase: source '"+badB+"' has no omakase.manifest at its root — not an omakase source\n") {
+		t.Errorf("stacking refusal not byte-identical to the source arm:\n%s", stderr.String())
+	}
+	rows := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
+	if len(rows) != 1 || rows[0].Layer != "1" || rows[0].Source != srcA {
+		t.Errorf("recorded stack changed by a failed stack: %+v", rows)
+	}
+	if _, err := os.Stat(filepath.Join(repo.OMK, "layers", "2")); err == nil {
+		t.Error("layers/2 built despite a failed stack")
+	}
+	eq(t, "A's gate intact", readFileT(t, filepath.Join(dir, ".omakase", "gates", "a.sh")), "a\n")
+}
+
+// TestStackCollisionFailClosed: stacking a source that ships BOTH a root AGENTS.md
+// (rerouted to CLAUDE.local.md because the bottom owns the root slot) and an
+// explicit CLAUDE.local.md fights over one dest — buildMergedStaging refuses
+// fail-closed, exit 1, naming both source rels; the recorded stack stays [1=A].
+func TestStackCollisionFailClosed(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	srcA := newHarnessSource(t, "a", map[string]string{"AGENTS.md": "A doctrine\n"})
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init A failed")
+	}
+
+	srcB := newHarnessSource(t, "b", map[string]string{
+		"AGENTS.md":       "reroutes to CLAUDE.local.md\n",
+		"CLAUDE.local.md": "explicit, same dest\n",
+	})
+
+	var stdout, stderr strings.Builder
+	code := RunInit([]string{"--source", srcB}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "AGENTS.md") || !strings.Contains(stderr.String(), "CLAUDE.local.md") {
+		t.Errorf("collision refusal must name both source rels:\n%s", stderr.String())
+	}
+	rows := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
+	if len(rows) != 1 || rows[0].Source != srcA {
+		t.Errorf("recorded stack changed by a collision refusal: %+v", rows)
+	}
+	if _, err := os.Stat(filepath.Join(repo.OMK, "layers", "2")); err == nil {
+		t.Error("layers/2 built despite a collision refusal")
+	}
+	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
+		t.Errorf("collision refusal dirtied the tree: %q", out)
 	}
 }
