@@ -842,9 +842,10 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 
 	// labelFor is placed.tsv column 3: the WINNING layer's label for a layered
-	// install (base "payload", project/personal the source string), else the
-	// base-only sourceLabel ("payload"). Every layered placed rel is in labelByRel;
-	// the fallback covers the base-only path (labelByRel is nil).
+	// install (a base row says "payload"; any other layer's row is its source
+	// label, "source" or "source#ref"), else the base-only sourceLabel
+	// ("payload"). Every layered placed rel is in labelByRel; the fallback
+	// covers the base-only path (labelByRel is nil).
 	labelFor := func(rel string) string {
 		if labelByRel != nil {
 			if l, ok := labelByRel[rel]; ok {

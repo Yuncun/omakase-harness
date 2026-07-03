@@ -1175,3 +1175,76 @@ func TestRemoveTopBacksUpEditedRestoreTarget(t *testing.T) {
 
 	assertRemoveTwinEqual(t, repoA, repoB, dirA, dirB)
 }
+
+// ---------------------------------------------------------------- final-review fix sweep (Fix B)
+
+// TestRemoveArgSoleSourceMixedEraWarnsOnce: `remove <source>` naming the ONE
+// recorded source in a mixed-era repo (design §9: a v1 tool rewrote $OMK/source
+// out from under sources.tsv) falls through the <source> dispatch to the
+// total-teardown path (remove.go:110-112), which used to call EnsureSources a
+// SECOND time (remove.go's bare-path migration call) — printing the mixed-era
+// WARNING line twice for the exact same on-disk state. It must print exactly
+// once.
+func TestRemoveArgSoleSourceMixedEraWarnsOnce(t *testing.T) {
+	_, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	src := newHarnessSource(t, "solo", map[string]string{".omakase/gates/g.sh": "g\n"})
+	if code := RunInit([]string{"--source", src}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init failed")
+	}
+
+	// The "v1 tool": repoint $OMK/source at a different string, leaving
+	// sources.tsv still naming the original source — mixed-era axis 1.
+	writeFile(t, filepath.Join(repo.OMK, "source"), "other/harness\n")
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove([]string{src}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if n := strings.Count(stderr.String(), "a pre-layers omakase run changed this repo's source"); n != 1 {
+		t.Errorf("mixed-era warning count = %d, want exactly 1; stderr=%q", n, stderr.String())
+	}
+	eq(t, "stdout is the bare-remove line", stdout.String(), removedLine)
+}
+
+// TestRemoveArgThreeRowSourcesRefusesRatherThanPanic: RemoveLayer's survivor
+// math (layers.go: survivorIdx := 1 - removeIdx) only holds for exactly TWO
+// recorded rows. A hand-edited sources.tsv carrying a third row would let a
+// matched `remove <source>` reach RemoveLayer with removeIdx == 2, indexing
+// recorded[-1] and panicking. `remove` must instead refuse before any
+// mutation: exit 1, a named refusal, zero $OMK change, no panic.
+func TestRemoveArgThreeRowSourcesRefusesRatherThanPanic(t *testing.T) {
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+
+	if err := os.MkdirAll(filepath.Join(repo.OMK, "layers"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo.OMK, "sources.tsv"),
+		"1\ta/one\t-\tdeadbeef\t1700000000\n"+
+			"2\ta/two\t-\tcafef00d\t1700000000\n"+
+			"3\ta/three\t-\tfeedface\t1700000000\n")
+	writeFile(t, filepath.Join(repo.OMK, "placed.tsv"),
+		".omakase/gates/example.sh\tgate\ta/one\t"+sha256hex([]byte(gateContent))+"\t1\n")
+
+	before := snapshotTree(t, repo.OMK)
+
+	var stdout, stderr strings.Builder
+	code := RunRemove([]string{"a/three"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(), "")
+	eq(t, "stderr", stderr.String(),
+		"omakase: sources.tsv records 3 harnesses — expected at most 2; repair it or run omakase init\n")
+
+	if after := snapshotTree(t, repo.OMK); !maps.Equal(before, after) {
+		t.Errorf("3-row refusal mutated $OMK")
+	}
+	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
+		t.Errorf("3-row refusal dirtied the tree: %q", out)
+	}
+}

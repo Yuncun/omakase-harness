@@ -84,10 +84,12 @@ func MapInstruction(rel string, rootSlotFree bool) (dest string, fellBack bool) 
 // re-derives whether the bridge is still wanted from scratch.
 //
 // True iff ALL of:
-//   - layer == LayerProject — the bridge is a project-layer-only feature.
-//     A personal layer's AGENTS.md can fall back to CLAUDE.local.md (see
-//     MapInstruction) and never bridges; base's AGENTS.md ships as-is with
-//     no bridge at all.
+//   - layer == LayerProject — the internal key callers use for whichever
+//     layer owns the root instruction slot (rootSlotFree was true when its
+//     store was built). A layer whose AGENTS.md instead fell back to
+//     CLAUDE.local.md (see MapInstruction) wants no bridge; base's AGENTS.md
+//     ships as-is with no bridge either — the bridge only fires when the
+//     root CLAUDE.md slot is genuinely free.
 //   - postMappingSets[LayerProject] contains the literal string "AGENTS.md"
 //     — the project layer must actually be placing a ROOT AGENTS.md (a
 //     project harness shipping only a nested docs/AGENTS.md has nothing for

@@ -105,6 +105,15 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		if len(recorded) >= 2 {
+			if len(recorded) != 2 {
+				// Refuse rather than guess (GC8 spirit): RemoveLayer's survivor math
+				// (layers.go: survivorIdx := 1 - removeIdx) only holds for exactly two
+				// recorded rows. A hand-edited sources.tsv carrying a third row would
+				// otherwise index recorded[-1] and panic. Print and exit BEFORE any
+				// mutation — nothing below this point has run yet.
+				fmt.Fprintf(stderr, "omakase: sources.tsv records %d harnesses — expected at most 2; repair it or run omakase init\n", len(recorded))
+				return 1
+			}
 			return RemoveLayer(root, common, omk, recorded, idx, stdout, stderr)
 		}
 		// Exactly one source, and it matched: fall through to the total-teardown
@@ -117,7 +126,15 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	// early-out below stays byte-identical; when $OMK IS present, remove wipes it
 	// wholesale moments later (os.RemoveAll below), so this write is momentary. The
 	// return value is unused — remove reads no layer stack, it just tears down.
-	EnsureSources(omk, stderr)
+	//
+	// Guarded on source == "": a `remove <source>` naming the sole recorded source
+	// already called EnsureSources once above before falling through to this
+	// total-teardown path. Calling it again here would run detectMixedEra a
+	// second time against the same on-disk state and print its WARNING line
+	// twice for one mixed-era repo; skip the redundant call instead.
+	if source == "" {
+		EnsureSources(omk, stderr)
+	}
 
 	const begin = "# >>> omakase-harness >>>"
 	const end = "# <<< omakase-harness <<<"

@@ -55,8 +55,8 @@ type LayerSet struct {
 //
 //  3. If two source rels map to the SAME dest rel, refuse: return an error
 //     naming both source rels and the colliding dest, and clean up the tmp
-//     dir. This can only happen with the CURRENT §7 mapping table when a
-//     personal payload ships BOTH a root AGENTS.md (rerouted to
+//     dir. This can only happen with the CURRENT §7 mapping table when an
+//     upper layer's payload ships BOTH a root AGENTS.md (rerouted to
 //     CLAUDE.local.md) and an explicit CLAUDE.local.md of its own — the two
 //     sources would silently fight over one dest. Last-walked-wins would be
 //     a silent, order-dependent data loss; this fails closed instead.

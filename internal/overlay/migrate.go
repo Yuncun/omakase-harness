@@ -1,8 +1,8 @@
 // This file (migrate.go) implements the design §9 v1→v2 migration surface every
-// Phase 3 verb shares: lazy sources.tsv synthesis (EnsureSources), mixed-era
+// layer-aware verb shares: lazy sources.tsv synthesis (EnsureSources), mixed-era
 // detection (a v1 tool ran after a v2 layered install), and the GC8
-// refuse-don't-guess layer-store guard (RequireLayers). init/status/remove/personal
-// all route their sources.tsv read through EnsureSources, so the first v2 run of
+// refuse-don't-guess layer-store guard (RequireLayers). init/status/remove all
+// route their sources.tsv read through EnsureSources, so the first v2 run of
 // ANY verb against a still-v1 repo migrates it once — silently, without ever
 // touching a working-tree file.
 //
@@ -141,7 +141,9 @@ func reassembleSource(r state.SourceRow) string {
 // needs the $OMK/layers/ store before it exists (an unmigrated / pre-layers repo)
 // must refuse rather than guess. Returns true when $OMK/layers/ is a directory;
 // otherwise prints the one-line refusal to stderr and returns false. The message
-// is byte-frozen (personal_test.go's GC8 tests + migrate_test.go pin it).
+// is byte-frozen (remove_test.go's GC8 refusal test + migrate_test.go's
+// TestRequireLayers pin it; tests/layers.test.sh L10 exercises the same
+// refusal end-to-end).
 func RequireLayers(omk string, stderr io.Writer) bool {
 	if isDir(filepath.Join(omk, "layers")) {
 		return true
