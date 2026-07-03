@@ -413,6 +413,23 @@ func RemoveLayer(root, common, omk string, recorded []state.SourceRow, removeIdx
 	// The survivor's FINAL store always lands at layers/1 (the sole bottom layer).
 	survivorDir := filepath.Join(omk, "layers", "1")
 
+	// GC8 refuse-don't-guess (Fix #3): a TOP removal reads the survivor's store at
+	// layers/1 AS-IS (never rebuilding it, per the doc comment above) — so if that
+	// store is missing, state.ReadPlaced on its absent placed.tsv below would
+	// silently yield an empty survivor set, and every old live row would then be
+	// treated as sole-to-the-removed-layer: the rebuilt placed.tsv/snapshot would
+	// come out EMPTY, a false "0 restored" would print, and sources.tsv would still
+	// claim the (now-orphaned) survivor is installed. This is reachable without
+	// hand-editing state: BuildLayerStore's publish is os.RemoveAll(finalDir) THEN
+	// os.Rename (see its doc comment), so a crash in that window during an earlier
+	// BOTTOM removal leaves layers/1 absent with sources.tsv still 2-row. Refuse
+	// BEFORE any mutation — nothing below this point has run yet for a TOP removal
+	// (the removeIdx == 0 branch below is BOTTOM-only).
+	if removeIdx == 1 && !isDir(survivorDir) {
+		fmt.Fprintln(stderr, "omakase: harness state is damaged (layers/1 missing) — run omakase init to reheal, or omakase remove to tear down")
+		return 1
+	}
+
 	if removeIdx == 0 {
 		// ---- BOTTOM removal: re-fold the embedded base under the survivor's delta
 		// (layers/2/files) into a fresh layers/1 store. ----
@@ -653,6 +670,15 @@ func foldBaseUnder(deltaDir string, stderr io.Writer) (string, int) {
 	base := defaultPayload()
 	if info, err := os.Stat(base); err != nil || !info.IsDir() {
 		fmt.Fprintf(stderr, "omakase: payload dir not found at %s\n", base)
+		return "", 1
+	}
+	// GC8 refuse-don't-guess, folded in from the whole-branch review (Minor #2):
+	// a missing surviving-delta store (layers/2, the only caller of this
+	// function) must refuse with an omakase:-prefixed message, never leak the
+	// raw `lstat …: no such file or directory` walkPayload would otherwise
+	// return below straight to the user.
+	if !isDir(deltaDir) {
+		fmt.Fprintln(stderr, "omakase: harness state is damaged (layers/2 missing) — run omakase init to reheal, or omakase remove to tear down")
 		return "", 1
 	}
 	merged, err := os.MkdirTemp(os.TempDir(), "omakase-refold.")

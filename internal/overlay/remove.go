@@ -40,7 +40,16 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	// ---- arg parse: remove [<source>] ----
 	// A single optional positional (the source to unlayer). -h/--help prints the
 	// usage; any other flag, or a second positional, is a usage error (exit 2).
+	//
+	// sourceGiven tracks whether a positional token was seen AT ALL, separately
+	// from source's own value: an explicitly-passed empty string (remove
+	// invoked with a single empty-string argument) is one argv token, not "no
+	// argument" (Fix #2 below relies on telling
+	// these two apart — testing source != "" alone conflated them, and also
+	// silently let a SECOND positional slip past the two-positional usage
+	// check whenever the first one happened to be "").
 	source := ""
+	sourceGiven := false
 	for i := 0; i < len(argv); i++ {
 		a := argv[i]
 		switch {
@@ -51,11 +60,12 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 			fmt.Fprint(stderr, removeUsageText)
 			return 2
 		default:
-			if source != "" {
+			if sourceGiven {
 				fmt.Fprint(stderr, removeUsageText)
 				return 2
 			}
 			source = a
+			sourceGiven = true
 		}
 	}
 
@@ -94,7 +104,18 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	// match → the GC5 not-installed line. One source recorded and it matched → the
 	// total teardown below (the decided edge case, byte-identical to a bare remove).
 	// Two sources → RemoveLayer, which returns here. Offline throughout (GC10).
-	if source != "" {
+	//
+	// Gated on $OMK EXISTING (Fix #7): a repo that was NEVER initialized has no
+	// layers store — and no v1 state of any kind — to refuse about. Without this
+	// gate, RequireLayers' isDir(layers) test is false for that repo too, and its
+	// "predates layered state — run omakase init once first" refusal fires,
+	// wrongly instructing the user to INSTALL the very harness they are trying to
+	// remove. A genuine pre-layers v1 repo ($OMK exists, no layers/) still gets
+	// that refusal below — this gate only excludes "$OMK never existed at all".
+	omkExists := isDir(omk)
+	dispatchedBySource := false
+	if sourceGiven && omkExists {
+		dispatchedBySource = true
 		recorded := EnsureSources(omk, stderr)
 		if !RequireLayers(omk, stderr) {
 			return 1
@@ -119,6 +140,10 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 		// Exactly one source, and it matched: fall through to the total-teardown
 		// path below (bin/remove.sh's own bytes — no third state invented).
 	}
+	// sourceGiven but $OMK absent: falls all the way through (no error printed
+	// here) to the bare-remove dispatch below, which lands on its own "nothing
+	// installed here; nothing to remove." no-op — matching legacy bin/remove.sh,
+	// which also ignored every argv token on a never-installed repo.
 
 	// v1→v2 migration for uniformity (design §9): EnsureSources synthesizes
 	// sources.tsv (and warns on mixed-era) on the first v2 run when $OMK exists. It
@@ -127,12 +152,15 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	// wholesale moments later (os.RemoveAll below), so this write is momentary. The
 	// return value is unused — remove reads no layer stack, it just tears down.
 	//
-	// Guarded on source == "": a `remove <source>` naming the sole recorded source
-	// already called EnsureSources once above before falling through to this
-	// total-teardown path. Calling it again here would run detectMixedEra a
-	// second time against the same on-disk state and print its WARNING line
-	// twice for one mixed-era repo; skip the redundant call instead.
-	if source == "" {
+	// Guarded on !dispatchedBySource: a `remove <source>` naming the sole
+	// recorded source already called EnsureSources once above before falling
+	// through to this total-teardown path. Calling it again here would run
+	// detectMixedEra a second time against the same on-disk state and print
+	// its WARNING line twice for one mixed-era repo; skip the redundant call
+	// instead. (A sourceGiven-but-$OMK-absent call never dispatched above, so
+	// it reaches here — a harmless no-op call, since EnsureSources itself is
+	// silent when $OMK is absent.)
+	if !dispatchedBySource {
 		EnsureSources(omk, stderr)
 	}
 

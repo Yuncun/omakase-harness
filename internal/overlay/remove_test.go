@@ -1248,3 +1248,184 @@ func TestRemoveArgThreeRowSourcesRefusesRatherThanPanic(t *testing.T) {
 		t.Errorf("3-row refusal dirtied the tree: %q", out)
 	}
 }
+
+// ---------------------------------------------------------------- adversarial-review fix wave (FT2)
+
+// TestRemoveEmptyStringArgIsNotInstalledNotTeardown pins Fix #2: an
+// explicitly-passed empty-string positional (remove invoked with a single
+// empty-string argument) is a source arg like any other and must land on the
+// GC5 not-installed refusal -- never the bare total-teardown path. Before the
+// fix, an empty string collapsed to the zero-args case (both compared as
+// source == ""), silently wiping BOTH stacked harnesses and $OMK/clobbered
+// instead of refusing.
+func TestRemoveEmptyStringArgIsNotInstalledNotTeardown(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	srcA := newHarnessSource(t, "a", map[string]string{".omakase/gates/a.sh": "a\n"})
+	srcB := newHarnessSource(t, "b", map[string]string{".omakase/gates/b.sh": "b\n"})
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init A failed")
+	}
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init B failed")
+	}
+	before := snapshotTree(t, repo.OMK)
+
+	var stdout, stderr strings.Builder
+	code := RunRemove([]string{""}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(), "")
+	eq(t, "stderr", stderr.String(),
+		"omakase: no harness '' installed here (installed: "+srcA+", "+srcB+")\n")
+
+	if after := snapshotTree(t, repo.OMK); !maps.Equal(before, after) {
+		t.Errorf("empty-string-arg refusal mutated $OMK")
+	}
+	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
+		t.Errorf("empty-string-arg refusal dirtied the tree: %q", out)
+	}
+	if _, err := os.Lstat(repo.OMK); err != nil {
+		t.Errorf("$OMK must still exist (no teardown happened): %v", err)
+	}
+}
+
+// TestRemoveTwoPositionalsWithEmptyFirstIsUsageError: a latent twin of Fix #2
+// in the positional-count check itself -- when the FIRST positional is "",
+// testing `source != ""` to detect "already have one" also misfires (it never
+// becomes true), so a genuine second positional slipped through as a silent
+// source reassignment instead of the usage error every other two-positional
+// invocation gets. Pins that argv{"", "b/c"} is a usage error like any other.
+func TestRemoveTwoPositionalsWithEmptyFirstIsUsageError(t *testing.T) {
+	initRepo(t)
+	stubLefthook(t)
+
+	var stdout, stderr strings.Builder
+	code := RunRemove([]string{"", "b/c"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	eq(t, "stdout", stdout.String(), "")
+	eq(t, "stderr", stderr.String(), removeUsageText)
+}
+
+// TestRemoveArgNothingInstalledIsNoOp pins Fix #7: `remove <src>` in a repo
+// that was NEVER initialized ($OMK absent entirely) must land on the legacy
+// "nothing installed here; nothing to remove." no-op (exit 0) -- never
+// RequireLayers' "predates layered state -- run omakase init once first"
+// refusal, which would falsely instruct the user to INSTALL the very harness
+// they are trying to remove.
+func TestRemoveArgNothingInstalledIsNoOp(t *testing.T) {
+	initRepo(t)
+	stubLefthook(t)
+
+	var stdout, stderr strings.Builder
+	code := RunRemove([]string{"foo/bar"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(), "")
+	eq(t, "stderr", stderr.String(), "omakase: nothing installed here; nothing to remove.\n")
+}
+
+// TestRemoveTopLayerMissingSurvivorStoreRefuses pins Fix #3: a TOP removal
+// whose survivor store (layers/1) is missing -- e.g. a crash mid-publish
+// during a prior bottom removal's BuildLayerStore RemoveAll-then-Rename
+// window -- must refuse BEFORE any mutation rather than silently reading a
+// missing placed.tsv as an empty survivor set and wiping the live state while
+// sources.tsv still claims the survivor is installed.
+func TestRemoveTopLayerMissingSurvivorStoreRefuses(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	srcA := newHarnessSource(t, "a", map[string]string{".omakase/gates/a.sh": "a\n"})
+	srcB := newHarnessSource(t, "b", map[string]string{".omakase/gates/b.sh": "b\n"})
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init A failed")
+	}
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init B failed")
+	}
+
+	// Simulate the crash-mid-publish state a prior BOTTOM removal (or repair)
+	// could leave: layers/1 (the TOP removal's survivor store) is gone, while
+	// sources.tsv still records both layers.
+	if err := os.RemoveAll(filepath.Join(repo.OMK, "layers", "1")); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotTree(t, repo.OMK)
+
+	var stdout, stderr strings.Builder
+	code := RunRemove([]string{srcB}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(), "")
+	eq(t, "stderr", stderr.String(),
+		"omakase: harness state is damaged (layers/1 missing) — run omakase init to reheal, or omakase remove to tear down\n")
+
+	if after := snapshotTree(t, repo.OMK); !maps.Equal(before, after) {
+		t.Errorf("damaged-survivor refusal mutated $OMK further")
+	}
+	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
+		t.Errorf("damaged-survivor refusal dirtied the tree: %q", out)
+	}
+	rows := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
+	if len(rows) != 2 {
+		t.Errorf("sources.tsv rewritten despite the refusal: %+v", rows)
+	}
+}
+
+// TestRemoveBottomLayerMissingLayers2WrapsError pins the whole-branch-review
+// Minor #2 fold-in: a BOTTOM removal whose surviving delta store (layers/2)
+// is missing must refuse with an omakase:-prefixed message and a reheal hint
+// -- never leak foldBaseUnder's raw `lstat ...: no such file or directory` Go
+// error text straight to the user.
+func TestRemoveBottomLayerMissingLayers2WrapsError(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	srcA := newHarnessSource(t, "a", map[string]string{".omakase/gates/a.sh": "a\n"})
+	srcB := newHarnessSource(t, "b", map[string]string{".omakase/gates/b.sh": "b\n"})
+	if code := RunInit([]string{"--source", srcA}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init A failed")
+	}
+	if code := RunInit([]string{"--source", srcB}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("init B failed")
+	}
+
+	// Damage the surviving-delta store: layers/2 gone. Removing the BOTTOM (A)
+	// re-folds the base under layers/2/files via foldBaseUnder.
+	if err := os.RemoveAll(filepath.Join(repo.OMK, "layers", "2")); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotTree(t, repo.OMK)
+
+	var stdout, stderr strings.Builder
+	code := RunRemove([]string{srcA}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(), "")
+	eq(t, "stderr", stderr.String(),
+		"omakase: harness state is damaged (layers/2 missing) — run omakase init to reheal, or omakase remove to tear down\n")
+
+	if after := snapshotTree(t, repo.OMK); !maps.Equal(before, after) {
+		t.Errorf("damaged-delta refusal mutated $OMK further")
+	}
+	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
+		t.Errorf("damaged-delta refusal dirtied the tree: %q", out)
+	}
+	rows := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
+	if len(rows) != 2 {
+		t.Errorf("sources.tsv rewritten despite the refusal: %+v", rows)
+	}
+}
