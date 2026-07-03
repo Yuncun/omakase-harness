@@ -504,6 +504,45 @@ printf 'omakase: unknown command "personal"\n' > "$TMP/L10.personal.exp"
 cmp_exact "L10: unknown-command stderr names personal" "$TMP/L10p.err" "$TMP/L10.personal.exp"
 [ ! -s "$TMP/L10p.out" ] && pass "L10: personal verb wrote no stdout" || fail "L10: personal verb wrote stdout"
 
+# ============================================================================
+# L11 — REMOVE STRANDS WIRING (Fix G): srcA ships a gate script; srcE ships ONLY a
+# lefthook-local.yml that runs it. A merge init blesses the pair (the wiring guard
+# runs against the MERGED tree, where the script is present). remove A (the script
+# supplier) would delete the script but keep E's wiring -> every commit would fail
+# exit 127. remove A must REFUSE before any mutation (exit 1, names the stranded
+# script, zero $OMK mutation, repo still committable). remove E strands nothing.
+# ============================================================================
+echo "== L11: remove refuses when it would strand the survivor's hook wiring (Fix G) =="
+L11A="$TMP/l11-a"; mksrc "$L11A" a ".omakase/gates/gate-a.sh=true"; L11AA="$(resolvep "$L11A")"
+L11E="$TMP/l11-e"; src_init "$L11E"; printf 'name: e\n' > "$L11E/omakase.manifest"
+mkdir -p "$L11E/payload"; printf 'pre-commit:\n  jobs:\n    - run: bash .omakase/gates/gate-a.sh\n' > "$L11E/payload/lefthook-local.yml"
+src_commit "$L11E" e; L11EE="$(resolvep "$L11E")"
+R11="$TMP/l11-repo"; newrepo "$R11"; OMK11="$(omk_of "$R11")"
+gi "$R11" "$TMP/L11a.out" "$TMP/L11a.err" --source "$L11AA" >/dev/null 2>&1
+gi "$R11" "$TMP/L11e.out" "$TMP/L11e.err" --source "$L11EE"; r11e=$?
+if ran_go "L11-initE" "$TMP/L11e.err" "$NOTICE_INIT"; then
+  is_exit "$r11e" 0 "L11: init E succeeds (merged wiring guard passes — gate-a.sh present)"
+  snap_full "$OMK11" "$TMP/L11.omk.pre"
+  rmv "$R11" "$TMP/L11rA.out" "$TMP/L11rA.err" "$L11AA"; r11ra=$?
+  if ran_go "L11-removeA" "$TMP/L11rA.err" "$NOTICE_REMOVE"; then
+    is_exit "$r11ra" 1 "L11: remove A refused (would strand E's wiring)"
+    have "$TMP/L11rA.err" "refusing to remove ${L11AA}" "L11: refusal names the removed harness"
+    have "$TMP/L11rA.err" ".omakase/gates/gate-a.sh" "L11: refusal names the stranded script"
+    [ ! -s "$TMP/L11rA.out" ] && pass "L11: refusal wrote no stdout" || fail "L11: refusal wrote stdout"
+    snap_full "$OMK11" "$TMP/L11.omk.post"
+    same "L11: \$OMK byte-identical after the refused remove" "$TMP/L11.omk.pre" "$TMP/L11.omk.post"
+    present "$R11/.omakase/gates/gate-a.sh" "L11: gate-a.sh still present after the refusal (repo committable)"
+    clean_tree "$R11" "L11: working tree clean after the refused remove"
+  fi
+  # remove E instead strands nothing (survivor A's own wiring references only shipped scripts)
+  rmv "$R11" "$TMP/L11rE.out" "$TMP/L11rE.err" "$L11EE"; r11re=$?
+  if ran_go "L11-removeE" "$TMP/L11rE.err" "$NOTICE_REMOVE"; then
+    is_exit "$r11re" 0 "L11: remove E works (strands nothing)"
+    ok "$(src_field "$OMK11/sources.tsv" 1 2)" "$L11AA" "L11: sources.tsv left with the sole A row"
+    present "$R11/.omakase/gates/gate-a.sh" "L11: gate-a.sh survives remove E"
+  fi
+fi
+
 # ---- GC4 vocabulary grep (CONTROLLER RULING) ----
 # Scope: (a) the binary's usage/help output (main usage + each verb's -h) and (b)
 # the captured stdout/stderr of the L1-L9 scenario runs. Assert neither carries the
@@ -518,9 +557,11 @@ verb "$R10" "$TMP/help-remove.out" "$TMP/help-remove.err" remove -h
 RCLEAN="$TMP/l10-clean"; newrepo "$RCLEAN"
 verb "$RCLEAN" "$TMP/help-status.out" "$TMP/help-status.err" status -h
 GC4_FILES="$TMP/help-main.out $TMP/help-main.err $TMP/help-init.out $TMP/help-init.err $TMP/help-remove.out $TMP/help-remove.err $TMP/help-status.out $TMP/help-status.err"
-# L1-L9 captures only: exclude every L10* file (L10 deliberately carries the
-# 'personal' unknown-command string and the RequireLayers refusal — not verb vocab).
-GC4_FILES="$GC4_FILES $(ls "$TMP"/L*.out "$TMP"/L*.err 2>/dev/null | grep -vE '/L10')"
+# L1-L9 captures only: exclude every L1x file (L10 deliberately carries the
+# 'personal' unknown-command string and the RequireLayers refusal; L11+ are
+# later-added Phase-3.5 fix scenarios — neither is verb vocab). `/L1[0-9]` excludes
+# L10..L19 while keeping L1..L9 (`/L1a` etc. have no digit after L1).
+GC4_FILES="$GC4_FILES $(ls "$TMP"/L*.out "$TMP"/L*.err 2>/dev/null | grep -vE '/L1[0-9]')"
 if grep -wln 'personal' $GC4_FILES 2>/dev/null | grep -q .; then
   fail "L10/GC4: a 'personal' verb token leaked into help or an L1-L9 capture"; grep -wln 'personal' $GC4_FILES | sed 's/^/      /'
 else pass "L10/GC4: no 'personal' token in usage/help or any L1-L9 output"; fi
