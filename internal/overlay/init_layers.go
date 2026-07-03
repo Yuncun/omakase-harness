@@ -104,7 +104,13 @@ func buildMergedStaging(specs []layerSpec) (staging string, labelByRel map[strin
 			return nil
 		}
 		for _, rel := range rels {
-			dest := MapLayerPath(spec.layer, rel)
+			// Task 2 (Phase 3.5) mechanical compile fix, NOT a redesign: MapLayerPath
+			// is gone, replaced by the role-free MapInstruction(rel, rootSlotFree).
+			// `spec.layer != LayerPersonal` reproduces MapLayerPath's exact old
+			// behavior (only LayerPersonal ever rerouted AGENTS.md), so this staged
+			// tree stays byte-identical to before. Task 3 owns replacing this
+			// whole layer-role merge with real rootSlotFree computation.
+			dest, _ := MapInstruction(rel, spec.layer != LayerPersonal)
 			src := filepath.Join(spec.payloadDir, rel)
 			if e := place(rel, dest, func(dst string) error { return CopyEntry(src, dst) }); e != nil {
 				return fail(e)

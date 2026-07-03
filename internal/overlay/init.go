@@ -362,7 +362,14 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			}
 			mapped := make([]string, 0, len(rels))
 			for _, rel := range rels {
-				mapped = append(mapped, MapLayerPath(s.layer, rel))
+				// Task 2 (Phase 3.5) mechanical compile fix, NOT a redesign: MapLayerPath
+				// is gone, replaced by the role-free MapInstruction(rel, rootSlotFree).
+				// This inline `s.layer != LayerPersonal` reproduces MapLayerPath's exact
+				// old behavior (only LayerPersonal ever rerouted AGENTS.md), so postSets
+				// (BridgeWanted's only input) is byte-identical to before. Task 3 owns
+				// replacing this whole layer-role loop with real rootSlotFree computation.
+				dest, _ := MapInstruction(rel, s.layer != LayerPersonal)
+				mapped = append(mapped, dest)
 			}
 			postSets[s.layer] = mapped
 		}

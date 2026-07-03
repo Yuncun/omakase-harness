@@ -17,55 +17,56 @@ const (
 	LayerPersonal LayerName = "personal"
 )
 
-// MapLayerPath is the pure §7 instruction-mapping table (docs/v2-design.md:
-// 130-146): a harness ships exactly ONE instruction file, payload/AGENTS.md,
-// and this function is the literal per-layer, per-path fan-out rule that
-// turns it (and every other payload path) into the repo-root-relative
-// destination it's placed at. rel is matched EXACTLY as a repo-root-relative
-// path, never as a basename: "AGENTS.md" means the ROOT AGENTS.md only — a
-// nested path such as "docs/AGENTS.md" does not match that row and falls
-// through to "everything else, as-is" for every layer, including personal.
+// MapInstruction is the pure, role-free §7 instruction-routing rule (Phase
+// 3.5: docs/v2-design.md §7 is being rewritten in Task 6 to describe this
+// slot-fallback model in place of the old per-layer-role table). A harness
+// ships exactly ONE instruction file, payload/AGENTS.md, at the canonical
+// repo-root-relative path "AGENTS.md" (matched EXACTLY, never as a basename —
+// a nested path such as "docs/AGENTS.md" does not match and always passes
+// through unchanged). This function decides where THAT one path lands:
 //
-// The table (dest column blank means "rel, unchanged"):
+//   - canonical "AGENTS.md", rootSlotFree == true  -> ("AGENTS.md", false)
+//   - canonical "AGENTS.md", rootSlotFree == false -> ("CLAUDE.local.md", true)
+//   - any other rel (including an explicitly shipped "CLAUDE.md",
+//     ".github/copilot-instructions.md", or anything else) -> (rel, false),
+//     always, regardless of rootSlotFree
 //
-//	rel                              | layer            | dest
-//	---------------------------------|------------------|------------------
-//	AGENTS.md                        | project          | (as-is)
-//	AGENTS.md                        | personal         | CLAUDE.local.md
-//	AGENTS.md                        | base             | (as-is)
-//	CLAUDE.md (shipped explicitly)   | any              | (as-is)
-//	.github/copilot-instructions.md  | any              | (as-is)
-//	everything else                  | any              | (as-is)
+// rootSlotFree is computed entirely by the CALLER (init.go, Task 3) — this
+// function does no filesystem or state lookup of its own. Free means: no
+// committed AGENTS.md or CLAUDE.md at repo root, AND no already-installed
+// lower layer already owns the root instruction slot. Whichever of those
+// conditions fails, the caller passes false; MapInstruction does not need to
+// (and cannot) tell them apart, since the routing decision is identical
+// either way — CLAUDE.local.md, Claude Code's additive, gitignored-by-
+// convention slot, is the fallback: instructions placed there ADD to
+// whatever already occupies the root slot, they never shadow or replace it.
 //
-// The personal+AGENTS.md row is the ONLY reroute in the whole table:
-// CLAUDE.local.md is Claude Code's additive, gitignored-by-convention slot —
-// personal instructions there ADD to the project's CLAUDE.md, they never
-// shadow/replace it, which is why personal is rerouted instead of placed at
-// AGENTS.md (where "higher layer wins" whole-file replacement, design §4,
-// would otherwise make it clobber the project's instructions). The project
-// row's AGENTS.md may ALSO gain a bridge symlink CLAUDE.md -> AGENTS.md
-// alongside it — a separate, conditional placement decided by BridgeWanted,
-// not by this function (MapLayerPath only ever maps ONE path to ONE dest; it
-// never adds paths). The base row has no such bridge: bridging is a
-// project-layer-only feature (see BridgeWanted).
+// fellBack reports whether THIS call actually rerouted (true only for the
+// canonical-AGENTS.md/rootSlotFree-false case). The caller uses it to emit
+// the one-line narration (design contract, GC5):
+// "omakase: instructions from <label> -> CLAUDE.local.md (root slot taken)".
 //
-// An explicitly shipped CLAUDE.md or .github/copilot-instructions.md maps
-// as-is regardless of layer — CLAUDE.md is read natively by both Claude Code
-// and Copilot CLI, and .github/copilot-instructions.md is Copilot's own
-// convention; neither needs rerouting the way AGENTS.md does.
+// An explicit CLAUDE.md or .github/copilot-instructions.md passes through
+// unchanged no matter what rootSlotFree is — CLAUDE.md is read natively by
+// both Claude Code and Copilot CLI and never needs rerouting the way the
+// canonical AGENTS.md does; a committed copy of it is skipped downstream by
+// the normal place-loop rule (v1 semantics, unaffected by this function).
+//
+// The §7 bridge symlink (CLAUDE.md -> AGENTS.md) remains a SEPARATE,
+// conditional placement decided by BridgeWanted below, not by this function
+// — MapInstruction only ever maps one path to one dest, never adds paths.
 //
 // Copilot CLI's personal-instruction slot is a deliberate, honest gap (§8):
-// Copilot has no per-repo gitignored personal slot equivalent to
-// CLAUDE.local.md, so this function places nothing anywhere for it — personal
-// instructions are Claude-only for now, and `status` says so. Revisiting that
-// costs one row in this table, not a redesign.
-func MapLayerPath(layer LayerName, rel string) string {
-	switch {
-	case layer == LayerPersonal && rel == "AGENTS.md":
-		return "CLAUDE.local.md"
-	default:
-		return rel
+// Copilot has no per-repo gitignored slot equivalent to CLAUDE.local.md, so a
+// fallen-back instruction file is invisible to it — `status` says so.
+func MapInstruction(rel string, rootSlotFree bool) (dest string, fellBack bool) {
+	if rel != "AGENTS.md" {
+		return rel, false
 	}
+	if rootSlotFree {
+		return "AGENTS.md", false
+	}
+	return "CLAUDE.local.md", true
 }
 
 // BridgeWanted reports whether the project layer's placement of a root
@@ -85,8 +86,9 @@ func MapLayerPath(layer LayerName, rel string) string {
 //
 // True iff ALL of:
 //   - layer == LayerProject — the bridge is a project-layer-only feature.
-//     Personal's AGENTS.md is rerouted to CLAUDE.local.md by MapLayerPath and
-//     never bridges; base's AGENTS.md ships as-is with no bridge at all.
+//     A personal layer's AGENTS.md can fall back to CLAUDE.local.md (see
+//     MapInstruction) and never bridges; base's AGENTS.md ships as-is with
+//     no bridge at all.
 //   - postMappingSets[LayerProject] contains the literal string "AGENTS.md"
 //     — the project layer must actually be placing a ROOT AGENTS.md (a
 //     project harness shipping only a nested docs/AGENTS.md has nothing for

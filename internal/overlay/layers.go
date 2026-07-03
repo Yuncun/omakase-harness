@@ -136,7 +136,13 @@ func BuildLayerStore(omk string, layer LayerName, label string, payloadDir strin
 	}
 
 	for _, rel := range rels {
-		destRel := MapLayerPath(layer, rel)
+		// Task 2 (Phase 3.5) mechanical compile fix, NOT a redesign: MapLayerPath
+		// is gone, replaced by the role-free MapInstruction(rel, rootSlotFree).
+		// `layer != LayerPersonal` reproduces MapLayerPath's exact old behavior
+		// (only LayerPersonal ever rerouted AGENTS.md), so this store's contents
+		// stay byte-identical to before. Task 3/4 own replacing this per-layer
+		// store build with real rootSlotFree computation.
+		destRel, _ := MapInstruction(rel, layer != LayerPersonal)
 		if err := place(rel, destRel, func(dst string) error {
 			return CopyEntry(filepath.Join(payloadDir, rel), dst)
 		}); err != nil {
