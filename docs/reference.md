@@ -19,16 +19,20 @@ the payload no longer ships, unless it was edited locally.
   harness's delta winning on overlap), so a custom harness ships only its delta and
   relies on base machinery without keeping its own copy — the same base+delta merge
   `tools/build.sh` bakes into a bundle, done at install time. One harness already
-  installed and this source names the SAME one: repairs it at its recorded pin (no
-  fetch of anything newer — that's what `update` is for). One harness installed and
-  this source names a DIFFERENT one: **stacks** it on top — both harnesses' files stay
-  live, the new one wins where both ship the same path (printed as `stacked <new> on
+  installed and this source names the SAME one: repairs it. (Design intent, Phase 4,
+  not yet shipped: repair at the recorded pin, offline, with `update` the only verb
+  that fetches anything newer. Today a repair re-fetches the source's ref and
+  re-records whatever commit currently resolves — `sources.tsv` records the resolved
+  commit on every install/repair, but nothing reads it back to skip the fetch.) One
+  harness installed and this source names a DIFFERENT one: **stacks** it on top — both
+  harnesses' files stay live, the new one wins where both ship the same path (printed as `stacked <new> on
   top of <old>` plus one `^ overrides` line per shadowed path). Two harnesses already
   installed: a third, different source is refused (exit 1, nothing changed) — remove
   one first (`omakase remove <source>`). Refuses (placing nothing) if the merged hook
   wiring references a `.omakase/*.sh` script neither side ships. Each installed
-  harness is remembered; a later bare `init` refreshes and reinstalls all of them at
-  their recorded pins.
+  harness is remembered; a later bare `init` refreshes and reinstalls all of them —
+  again, design intent is "at their recorded pins"; today it re-fetches each one's ref
+  and re-records whatever commit currently resolves.
 - `--cut-over` — also untrack (`git rm --cached`) every payload path the repo currently
   tracks, so the installed copy takes over. Guarded: refuses without
   `OMAKASE_CUTOVER_CONFIRM=1`.
@@ -47,9 +51,13 @@ never touched.
 
 With `<source>`: removes just that one harness (matched by its source string or its
 `source#ref` label) and restores whatever it had shadowed from the OTHER installed
-harness — offline, no network fetch. Removing the harness that owns the root
-instruction slot hands that slot back to the surviving harness (see the instruction
-file mapping below). An unrecognized `<source>` errors and changes nothing. With
+harness — offline, no network fetch. Un-reroute is wired to **removing the BOTTOM
+harness only**: that hands the root instruction slot back to the surviving harness
+(see the instruction file mapping below), moving its own rerouted `AGENTS.md` back to
+the root if nothing else claims the slot. Removing the TOP harness never un-reroutes,
+even in the narrow case where the TOP harness ended up owning the slot — that survivor
+stays stuck in `CLAUDE.local.md` (a known, deferred limitation; see v2-design.md §8).
+An unrecognized `<source>` errors and changes nothing. With
 only one harness installed, `remove <source>` for it behaves exactly like the
 no-argument form.
 

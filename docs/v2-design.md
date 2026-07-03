@@ -48,18 +48,23 @@ tools in an adopter's command list. Authors write a repo with `payload/` +
 
 | Verb | Args | One meaning |
 |---|---|---|
-| `init` | `[owner/repo[#ref] \| --source <url\|path>] [--cut-over]` | Install, stack, or repair. No source recorded yet: installs it (v1 parity). Same source recorded again: repairs that harness at its **recorded pin** (offline — does NOT fetch newer). A DIFFERENT source, one already recorded: **stacks** it on top — the new harness's files win where both ship the same path, narrated (`stacked <B> on top of <A>` + one `^ overrides <A>: <path>` line per shadowed path). Two sources already recorded and a third, different one given: refused (exit 1, nothing touched) — "remove one first". Bare `init` (no source): re-places every recorded harness at its **recorded pins**. `--cut-over` unchanged from v1 (guarded by `OMAKASE_CUTOVER_CONFIRM=1`). |
-| `update` | `[<source>] [--check]` | The ONLY pin-mover. Fetch the named source's latest ref (default: every recorded source), resolve to a new commit, record it, re-overlay. Prints `old → new` per source. `--check` = read-only dry run ("9f3c2ab → 4d21e77, 12 commits behind"). |
-| `status` | `[--markdown]` | Read-only, question-first (identity / footprint / guards / inventory). Identity = the stack with `source@short-commit`. Guards chart shows `off — omakase enable <name>` for disabled gates (with age + reason). Inventory rows name the owning harness; shadowing is flagged **with its consequence** ("`you/b`'s CLAUDE.md shadows `you/a` — `you/a`'s instructions no longer load in Claude Code"). Stale disabled-gates rows (name no longer wired) are flagged. |
+| `init` | `[owner/repo[#ref] \| --source <url\|path>] [--cut-over]` | Install, stack, or repair. No source recorded yet: installs it (v1 parity). Same source recorded again: repairs that harness. A DIFFERENT source, one already recorded: **stacks** it on top — the new harness's files win where both ship the same path, narrated (`stacked <B> on top of <A>` + one `^ overrides <A>: <path>` line per shadowed path). Two sources already recorded and a third, different one given: refused (exit 1, nothing touched) — "remove one first". Bare `init` (no source): re-places every recorded harness. **Pins are RECORDED now** (`sources.tsv` captures each layer's resolved commit on every install/repair) **but not yet ENFORCED**: today both a same-source repair and a bare `init` re-fetch each layer's ref and re-record whatever commit currently resolves — the same "refresh to latest" v1 always did. Repair-at-recorded-pin (offline, no fetch) and `update` becoming the sole pin-mover are Phase 4 work (§13). `--cut-over` unchanged from v1 (guarded by `OMAKASE_CUTOVER_CONFIRM=1`). |
+| `update` | `[<source>] [--check]` | **Not yet built (Phase 4, §13).** Design intent: the ONLY pin-mover. Fetch the named source's latest ref (default: every recorded source), resolve to a new commit, record it, re-overlay. Prints `old → new` per source. `--check` = read-only dry run ("9f3c2ab → 4d21e77, 12 commits behind"). Today `init`/bare `init` already do the "fetch + re-record" half (see the `init` row) — `update` as a distinct, sole pin-moving verb has not shipped. |
+| `status` | `[--markdown]` | Read-only, question-first (identity / footprint / guards / inventory). **Today**: identity names only the BOTTOM layer's source (v1-byte-parity — no commit shown, no second harness named there); each Injected row instead carries its own winning layer's source label (`from <label>`), which is how a stacked second harness becomes visible today. Guards chart shows `off — omakase enable <name>` for disabled gates (with age + reason). Stale disabled-gates rows (name no longer wired) are flagged. **Not yet built:** a live-stack-order identity line (`source@short-commit` per layer) and an explicit shadow-with-consequence flag ("`you/b`'s CLAUDE.md shadows `you/a` — `you/a`'s instructions no longer load in Claude Code") are design intent, not shipped. |
 | `enable` | `<gate>` | Remove the gate's row from `$OMK/disabled-gates` (atomic rewrite). Prints what turned back on. |
 | `disable` | `<gate> [--reason <text>]` | Append `name<TAB>epoch<TAB>reason` to `$OMK/disabled-gates`. Persistent per-clone, shared across worktrees. Validates the name against wired gates; refuses unknown names, printing the valid list. The hook prints an audited one-line OFF notice on every skip — never silent. |
 | `remove` | `[<source>]` | Bare: total teardown, v1 semantics verbatim — hooks out, every placed file deleted, exclude block stripped, `$OMK` deleted. Works directly on v1 state. With a source: remove just that one harness, restoring what it overrode from the other (offline — no network); with only one harness installed, this is the same as bare `remove` (there is no third state — the base ships inside the binary, not as an installed layer of its own). Unknown source name: error, exit 1, nothing touched. |
 
-Deliberate v1 behavior change #1: **bare `init` stops meaning "fetch latest"** (v1's
-cache refresh hard-reset to the remote default branch — de facto an update). v2 bare
-`init` repairs at recorded pins; `update` advances. Transition mitigation: `init` prints
-`pinned at <short-commit> — omakase update to refresh` on every run until the wording
-ships in docs + skills.
+Deliberate v1 behavior change #1 (Phase 4 — design intent, NOT YET SHIPPED): **bare
+`init` will stop meaning "fetch latest"** (v1's cache refresh hard-reset to the remote
+default branch — de facto an update). The intent is bare `init` repairs at recorded
+pins, offline, and `update` becomes the sole verb that advances a pin. Today, bare
+`init` (and a same-source repair `init`) still behave like v1: they re-fetch each
+layer's ref and re-record whatever commit currently resolves — `sources.tsv` captures
+that resolved commit (the recording half of the design is built), but nothing reads it
+back to skip the fetch. Transition mitigation, once shipped: `init` prints `pinned at
+<short-commit> — omakase update to refresh` on every run until the wording ships in
+docs + skills.
 
 Deliberate v1 behavior change #2: **a second `init` with a different source now stacks
 instead of replacing.** v1's second `init` replaced the remembered source wholesale and
@@ -181,22 +186,36 @@ the caller and handed to the mapping rule as one boolean, `rootSlotFree`:
 
 Every slot is a normal omakase placement: excluded via `.git/info/exclude`, healed by
 ensure-present, reversed by remove; a committed target is skipped and reported — the
-universal rule, no special case. Only removing the slot-owning layer (`omakase remove
-<source>` on it) frees the slot again, at which point the survivor's own `AGENTS.md`,
-if it had been rerouted, moves back to the root (§4).
+universal rule, no special case. Un-reroute is wired to **BOTTOM-layer removal only**
+(§4/§5): `omakase remove <source>` on the BOTTOM layer frees the slot and moves the
+survivor's own `AGENTS.md`, if it had been rerouted, back to the root. Removing a TOP
+layer never triggers an un-reroute, even in the narrow case where the TOP layer is the
+one that ended up owning the slot (see the known limitation in §8).
 
 ## 8. Copilot additive-slot gap — DECIDED: honest gap (provisional)
 
 Copilot CLI has no per-repo gitignored additive slot (no `CLAUDE.local.md`
 equivalent). **Decision: a rerouted instruction file (§7) is Claude-only for now.**
-`status` states "instructions rerouted to CLAUDE.local.md are not visible to
-Copilot". Revisit when the AGENTS.md standard grows a local slot — the mapping table
-(§7) exists for exactly this, and this decision costs one table row to change.
+This is design intent, not yet surfaced in `status` — today `status` carries no
+Copilot-visibility note at all; the reroute is visible only as the per-file `from
+<label>` origin row `status` prints for the placed `CLAUDE.local.md` path (§3, §12).
+Revisit when the AGENTS.md standard grows a local slot — the mapping table (§7) exists
+for exactly this, and this decision costs one table row to change.
 
 Rejected for now: placing `.github/copilot-instructions.md` when absent (occupies a
 conventionally *committed team* file, and silently fails where teams commit it) and
 routing to user-global `~/.copilot/copilot-instructions.md` (machine-wide, outside the
 per-repo overlay/remove model — a special case in an otherwise uniform design).
+
+**Known limitation (deferred):** un-reroute only runs on a BOTTOM-layer removal
+(§4/§7). In the narrow case where the TOP layer ends up owning the root slot — the
+bottom layer's payload didn't ship `AGENTS.md` at first install (or was blocked by a
+since-removed committed instruction file) while the top layer claimed the free slot,
+and the bottom layer's `AGENTS.md` was the one rerouted to `CLAUDE.local.md` —
+`omakase remove <top-source>` does NOT hand the slot back: the survivor's instructions
+stay stuck in `CLAUDE.local.md` (invisible to Copilot, per above) with no root
+`AGENTS.md` or bridge restored. The fix (top-removal un-reroute) is deferred to a
+later phase; it is not built in this batch.
 
 Verified against live Copilot docs 2026-07-02: root `CLAUDE.md` IS read by Copilot
 (so the slot-owning layer needs no Copilot-specific placement), `CLAUDE.local.md` is
@@ -257,7 +276,7 @@ motion as a lefthook re-pin.
 |---|---|
 | placed.tsv 6th-column trap for future contributors | header comment + writer-side format test |
 | bare-init semantic change breaks muscle memory | per-run transition notice; docs/skills wording |
-| stack order is state — the same two sources stacked in a different order (or in two different repos) can leave different files winning | narrated on every `init`/`remove` (`stacked`/`overrides`/`removed`/`restored` lines) + `status` shows the live stack order and flags shadowing with its consequence |
+| stack order is state — the same two sources stacked in a different order (or in two different repos) can leave different files winning | narrated on every `init`/`remove` (`stacked`/`overrides`/`removed`/`restored` lines) + `status`'s per-file Injected rows name each file's winning layer (`from <label>`). A live stack-order identity line and an explicit shadow-with-consequence flag in `status` are design intent, not yet built (unscheduled) — see §3. |
 | stale disabled-gates row after a gate rename silently re-arms nothing | status flags "disabled gate X is not wired" |
 | a layer's pin only refreshes at `init`/`update`, never automatically | by design; no daemon |
 | binary release blast radius | hook-time is sh; remove works offline from cache; checksum-pinned bootstrap |
