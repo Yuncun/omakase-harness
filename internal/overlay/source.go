@@ -168,7 +168,10 @@ func runSource(source, sourceRef, basePayload string, stdout, stderr io.Writer) 
 	}
 	overlayOne := func(rel string) error {
 		dst := filepath.Join(merged, rel)
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		// safeMkdirAll refuses a symlinked parent under the merge root: the base
+		// (or an earlier delta entry) must never leave a directory-symlink that a
+		// later file is written straight through, out of the staging dir.
+		if err := safeMkdirAll(merged, filepath.Dir(dst)); err != nil {
 			return err
 		}
 		if err := os.RemoveAll(dst); err != nil { // rm -rf: also clears a base DIR at this path

@@ -20,7 +20,9 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   --no-personal` persistently opts a repo out. Migration is lazy and read-only: the first v2
   verb in a v1 repo synthesizes `sources.tsv` from `$OMK/source` (commit `-`, never guessed);
   a v1 tool that later disagrees with the recorded stack is detected and rehealed on the next
-  `init`. Covered black-box end-to-end by `tests/layers.test.sh`.
+  `init`. Covered black-box end-to-end by `tests/layers.test.sh`. (Superseded below —
+  Phase 3.5 replaced the `personal` verb and the global setting with source-stacking
+  through `init`/`remove` before any of this reached a release.)
 
 ### Changed
 - Renamed the inventory script `bin/show.sh` → `bin/status.sh` so it matches the `status`
@@ -39,6 +41,23 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   the `placed.tsv` rows, and the `.git/info/exclude` + `.worktreeinclude` entries can appear
   in a different (still complete, still correct) order. New differential parity suite,
   `tests/init-remove-parity.test.sh`.
+- **Init now stacks; `personal` is gone (Phase 3.5, v2 design §3/§4/§5/§7).** A second
+  `init <source>` on a different source no longer replaces the installed harness — it
+  stacks on top instead: both harnesses' files stay live, and the newer `init` wins
+  only where both ship the same path (temporal precedence, always narrated on stdout,
+  capped at two sources — a third, different source errors and changes nothing).
+  `omakase remove <source>` unlayers just that one harness, restoring whatever it had
+  shadowed from the other; bare `remove` keeps its v1 total-teardown meaning. The
+  `personal` verb, the global `${XDG_CONFIG_HOME:-~/.config}/omakase/personal`
+  setting, and `init --no-personal` are deleted: every harness on the stack is one you
+  installed explicitly with `init`, nothing layers in automatically. `sources.tsv`'s
+  layer column is now an ordinal (`1` bottom, `2` top) instead of a `project`/
+  `personal` role name, with no back-compat for the Phase-3-era role labels — that
+  surface never reached a release, so zero users are affected. Instruction routing is
+  role-free: whichever harness first places a root `AGENTS.md` owns the root slot (and
+  the `CLAUDE.md` bridge, if nothing else provides `CLAUDE.md`); a later or
+  slot-blocked harness's `AGENTS.md` reroutes to `CLAUDE.local.md` instead, narrated on
+  stdout. Covered by the rewritten `tests/layers.test.sh` (142 assertions).
 
 ## [0.17.0] — 2026-06-29
 

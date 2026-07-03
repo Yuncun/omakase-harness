@@ -3,14 +3,21 @@
 Status: LOCKED 2026-07-02. This document is the contract for the v2 implementation;
 when it and the code disagree during the build, this document wins until amended.
 §8 is provisional — it is deliberately the cheapest decision in the design to reverse
-(one mapping-table row, no state impact).
+(one mapping-table row, no state impact). Amended 2026-07-03 (Phase 3.5): §1, §3, §4,
+§5, §7, §8, §12, §13 rewritten for the init-stack surface that replaced the original
+`personal` verb/global-setting design — see the CHANGELOG for why.
 
 ## 1. What v2 is
 
 Two changes, one rewrite:
 
-1. **Layers.** A repo can hold a *project harness* and your *personal harness* at the
-   same time. Today a second `init` replaces the first source wholesale; v2 stacks them.
+1. **Layers.** Today a second `init` replaces the first source wholesale. v2 lets a
+   repo hold two harnesses at once: run `init` again with a DIFFERENT source and it
+   STACKS on top of the first instead of replacing it — the newer one wins where both
+   ship the same path, capped at two, always narrated on stdout. `omakase remove
+   <source>` drops back to one. There are no roles ("project" vs "personal") and
+   nothing layers in automatically — precedence is purely temporal (the order you ran
+   `init`), and every harness on the stack is one you explicitly asked for.
 2. **Toggles + pins.** Gates can be persistently disabled per-repo (`omakase disable
    <gate>`), and every source records the commit it was installed at (`update` is the
    only verb that moves pins).
@@ -33,62 +40,85 @@ tools in an adopter's command list. Authors write a repo with `payload/` +
 ## 2. The pitch (README first paragraph)
 
 > omakase installs a project's quality gates, git hooks, and agent instructions into any
-> repo as an invisible overlay — plus your own personal harness on top — with zero
-> committed footprint: nothing ever reaches a PR, and `omakase remove` puts everything
-> back exactly.
+> repo as an invisible overlay — run `init` again with a different source to stack your
+> own harness on top — with zero committed footprint: nothing ever reaches a PR, and
+> `omakase remove` puts everything back exactly.
 
-## 3. Verb surface (7 verbs, flat, no interactive menu)
+## 3. Verb surface (6 verbs, flat, no interactive menu)
 
 | Verb | Args | One meaning |
 |---|---|---|
-| `init` | `[owner/repo[#ref] \| --source <url\|path>] [--cut-over] [--no-personal]` | Install or repair. With a source: set/replace THE project layer. Bare: re-place all layers at their **recorded pins** (offline-capable repair — does NOT fetch newer). `--no-personal` = persisted per-repo opt-out of the global personal layer. `--cut-over` unchanged from v1 (guarded by `OMAKASE_CUTOVER_CONFIRM=1`). |
-| `update` | `[project \| personal] [--check]` | The ONLY pin-mover. Fetch the named layers' sources (default: all), resolve ref → new commit, record it, re-overlay. Prints `old → new` per layer. `--check` = read-only dry run ("project: 9f3c2ab → 4d21e77, 12 commits behind"). |
-| `status` | `[--markdown]` | Read-only, question-first (identity / footprint / guards / inventory). Identity = the layer stack with `source@short-commit`. Guards chart shows `off — omakase enable <name>` for disabled gates (with age + reason). Inventory rows name the owning layer; shadowing is flagged **with its consequence** ("personal CLAUDE.md shadows project — project instructions no longer load in Claude Code"). Stale disabled-gates rows (name no longer wired) are flagged. |
+| `init` | `[owner/repo[#ref] \| --source <url\|path>] [--cut-over]` | Install, stack, or repair. No source recorded yet: installs it (v1 parity). Same source recorded again: repairs that harness. A DIFFERENT source, one already recorded: **stacks** it on top — the new harness's files win where both ship the same path, narrated (`stacked <B> on top of <A>` + one `^ overrides <A>: <path>` line per shadowed path). Two sources already recorded and a third, different one given: refused (exit 1, nothing touched) — "remove one first". Bare `init` (no source): re-places every recorded harness. **Pins are RECORDED now** (`sources.tsv` captures each layer's resolved commit on every install/repair) **but not yet ENFORCED**: today both a same-source repair and a bare `init` re-fetch each layer's ref and re-record whatever commit currently resolves — the same "refresh to latest" v1 always did. Repair-at-recorded-pin (offline, no fetch) and `update` becoming the sole pin-mover are Phase 4 work (§13). `--cut-over` unchanged from v1 (guarded by `OMAKASE_CUTOVER_CONFIRM=1`). |
+| `update` | `[<source>] [--check]` | **Not yet built (Phase 4, §13).** Design intent: the ONLY pin-mover. Fetch the named source's latest ref (default: every recorded source), resolve to a new commit, record it, re-overlay. Prints `old → new` per source. `--check` = read-only dry run ("9f3c2ab → 4d21e77, 12 commits behind"). Today `init`/bare `init` already do the "fetch + re-record" half (see the `init` row) — `update` as a distinct, sole pin-moving verb has not shipped. |
+| `status` | `[--markdown]` | Read-only, question-first (identity / footprint / guards / inventory). **Today**: identity names only the BOTTOM layer's source (v1-byte-parity — no commit shown, no second harness named there); each Injected row instead carries its own winning layer's source label (`from <label>`), which is how a stacked second harness becomes visible today. Guards chart shows `off — omakase enable <name>` for disabled gates (with age + reason). Stale disabled-gates rows (name no longer wired) are flagged. **Not yet built:** a live-stack-order identity line (`source@short-commit` per layer) and an explicit shadow-with-consequence flag ("`you/b`'s CLAUDE.md shadows `you/a` — `you/a`'s instructions no longer load in Claude Code") are design intent, not shipped. |
 | `enable` | `<gate>` | Remove the gate's row from `$OMK/disabled-gates` (atomic rewrite). Prints what turned back on. |
 | `disable` | `<gate> [--reason <text>]` | Append `name<TAB>epoch<TAB>reason` to `$OMK/disabled-gates`. Persistent per-clone, shared across worktrees. Validates the name against wired gates; refuses unknown names, printing the valid list. The hook prints an audited one-line OFF notice on every skip — never silent. |
-| `personal` | `[owner/repo[#ref] \| --source <url\|path> \| off]` | No arg: print the setting. With a source: write ONE line to `${XDG_CONFIG_HOME:-~/.config}/omakase/personal`; auto-layered on every future `init`/`update` in any repo; applied immediately to the current repo if it's initialized (announced). `off`: clear globally + unlayer from the current repo. |
-| `remove` | *(none)* | Total teardown, v1 semantics verbatim: hooks out, every placed file deleted, exclude block stripped, `$OMK` deleted. Works directly on v1 state. Removing only the personal layer = `omakase personal off` (in that repo) — `remove` keeps its single total-teardown meaning. |
+| `remove` | `[<source>]` | Bare: total teardown, v1 semantics verbatim — hooks out, every placed file deleted, exclude block stripped, `$OMK` deleted. Works directly on v1 state. With a source: remove just that one harness, restoring what it overrode from the other (offline — no network); with only one harness installed, this is the same as bare `remove` (there is no third state — the base ships inside the binary, not as an installed layer of its own). Unknown source name: error, exit 1, nothing touched. |
 
-Deliberate v1 behavior change (the only one): **bare `init` stops meaning "fetch
-latest"** (v1's cache refresh hard-reset to the remote default branch — de facto an
-update). v2 bare `init` repairs at recorded pins; `update` advances. Transition
-mitigation: `init` prints `pinned at <short-commit> — omakase update to refresh` on every
-run until the wording ships in docs + skills.
+Deliberate v1 behavior change #1 (Phase 4 — design intent, NOT YET SHIPPED): **bare
+`init` will stop meaning "fetch latest"** (v1's cache refresh hard-reset to the remote
+default branch — de facto an update). The intent is bare `init` repairs at recorded
+pins, offline, and `update` becomes the sole verb that advances a pin. Today, bare
+`init` (and a same-source repair `init`) still behave like v1: they re-fetch each
+layer's ref and re-record whatever commit currently resolves — `sources.tsv` captures
+that resolved commit (the recording half of the design is built), but nothing reads it
+back to skip the fetch. Transition mitigation, once shipped: `init` prints `pinned at
+<short-commit> — omakase update to refresh` on every run until the wording ships in
+docs + skills.
+
+Deliberate v1 behavior change #2: **a second `init` with a different source now stacks
+instead of replacing.** v1's second `init` replaced the remembered source wholesale and
+orphan-swept every file the old source had placed. v2's second `init <source>` keeps
+the first harness's files live and stacks the new one on top of it — nothing is swept,
+both harnesses' files coexist, and the newer one wins only where both ship the same
+path. `omakase remove <source>` is the new way to drop back to one harness.
 
 ## 4. Layering model
 
-A FIXED three-role stack — this is the entire mental model:
+A TEMPORAL stack, capped at two — this is the entire mental model:
 
-    base machinery   (bottom — ships embedded in the omakase binary)
-    project harness  (the one remembered source; `init other/src` replaces it)
-    personal harness (the one global setting; on top)
+    base machinery   (bottom — ships embedded in the omakase binary; folds into layer 1)
+    layer 1          (the first `init <source>` this repo ran)
+    layer 2          (a second, DIFFERENT `init <source>` — optional, stacked on top)
 
-On a `--source` install, the base payload folds INTO the project layer (base+delta
-= the project store; there is no separate base store), so `$OMK/layers/` holds
-project(+personal) — the three-role stack above is the MENTAL model, not always
-three physical stores.
+Precedence, one line: **committed file > latest `init` > earlier `init` > base
+machinery.** There are no roles — no "project" layer, no "personal" layer — only
+*installed first* and *installed second*. Which harness plays which part is whatever
+was typed, in order; nothing is ever layered in automatically.
+
+On the FIRST `init <source>` in a repo, the base payload folds INTO that source's
+layer (base+delta = layer 1's store; there is no separate base store), so
+`$OMK/layers/` holds layer 1 (+layer 2) — the diagram above is the MENTAL model, not
+always three physical stores.
 
 - Overlap = **whole-file replacement, higher layer wins**. Never content merging —
   not for instructions, not for `lefthook-local.yml`.
-- One exception, owned by the instruction mapping table (§8): a personal layer's
-  instruction file is **rerouted** to the host's additive personal slot instead of
-  shadowing the project's instructions.
+- One exception, owned by the instruction mapping rule (§7): whichever layer FIRST
+  places a root `AGENTS.md` owns the root instruction slot for as long as it stays
+  installed. A layer that ships `AGENTS.md` after the slot is taken (or under a
+  committed root `AGENTS.md`/`CLAUDE.md`) is **rerouted** to `CLAUDE.local.md`, the
+  host's additive gitignored slot, instead of shadowing the slot-owner's
+  instructions — narrated on stdout.
+- Capped at 2. A third, different source errors ("remove one first") and mutates
+  nothing.
 - Arbitrary N-layer stacks are out of scope. Two team harnesses compose in a harness
   repo, not in omakase.
-- Removing one layer: for each path it won, re-place the copy the next layer down ships
-  (from `$OMK/layers/<layer>/files/`), rewriting the placed.tsv row (source + sha256);
-  delete the path if nothing below ships it (untracked + hash-match rule; local edits
-  warned and kept). Deterministic, offline.
-- Layer rebuild ordering (worktree race): only `$OMK/layers/<layer>/` is rebuilt
-  tmp + rename; `payload-snapshot/` is RemoveAll'd and rebuilt in place (no tmp
-  dir). The safety property lives in the READER instead: ensure-present.sh skips
-  a placed row whose snapshot copy is missing, so a hook racing a mid-rebuild
-  snapshot can only skip a heal, never heal from wrong bytes. The
-  rebuilt-before-deletions ordering itself holds for `personal off` (snapshot
-  rebuilt before any working-tree deletion). init's de-layer path (`--no-personal`
-  over an already-layered repo) does the reverse — it sweeps the personal-only
-  files from the working tree, THEN rebuilds the snapshot — a seconds-wide
-  benign window, covered by the same reader mitigation.
+- Removing one layer (`omakase remove <source>`): for each path it won, re-place the
+  copy the OTHER layer ships (from `$OMK/layers/<n>/files/`), rewriting the
+  placed.tsv row (source label + sha256); delete the path if the other layer doesn't
+  ship it (untracked + hash-match rule; local edits warned and kept). Deterministic,
+  offline (GC10 — no network). Removing the BOTTOM layer additionally: re-folds the
+  embedded base payload under the survivor's delta (the same fold a fresh
+  `init <survivor>` would build), repoints `$OMK/source` at the survivor (so a later
+  bare `init` can't resurrect the removed harness), and un-reroutes the survivor's
+  instructions back to the root slot if nothing else still claims it.
+- Layer rebuild ordering (worktree race): only `$OMK/layers/<n>/` is rebuilt tmp +
+  rename; `payload-snapshot/` is RemoveAll'd and rebuilt in place (no tmp dir). The
+  safety property lives in the READER instead: ensure-present.sh skips a placed row
+  whose snapshot copy is missing, so a hook racing a mid-rebuild snapshot can only
+  skip a heal, never heal from wrong bytes. The rebuilt-before-deletions ordering
+  itself holds for `remove <source>` (snapshot rebuilt before any working-tree
+  deletion, on both the top-removal and the bottom-removal path).
 - The fail-closed wiring guard runs against the MERGED tree.
 
 ## 5. State under `$GIT_COMMON_DIR/omakase` (`$OMK`)
@@ -97,23 +127,21 @@ three physical stores.
 
 | Artifact | Frozen contract |
 |---|---|
-| `placed.tsv` | Exactly 5 columns `path<TAB>kind<TAB>source<TAB>sha256<TAB>enabled`, one row per LIVE placed file (the merged winning view). **No 6th column, ever**: the sh readers (`ensure-present.sh:28`, `verify-overlay.sh:12`, `remove.sh:55`) parse `read -r rel kind src hash enabled` — an appended column is absorbed into `$enabled` and flips verification fail-open. A writer-side format test must enforce ≤5 columns. Layer identity rides in the EXISTING col 3 (`payload` (the v1 label, pinned by placed.test.sh), or the layer's source string) — display-only, no sh reader parses it. |
+| `placed.tsv` | Exactly 5 columns `path<TAB>kind<TAB>source<TAB>sha256<TAB>enabled`, one row per LIVE placed file (the merged winning view). **No 6th column, ever**: the sh readers (`ensure-present.sh:28`, `verify-overlay.sh:12`, `remove.sh:55`) parse `read -r rel kind src hash enabled` — an appended column is absorbed into `$enabled` and flips verification fail-open. A writer-side format test must enforce ≤5 columns. Layer identity rides in the EXISTING col 3: `payload` for a base-only install (the v1 label, pinned by placed.test.sh), otherwise the WINNING layer's source label (`source` or `source#ref`) — never the layer ordinal number — display-only, no sh reader parses it. |
 | exclude block | `# >>> omakase-harness >>>` / `# <<< omakase-harness <<<` markers, verbatim. |
 | sha256 semantics | A symlink hashes its readlink TARGET STRING; digest tool = shasum (macOS) / sha256sum (elsewhere), identical output required. |
 | `payload-snapshot/` | Still the MERGED effective tree ensure-present heals from. |
 | `ledger.tsv` | `epoch<TAB>name<TAB>verdict<TAB>sha` gate-run records; disabled skips write NO row (parity with the env bypass) so the pass/fail join in status is untouched. |
-| `$OMK/source` | Still written (one line = project source) so any stale v1 tooling stays coherent. |
+| `$OMK/source` | Still written, one line = the BOTTOM layer's source, so any stale v1 tooling stays coherent. Rewritten to the survivor's source when a bottom-layer `remove <source>` leaves it as the sole layer (§4) — otherwise a later bare `init` would resurrect the removed harness. |
 
 **NEW (strict additions; only `disabled-gates` is read by hook-time sh):**
 
 | File | Format | Purpose |
 |---|---|---|
-| `sources.tsv` | `layer<TAB>source<TAB>ref<TAB>commit<TAB>installed_epoch`, bottom-to-top; `layer ∈ {project, personal}`; `ref` = requested `#ref` or `-`; `commit` = full resolved sha at install/update time (`-` for a non-git local path — never guessed). A row `personal<TAB>off<TAB>-<TAB>-<TAB><epoch>` records `--no-personal`. | The layer stack + lockfile groundwork (diff/verify UX deferred; only the format ships now). |
+| `sources.tsv` | `layer<TAB>source<TAB>ref<TAB>commit<TAB>installed_epoch`, bottom-to-top. `layer` is an OPAQUE ORDINAL string — `"1"` for the bottom row, `"2"` for the top row — assigned by the caller from each row's position in the stack, never a role name (Phase 3.5 deleted the `project`/`personal` labels and the `personal<TAB>off<TAB>-<TAB>-<TAB><epoch>` sentinel row entirely; no back-compat, that state never reached a user — see §9). `ref` = requested `#ref` or `-`; `commit` = full resolved sha at install/update time (`-` for a non-git local path — never guessed). | The layer stack + lockfile groundwork (diff/verify UX deferred; only the format ships now). |
 | `disabled-gates` | `name<TAB>epoch<TAB>reason` (reason optional, tabs/newlines stripped), atomic tmp+mv writes. | Persistent gate toggles; lets status render "OFF · 6 weeks · flaky on CI". |
-| `layers/<layer>/files/` + `layers/<layer>/placed.tsv` | Each layer's FULL post-mapping file set (incl. currently-shadowed paths), same 5-col layout. | Shadow-restore source for layer removal / project-source replacement. |
-
-Per-user global (not in `$OMK`): `${XDG_CONFIG_HOME:-~/.config}/omakase/personal` — one
-source line, same grammar `init` accepts.
+| `layers/<n>/files/` + `layers/<n>/placed.tsv` | Each layer's FULL post-mapping file set (incl. currently-shadowed paths), same 5-col layout. | Shadow-restore source for `remove <source>` / bottom-layer re-fold. |
+| `layers/<n>/rerouted` | One line per rerouted path, `<dest><TAB><original>` (in practice at most one: `CLAUDE.local.md<TAB>AGENTS.md`). Lives OUTSIDE `layers/<n>/files/` — never leaks into `placed.tsv`, the exclude block, or the snapshot. | Sidecar marker recording that this layer's canonical `AGENTS.md` fell back to `CLAUDE.local.md` (§7). Read only by a BOTTOM-layer `remove <source>`, to un-reroute the survivor's instructions back to the root slot (suppressed if a committed root instruction file still blocks it). Preserved when a store is reused untouched; recomputed from scratch on every store rebuild. |
 
 ## 6. Gate toggles — mechanics
 
@@ -143,38 +171,58 @@ a silent no-op.
 
 Canonical authoring rule: a harness ships ONE instruction file, `payload/AGENTS.md`.
 A literal data table in the binary (mirrored in docs/reference.md; swap rows when the
-AGENTS.md standard converges — data, not a subsystem) fans it out:
+AGENTS.md standard converges — data, not a subsystem) fans it out. Routing is
+role-free: it depends only on whether the ROOT INSTRUCTION SLOT is free, not on which
+layer (first or second) is asking. Whichever installed layer FIRST places a root
+`AGENTS.md` owns the slot for as long as it stays installed (§4); this is decided by
+the caller and handed to the mapping rule as one boolean, `rootSlotFree`:
 
-| Payload file | Layer | Claude Code | Copilot CLI |
+| Payload file | Root slot | Claude Code | Copilot CLI |
 |---|---|---|---|
-| `AGENTS.md` | project | placed as-is + bridge `CLAUDE.md → AGENTS.md` (symlink; **only if** no layer and no committed file provides CLAUDE.md) | reads root AGENTS.md natively — nothing extra placed |
-| `CLAUDE.md` (shipped explicitly) | any | as-is; whole-file, later layer wins; committed copy skipped as always | reads root CLAUDE.md natively |
-| `AGENTS.md` | personal | **rerouted to `CLAUDE.local.md`** — Claude's additive gitignored slot; personal instructions ADD to the project's, never replace | **honest gap — DECIDED, §8** |
-| `.github/copilot-instructions.md` | any | — | as-is (file-level exclude under the shared `.github` topdir) |
+| `AGENTS.md` | free (no committed `AGENTS.md`/`CLAUDE.md` at root, and no already-installed layer owns the slot) | placed as-is at root + bridge `CLAUDE.md → AGENTS.md` (symlink; **only if** nothing already provides `CLAUDE.md`) | reads root AGENTS.md natively — nothing extra placed |
+| `AGENTS.md` | taken | **rerouted to `CLAUDE.local.md`** — Claude Code's additive, gitignored slot; these instructions ADD to whatever owns the root slot, never replace it. Narrated: `instructions from <label> -> CLAUDE.local.md (root slot taken)` | **honest gap — DECIDED, §8** |
+| `CLAUDE.md` (shipped explicitly) | n/a | as-is; whole-file, later layer wins; committed copy skipped as always (v1 semantics, unaffected by slot-fallback) | reads root CLAUDE.md natively |
+| `.github/copilot-instructions.md` | n/a | — | as-is (file-level exclude under the shared `.github` topdir) |
 
 Every slot is a normal omakase placement: excluded via `.git/info/exclude`, healed by
 ensure-present, reversed by remove; a committed target is skipped and reported — the
-universal rule, no special case.
+universal rule, no special case. Un-reroute is wired to **BOTTOM-layer removal only**
+(§4/§5): `omakase remove <source>` on the BOTTOM layer frees the slot and moves the
+survivor's own `AGENTS.md`, if it had been rerouted, back to the root. Removing a TOP
+layer never triggers an un-reroute, even in the narrow case where the TOP layer is the
+one that ended up owning the slot (see the known limitation in §8).
 
-## 8. Copilot personal-instruction slot — DECIDED: honest gap (provisional)
+## 8. Copilot additive-slot gap — DECIDED: honest gap (provisional)
 
-Copilot CLI has no per-repo gitignored personal slot (no CLAUDE.local.md equivalent).
-**Decision: personal instructions are Claude-only for now.** `status` states "personal
-instructions not visible to Copilot". Revisit when the AGENTS.md standard grows a local
-slot — the mapping table (§7) exists for exactly this, and this decision costs one table
-row to change.
+Copilot CLI has no per-repo gitignored additive slot (no `CLAUDE.local.md`
+equivalent). **Decision: a rerouted instruction file (§7) is Claude-only for now.**
+This is design intent, not yet surfaced in `status` — today `status` carries no
+Copilot-visibility note at all; the reroute is visible only as the per-file `from
+<label>` origin row `status` prints for the placed `CLAUDE.local.md` path (§3, §12).
+Revisit when the AGENTS.md standard grows a local slot — the mapping table (§7) exists
+for exactly this, and this decision costs one table row to change.
 
 Rejected for now: placing `.github/copilot-instructions.md` when absent (occupies a
 conventionally *committed team* file, and silently fails where teams commit it) and
 routing to user-global `~/.copilot/copilot-instructions.md` (machine-wide, outside the
 per-repo overlay/remove model — a special case in an otherwise uniform design).
 
+**Known limitation (deferred):** un-reroute only runs on a BOTTOM-layer removal
+(§4/§7). In the narrow case where the TOP layer ends up owning the root slot — the
+bottom layer's payload didn't ship `AGENTS.md` at first install (or was blocked by a
+since-removed committed instruction file) while the top layer claimed the free slot,
+and the bottom layer's `AGENTS.md` was the one rerouted to `CLAUDE.local.md` —
+`omakase remove <top-source>` does NOT hand the slot back: the survivor's instructions
+stay stuck in `CLAUDE.local.md` (invisible to Copilot, per above) with no root
+`AGENTS.md` or bridge restored. The fix (top-removal un-reroute) is deferred to a
+later phase; it is not built in this batch.
+
 Verified against live Copilot docs 2026-07-02: root `CLAUDE.md` IS read by Copilot
-(so the project layer needs no Copilot-specific placement), `CLAUDE.local.md` is NOT.
-One more future option recorded: `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` (env var naming
-directories whose `AGENTS.md` Copilot reads) could carry a per-user personal slot —
-rejected for now because it requires mutating the user's shell profile, which omakase
-never does.
+(so the slot-owning layer needs no Copilot-specific placement), `CLAUDE.local.md` is
+NOT. One more future option recorded: `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` (env var
+naming directories whose `AGENTS.md` Copilot reads) could carry a per-user additive
+slot — rejected for now because it requires mutating the user's shell profile, which
+omakase never does.
 
 ## 9. Migration from v1 (grafts from design C, both judges)
 
@@ -182,15 +230,19 @@ never does.
   `sources.tsv` from `$OMK/source` with `commit = '-'` (never guessed), touching no
   working-tree file. `status`/`remove` work immediately on v1 state.
 - First real `init`/`update` records resolved commits, builds `$OMK/layers/`, rewrites
-  placed.tsv (same frozen 5 columns, layer labels in col 3), regenerates hook scripts
-  (same reader contracts + the disabled-gates check).
+  placed.tsv (same frozen 5 columns, the winning layer's source label in col 3),
+  regenerates hook scripts (same reader contracts + the disabled-gates check).
 - **Refuse-don't-guess:** any operation needing `$OMK/layers/` before it exists
-  (`personal off` with a personal row recorded but no `$OMK/layers/` store) errors with
-  "run omakase init once first".
+  (`omakase remove <source>` before any real `init` has built the layer store) errors
+  with "run omakase init once first".
 - **Mixed-era detection:** v2 notices `sources.tsv` disagreeing with `$OMK/source` +
-  `placed.tsv` (a v1 tool ran after a v2 layered install and orphan-swept the personal
+  `placed.tsv` (a v1 tool ran after a v2 stacked install and orphan-swept the top
   layer) and reports/reheals on the next run. Window is real (plugin-dist one-session
   lag); keep the transition short.
+- **No compat for Phase-3-era state:** an earlier v2 prototype wrote `sources.tsv`
+  rows labeled with `project`/`personal` roles instead of ordinals. That surface
+  never reached a user — zero back-compat for it. Only genuine v1 state
+  (`$OMK/source`, no `sources.tsv` at all) is migrated, per the lazy synthesis above.
 - Carried forward: pre-0.10 `placed.list` fallback, `ledger.tsv` 6-col rotation.
 
 ## 10. Compatibility gates (release blockers)
@@ -224,10 +276,9 @@ motion as a lefthook re-pin.
 |---|---|
 | placed.tsv 6th-column trap for future contributors | header comment + writer-side format test |
 | bare-init semantic change breaks muscle memory | per-run transition notice; docs/skills wording |
-| personal layer can shadow project gates/wiring on one machine | status flags with consequence; documented as trust-equivalent-to-your-shell, not a security boundary |
-| global personal setting makes init machine-dependent | init prints `+ personal layer from <src> (your machine's setting; --no-personal to skip here)`; never activates unless the user ran `omakase personal` (CI/tests unaffected) |
+| stack order is state — the same two sources stacked in a different order (or in two different repos) can leave different files winning | narrated on every `init`/`remove` (`stacked`/`overrides`/`removed`/`restored` lines) + `status`'s per-file Injected rows name each file's winning layer (`from <label>`). A live stack-order identity line and an explicit shadow-with-consequence flag in `status` are design intent, not yet built (unscheduled) — see §3. |
 | stale disabled-gates row after a gate rename silently re-arms nothing | status flags "disabled gate X is not wired" |
-| personal layer staleness across many repos (refreshes only at init/update) | by design; no daemon |
+| a layer's pin only refreshes at `init`/`update`, never automatically | by design; no daemon |
 | binary release blast radius | hook-time is sh; remove works offline from cache; checksum-pinned bootstrap |
 
 ## 13. Implementation plan
@@ -238,7 +289,8 @@ motion as a lefthook re-pin.
 | 1 | Go binary skeleton + `status` (read-only, v1 state) | v1 suite status tests pass via shim |
 | 2 | `init` (single-source parity) + `remove` + sh template generation | full v1 suite passes via shims |
 | 3 | Layers: sources.tsv, `$OMK/layers/`, `personal` verb, migration + mixed-era detection | new layer tests + v1 suite |
+| 3.5 | Init-stack surface: kill the `personal` verb/global setting/`--no-personal`; a second `init <source>` stacks instead of replacing (temporal precedence, cap 2, narrated); `remove <source>` unlayers one harness; role-free slot-fallback instruction routing | rewritten `tests/layers.test.sh` (142 assertions) + full v1 suite |
 | 4 | `update` (+ `--check`), pin semantics, transition notices | new pin tests |
 | 5 | `enable`/`disable` + gate-primitive check + self-heal | new toggle tests |
-| 6 | Bootstrap + release pipeline; plugin skills updated (init/status/remove + update/enable/disable/personal); share/import retired | both-host verification |
+| 6 | Bootstrap + release pipeline; plugin skills updated (init/status/remove + update/enable/disable); share/import retired | both-host verification |
 | 7 | Delete old bash bodies (shims remain); docs rewrite; pixterm chain re-verified | downstream re-init works |

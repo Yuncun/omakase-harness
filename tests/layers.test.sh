@@ -1,31 +1,37 @@
 #!/usr/bin/env bash
-# tests/layers.test.sh — the Phase-3 BLACK-BOX oracle for omakase's NEW layered
+# tests/layers.test.sh — the Phase-3.5 BLACK-BOX oracle for omakase's STACK/UNLAYER
 # behavior (design §4/§5/§7/§9). Where init-remove-parity.test.sh proves the Go
 # init/remove match the frozen v1 bash byte-for-byte, THIS suite drives the shipped
-# entry points (`bash bin/init.sh` / `bash bin/status.sh` / `bash bin/remove.sh` /
-# `dist/omakase personal`) exactly as an adopter would and pins the behavior v1 never
-# had: the personal layer, the CLAUDE.local.md reroute, the §7 bridge, --no-personal
-# persistence, `personal off` unlayering, the GC8 refusal, lazy v1→v2 migration, and
-# mixed-era reheal.
+# entry points (`bash bin/init.sh` / `bash bin/status.sh` / `bash bin/remove.sh` and
+# the `omakase` binary directly) exactly as an adopter would, and pins the behavior
+# v1 never had and Phase 3.5 built: a SECOND source stacks on top (cap 2, narrated),
+# a re-init of a known source REPAIRS in place (no reorder), `remove <source>`
+# UNLAYERS one harness (top or bottom, twin-diff to a fresh single-source install),
+# the §7 slot-fallback reroute + sidecar marker, lazy v1→v2 sources.tsv synthesis,
+# and the deleted `personal` verb (now an unknown command, exit 2).
 #
 # There is no v1 oracle for any of this — the expected bytes are pinned as EXACT
-# strings COPIED from the Go source that emits them (grep init.go for the two summary
-# lines, personal.go for the verb's lines, migrate.go for the warnings). Every fixture
-# carries a want() anti-rot marker (modelled on init-remove-parity's want / status-
-# parity's expect_marker) so a fixture edit that stops exercising the intended state
-# fails loudly instead of going vacuously green.
+# strings COPIED from the Go source that emits them and CONFIRMED against live
+# `bin/*.sh` shim runs of the built binary (init.go's stacked/overrides/fallback +
+# cap lines, layers.go's RemoveLayer summary + per-file bullets, remove.go's
+# not-installed line, migrate.go's RequireLayers refusal). Each GC5 byte assertion
+# is either a full-stdout/stderr `cmp` (remove/cap/unknown — those streams carry
+# nothing else) or an exact-line `have` (init's summary carries many other lines);
+# a handful of `hasnt` mutation spot-checks (hyphen-for-em-dash, dropped caret
+# space) prove the compares are real. The — dashes below are U+2014 EM DASH.
 #
 # Isolation (never touches the real machine): HOME + XDG_CONFIG_HOME + XDG_CACHE_HOME
-# all point INSIDE $TMP, so the per-user personal-config slot
-# (${XDG_CONFIG_HOME:-~/.config}/omakase/personal) and the source cache are private.
-# Sources are local git repos built in-test — no network. The Go binary is pinned via
-# OMAKASE_BIN so the shims exec it directly (never rebuild under the fake HOME, never
-# fall back to legacy bash); a ran_go guard fails on the fallback notice.
+# all point INSIDE $TMP, so the source clone cache and any per-user config are
+# private. Sources are local git repos built in-test — no network (GC10). The Go
+# binary is pinned via OMAKASE_BIN so the shims exec it directly (never rebuild
+# under the fake HOME, never fall back to legacy bash); a ran_go guard fails on the
+# fallback notice. The base payload folded under every source is the REAL
+# $ROOT/payload (the binary resolves it binary-relative, NOT via OMAKASE_PAYLOAD) —
+# identical for every install, so the twin-diffs hold.
 #
 # Skip-with-notice (exit 0) when dist/omakase is absent AND go is not on PATH. Every
-# scenario installs hooks (or migrates a hook-installed repo), so the WHOLE suite SKIPs
-# as a group when lefthook is unresolvable — the same gate init-remove-parity uses.
-# bash 3.2-safe throughout.
+# scenario installs hooks, so the WHOLE suite SKIPs as a group when lefthook is
+# unresolvable — the same gate init-remove-parity uses. bash 3.2-safe throughout.
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,7 +41,6 @@ SHIM_INIT="$ROOT/bin/init.sh"
 SHIM_STATUS="$ROOT/bin/status.sh"
 SHIM_REMOVE="$ROOT/bin/remove.sh"
 LEG_INIT="$ROOT/bin/legacy/init.sh"
-PAY="$ROOT/payload"
 LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 TMP="${TMPDIR:-/tmp}/layers.$$"
 NOTICE_INIT='omakase: Go binary not present — running the bundled v1 init script'
@@ -46,15 +51,6 @@ FAILED=0
 pass(){ echo "  PASS: $1"; }
 fail(){ echo "  FAIL: $1"; FAILED=1; }
 skip(){ echo "  SKIP: $1"; }
-
-# ---- EXACT expected bytes, COPIED from the Go source (never retyped) ----
-# init.go:887 / :889 (the two new summary lines; %s is the personal label, filled per
-# scenario). personal.go:137/:155/:161/:170/:455 (the verb's lines). migrate.go:71/:138.
-SKIPPED_LINE="omakase: personal harness skipped in this repo (init --no-personal is remembered)."
-CLEARED_LINE="omakase: personal harness cleared."
-APPLY_OFF_LINE="omakase: this repo has personal layering off (init --no-personal); not applied here."
-GC8_LINE="omakase: this repo predates layered state — run omakase init once first"
-MIXED_AXIS1='($OMK/source disagrees with sources.tsv)'   # single-quoted: literal $OMK
 
 [ -n "$LEFTHOOK" ] && export PATH="$(dirname "$LEFTHOOK"):$PATH"
 HAVE_LH=0; { [ -n "$LEFTHOOK" ] && [ -x "$LEFTHOOK" ]; } && HAVE_LH=1
@@ -77,9 +73,7 @@ fi
 
 mkdir -p "$TMP"
 FAKEHOME="$TMP/home"; mkdir -p "$FAKEHOME"
-XDGC="$TMP/xdg-config"        # the per-user personal-config slot lives HERE, never ~/.config
-XDGCACHE="$TMP/xdg-cache"     # the source clone cache lives HERE, never ~/.cache
-mkdir -p "$XDGC" "$XDGCACHE"
+XDGC="$TMP/xdg-config"; XDGCACHE="$TMP/xdg-cache"; mkdir -p "$XDGC" "$XDGCACHE"
 
 # --- repo + source builders (local git only; no network) ---
 newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }
@@ -89,35 +83,29 @@ omk_of(){ echo "$(common_of "$1")/omakase"; }
 src_init(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email s@s && git config user.name s && git config commit.gpgsign false ); }
 src_commit(){ ( cd "$1" && git add -A && git commit -q -m "${2:-src}" ); }
 w(){ mkdir -p "$(dirname "$1")"; printf '%s\n' "$2" > "$1"; }   # write a file, creating parent dirs
-digest(){ if command -v shasum >/dev/null 2>&1; then printf '%s' "$1" | shasum -a 256 | awk '{print $1}'; else printf '%s' "$1" | sha256sum | awk '{print $1}'; fi; }
 digest_file(){ if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'; else sha256sum "$1" | awk '{print $1}'; fi; }
-set_personal(){ mkdir -p "$XDGC/omakase"; printf '%s\n' "$1" > "$XDGC/omakase/personal"; }
-clear_personal(){ rm -f "$XDGC/omakase/personal"; }
-snap_tree(){ ( cd "$1" && find . -mindepth 1 -name .git -prune -o -print | sed 's|^\./||' | sort ); }
 
-# placed.tsv helpers (frozen 5-col path<TAB>kind<TAB>source<TAB>sha256<TAB>enabled).
+# build a valid harness source at $1 named $2; remaining args are rel=content pairs.
+mksrc(){ local dir="$1" name="$2"; shift 2; src_init "$dir"; printf 'name: %s\n' "$name" > "$dir/omakase.manifest"
+  local kv; for kv in "$@"; do w "$dir/payload/${kv%%=*}" "${kv#*=}"; done; src_commit "$dir" "$name"; }
+
+# placed.tsv helpers (frozen 5-col rel<TAB>kind<TAB>source<TAB>sha256<TAB>enabled).
 placed_col(){ awk -F'\t' -v r="$2" -v c="$3" '$1==r{print $c; exit}' "$1"; }  # $1 file $2 rel $3 colnum
 placed_has(){ awk -F'\t' -v r="$2" '$1==r{f=1} END{exit f?0:1}' "$1"; }        # $1 file $2 rel
 # sources.tsv helpers (layer<TAB>source<TAB>ref<TAB>commit<TAB>installed_epoch).
 src_field(){ awk -F'\t' -v n="$2" -v c="$3" 'NR==n{print $c; exit}' "$1"; }    # $1 file $2 rownum $3 col
-src_epoch_of(){ awk -F'\t' -v l="$2" -v s="$3" '$1==l && $2==s{print $5; exit}' "$1"; }
 
-# --- run helpers ---
-# EXTRA_ENV (reset per scenario) carries scenario-specific NAME=VALUE pairs (only
-# OMAKASE_PAYLOAD, for the base-only L9). Paths under $TMP hold no spaces, so the
-# unquoted expansion is safe. The Go side pins OMAKASE_BIN to the prebuilt binary so
-# the shim execs Go directly instead of rebuilding per call under the fake HOME.
-EXTRA_ENV=""
-gi(){ local cwd="$1" out="$2" err="$3"; shift 3   # go init via the shim
-  ( cd "$cwd" && env -u OMAKASE_ICON -u NO_COLOR HOME="$FAKEHOME" XDG_CONFIG_HOME="$XDGC" XDG_CACHE_HOME="$XDGCACHE" LEFTHOOK_BIN="$LEFTHOOK" OMAKASE_BIN="$BIN" $EXTRA_ENV bash "$SHIM_INIT" "$@" ) >"$out" 2>"$err"; }
+# --- run helpers: the shipped shims exec the pinned binary directly (OMAKASE_BIN) ---
+gi(){ local cwd="$1" out="$2" err="$3"; shift 3   # init via the shim
+  ( cd "$cwd" && env -u OMAKASE_ICON -u NO_COLOR -u OMAKASE_PAYLOAD HOME="$FAKEHOME" XDG_CONFIG_HOME="$XDGC" XDG_CACHE_HOME="$XDGCACHE" LEFTHOOK_BIN="$LEFTHOOK" OMAKASE_BIN="$BIN" bash "$SHIM_INIT" "$@" ) >"$out" 2>"$err"; }
 st(){ local cwd="$1" out="$2" err="$3"; shift 3   # status via the shim (age math pinned)
-  ( cd "$cwd" && env -u OMAKASE_ICON -u NO_COLOR HOME="$FAKEHOME" XDG_CONFIG_HOME="$XDGC" XDG_CACHE_HOME="$XDGCACHE" LEFTHOOK_BIN="$LEFTHOOK" OMAKASE_BIN="$BIN" OMAKASE_NOW="$NOW" $EXTRA_ENV bash "$SHIM_STATUS" "$@" ) >"$out" 2>"$err"; }
+  ( cd "$cwd" && env -u OMAKASE_ICON -u NO_COLOR -u OMAKASE_PAYLOAD HOME="$FAKEHOME" XDG_CONFIG_HOME="$XDGC" XDG_CACHE_HOME="$XDGCACHE" LEFTHOOK_BIN="$LEFTHOOK" OMAKASE_BIN="$BIN" OMAKASE_NOW="$NOW" bash "$SHIM_STATUS" "$@" ) >"$out" 2>"$err"; }
 rmv(){ local cwd="$1" out="$2" err="$3"; shift 3  # remove via the shim
-  ( cd "$cwd" && env -u OMAKASE_ICON -u NO_COLOR HOME="$FAKEHOME" XDG_CONFIG_HOME="$XDGC" XDG_CACHE_HOME="$XDGCACHE" LEFTHOOK_BIN="$LEFTHOOK" OMAKASE_BIN="$BIN" $EXTRA_ENV bash "$SHIM_REMOVE" "$@" ) >"$out" 2>"$err"; }
-pers(){ local cwd="$1" out="$2" err="$3"; shift 3 # the personal verb — the binary directly (no shim)
-  ( cd "$cwd" && env -u OMAKASE_ICON -u NO_COLOR HOME="$FAKEHOME" XDG_CONFIG_HOME="$XDGC" XDG_CACHE_HOME="$XDGCACHE" LEFTHOOK_BIN="$LEFTHOOK" $EXTRA_ENV "$BIN" personal "$@" ) >"$out" 2>"$err"; }
-leg_init(){ local cwd="$1" out="$2" err="$3"; shift 3   # the frozen v1 body → a genuine v1-era $OMK
-  ( cd "$cwd" && env -u OMAKASE_BIN -u OMAKASE_ICON -u NO_COLOR HOME="$FAKEHOME" XDG_CONFIG_HOME="$XDGC" XDG_CACHE_HOME="$XDGCACHE" LEFTHOOK_BIN="$LEFTHOOK" $EXTRA_ENV bash "$LEG_INIT" "$@" ) >"$out" 2>"$err"; }
+  ( cd "$cwd" && env -u OMAKASE_ICON -u NO_COLOR -u OMAKASE_PAYLOAD HOME="$FAKEHOME" XDG_CONFIG_HOME="$XDGC" XDG_CACHE_HOME="$XDGCACHE" LEFTHOOK_BIN="$LEFTHOOK" OMAKASE_BIN="$BIN" bash "$SHIM_REMOVE" "$@" ) >"$out" 2>"$err"; }
+verb(){ local cwd="$1" out="$2" err="$3"; shift 3 # the binary directly (for the deleted `personal` verb + help)
+  ( cd "$cwd" && env -u OMAKASE_ICON -u NO_COLOR -u OMAKASE_PAYLOAD HOME="$FAKEHOME" XDG_CONFIG_HOME="$XDGC" XDG_CACHE_HOME="$XDGCACHE" LEFTHOOK_BIN="$LEFTHOOK" "$BIN" "$@" ) >"$out" 2>"$err"; }
+leg_init(){ local cwd="$1" out="$2" err="$3"; shift 3   # the frozen v1 body → a genuine v1-era $OMK (no sources.tsv/layers)
+  ( cd "$cwd" && env -u OMAKASE_BIN -u OMAKASE_ICON -u NO_COLOR -u OMAKASE_PAYLOAD HOME="$FAKEHOME" XDG_CONFIG_HOME="$XDGC" XDG_CACHE_HOME="$XDGCACHE" LEFTHOOK_BIN="$LEFTHOOK" bash "$LEG_INIT" "$@" ) >"$out" 2>"$err"; }
 
 # guard: a shim invocation must NOT have fallen back to legacy bash (else we'd be
 # testing bash, not the Go layering engine). Called on every shim-side stderr.
@@ -125,391 +113,499 @@ ran_go(){ local label="$1" errf="$2" notice="$3"
   if grep -qF "$notice" "$errf"; then fail "$label: shim fell back to legacy bash (the Go binary did not run)"; sed 's/^/      /' "$errf"; return 1; fi
   return 0; }
 
-# want <label> <file> <marker...>: fixed-string containment — pins the fixture
-# exercised the intended state (anti-rot). No markers => no-op.
-want(){ local l="$1" f="$2"; shift 2; [ "$#" -eq 0 ] && return 0
-  local p miss=""
-  for p in "$@"; do grep -qF -- "$p" "$f" 2>/dev/null || miss="${miss:+$miss, }'$p'"; done
-  [ -z "$miss" ] && pass "$l: output carries the expected marker(s)" \
-                 || fail "$l: output MISSING marker(s) $miss — fixture may not exercise the intended state"; }
-
-ok(){ [ "$1" = "$2" ] && pass "$3" || { fail "$3 (got '$1' want '$2')"; }; }
-have(){ grep -qF -- "$2" "$1" 2>/dev/null && pass "$3" || { fail "$3 — missing: $2"; sed 's/^/      /' "$1"; }; }
-hasnt(){ grep -qF -- "$2" "$1" 2>/dev/null && { fail "$3 — unexpected: $2"; } || pass "$3"; }
+# --- assertions ---
+ok(){ [ "$1" = "$2" ] && pass "$3" || fail "$3 (got '$1' want '$2')"; }
+have(){ grep -qF -- "$2" "$1" 2>/dev/null && pass "$3" || { fail "$3 — missing exact line: $2"; sed 's/^/      /' "$1"; }; }
+hasnt(){ grep -qF -- "$2" "$1" 2>/dev/null && fail "$3 — unexpectedly present: $2" || pass "$3"; }
 is_exit(){ [ "$1" -eq "$2" ] && pass "$3 (exit $2)" || fail "$3 (exit $1, want $2)"; }
+gone(){ [ ! -e "$1" ] && [ ! -L "$1" ] && pass "$2" || fail "$2 — still present: $1"; }
+present(){ { [ -e "$1" ] || [ -L "$1" ]; } && pass "$2" || fail "$2 — missing: $1"; }
+cmp_exact(){ local lbl="$1" got="$2" exp="$3"; cmp -s "$got" "$exp" && pass "$lbl" || { fail "$lbl — bytes differ"; diff "$exp" "$got" | sed 's/^/      /'; }; }
+same(){ local lbl="$1" a="$2" b="$3"; cmp -s "$a" "$b" && pass "$lbl" || { fail "$lbl — differ"; diff "$a" "$b" | sed 's/^/      /'; }; }
+is40(){ echo "$1" | grep -qE '^[0-9a-f]{40}$' && pass "$2" || fail "$2 (got '$1', want 40-hex)"; }
+clean_tree(){ [ -z "$(cd "$1" && git status --porcelain)" ] && pass "$2" || { fail "$2 — git status not clean"; (cd "$1" && git status --porcelain | sed 's/^/      /'); }; }
+
+# snap_full: a content fingerprint of EVERY file+symlink under a dir (for
+# before/after no-mutation checks; includes clobbered/, no normalization).
+snap_full(){ ( cd "$1" 2>/dev/null && find . -mindepth 1 \( -type f -o -type l \) 2>/dev/null | LC_ALL=C sort | while IFS= read -r p; do
+    if [ -L "$p" ]; then printf '%s -> %s\n' "$p" "$(readlink "$p")"; else printf '%s : %s\n' "$p" "$(digest_file "$p")"; fi
+  done ) > "$2"; }
+
+# omk_manifest: the twin-diff fingerprint of the FULL $OMK tree — every regular
+# file's content and every symlink's target — with EXACTLY TWO normalizations,
+# mirroring internal/overlay/remove_test.go's omkTreeForTwin: (1) sources.tsv field
+# 5 (epoch) -> EPOCH; (2) clobbered/ excluded. \037 terminates each file body so a
+# body can never be confused with the next header.
+omk_manifest(){ local omk="$1" out="$2"; : > "$out"; local rel full
+  ( cd "$omk" && find . -mindepth 1 \( -path './clobbered' -o -path './clobbered/*' \) -prune -o \( -type f -o -type l \) -print ) \
+    | sed 's|^\./||' | LC_ALL=C sort | while IFS= read -r rel; do
+      [ -z "$rel" ] && continue; full="$omk/$rel"
+      if [ -L "$full" ]; then printf 'SYMLINK\t%s\t%s\n' "$rel" "$(readlink "$full")" >> "$out"
+      elif [ -f "$full" ]; then
+        printf 'FILE\t%s\n' "$rel" >> "$out"
+        if [ "$rel" = "sources.tsv" ]; then awk -F'\t' 'BEGIN{OFS="\t"}{if(NF==5)$5="EPOCH"; print}' "$full" >> "$out"
+        else cat "$full" >> "$out"; fi
+        printf '\037\n' >> "$out"
+      fi
+    done; }
+
+# wt_manifest: the working-tree bytes of every placed path (placed.tsv col1) —
+# proves the two twins' PLACED files agree, not just their $OMK state.
+wt_manifest(){ local root="$1" omk="$2" out="$3"; : > "$out"; local rel full
+  cut -f1 "$omk/placed.tsv" | LC_ALL=C sort | while IFS= read -r rel; do
+    [ -z "$rel" ] && continue; full="$root/$rel"
+    if [ -L "$full" ]; then printf 'SYMLINK\t%s\t%s\n' "$rel" "$(readlink "$full")" >> "$out"
+    elif [ -f "$full" ]; then printf 'FILE\t%s\n' "$rel" >> "$out"; cat "$full" >> "$out"; printf '\037\n' >> "$out"
+    else printf 'MISSING\t%s\n' "$rel" >> "$out"; fi
+  done; }
+
+# full_wt_manifest: the FULL working-tree content of a repo — every regular
+# file's bytes and every symlink's target, for the WHOLE tree — skipping ONLY
+# the top-level .git dir (two independently created repos never share .git
+# bytes). Unlike wt_manifest (placed.tsv column 1 only), this walks EVERY
+# path, so a leftover file a removal failed to sweep is caught even when it
+# sits under an omakase-owned dir that the exclude block hides wholesale from
+# `git status --porcelain` (e.g. a stray file under .omakase/), or when it is
+# a wiring file that is never a placed row at all (.worktreeinclude,
+# lefthook.yml — those are otherwise compared only via the byte-checked
+# .git/info/exclude block). No normalization: the working tree has none of
+# $OMK's epoch/clobbered exemptions.
+full_wt_manifest(){ local root="$1" out="$2"; : > "$out"; local rel full
+  ( cd "$root" && find . -mindepth 1 \( -path './.git' -o -path './.git/*' \) -prune -o \( -type f -o -type l \) -print ) \
+    | sed 's|^\./||' | LC_ALL=C sort | while IFS= read -r rel; do
+      [ -z "$rel" ] && continue; full="$root/$rel"
+      if [ -L "$full" ]; then printf 'SYMLINK\t%s\t%s\n' "$rel" "$(readlink "$full")" >> "$out"
+      elif [ -f "$full" ]; then printf 'FILE\t%s\n' "$rel" >> "$out"; cat "$full" >> "$out"; printf '\037\n' >> "$out"; fi
+    done; }
+
+# excl_block: the omakase marked block of an exclude file (markers inclusive),
+# path-free by construction (every entry is a repo-relative prefix).
+excl_block(){ awk '/^# >>> omakase-harness >>>$/{p=1} p{print} /^# <<< omakase-harness <<<$/{p=0}' "$1" 2>/dev/null; }
+
+# twin_equal: the GC7 twin-diff — an unlayered repo (A) and a fresh single-source
+# install (B) agree byte-for-byte on the FULL $OMK tree + the exclude block + every
+# placed working-tree file + the ENTIRE working tree (any file, anywhere, placed
+# or not), and both working trees are git-clean.
+twin_equal(){ local lbl="$1" ra="$2" rb="$3"; local oa ob; oa="$(omk_of "$ra")"; ob="$(omk_of "$rb")"
+  omk_manifest "$oa" "$TMP/$lbl.omkA"; omk_manifest "$ob" "$TMP/$lbl.omkB"
+  same "$lbl: \$OMK tree byte-equal (epoch-normalized, clobbered excluded)" "$TMP/$lbl.omkA" "$TMP/$lbl.omkB"
+  same "$lbl: placed.tsv byte-identical" "$oa/placed.tsv" "$ob/placed.tsv"
+  excl_block "$(common_of "$ra")/info/exclude" > "$TMP/$lbl.exA"; excl_block "$(common_of "$rb")/info/exclude" > "$TMP/$lbl.exB"
+  same "$lbl: exclude block byte-identical" "$TMP/$lbl.exA" "$TMP/$lbl.exB"
+  wt_manifest "$ra" "$oa" "$TMP/$lbl.wtA"; wt_manifest "$rb" "$ob" "$TMP/$lbl.wtB"
+  same "$lbl: placed working-tree files byte-identical" "$TMP/$lbl.wtA" "$TMP/$lbl.wtB"
+  full_wt_manifest "$ra" "$TMP/$lbl.fullA"; full_wt_manifest "$rb" "$TMP/$lbl.fullB"
+  same "$lbl: FULL working tree byte-equal (entire repo, .git excluded, no normalization)" "$TMP/$lbl.fullA" "$TMP/$lbl.fullB"
+  clean_tree "$ra" "$lbl: unlayered repo git-clean"; clean_tree "$rb" "$lbl: fresh repo git-clean"; }
 
 # ============================================================================
-# L1 — personal set → init reroutes AGENTS.md to CLAUDE.local.md, per-row col-3
-# labels, sources.tsv bottom-to-top, the layered-on-top summary line.
+# L1 — STACK: init A → init B stacks B on top. Both file sets live, B wins the
+# overlap, the §7 reroute + bridge, the two ordinal sources.tsv rows w/ resolved
+# commits, and the exact GC5 stacked/overrides/fallback narration bytes.
 # ============================================================================
-echo "== L1: project+personal stack, reroute + labels + sources + summary =="
-P1="$TMP/l1proj"; src_init "$P1"
-printf 'name: proj\n' > "$P1/omakase.manifest"
-w "$P1/payload/.claude/rules/r.md" 'proj rule'
-w "$P1/payload/.omakase/gates/shared.sh" 'PROJECT'
-src_commit "$P1" proj; P1A="$(resolvep "$P1")"
-S1="$TMP/l1pers"; src_init "$S1"
-printf 'name: personal-harness\n' > "$S1/omakase.manifest"
-w "$S1/payload/AGENTS.md" 'personal doctrine'
-w "$S1/payload/.omakase/gates/shared.sh" 'PERSONAL'
-src_commit "$S1" pers; S1A="$(resolvep "$S1")"
-set_personal "$S1A"
-R1="$TMP/l1repo"; newrepo "$R1"; OMK1="$(omk_of "$R1")"
-gi "$R1" "$TMP/l1.out" "$TMP/l1.err" --source "$P1A"; r1=$?
-if ran_go "L1" "$TMP/l1.err" "$NOTICE_INIT"; then
-  is_exit "$r1" 0 "L1: init succeeded"
-  want "L1" "$TMP/l1.out" "omakase: personal harness layered on top (${S1A}) — omakase personal off to remove it everywhere."
-  ok "$(cat "$R1/CLAUDE.local.md" 2>/dev/null)" "personal doctrine" "L1: personal AGENTS.md rerouted to CLAUDE.local.md"
-  [ ! -e "$R1/AGENTS.md" ] && pass "L1: no root AGENTS.md (personal never placed as-is)" || fail "L1: personal AGENTS.md placed at root"
-  ok "$(cat "$R1/.omakase/gates/shared.sh" 2>/dev/null)" "PERSONAL" "L1: personal wins the overlap in the working tree"
-  ok "$(cat "$R1/.claude/rules/r.md" 2>/dev/null)" "proj rule" "L1: project-only file placed"
-  # placed.tsv col 3 = the winning layer's label
-  ok "$(placed_col "$OMK1/placed.tsv" "CLAUDE.local.md" 3)" "$S1A" "L1: CLAUDE.local.md col3 = personal label"
-  ok "$(placed_col "$OMK1/placed.tsv" ".omakase/gates/shared.sh" 3)" "$S1A" "L1: shared.sh col3 = personal label (personal won)"
-  ok "$(placed_col "$OMK1/placed.tsv" ".claude/rules/r.md" 3)" "$P1A" "L1: project file col3 = project label"
-  # sources.tsv: project (bottom) then personal (top)
-  ok "$(src_field "$OMK1/sources.tsv" 1 1)" "project"  "L1: sources.tsv row1 layer = project (bottom)"
-  ok "$(src_field "$OMK1/sources.tsv" 1 2)" "$P1A"     "L1: sources.tsv row1 source = project"
-  ok "$(src_field "$OMK1/sources.tsv" 2 1)" "personal" "L1: sources.tsv row2 layer = personal (top)"
-  ok "$(src_field "$OMK1/sources.tsv" 2 2)" "$S1A"     "L1: sources.tsv row2 source = personal"
-  c1="$(src_field "$OMK1/sources.tsv" 1 4)"; echo "$c1" | grep -qE '^[0-9a-f]{40}$' && pass "L1: project row commit is a resolved 40-hex sha" || fail "L1: project commit = '$c1'"
-  # both layer stores built (shadow-restore groundwork)
-  ok "$(cat "$OMK1/layers/project/files/.omakase/gates/shared.sh" 2>/dev/null)" "PROJECT" "L1: project store keeps its own shared.sh copy"
-  ok "$(cat "$OMK1/layers/personal/files/CLAUDE.local.md" 2>/dev/null)" "personal doctrine" "L1: personal store keeps CLAUDE.local.md"
+echo "== L1: init A then init B stacks B on top (narration + winners + sources) =="
+L1A="$TMP/l1-a"; mksrc "$L1A" a "AGENTS.md=A doctrine" ".claude/rules/a.md=A rule" ".omakase/gates/shared.sh=A"; L1AA="$(resolvep "$L1A")"
+L1B="$TMP/l1-b"; mksrc "$L1B" b "AGENTS.md=B doctrine" ".omakase/gates/shared.sh=B" ".omakase/gates/bonly.sh=B only"; L1BB="$(resolvep "$L1B")"
+R1="$TMP/l1-repo"; newrepo "$R1"; OMK1="$(omk_of "$R1")"
+gi "$R1" "$TMP/L1a.out" "$TMP/L1a.err" --source "$L1AA"; r1a=$?
+gi "$R1" "$TMP/L1b.out" "$TMP/L1b.err" --source "$L1BB"; r1b=$?
+if ran_go "L1-A" "$TMP/L1a.err" "$NOTICE_INIT" && ran_go "L1-B" "$TMP/L1b.err" "$NOTICE_INIT"; then
+  is_exit "$r1a" 0 "L1: init A"
+  is_exit "$r1b" 0 "L1: init B stacks"
+  # winners on disk
+  ok "$(cat "$R1/AGENTS.md" 2>/dev/null)" "A doctrine" "L1: A owns the root AGENTS.md"
+  ok "$(cat "$R1/CLAUDE.local.md" 2>/dev/null)" "B doctrine" "L1: B rerouted to CLAUDE.local.md"
+  ok "$(cat "$R1/.omakase/gates/shared.sh" 2>/dev/null)" "B" "L1: B wins the overlapping gate"
+  ok "$(cat "$R1/.claude/rules/a.md" 2>/dev/null)" "A rule" "L1: A-only file placed"
+  ok "$(cat "$R1/.omakase/gates/bonly.sh" 2>/dev/null)" "B only" "L1: B-only file placed"
+  ok "$(cat "$R1/.omakase/gates/example.sh" 2>/dev/null | head -1)" "#!/usr/bin/env bash" "L1: base machinery folded in under the stack"
+  ok "$(readlink "$R1/CLAUDE.md" 2>/dev/null)" "AGENTS.md" "L1: §7 bridge CLAUDE.md -> AGENTS.md"
+  # GC5 stacking narration (exact lines on init B's stdout)
+  have "$TMP/L1b.out" "omakase: stacked ${L1BB} on top of ${L1AA}" "L1: stacked line exact"
+  have "$TMP/L1b.out" "  ^ overrides ${L1AA}: .omakase/gates/shared.sh" "L1: override line exact (two-space caret-space)"
+  have "$TMP/L1b.out" "omakase: instructions from ${L1BB} -> CLAUDE.local.md (root slot taken)" "L1: slot-fallback line exact"
+  # mutation spot-checks: the em-dash-free / dropped-space variants must be ABSENT
+  hasnt "$TMP/L1b.out" "  ^overrides ${L1AA}: .omakase/gates/shared.sh" "L1: dropped caret-space variant absent (compare is real)"
+  hasnt "$TMP/L1b.out" "omakase: instructions from ${L1BB} -> CLAUDE.local.md (root slot free)" "L1: wrong-parenthetical variant absent (compare is real)"
+  # only the PRIOR path B now wins is narrated (bonly is new, not an override)
+  hasnt "$TMP/L1b.out" "  ^ overrides ${L1AA}: .omakase/gates/bonly.sh" "L1: a brand-new B path is not narrated as an override"
+  # placed.tsv col3 = winning layer's SOURCE LABEL
+  ok "$(placed_col "$OMK1/placed.tsv" ".omakase/gates/shared.sh" 3)" "$L1BB" "L1: shared.sh col3 = B (winner)"
+  ok "$(placed_col "$OMK1/placed.tsv" "CLAUDE.local.md" 3)" "$L1BB" "L1: CLAUDE.local.md col3 = B"
+  ok "$(placed_col "$OMK1/placed.tsv" ".claude/rules/a.md" 3)" "$L1AA" "L1: a.md col3 = A"
+  ok "$(placed_col "$OMK1/placed.tsv" "AGENTS.md" 3)" "$L1AA" "L1: AGENTS.md col3 = A"
+  ok "$(placed_col "$OMK1/placed.tsv" "CLAUDE.md" 3)" "$L1AA" "L1: bridge CLAUDE.md col3 = A"
+  # sources.tsv: two ordinal rows, bottom-to-top, both commits resolved
+  ok "$(src_field "$OMK1/sources.tsv" 1 1)" "1" "L1: row1 layer ordinal = 1 (bottom)"
+  ok "$(src_field "$OMK1/sources.tsv" 1 2)" "$L1AA" "L1: row1 source = A"
+  ok "$(src_field "$OMK1/sources.tsv" 1 3)" "-" "L1: row1 ref placeholder = -"
+  is40 "$(src_field "$OMK1/sources.tsv" 1 4)" "L1: row1 commit is a resolved 40-hex sha"
+  ok "$(src_field "$OMK1/sources.tsv" 2 1)" "2" "L1: row2 layer ordinal = 2 (top)"
+  ok "$(src_field "$OMK1/sources.tsv" 2 2)" "$L1BB" "L1: row2 source = B"
+  is40 "$(src_field "$OMK1/sources.tsv" 2 4)" "L1: row2 commit is a resolved 40-hex sha"
+  # both layer stores built at ordinal dirs; the reroute sidecar on layers/2
+  present "$OMK1/layers/1/placed.tsv" "L1: layers/1 store built"
+  present "$OMK1/layers/2/placed.tsv" "L1: layers/2 store built"
+  printf 'CLAUDE.local.md\tAGENTS.md\n' > "$TMP/L1.reroute.exp"
+  cmp_exact "L1: layers/2 reroute sidecar = CLAUDE.local.md<TAB>AGENTS.md" "$OMK1/layers/2/rerouted" "$TMP/L1.reroute.exp"
+  gone "$OMK1/layers/1/rerouted" "L1: bottom layer (root owner) has NO reroute sidecar"
+  clean_tree "$R1" "L1: git status clean after the stack"
+  # --- Fix I pin: TODAY's `status` rendering of a 2-stack repo. status.go is
+  # v1-byte-parity and renders NOTHING from sources.tsv (design §3/§8/§12 note
+  # this as design intent, not shipped): identity names ONLY the bottom layer's
+  # source (A) — no commit suffix, no second/top harness named there. The
+  # stacked top harness (B) is visible ONLY through the per-file Injected rows'
+  # `from <label>` tag naming each row's WINNING layer. Any future change to
+  # this rendering must touch this pin deliberately.
+  st "$R1" "$TMP/L1st.out" "$TMP/L1st.err"; r1st=$?
+  ran_go "L1-status" "$TMP/L1st.err" "$NOTICE_STATUS" && is_exit "$r1st" 0 "L1-status: status on a 2-stack repo exits 0"
+  grep 'base omakase' "$TMP/L1st.out" > "$TMP/L1.identity" 2>/dev/null
+  have "$TMP/L1.identity" "l1-a — ${L1AA} " "L1-status: identity names ONLY the bottom source (A)"
+  hasnt "$TMP/L1.identity" "$L1BB" "L1-status: identity line does NOT name the top/second harness (live-stack-order rendering not yet built)"
+  hasnt "$TMP/L1.identity" "@" "L1-status: identity line carries no commit suffix (source@short-commit not yet built)"
+  have "$TMP/L1st.out" "    + .claude/rules/a.md   (rule, from ${L1AA})" "L1-status: A-only file's Injected row is tagged from A"
+  have "$TMP/L1st.out" "    + AGENTS.md   (doc, from ${L1AA})" "L1-status: root AGENTS.md's Injected row is tagged from A"
+  have "$TMP/L1st.out" "    + CLAUDE.local.md   (doc, from ${L1BB})" "L1-status: B's rerouted CLAUDE.local.md row is tagged from B (this per-file row is how the 2nd harness is visible today)"
 fi
 
 # ============================================================================
-# L2 — stack override: same path from both layers → personal bytes + label win.
+# L2 — REPAIR (no reorder): with A+B installed, re-init A repairs layer 1 in place
+# (sources.tsv + placed.tsv byte-identical, no stacked line, no third layer, B still
+# wins); re-init B is likewise idempotent. Reuses the L1 repo.
 # ============================================================================
-echo "== L2: overlap → personal wins bytes AND placed.tsv label =="
-P2="$TMP/l2proj"; src_init "$P2"
-printf 'name: proj2\n' > "$P2/omakase.manifest"
-w "$P2/payload/.omakase/gates/dup.sh" 'PROJECT'
-src_commit "$P2" p2; P2A="$(resolvep "$P2")"
-S2="$TMP/l2pers"; src_init "$S2"
-printf 'name: personal2\n' > "$S2/omakase.manifest"
-w "$S2/payload/.omakase/gates/dup.sh" 'PERSONAL'
-src_commit "$S2" s2; S2A="$(resolvep "$S2")"
-set_personal "$S2A"
-R2="$TMP/l2repo"; newrepo "$R2"; OMK2="$(omk_of "$R2")"
-gi "$R2" "$TMP/l2.out" "$TMP/l2.err" --source "$P2A"; r2=$?
-if ran_go "L2" "$TMP/l2.err" "$NOTICE_INIT"; then
-  is_exit "$r2" 0 "L2: init succeeded"
-  ok "$(cat "$R2/.omakase/gates/dup.sh" 2>/dev/null)" "PERSONAL" "L2: personal bytes win in the working tree"
-  ok "$(placed_col "$OMK2/placed.tsv" ".omakase/gates/dup.sh" 3)" "$S2A" "L2: placed.tsv label = personal (higher layer)"
-  ok "$(cat "$OMK2/layers/project/files/.omakase/gates/dup.sh" 2>/dev/null)" "PROJECT" "L2: project store still holds its shadowed copy"
+echo "== L2: re-init a known source REPAIRS in place (no reorder, no stack) =="
+cp "$OMK1/sources.tsv" "$TMP/L2.sources.pre"; cp "$OMK1/placed.tsv" "$TMP/L2.placed.pre"
+gi "$R1" "$TMP/L2a.out" "$TMP/L2a.err" --source "$L1AA"; r2a=$?
+if ran_go "L2-A" "$TMP/L2a.err" "$NOTICE_INIT"; then
+  is_exit "$r2a" 0 "L2: re-init A"
+  same "L2: sources.tsv byte-identical after re-init A (no reorder)" "$OMK1/sources.tsv" "$TMP/L2.sources.pre"
+  same "L2: placed.tsv byte-identical after re-init A" "$OMK1/placed.tsv" "$TMP/L2.placed.pre"
+  hasnt "$TMP/L2a.out" "stacked " "L2: re-init A narrates NO stack"
+  gone "$OMK1/layers/3" "L2: re-init A created no third layer"
+  ok "$(cat "$R1/.omakase/gates/shared.sh" 2>/dev/null)" "B" "L2: B still wins the overlap after re-init A"
+fi
+gi "$R1" "$TMP/L2b.out" "$TMP/L2b.err" --source "$L1BB"; r2b=$?
+if ran_go "L2-B" "$TMP/L2b.err" "$NOTICE_INIT"; then
+  is_exit "$r2b" 0 "L2: re-init B"
+  same "L2: sources.tsv byte-identical after re-init B" "$OMK1/sources.tsv" "$TMP/L2.sources.pre"
+  same "L2: placed.tsv byte-identical after re-init B" "$OMK1/placed.tsv" "$TMP/L2.placed.pre"
+  hasnt "$TMP/L2b.out" "stacked " "L2: re-init B narrates NO stack"
 fi
 
 # ============================================================================
-# L3 — §7 bridge: CLAUDE.md -> AGENTS.md placed for a project AGENTS.md; suppressed
-# by a tracked CLAUDE.md; suppressed by a personal-shipped CLAUDE.md.
+# L3 — CAP: with two sources installed, a third distinct source errors (exit 1) with
+# the exact GC5 cap line and mutates NOTHING ($OMK + working tree byte-identical
+# before/after, the third gate never placed).
 # ============================================================================
-echo "== L3: CLAUDE.md -> AGENTS.md bridge (placed / two suppressions) =="
-AGENTS_HASH="$(digest 'AGENTS.md')"
-# (a) placed
-P3="$TMP/l3proj"; src_init "$P3"
-printf 'name: bridge\n' > "$P3/omakase.manifest"
-w "$P3/payload/AGENTS.md" 'doctrine'
-src_commit "$P3" p3; P3A="$(resolvep "$P3")"
-clear_personal
-R3="$TMP/l3repo"; newrepo "$R3"; OMK3="$(omk_of "$R3")"
-gi "$R3" "$TMP/l3.out" "$TMP/l3.err" --source "$P3A"; r3=$?
-if ran_go "L3a" "$TMP/l3.err" "$NOTICE_INIT"; then
-  is_exit "$r3" 0 "L3a: init succeeded"
-  tgt="$(readlink "$R3/CLAUDE.md" 2>/dev/null)"
-  ok "$tgt" "AGENTS.md" "L3a: CLAUDE.md is a symlink -> AGENTS.md"
-  ok "$(placed_col "$OMK3/placed.tsv" "CLAUDE.md" 3)" "$P3A" "L3a: bridge row col3 = project label"
-  ok "$(placed_col "$OMK3/placed.tsv" "CLAUDE.md" 4)" "$AGENTS_HASH" "L3a: bridge row hash = sha256('AGENTS.md')"
+echo "== L3: a third distinct source hits the 2-harness cap, exit 1, zero mutation =="
+L3A="$TMP/l3-a"; mksrc "$L3A" a ".omakase/gates/a.sh=a"; L3AA="$(resolvep "$L3A")"
+L3B="$TMP/l3-b"; mksrc "$L3B" b ".omakase/gates/b.sh=b"; L3BB="$(resolvep "$L3B")"
+L3C="$TMP/l3-c"; mksrc "$L3C" c ".omakase/gates/c.sh=c"; L3CC="$(resolvep "$L3C")"
+R3="$TMP/l3-repo"; newrepo "$R3"; OMK3="$(omk_of "$R3")"
+gi "$R3" "$TMP/L3a.out" "$TMP/L3a.err" --source "$L3AA" >/dev/null 2>&1
+gi "$R3" "$TMP/L3b.out" "$TMP/L3b.err" --source "$L3BB" >/dev/null 2>&1
+snap_full "$OMK3" "$TMP/L3.omk.pre"
+gi "$R3" "$TMP/L3c.out" "$TMP/L3c.err" --source "$L3CC"; r3c=$?
+if ran_go "L3-cap" "$TMP/L3c.err" "$NOTICE_INIT"; then
+  is_exit "$r3c" 1 "L3: third source refused"
+  printf 'omakase: this repo already has 2 harnesses (%s, %s) — remove one first: omakase remove <source>\n' "$L3AA" "$L3BB" > "$TMP/L3.cap.exp"
+  cmp_exact "L3: cap stderr is exactly the GC5 cap line (em-dash)" "$TMP/L3c.err" "$TMP/L3.cap.exp"
+  [ ! -s "$TMP/L3c.out" ] && pass "L3: cap stdout empty" || fail "L3: cap wrote stdout"
+  hasnt "$TMP/L3.cap.exp" "already has 2 harnesses ($L3AA, $L3BB) - remove one first" "L3: hyphen-for-em-dash variant is not what the binary emitted"
+  snap_full "$OMK3" "$TMP/L3.omk.post"
+  same "L3: \$OMK byte-identical before/after the refused cap" "$TMP/L3.omk.pre" "$TMP/L3.omk.post"
+  gone "$R3/.omakase/gates/c.sh" "L3: third source's gate never placed"
+  clean_tree "$R3" "L3: working tree clean after the refused cap"
 fi
-# (b) suppressed by a tracked CLAUDE.md
-R3b="$TMP/l3repo-b"; newrepo "$R3b"
-printf 'TEAM CLAUDE\n' > "$R3b/CLAUDE.md"; ( cd "$R3b" && git add CLAUDE.md && git commit -q -m team )
-gi "$R3b" "$TMP/l3b.out" "$TMP/l3b.err" --source "$P3A"; r3b=$?
-if ran_go "L3b" "$TMP/l3b.err" "$NOTICE_INIT"; then
-  is_exit "$r3b" 0 "L3b: init succeeded"
-  [ ! -L "$R3b/CLAUDE.md" ] && pass "L3b: committed CLAUDE.md suppresses the bridge (not a symlink)" || fail "L3b: bridge overwrote a committed CLAUDE.md"
-  ok "$(cat "$R3b/CLAUDE.md")" "TEAM CLAUDE" "L3b: committed CLAUDE.md left byte-untouched"
-fi
-# (c) suppressed when the personal layer ships CLAUDE.md
-S3="$TMP/l3pers"; src_init "$S3"
-printf 'name: personal3\n' > "$S3/omakase.manifest"
-w "$S3/payload/CLAUDE.md" 'PERSONAL CLAUDE'
-src_commit "$S3" s3; S3A="$(resolvep "$S3")"
-set_personal "$S3A"
-R3c="$TMP/l3repo-c"; newrepo "$R3c"
-gi "$R3c" "$TMP/l3c.out" "$TMP/l3c.err" --source "$P3A"; r3c=$?
-if ran_go "L3c" "$TMP/l3c.err" "$NOTICE_INIT"; then
-  is_exit "$r3c" 0 "L3c: init succeeded"
-  [ ! -L "$R3c/CLAUDE.md" ] && pass "L3c: personal CLAUDE.md suppresses the bridge (not a symlink)" || fail "L3c: bridge placed despite a personal CLAUDE.md"
-  ok "$(cat "$R3c/CLAUDE.md" 2>/dev/null)" "PERSONAL CLAUDE" "L3c: personal CLAUDE.md placed as-is (whole-file wins)"
-fi
-clear_personal
 
 # ============================================================================
-# L4 — --no-personal: flag skips + persists (off-row), bare re-init keeps skipping
-# and prints the skipped line, personal-verb apply respects the off-row.
+# L4 — REMOVE TOP (GC7a): init A; init B; remove B  ≡  a fresh init-A-only repo.
+# Exact GC5 removed summary + per-file bullets; B's reroute swept; twin-diff.
 # ============================================================================
-echo "== L4: --no-personal skip + persistence + verb-apply respect =="
-P4="$TMP/l4proj"; src_init "$P4"
-printf 'name: proj4\n' > "$P4/omakase.manifest"
-w "$P4/payload/.omakase/gates/g.sh" 'g4'
-src_commit "$P4" p4; P4A="$(resolvep "$P4")"
-S4="$TMP/l4pers"; src_init "$S4"
-printf 'name: personal4\n' > "$S4/omakase.manifest"
-w "$S4/payload/AGENTS.md" 'personal doctrine'
-src_commit "$S4" s4; S4A="$(resolvep "$S4")"
-set_personal "$S4A"
-R4="$TMP/l4repo"; newrepo "$R4"; OMK4="$(omk_of "$R4")"
-# (1) init --source --no-personal → silent skip, off-row recorded
-gi "$R4" "$TMP/l4a.out" "$TMP/l4a.err" --source "$P4A" --no-personal; r4a=$?
-if ran_go "L4-1" "$TMP/l4a.err" "$NOTICE_INIT"; then
-  is_exit "$r4a" 0 "L4-1: init --no-personal succeeded"
-  [ ! -e "$R4/CLAUDE.local.md" ] && pass "L4-1: no personal layer placed" || fail "L4-1: --no-personal still placed CLAUDE.local.md"
-  hasnt "$TMP/l4a.out" "personal harness" "L4-1: freshly-given flag prints NO personal line"
-  ok "$(src_field "$OMK4/sources.tsv" 1 1)" "project"  "L4-1: sources row1 = project"
-  ok "$(src_field "$OMK4/sources.tsv" 2 1)" "personal" "L4-1: sources row2 = personal (the off row)"
-  ok "$(src_field "$OMK4/sources.tsv" 2 2)" "off"      "L4-1: personal row source = off"
-  e4="$(src_epoch_of "$OMK4/sources.tsv" personal off)"
-  echo "$e4" | grep -qE '^[0-9]+$' && pass "L4-1: off-row epoch is a unix decimal" || fail "L4-1: off-row epoch = '$e4'"
+echo "== L4: remove the TOP source; twin-diff to a fresh init-A-only repo =="
+L4A="$TMP/l4-a"; mksrc "$L4A" a "AGENTS.md=A doctrine" ".claude/rules/a.md=A rule" ".omakase/gates/shared.sh=A" ".omakase/gates/aonly.sh=A only"; L4AA="$(resolvep "$L4A")"
+L4B="$TMP/l4-b"; mksrc "$L4B" b "AGENTS.md=B doctrine" ".omakase/gates/shared.sh=B" ".omakase/gates/bonly.sh=B only"; L4BB="$(resolvep "$L4B")"
+R4="$TMP/l4-repo"; newrepo "$R4"; OMK4="$(omk_of "$R4")"
+gi "$R4" "$TMP/L4a.out" "$TMP/L4a.err" --source "$L4AA" >/dev/null 2>&1
+gi "$R4" "$TMP/L4b.out" "$TMP/L4b.err" --source "$L4BB" >/dev/null 2>&1
+rmv "$R4" "$TMP/L4r.out" "$TMP/L4r.err" "$L4BB"; r4r=$?
+if ran_go "L4-remove" "$TMP/L4r.err" "$NOTICE_REMOVE"; then
+  is_exit "$r4r" 0 "L4: remove B (top)"
+  # stdout is EXACTLY the summary + three bullets in lexical rel order (nothing else)
+  { printf 'omakase: removed %s — 2 file(s) deleted, 1 restored from %s\n' "$L4BB" "$L4AA"
+    printf '  - deleted: .omakase/gates/bonly.sh\n'
+    printf '  ^ restored: .omakase/gates/shared.sh\n'
+    printf '  - deleted: CLAUDE.local.md\n'; } > "$TMP/L4.rm.exp"
+  cmp_exact "L4: remove stdout is exactly the GC5 summary + bullets (em-dash, lexical bullets)" "$TMP/L4r.out" "$TMP/L4.rm.exp"
+  hasnt "$TMP/L4.rm.exp" "omakase: removed $L4BB - 2 file(s) deleted" "L4: hyphen-for-em-dash variant is not what the binary emitted"
+  # B's traces gone; A's survive
+  gone "$R4/CLAUDE.local.md" "L4: B's rerouted CLAUDE.local.md swept"
+  gone "$R4/.omakase/gates/bonly.sh" "L4: sole-B gate deleted"
+  ok "$(cat "$R4/.omakase/gates/shared.sh" 2>/dev/null)" "A" "L4: shared.sh restored to A's copy"
+  ok "$(cat "$R4/.omakase/gates/aonly.sh" 2>/dev/null)" "A only" "L4: A-only gate untouched"
+  ok "$(cat "$R4/AGENTS.md" 2>/dev/null)" "A doctrine" "L4: A still owns the root AGENTS.md"
+  ok "$(readlink "$R4/CLAUDE.md" 2>/dev/null)" "AGENTS.md" "L4: A's bridge intact"
+  ok "$(src_field "$OMK4/sources.tsv" 1 2)" "$L4AA" "L4: sources.tsv left with the sole A row"
+  gone "$OMK4/layers/2" "L4: layers/2 removed after top removal"
+  # twin: a repo that only ever installed A
+  R4T="$TMP/l4-twin"; newrepo "$R4T"
+  gi "$R4T" "$TMP/L4t.out" "$TMP/L4t.err" --source "$L4AA"; r4t=$?
+  ran_go "L4-twin" "$TMP/L4t.err" "$NOTICE_INIT" && is_exit "$r4t" 0 "L4: fresh init-A-only twin"
+  twin_equal "L4-twin" "$R4" "$R4T"
 fi
-# (2) bare re-init → still off, prints the skipped line, off-row epoch preserved
-gi "$R4" "$TMP/l4b.out" "$TMP/l4b.err"; r4b=$?
-if ran_go "L4-2" "$TMP/l4b.err" "$NOTICE_INIT"; then
-  is_exit "$r4b" 0 "L4-2: bare re-init succeeded"
-  [ ! -e "$R4/CLAUDE.local.md" ] && pass "L4-2: bare re-init keeps skipping the personal layer" || fail "L4-2: bare re-init placed a personal layer"
-  have "$TMP/l4b.out" "$SKIPPED_LINE" "L4-2: bare re-init prints the remembered-skip line"
-  ok "$(src_epoch_of "$OMK4/sources.tsv" personal off)" "$e4" "L4-2: off-row epoch preserved (no flag = no refresh)"
-fi
-# (3) personal-verb apply respects the off-row (announces, does not apply)
-S4b="$TMP/l4pers-b"; src_init "$S4b"
-printf 'name: personal4b\n' > "$S4b/omakase.manifest"
-w "$S4b/payload/AGENTS.md" 'later doctrine'
-src_commit "$S4b" s4b; S4bA="$(resolvep "$S4b")"
-pers "$R4" "$TMP/l4c.out" "$TMP/l4c.err" "$S4bA"; r4c=$?
-is_exit "$r4c" 0 "L4-3: personal set exit 0"
-have "$TMP/l4c.out" "omakase: personal harness set to ${S4bA} — layered on every omakase init from now on." "L4-3: set-line printed"
-have "$TMP/l4c.out" "$APPLY_OFF_LINE" "L4-3: apply respects the off-row (announces, no apply)"
-[ ! -e "$R4/CLAUDE.local.md" ] && pass "L4-3: no personal layer applied over the off-row" || fail "L4-3: verb applied a personal layer despite --no-personal"
-clear_personal
 
 # ============================================================================
-# L5 — `personal off` unlayers: overlap restored byte-exact, sole-personal clean
-# deleted (incl. CLAUDE.local.md), sole-personal edited kept + warned, placed.tsv +
-# sources.tsv + layers/ + exclude healed to the post-unlayer view.
+# L5 — REMOVE BOTTOM (GC7b): init A; init B; remove A  ≡  a fresh init-B-only repo.
+# The survivor B is re-folded with the base and its instructions UN-reroute back to
+# the root slot (+ bridge); twin-diff. (Counts vary with the base fold, so the
+# summary is pinned by its stable prefix/suffix, not its interior counts.)
 # ============================================================================
-echo "== L5: personal off (restore / delete / keep-warn / heal) =="
-P5="$TMP/l5proj"; src_init "$P5"
-printf 'name: proj5\n' > "$P5/omakase.manifest"
-w "$P5/payload/.claude/rules/r.md" 'proj rule'
-w "$P5/payload/.omakase/gates/shared.sh" 'PROJECT'
-src_commit "$P5" p5; P5A="$(resolvep "$P5")"
-S5="$TMP/l5pers"; src_init "$S5"
-printf 'name: personal5\n' > "$S5/omakase.manifest"
-w "$S5/payload/AGENTS.md" 'personal doctrine'          # -> CLAUDE.local.md, sole-personal clean (delete)
-w "$S5/payload/.omakase/gates/shared.sh" 'PERSONAL'    # overlaps project (restore)
-w "$S5/payload/.omakase/gates/ponly.sh" 'P ONLY'       # sole-personal clean (delete)
-w "$S5/payload/.omakase/gates/pedit.sh" 'P EDIT'       # sole-personal, will be edited (keep)
-src_commit "$S5" s5; S5A="$(resolvep "$S5")"
-set_personal "$S5A"
-R5="$TMP/l5repo"; newrepo "$R5"; OMK5="$(omk_of "$R5")"
-gi "$R5" "$TMP/l5i.out" "$TMP/l5i.err" --source "$P5A"; r5i=$?
-if ran_go "L5-init" "$TMP/l5i.err" "$NOTICE_INIT"; then
-  is_exit "$r5i" 0 "L5: init succeeded"
-  if [ "$r5i" -eq 0 ]; then
-    want "L5" "$TMP/l5i.out" "omakase: personal harness layered on top (${S5A}) — omakase personal off to remove it everywhere."
-    ok "$(cat "$R5/.omakase/gates/shared.sh")" "PERSONAL" "L5: precheck personal won shared.sh"
-    ok "$(cat "$R5/CLAUDE.local.md")" "personal doctrine" "L5: precheck CLAUDE.local.md present"
-    printf 'MY EDIT\n' > "$R5/.omakase/gates/pedit.sh"   # user edits a sole-personal file before unlayering
-    pers "$R5" "$TMP/l5o.out" "$TMP/l5o.err" off; r5o=$?
-    is_exit "$r5o" 0 "L5: personal off exit 0"
-    # stdout EXACTLY the two lines; stderr EXACTLY the keep-warn line
-    { printf '%s\n' "$CLEARED_LINE"; printf '%s\n' "omakase: personal layer removed from this repo (restored 1 file(s), deleted 2)."; } > "$TMP/l5.exp.out"
-    cmp -s "$TMP/l5o.out" "$TMP/l5.exp.out" && pass "L5: off stdout is exactly the cleared+removed lines" || { fail "L5: off stdout differs"; diff "$TMP/l5.exp.out" "$TMP/l5o.out" | sed 's/^/      /'; }
-    printf '%s\n' "omakase: WARNING — '.omakase/gates/pedit.sh' was placed by your personal layer, has no lower-layer copy to restore, and differs from what omakase placed (a local edit?). Leaving it; delete it yourself if unwanted." > "$TMP/l5.exp.err"
-    cmp -s "$TMP/l5o.err" "$TMP/l5.exp.err" && pass "L5: off stderr is exactly the edited-orphan keep-warn line" || { fail "L5: off stderr differs"; diff "$TMP/l5.exp.err" "$TMP/l5o.err" | sed 's/^/      /'; }
-    # working tree
-    ok "$(cat "$R5/.omakase/gates/shared.sh")" "PROJECT" "L5: overlap restored to the project copy byte-exact"
-    ok "$(cat "$R5/.omakase/gates/pedit.sh")" "MY EDIT" "L5: edited sole-personal file kept"
-    [ ! -e "$R5/.omakase/gates/ponly.sh" ] && pass "L5: clean sole-personal file deleted" || fail "L5: ponly.sh survived"
-    [ ! -e "$R5/CLAUDE.local.md" ] && pass "L5: rerouted CLAUDE.local.md deleted" || fail "L5: CLAUDE.local.md survived"
-    ok "$(cat "$R5/.claude/rules/r.md")" "proj rule" "L5: project-only file untouched"
-    # placed.tsv rewritten to the project view (label + hash)
-    ok "$(placed_col "$OMK5/placed.tsv" ".omakase/gates/shared.sh" 3)" "$P5A" "L5: shared.sh row rewritten to project label"
-    ok "$(placed_col "$OMK5/placed.tsv" ".omakase/gates/shared.sh" 4)" "$(digest_file "$P5/payload/.omakase/gates/shared.sh")" "L5: shared.sh row hash = project bytes"
-    for gone in CLAUDE.local.md .omakase/gates/ponly.sh .omakase/gates/pedit.sh; do
-      placed_has "$OMK5/placed.tsv" "$gone" && fail "L5: placed.tsv still lists personal path $gone" || pass "L5: placed.tsv dropped $gone"
-    done
-    # state: personal row gone, layers/personal gone, exclude drops CLAUDE.local.md
-    ok "$(src_field "$OMK5/sources.tsv" 1 1)" "project" "L5: sources.tsv left with one project row"
-    awk -F'\t' 'END{exit (NR==1)?0:1}' "$OMK5/sources.tsv" && pass "L5: sources.tsv has exactly one row" || fail "L5: sources.tsv row count wrong"
-    [ ! -e "$OMK5/layers/personal" ] && pass "L5: layers/personal removed" || fail "L5: layers/personal survived"
-    hasnt "$(common_of "$R5")/info/exclude" "CLAUDE.local.md" "L5: exclude block dropped the CLAUDE.local.md entry"
-    [ ! -e "$XDGC/omakase/personal" ] && pass "L5: global personal config cleared" || fail "L5: global config survived off"
-  else
-    fail "L5: skipping rest of L5 — init did not exit 0"
+echo "== L5: remove the BOTTOM source; survivor un-reroutes; twin-diff to fresh init-B =="
+L5A="$TMP/l5-a"; mksrc "$L5A" a "AGENTS.md=A doctrine" ".omakase/gates/a.sh=a gate"; L5AA="$(resolvep "$L5A")"
+L5B="$TMP/l5-b"; mksrc "$L5B" b "AGENTS.md=B doctrine" ".omakase/gates/b.sh=b gate"; L5BB="$(resolvep "$L5B")"
+R5="$TMP/l5-repo"; newrepo "$R5"; OMK5="$(omk_of "$R5")"
+gi "$R5" "$TMP/L5a.out" "$TMP/L5a.err" --source "$L5AA" >/dev/null 2>&1
+gi "$R5" "$TMP/L5b.out" "$TMP/L5b.err" --source "$L5BB" >/dev/null 2>&1
+ok "$(cat "$R5/CLAUDE.local.md" 2>/dev/null)" "B doctrine" "L5: precheck — B rerouted to CLAUDE.local.md at stack time"
+rmv "$R5" "$TMP/L5r.out" "$TMP/L5r.err" "$L5AA"; r5r=$?
+if ran_go "L5-remove" "$TMP/L5r.err" "$NOTICE_REMOVE"; then
+  is_exit "$r5r" 0 "L5: remove A (bottom)"
+  head -1 "$TMP/L5r.out" > "$TMP/L5.rm.head"
+  have "$TMP/L5.rm.head" "omakase: removed ${L5AA} — " "L5: removed-summary names A with the em-dash separator"
+  have "$TMP/L5.rm.head" " restored from ${L5BB}" "L5: removed-summary names B as the survivor"
+  hasnt "$TMP/L5.rm.head" "omakase: removed ${L5AA} - " "L5: hyphen-for-em-dash variant absent (compare is real)"
+  # survivor's instructions moved back to the root slot; the old reroute swept
+  ok "$(cat "$R5/AGENTS.md" 2>/dev/null)" "B doctrine" "L5: B's AGENTS.md un-rerouted to the root"
+  ok "$(readlink "$R5/CLAUDE.md" 2>/dev/null)" "AGENTS.md" "L5: survivor bridge placed after un-reroute"
+  gone "$R5/CLAUDE.local.md" "L5: stale CLAUDE.local.md swept"
+  gone "$OMK5/layers/1/rerouted" "L5: rebuilt survivor store carries no stale reroute marker"
+  ok "$(cat "$R5/.omakase/gates/b.sh" 2>/dev/null)" "b gate" "L5: survivor B's gate remains"
+  ok "$(src_field "$OMK5/sources.tsv" 1 2)" "$L5BB" "L5: sources.tsv renumbered to the sole survivor B (bottom)"
+  gone "$OMK5/layers/2" "L5: stale layers/2 dropped"
+  # twin: a repo that only ever installed B
+  R5T="$TMP/l5-twin"; newrepo "$R5T"
+  gi "$R5T" "$TMP/L5t.out" "$TMP/L5t.err" --source "$L5BB"; r5t=$?
+  ran_go "L5-twin" "$TMP/L5t.err" "$NOTICE_INIT" && is_exit "$r5t" 0 "L5: fresh init-B-only twin"
+  ok "$(cat "$R5T/AGENTS.md" 2>/dev/null)" "B doctrine" "L5: fresh init B places AGENTS.md at the free root"
+  twin_equal "L5-twin" "$R5" "$R5T"
+fi
+
+# ============================================================================
+# L6 — REMOVE UNKNOWN: `remove <bogus>` in a 2-stack refuses with the exact GC5
+# not-installed line naming the installed harnesses, exit 1, mutating NOTHING.
+# ============================================================================
+echo "== L6: remove an un-installed source name refuses, exit 1, zero mutation =="
+L6A="$TMP/l6-a"; mksrc "$L6A" a ".omakase/gates/a.sh=a"; L6AA="$(resolvep "$L6A")"
+L6B="$TMP/l6-b"; mksrc "$L6B" b ".omakase/gates/b.sh=b"; L6BB="$(resolvep "$L6B")"
+R6="$TMP/l6-repo"; newrepo "$R6"; OMK6="$(omk_of "$R6")"
+gi "$R6" "$TMP/L6a.out" "$TMP/L6a.err" --source "$L6AA" >/dev/null 2>&1
+gi "$R6" "$TMP/L6b.out" "$TMP/L6b.err" --source "$L6BB" >/dev/null 2>&1
+snap_full "$OMK6" "$TMP/L6.omk.pre"
+rmv "$R6" "$TMP/L6u.out" "$TMP/L6u.err" "nope/nope"; r6u=$?
+if ran_go "L6-unknown" "$TMP/L6u.err" "$NOTICE_REMOVE"; then
+  is_exit "$r6u" 1 "L6: unknown source refused"
+  printf "omakase: no harness 'nope/nope' installed here (installed: %s, %s)\n" "$L6AA" "$L6BB" > "$TMP/L6.exp"
+  cmp_exact "L6: stderr is exactly the GC5 not-installed line + installed list" "$TMP/L6u.err" "$TMP/L6.exp"
+  [ ! -s "$TMP/L6u.out" ] && pass "L6: unknown-source stdout empty" || fail "L6: unknown-source wrote stdout"
+  snap_full "$OMK6" "$TMP/L6.omk.post"
+  same "L6: \$OMK byte-identical after the refused unknown-source remove" "$TMP/L6.omk.pre" "$TMP/L6.omk.post"
+  clean_tree "$R6" "L6: working tree clean after the refused remove"
+fi
+
+# ============================================================================
+# L7 — INSTRUCTION STACKING: A ships AGENTS.md (root + bridge); init B shipping
+# AGENTS.md reroutes to CLAUDE.local.md + prints the fallback line; the reroute
+# sidecar is on layers/2; remove B restores the root ownership cleanly.
+# ============================================================================
+echo "== L7: §7 instruction stacking (root/bridge, reroute + sidecar, clean restore) =="
+L7A="$TMP/l7-a"; mksrc "$L7A" a "AGENTS.md=A doctrine"; L7AA="$(resolvep "$L7A")"
+L7B="$TMP/l7-b"; mksrc "$L7B" b "AGENTS.md=B doctrine"; L7BB="$(resolvep "$L7B")"
+R7="$TMP/l7-repo"; newrepo "$R7"; OMK7="$(omk_of "$R7")"
+gi "$R7" "$TMP/L7a.out" "$TMP/L7a.err" --source "$L7AA"; r7a=$?
+gi "$R7" "$TMP/L7b.out" "$TMP/L7b.err" --source "$L7BB"; r7b=$?
+if ran_go "L7-A" "$TMP/L7a.err" "$NOTICE_INIT" && ran_go "L7-B" "$TMP/L7b.err" "$NOTICE_INIT"; then
+  is_exit "$r7a" 0 "L7: init A"; is_exit "$r7b" 0 "L7: init B"
+  ok "$(cat "$R7/AGENTS.md" 2>/dev/null)" "A doctrine" "L7: A owns the root AGENTS.md"
+  ok "$(readlink "$R7/CLAUDE.md" 2>/dev/null)" "AGENTS.md" "L7: A gets the §7 bridge"
+  ok "$(cat "$R7/CLAUDE.local.md" 2>/dev/null)" "B doctrine" "L7: B's AGENTS.md rerouted to CLAUDE.local.md"
+  have "$TMP/L7b.out" "omakase: instructions from ${L7BB} -> CLAUDE.local.md (root slot taken)" "L7: B's slot-fallback narration exact"
+  printf 'CLAUDE.local.md\tAGENTS.md\n' > "$TMP/L7.reroute.exp"
+  cmp_exact "L7: layers/2 reroute sidecar = CLAUDE.local.md<TAB>AGENTS.md<LF>" "$OMK7/layers/2/rerouted" "$TMP/L7.reroute.exp"
+  gone "$OMK7/layers/1/rerouted" "L7: root-owner layer 1 has no reroute sidecar"
+  # remove B restores root ownership cleanly (CLAUDE.local.md gone; root still A's)
+  rmv "$R7" "$TMP/L7r.out" "$TMP/L7r.err" "$L7BB"; r7r=$?
+  if ran_go "L7-remove" "$TMP/L7r.err" "$NOTICE_REMOVE"; then
+    is_exit "$r7r" 0 "L7: remove B"
+    gone "$R7/CLAUDE.local.md" "L7: CLAUDE.local.md gone after remove B (root ownership restored cleanly)"
+    ok "$(cat "$R7/AGENTS.md" 2>/dev/null)" "A doctrine" "L7: A still owns the root AGENTS.md"
+    ok "$(readlink "$R7/CLAUDE.md" 2>/dev/null)" "AGENTS.md" "L7: A's bridge intact after remove B"
+    clean_tree "$R7" "L7: git status clean after remove B"
   fi
 fi
-clear_personal
 
 # ============================================================================
-# L6 — GC8 refusal: a store-less v1-era $OMK that STILL records a personal row →
-# `personal off` clears the global setting then refuses (exit 1, exact stderr).
+# L8 — COMMITTED INSTRUCTIONS: a repo commits its own CLAUDE.md, taking the root
+# slot. (a) a source shipping the canonical AGENTS.md reroutes to CLAUDE.local.md +
+# prints the fallback line (v2 slot-fallback); (b) a source shipping an EXPLICIT
+# CLAUDE.md is SKIPPED (v1 committed-file-wins). The committed file is untouched
+# in both.
 # ============================================================================
-echo "== L6: GC8 refuse-don't-guess (personal row, no layers/) =="
-R6="$TMP/l6repo"; newrepo "$R6"; OMK6="$(omk_of "$R6")"
-set_personal "you/harness"
-mkdir -p "$OMK6"
-printf '.omakase/gates/example.sh\tgate\tpayload\t%s\t1\n' "$(digest 'x')" > "$OMK6/placed.tsv"
-printf 'personal\tyou/harness\t-\tabc123\t1\n' > "$OMK6/sources.tsv"   # a personal row, but NO layers/
-pers "$R6" "$TMP/l6.out" "$TMP/l6.err" off; r6=$?
-is_exit "$r6" 1 "L6: off refuses (exit 1)"
-printf '%s\n' "$CLEARED_LINE" > "$TMP/l6.exp.out"
-cmp -s "$TMP/l6.out" "$TMP/l6.exp.out" && pass "L6: stdout is exactly the cleared line (global clear still happened)" || { fail "L6: stdout differs"; diff "$TMP/l6.exp.out" "$TMP/l6.out" | sed 's/^/      /'; }
-printf '%s\n' "$GC8_LINE" > "$TMP/l6.exp.err"
-cmp -s "$TMP/l6.err" "$TMP/l6.exp.err" && pass "L6: stderr is exactly the GC8 refusal" || { fail "L6: stderr differs"; diff "$TMP/l6.exp.err" "$TMP/l6.err" | sed 's/^/      /'; }
-[ ! -e "$XDGC/omakase/personal" ] && pass "L6: global config cleared before the refusal" || fail "L6: global config survived"
-clear_personal
-
-# ============================================================================
-# L7 — lazy v1→v2 synthesis: a genuine v1-era $OMK (legacy init, no sources.tsv) +
-# `omakase status` synthesizes sources.tsv (commit '-'); status stdout is invisible
-# to the migration (two back-to-back runs byte-identical).
-# ============================================================================
-echo "== L7: lazy sources.tsv synthesis on first v2 status =="
-P7="$TMP/l7src"; src_init "$P7"
-printf 'name: proj7\n' > "$P7/omakase.manifest"
-w "$P7/payload/.omakase/gates/g.sh" 'g7'
-src_commit "$P7" p7; P7A="$(resolvep "$P7")"
-clear_personal
-R7="$TMP/l7repo"; newrepo "$R7"; OMK7="$(omk_of "$R7")"
-leg_init "$R7" "$TMP/l7leg.out" "$TMP/l7leg.err" --source "$P7A"; r7leg=$?
-is_exit "$r7leg" 0 "L7: legacy init built the v1-era repo"
-[ ! -e "$OMK7/sources.tsv" ] && pass "L7: precondition — no sources.tsv after a v1 install" || fail "L7: v1 install already had sources.tsv"
-[ ! -e "$OMK7/layers" ] && pass "L7: precondition — no layers/ after a v1 install" || fail "L7: v1 install already had layers/"
-st "$R7" "$TMP/l7s1.out" "$TMP/l7s1.err"; r7s1=$?
-if ran_go "L7-status1" "$TMP/l7s1.err" "$NOTICE_STATUS"; then
-  is_exit "$r7s1" 0 "L7: first status exit 0"
-  [ -e "$OMK7/sources.tsv" ] && pass "L7: first status synthesized sources.tsv" || fail "L7: sources.tsv not synthesized"
-  ok "$(src_field "$OMK7/sources.tsv" 1 1)" "project" "L7: synthesized row layer = project"
-  ok "$(src_field "$OMK7/sources.tsv" 1 2)" "$P7A"    "L7: synthesized row source = the remembered \$OMK/source"
-  ok "$(src_field "$OMK7/sources.tsv" 1 4)" "-"        "L7: synthesized commit = '-' (never guessed)"
-  hasnt "$TMP/l7s1.err" "WARNING —" "L7: synthesis is silent (no mixed-era warning on first run)"
+echo "== L8: a committed CLAUDE.md — AGENTS.md reroutes (v2); an explicit CLAUDE.md is skipped (v1) =="
+# (a) canonical AGENTS.md payload -> reroute
+L8A="$TMP/l8-a"; mksrc "$L8A" a "AGENTS.md=A doctrine"; L8AA="$(resolvep "$L8A")"
+R8="$TMP/l8-repo"; newrepo "$R8"
+printf 'TEAM CLAUDE\n' > "$R8/CLAUDE.md"; ( cd "$R8" && git add CLAUDE.md && git commit -q -m team )
+gi "$R8" "$TMP/L8a.out" "$TMP/L8a.err" --source "$L8AA"; r8a=$?
+if ran_go "L8a" "$TMP/L8a.err" "$NOTICE_INIT"; then
+  is_exit "$r8a" 0 "L8a: init A over a committed CLAUDE.md"
+  ok "$(cat "$R8/CLAUDE.local.md" 2>/dev/null)" "A doctrine" "L8a: canonical AGENTS.md rerouted to CLAUDE.local.md (root slot taken)"
+  gone "$R8/AGENTS.md" "L8a: no root AGENTS.md placed (slot taken by committed CLAUDE.md)"
+  ok "$(cat "$R8/CLAUDE.md" 2>/dev/null)" "TEAM CLAUDE" "L8a: committed CLAUDE.md left byte-untouched"
+  [ ! -L "$R8/CLAUDE.md" ] && pass "L8a: committed CLAUDE.md is not a bridge symlink" || fail "L8a: bridge overwrote the committed CLAUDE.md"
+  have "$TMP/L8a.out" "omakase: instructions from ${L8AA} -> CLAUDE.local.md (root slot taken)" "L8a: slot-fallback line exact"
+  clean_tree "$R8" "L8a: git status clean"
 fi
-st "$R7" "$TMP/l7s2.out" "$TMP/l7s2.err"; r7s2=$?
-if ran_go "L7-status2" "$TMP/l7s2.err" "$NOTICE_STATUS"; then
-  cmp -s "$TMP/l7s1.out" "$TMP/l7s2.out" && pass "L7: status stdout byte-identical pre/post synthesis" || { fail "L7: status stdout changed after synthesis"; diff "$TMP/l7s1.out" "$TMP/l7s2.out" | sed 's/^/      /'; }
-  cmp -s "$TMP/l7s1.err" "$TMP/l7s2.err" && pass "L7: status stderr byte-identical pre/post synthesis" || { fail "L7: status stderr changed"; diff "$TMP/l7s1.err" "$TMP/l7s2.err" | sed 's/^/      /'; }
+# (b) explicit CLAUDE.md payload -> v1 skip (committed file wins)
+L8B="$TMP/l8-b"; mksrc "$L8B" b "CLAUDE.md=SOURCE CLAUDE" ".omakase/gates/g.sh=g"; L8BB="$(resolvep "$L8B")"
+R8b="$TMP/l8-repo-b"; newrepo "$R8b"
+printf 'TEAM CLAUDE\n' > "$R8b/CLAUDE.md"; ( cd "$R8b" && git add CLAUDE.md && git commit -q -m team )
+gi "$R8b" "$TMP/L8b.out" "$TMP/L8b.err" --source "$L8BB"; r8b=$?
+if ran_go "L8b" "$TMP/L8b.err" "$NOTICE_INIT"; then
+  is_exit "$r8b" 0 "L8b: init an explicit-CLAUDE.md source over a committed CLAUDE.md"
+  ok "$(cat "$R8b/CLAUDE.md" 2>/dev/null)" "TEAM CLAUDE" "L8b: committed CLAUDE.md wins (source CLAUDE.md skipped, v1 semantics)"
+  [ ! -L "$R8b/CLAUDE.md" ] && pass "L8b: CLAUDE.md is the committed regular file, not a symlink" || fail "L8b: source symlinked over the committed CLAUDE.md"
+  gone "$R8b/CLAUDE.local.md" "L8b: nothing rerouted (source shipped no canonical AGENTS.md)"
+  have "$TMP/L8b.err" "omakase: SKIP (already tracked) CLAUDE.md" "L8b: the committed CLAUDE.md is reported skipped"
+  ok "$(cat "$R8b/.omakase/gates/g.sh" 2>/dev/null)" "g" "L8b: the source's non-instruction file still placed"
+  clean_tree "$R8b" "L8b: git status clean"
 fi
 
 # ============================================================================
-# L8 — mixed-era: a v2 install, then a "v1 tool" repoints $OMK/source out from under
-# sources.tsv → status warns (axis 1); a bare init reheals (sources.tsv re-recorded).
+# L9 — HEAL: with A+B installed, deleting a B-won file and an A-only file, a bare
+# init re-places BOTH from the merged view and leaves sources.tsv untouched.
 # ============================================================================
-echo "== L8: mixed-era detection on status + reheal on init =="
-P8a="$TMP/l8src1"; src_init "$P8a"
-printf 'name: proj8a\n' > "$P8a/omakase.manifest"
-w "$P8a/payload/.omakase/gates/g.sh" 'g8a'
-src_commit "$P8a" p8a; P8aA="$(resolvep "$P8a")"
-P8b="$TMP/l8src2"; src_init "$P8b"
-printf 'name: proj8b\n' > "$P8b/omakase.manifest"
-w "$P8b/payload/.omakase/gates/g.sh" 'g8b'
-src_commit "$P8b" p8b; P8bA="$(resolvep "$P8b")"
-clear_personal
-R8="$TMP/l8repo"; newrepo "$R8"; OMK8="$(omk_of "$R8")"
-gi "$R8" "$TMP/l8i.out" "$TMP/l8i.err" --source "$P8aA"; r8i=$?
-if ran_go "L8-init" "$TMP/l8i.err" "$NOTICE_INIT"; then
-  is_exit "$r8i" 0 "L8: init succeeded"
-  if [ "$r8i" -eq 0 ]; then
-    ok "$(src_field "$OMK8/sources.tsv" 1 2)" "$P8aA" "L8: install recorded src1 in sources.tsv"
-    printf '%s\n' "$P8bA" > "$OMK8/source"   # the "v1 tool": repoint $OMK/source out from under sources.tsv
-    st "$R8" "$TMP/l8s.out" "$TMP/l8s.err"; r8s=$?
-    if ran_go "L8-status" "$TMP/l8s.err" "$NOTICE_STATUS"; then
-      have "$TMP/l8s.err" "$MIXED_AXIS1" "L8: status warns mixed-era (axis 1 parenthetical)"
-      have "$TMP/l8s.err" "run omakase init to reheal" "L8: status warning names the reheal path"
-    fi
-    gi "$R8" "$TMP/l8r.out" "$TMP/l8r.err"; r8r=$?
-    if ran_go "L8-reheal" "$TMP/l8r.err" "$NOTICE_INIT"; then
-      is_exit "$r8r" 0 "L8: reheal init exit 0"
-      n="$(grep -cF "a pre-layers omakase run changed this repo's source" "$TMP/l8r.err")"
-      ok "$n" "1" "L8: reheal init prints the mixed-era warning exactly once"
-      ok "$(src_field "$OMK8/sources.tsv" 1 2)" "$P8bA" "L8: sources.tsv re-recorded to src2 (reheal)"
-      c8="$(src_field "$OMK8/sources.tsv" 1 4)"; echo "$c8" | grep -qE '^[0-9a-f]{40}$' && pass "L8: reheal recorded a fresh resolved commit" || fail "L8: reheal commit = '$c8'"
-    fi
-  else
-    fail "L8: skipping rest of L8 — init did not exit 0"
+echo "== L9: bare init heals a stacked repo from the merged view (sources.tsv untouched) =="
+L9A="$TMP/l9-a"; mksrc "$L9A" a ".omakase/gates/shared.sh=A" ".claude/rules/a.md=A rule"; L9AA="$(resolvep "$L9A")"
+L9B="$TMP/l9-b"; mksrc "$L9B" b ".omakase/gates/shared.sh=B"; L9BB="$(resolvep "$L9B")"
+R9="$TMP/l9-repo"; newrepo "$R9"; OMK9="$(omk_of "$R9")"
+gi "$R9" "$TMP/L9a.out" "$TMP/L9a.err" --source "$L9AA" >/dev/null 2>&1
+gi "$R9" "$TMP/L9b.out" "$TMP/L9b.err" --source "$L9BB" >/dev/null 2>&1
+cp "$OMK9/sources.tsv" "$TMP/L9.sources.pre"
+rm -f "$R9/.omakase/gates/shared.sh" "$R9/.claude/rules/a.md"   # delete a B-won file + an A-only file
+gi "$R9" "$TMP/L9h.out" "$TMP/L9h.err"; r9h=$?
+if ran_go "L9-heal" "$TMP/L9h.err" "$NOTICE_INIT"; then
+  is_exit "$r9h" 0 "L9: bare init heals"
+  ok "$(cat "$R9/.omakase/gates/shared.sh" 2>/dev/null)" "B" "L9: B-won file re-placed from the merged view"
+  ok "$(cat "$R9/.claude/rules/a.md" 2>/dev/null)" "A rule" "L9: A-only file re-placed from the merged view"
+  same "L9: sources.tsv untouched by the heal" "$OMK9/sources.tsv" "$TMP/L9.sources.pre"
+  clean_tree "$R9" "L9: git status clean after the heal"
+fi
+
+# ============================================================================
+# L10 — MIGRATION + VOCABULARY: a genuine v1-era $OMK (legacy init, no sources.tsv /
+# no layers/) → `status` synthesizes the ordinal sources.tsv silently (commit '-',
+# two runs byte-identical); `remove <src>` before any v2 init hits RequireLayers;
+# the deleted `personal` verb is an unknown command (exit 2). Then the GC4 grep.
+# ============================================================================
+echo "== L10: lazy v1->v2 synthesis, RequireLayers refusal, deleted personal verb, GC4 vocab =="
+L10S="$TMP/l10-src"; mksrc "$L10S" proj ".omakase/gates/g.sh=g10"; L10SS="$(resolvep "$L10S")"
+R10="$TMP/l10-repo"; newrepo "$R10"; OMK10="$(omk_of "$R10")"
+leg_init "$R10" "$TMP/L10leg.out" "$TMP/L10leg.err" --source "$L10SS"; r10leg=$?
+is_exit "$r10leg" 0 "L10: legacy (v1) init built the v1-era repo"
+gone "$OMK10/sources.tsv" "L10: precondition — no sources.tsv after a v1 install"
+gone "$OMK10/layers" "L10: precondition — no layers/ after a v1 install"
+st "$R10" "$TMP/L10s1.out" "$TMP/L10s1.err"; r10s1=$?
+if ran_go "L10-status1" "$TMP/L10s1.err" "$NOTICE_STATUS"; then
+  is_exit "$r10s1" 0 "L10: first status"
+  present "$OMK10/sources.tsv" "L10: first status synthesized sources.tsv"
+  ok "$(src_field "$OMK10/sources.tsv" 1 1)" "1" "L10: synthesized row layer ordinal = 1"
+  ok "$(src_field "$OMK10/sources.tsv" 1 2)" "$L10SS" "L10: synthesized row source = the remembered \$OMK/source"
+  ok "$(src_field "$OMK10/sources.tsv" 1 4)" "-" "L10: synthesized commit = '-' (never guessed for a v1-era repo)"
+  hasnt "$TMP/L10s1.err" "WARNING —" "L10: synthesis is silent (no mixed-era warning)"
+fi
+st "$R10" "$TMP/L10s2.out" "$TMP/L10s2.err"; r10s2=$?
+if ran_go "L10-status2" "$TMP/L10s2.err" "$NOTICE_STATUS"; then
+  same "L10: status stdout byte-identical pre/post synthesis" "$TMP/L10s1.out" "$TMP/L10s2.out"
+fi
+# remove <src> before any v2 init → RequireLayers refusal (no layers/ store)
+rmv "$R10" "$TMP/L10r.out" "$TMP/L10r.err" "$L10SS"; r10r=$?
+if ran_go "L10-remove" "$TMP/L10r.err" "$NOTICE_REMOVE"; then
+  is_exit "$r10r" 1 "L10: remove <src> on a pre-layers repo refuses"
+  printf 'omakase: this repo predates layered state — run omakase init once first\n' > "$TMP/L10.reqlayers.exp"
+  cmp_exact "L10: stderr is exactly the RequireLayers refusal (em-dash)" "$TMP/L10r.err" "$TMP/L10.reqlayers.exp"
+  [ ! -s "$TMP/L10r.out" ] && pass "L10: RequireLayers refusal wrote no stdout" || fail "L10: RequireLayers refusal wrote stdout"
+fi
+# the deleted `personal` verb is an unknown command (exit 2)
+verb "$R10" "$TMP/L10p.out" "$TMP/L10p.err" personal off; r10p=$?
+is_exit "$r10p" 2 "L10: 'omakase personal' is now an unknown command"
+printf 'omakase: unknown command "personal"\n' > "$TMP/L10.personal.exp"
+cmp_exact "L10: unknown-command stderr names personal" "$TMP/L10p.err" "$TMP/L10.personal.exp"
+[ ! -s "$TMP/L10p.out" ] && pass "L10: personal verb wrote no stdout" || fail "L10: personal verb wrote stdout"
+
+# ============================================================================
+# L11 — REMOVE STRANDS WIRING (Fix G): srcA ships a gate script; srcE ships ONLY a
+# lefthook-local.yml that runs it. A merge init blesses the pair (the wiring guard
+# runs against the MERGED tree, where the script is present). remove A (the script
+# supplier) would delete the script but keep E's wiring -> every commit would fail
+# exit 127. remove A must REFUSE before any mutation (exit 1, names the stranded
+# script, zero $OMK mutation, repo still committable). remove E strands nothing.
+# ============================================================================
+echo "== L11: remove refuses when it would strand the survivor's hook wiring (Fix G) =="
+L11A="$TMP/l11-a"; mksrc "$L11A" a ".omakase/gates/gate-a.sh=true"; L11AA="$(resolvep "$L11A")"
+L11E="$TMP/l11-e"; src_init "$L11E"; printf 'name: e\n' > "$L11E/omakase.manifest"
+mkdir -p "$L11E/payload"; printf 'pre-commit:\n  jobs:\n    - run: bash .omakase/gates/gate-a.sh\n' > "$L11E/payload/lefthook-local.yml"
+src_commit "$L11E" e; L11EE="$(resolvep "$L11E")"
+R11="$TMP/l11-repo"; newrepo "$R11"; OMK11="$(omk_of "$R11")"
+gi "$R11" "$TMP/L11a.out" "$TMP/L11a.err" --source "$L11AA" >/dev/null 2>&1
+gi "$R11" "$TMP/L11e.out" "$TMP/L11e.err" --source "$L11EE"; r11e=$?
+if ran_go "L11-initE" "$TMP/L11e.err" "$NOTICE_INIT"; then
+  is_exit "$r11e" 0 "L11: init E succeeds (merged wiring guard passes — gate-a.sh present)"
+  snap_full "$OMK11" "$TMP/L11.omk.pre"
+  rmv "$R11" "$TMP/L11rA.out" "$TMP/L11rA.err" "$L11AA"; r11ra=$?
+  if ran_go "L11-removeA" "$TMP/L11rA.err" "$NOTICE_REMOVE"; then
+    is_exit "$r11ra" 1 "L11: remove A refused (would strand E's wiring)"
+    have "$TMP/L11rA.err" "refusing to remove ${L11AA}" "L11: refusal names the removed harness"
+    have "$TMP/L11rA.err" ".omakase/gates/gate-a.sh" "L11: refusal names the stranded script"
+    [ ! -s "$TMP/L11rA.out" ] && pass "L11: refusal wrote no stdout" || fail "L11: refusal wrote stdout"
+    snap_full "$OMK11" "$TMP/L11.omk.post"
+    same "L11: \$OMK byte-identical after the refused remove" "$TMP/L11.omk.pre" "$TMP/L11.omk.post"
+    present "$R11/.omakase/gates/gate-a.sh" "L11: gate-a.sh still present after the refusal (repo committable)"
+    clean_tree "$R11" "L11: working tree clean after the refused remove"
+  fi
+  # remove E instead strands nothing (survivor A's own wiring references only shipped scripts)
+  rmv "$R11" "$TMP/L11rE.out" "$TMP/L11rE.err" "$L11EE"; r11re=$?
+  if ran_go "L11-removeE" "$TMP/L11rE.err" "$NOTICE_REMOVE"; then
+    is_exit "$r11re" 0 "L11: remove E works (strands nothing)"
+    ok "$(src_field "$OMK11/sources.tsv" 1 2)" "$L11AA" "L11: sources.tsv left with the sole A row"
+    present "$R11/.omakase/gates/gate-a.sh" "L11: gate-a.sh survives remove E"
   fi
 fi
 
-# ============================================================================
-# L9 — base-only invariance (GC2): no source, no personal → NO sources.tsv, NO
-# layers/, no new summary lines, col3 stays 'payload'; twin repos self-consistent.
-# ============================================================================
-echo "== L9: base-only install writes no layer artifacts (GC2) =="
-BP9="$TMP/l9base"; rm -rf "$BP9"; mkdir -p "$BP9/.omakase/gates"
-printf '#!/bin/sh\ntrue\n' > "$BP9/.omakase/gates/ex.sh"
-clear_personal
-A9="$TMP/l9A"; B9="$TMP/l9B"; newrepo "$A9"; newrepo "$B9"; OMKA9="$(omk_of "$A9")"; OMKB9="$(omk_of "$B9")"
-EXTRA_ENV="OMAKASE_PAYLOAD=$BP9"
-gi "$A9" "$TMP/l9A.out" "$TMP/l9A.err"; r9a=$?
-gi "$B9" "$TMP/l9B.out" "$TMP/l9B.err"; r9b=$?
-EXTRA_ENV=""
-if ran_go "L9A" "$TMP/l9A.err" "$NOTICE_INIT" && ran_go "L9B" "$TMP/l9B.err" "$NOTICE_INIT"; then
-  is_exit "$r9a" 0 "L9: twin A init succeeded"
-  is_exit "$r9b" 0 "L9: twin B init succeeded"
-  for pair in "A9:$OMKA9" "B9:$OMKB9"; do
-    lbl="${pair%%:*}"; omk="${pair#*:}"
-    [ ! -e "$omk/sources.tsv" ] && pass "L9($lbl): no sources.tsv" || fail "L9($lbl): sources.tsv written for a base-only install"
-    [ ! -e "$omk/layers" ] && pass "L9($lbl): no layers/" || fail "L9($lbl): layers/ created for a base-only install"
-    bad="$(awk -F'\t' '$3!="payload"{print; exit}' "$omk/placed.tsv")"
-    [ -z "$bad" ] && pass "L9($lbl): every placed.tsv col3 stays 'payload'" || fail "L9($lbl): a col3 diverged: $bad"
-    placed_has "$omk/placed.tsv" ".omakase/gates/ex.sh" && pass "L9($lbl): base payload file actually placed (.omakase/gates/ex.sh in placed.tsv col1)" || fail "L9($lbl): base payload file MISSING from placed.tsv"
-  done
-  hasnt "$TMP/l9A.out" "personal harness" "L9: base-only stdout carries no personal line"
-  # self-consistency across twins (path-free artifacts compared byte-for-byte)
-  cmp -s <(sort "$OMKA9/placed.tsv") <(sort "$OMKB9/placed.tsv") && pass "L9: twin placed.tsv identical (sorted)" || { fail "L9: twin placed.tsv differ"; diff <(sort "$OMKA9/placed.tsv") <(sort "$OMKB9/placed.tsv") | sed 's/^/      /'; }
-  bl(){ awk '/# >>> omakase-harness >>>/{s=1;next} /# <<< omakase-harness <<</{s=0} s' "$1" | sort; }
-  cmp -s <(bl "$(common_of "$A9")/info/exclude") <(bl "$(common_of "$B9")/info/exclude") && pass "L9: twin exclude blocks identical (sorted)" || fail "L9: twin exclude blocks differ"
-fi
-
-# ============================================================================
-# L10 — remove tears a layered repo all the way back to its pre-init tree (bridge
-# symlink + CLAUDE.local.md + $OMK all gone; roundtrip discipline).
-# ============================================================================
-echo "== L10: remove restores a layered repo to its pre-init tree =="
-P10="$TMP/l10proj"; src_init "$P10"
-printf 'name: proj10\n' > "$P10/omakase.manifest"
-w "$P10/payload/AGENTS.md" 'proj doctrine'           # -> bridge CLAUDE.md symlink
-w "$P10/payload/.omakase/gates/g.sh" 'g10'
-src_commit "$P10" p10; P10A="$(resolvep "$P10")"
-S10="$TMP/l10pers"; src_init "$S10"
-printf 'name: personal10\n' > "$S10/omakase.manifest"
-w "$S10/payload/AGENTS.md" 'personal doctrine'       # -> CLAUDE.local.md
-src_commit "$S10" s10; S10A="$(resolvep "$S10")"
-set_personal "$S10A"
-R10="$TMP/l10repo"; newrepo "$R10"; OMK10="$(omk_of "$R10")"
-printf 'my notes\n' > "$R10/notes-user.txt"   # an untracked user file the roundtrip must preserve
-snap_tree "$R10" > "$TMP/l10.pretree"
-gi "$R10" "$TMP/l10i.out" "$TMP/l10i.err" --source "$P10A"; r10i=$?
-if ran_go "L10-init" "$TMP/l10i.err" "$NOTICE_INIT"; then
-  is_exit "$r10i" 0 "L10: init succeeded"
-  if [ "$r10i" -eq 0 ]; then
-    [ -L "$R10/CLAUDE.md" ] && pass "L10: bridge symlink placed by the layered install" || fail "L10: no bridge symlink to tear down"
-    ok "$(cat "$R10/CLAUDE.local.md" 2>/dev/null)" "personal doctrine" "L10: CLAUDE.local.md placed by the layered install"
-    rmv "$R10" "$TMP/l10r.out" "$TMP/l10r.err"; r10r=$?
-    if ran_go "L10-remove" "$TMP/l10r.err" "$NOTICE_REMOVE"; then
-      is_exit "$r10r" 0 "L10: remove exit 0"
-      have "$TMP/l10r.out" "omakase: removed." "L10: remove prints its done line"
-      [ ! -L "$R10/CLAUDE.md" ] && [ ! -e "$R10/CLAUDE.md" ] && pass "L10: bridge symlink gone" || fail "L10: CLAUDE.md survived remove"
-      [ ! -e "$R10/CLAUDE.local.md" ] && pass "L10: CLAUDE.local.md gone" || fail "L10: CLAUDE.local.md survived remove"
-      [ ! -e "$OMK10" ] && pass "L10: \$OMK deleted" || fail "L10: \$OMK survived remove"
-      snap_tree "$R10" > "$TMP/l10.posttree"
-      cmp -s "$TMP/l10.pretree" "$TMP/l10.posttree" && pass "L10: repo byte-restored to its pre-init tree" || { fail "L10: tree not restored"; diff "$TMP/l10.pretree" "$TMP/l10.posttree" | sed 's/^/      /'; }
-    fi
-  else
-    fail "L10: skipping rest of L10 — init did not exit 0"
-  fi
-fi
-clear_personal
+# ---- GC4 vocabulary grep (CONTROLLER RULING) ----
+# Scope: (a) the binary's usage/help output (main usage + each verb's -h) and (b)
+# the captured stdout/stderr of the L1-L9 scenario runs. Assert neither carries the
+# token `personal` nor `add` as a STANDALONE VERB TOKEN. Grep is case-SENSITIVE
+# whole-word lowercase: verbs are lowercase, so prose "Add this command"/lefthook's
+# "Added config" (both current, non-frozen strings) are correctly NOT verb tokens.
+# Explicitly NOT grepped: the binary itself, legacy bash bodies, or v1-frozen
+# collision/cut-over strings — none of which the L1-L9 scenarios exercise.
+verb "$R10" "$TMP/help-main.out" "$TMP/help-main.err"                # main usage (no verb) -> exit 2
+verb "$R10" "$TMP/help-init.out" "$TMP/help-init.err" init -h
+verb "$R10" "$TMP/help-remove.out" "$TMP/help-remove.err" remove -h
+RCLEAN="$TMP/l10-clean"; newrepo "$RCLEAN"
+verb "$RCLEAN" "$TMP/help-status.out" "$TMP/help-status.err" status -h
+GC4_FILES="$TMP/help-main.out $TMP/help-main.err $TMP/help-init.out $TMP/help-init.err $TMP/help-remove.out $TMP/help-remove.err $TMP/help-status.out $TMP/help-status.err"
+# L1-L9 captures only: exclude every L1x file (L10 deliberately carries the
+# 'personal' unknown-command string and the RequireLayers refusal; L11+ are
+# later-added Phase-3.5 fix scenarios — neither is verb vocab). `/L1[0-9]` excludes
+# L10..L19 while keeping L1..L9 (`/L1a` etc. have no digit after L1).
+GC4_FILES="$GC4_FILES $(ls "$TMP"/L*.out "$TMP"/L*.err 2>/dev/null | grep -vE '/L1[0-9]')"
+if grep -wln 'personal' $GC4_FILES 2>/dev/null | grep -q .; then
+  fail "L10/GC4: a 'personal' verb token leaked into help or an L1-L9 capture"; grep -wln 'personal' $GC4_FILES | sed 's/^/      /'
+else pass "L10/GC4: no 'personal' token in usage/help or any L1-L9 output"; fi
+if grep -wln 'add' $GC4_FILES 2>/dev/null | grep -q .; then
+  fail "L10/GC4: an 'add' standalone verb token leaked into help or an L1-L9 capture"; grep -wln 'add' $GC4_FILES | sed 's/^/      /'
+else pass "L10/GC4: no 'add' standalone verb token in usage/help or any L1-L9 output"; fi
 
 rm -rf "$TMP"
 echo ""

@@ -13,7 +13,7 @@ import (
 // wording drift in migrate.go fails loudly. Shared, one line, all verbs.
 const (
 	wantMixedAxis1 = "omakase: WARNING — a pre-layers omakase run changed this repo's source ($OMK/source disagrees with sources.tsv); run omakase init to reheal.\n"
-	wantMixedAxis2 = "omakase: WARNING — a pre-layers omakase run changed this repo's source (personal layer missing from placed.tsv); run omakase init to reheal.\n"
+	wantMixedAxis2 = "omakase: WARNING — a pre-layers omakase run changed this repo's source (a stacked layer is missing from placed.tsv); run omakase init to reheal.\n"
 	wantGC8Refusal = "omakase: this repo predates layered state — run omakase init once first\n"
 )
 
@@ -50,15 +50,15 @@ func TestEnsureSourcesSynthesizesFromV1(t *testing.T) {
 		t.Fatalf("rows = %d, want 1: %+v", len(rows), rows)
 	}
 	r := rows[0]
-	if r.Layer != "project" || r.Source != "acme/harness" || r.Ref != "-" || r.Commit != "-" {
-		t.Errorf("row = %+v, want {project acme/harness - - <epoch>}", r)
+	if r.Layer != "1" || r.Source != "acme/harness" || r.Ref != "-" || r.Commit != "-" {
+		t.Errorf("row = %+v, want {1 acme/harness - - <epoch>}", r)
 	}
 	if !allDigits(r.Epoch) {
 		t.Errorf("epoch = %q, want unix digits", r.Epoch)
 	}
 	// The file was written; its non-epoch prefix is byte-frozen.
 	got := readFileT(t, filepath.Join(omk, "sources.tsv"))
-	wantPrefix := "project\tacme/harness\t-\t-\t"
+	wantPrefix := "1\tacme/harness\t-\t-\t"
 	if !strings.HasPrefix(got, wantPrefix) || !strings.HasSuffix(got, "\n") {
 		t.Errorf("sources.tsv = %q, want prefix %q + epoch + newline", got, wantPrefix)
 	}
@@ -144,7 +144,7 @@ func TestEnsureSourcesMixedEraAxis1(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(omk, "source"), "other/harness\n") // v1 tool rewrote this
-	writeFile(t, filepath.Join(omk, "sources.tsv"), "project\tacme/harness\t-\tdeadbeef\t1700000000\n")
+	writeFile(t, filepath.Join(omk, "sources.tsv"), "1\tacme/harness\t-\tdeadbeef\t1700000000\n")
 
 	var stderr strings.Builder
 	rows := EnsureSources(omk, &stderr)
@@ -156,9 +156,10 @@ func TestEnsureSourcesMixedEraAxis1(t *testing.T) {
 	}
 }
 
-// TestEnsureSourcesMixedEraAxis2: a personal row is recorded but no placed.tsv row
-// carries its label (a v1 orphan sweep ate the personal layer) → the axis-2
-// warning. The project row AGREES with $OMK/source, so axis 1 does not fire.
+// TestEnsureSourcesMixedEraAxis2: a stacked row (layer "2") is recorded but no
+// placed.tsv row carries its label (a v1 orphan sweep ate the stacked layer) → the
+// axis-2 warning. The bottom row (layer "1") AGREES with $OMK/source, so axis 1 does
+// not fire.
 func TestEnsureSourcesMixedEraAxis2(t *testing.T) {
 	omk := filepath.Join(t.TempDir(), "omakase")
 	if err := os.MkdirAll(omk, 0o755); err != nil {
@@ -166,9 +167,9 @@ func TestEnsureSourcesMixedEraAxis2(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(omk, "source"), "acme/harness\n")
 	writeFile(t, filepath.Join(omk, "sources.tsv"),
-		"project\tacme/harness\t-\tdeadbeef\t1700000000\n"+
-			"personal\tyou/harness\t-\tcafef00d\t1700000000\n")
-	// placed.tsv carries only a project-labelled row — no you/harness row.
+		"1\tacme/harness\t-\tdeadbeef\t1700000000\n"+
+			"2\tyou/harness\t-\tcafef00d\t1700000000\n")
+	// placed.tsv carries only a bottom-layer-labelled row — no you/harness row.
 	writeFile(t, filepath.Join(omk, "placed.tsv"), ".omakase/gates/example.sh\tgate\tacme/harness\tdeadbeef\t1\n")
 
 	var stderr strings.Builder
@@ -179,7 +180,7 @@ func TestEnsureSourcesMixedEraAxis2(t *testing.T) {
 }
 
 // TestEnsureSourcesConsistentSilent: sources.tsv agrees with $OMK/source AND the
-// personal layer is present in placed.tsv → no warning at all.
+// stacked layer is present in placed.tsv → no warning at all.
 func TestEnsureSourcesConsistentSilent(t *testing.T) {
 	omk := filepath.Join(t.TempDir(), "omakase")
 	if err := os.MkdirAll(omk, 0o755); err != nil {
@@ -187,8 +188,8 @@ func TestEnsureSourcesConsistentSilent(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(omk, "source"), "acme/harness\n")
 	writeFile(t, filepath.Join(omk, "sources.tsv"),
-		"project\tacme/harness\t-\tdeadbeef\t1700000000\n"+
-			"personal\tyou/harness\t-\tcafef00d\t1700000000\n")
+		"1\tacme/harness\t-\tdeadbeef\t1700000000\n"+
+			"2\tyou/harness\t-\tcafef00d\t1700000000\n")
 	writeFile(t, filepath.Join(omk, "placed.tsv"),
 		"CLAUDE.local.md\tdoc\tyou/harness\tcafef00d\t1\n")
 
@@ -242,8 +243,8 @@ func TestInitRehealsMixedEraAxis1(t *testing.T) {
 	}
 	// Reheal outcome: sources.tsv now names src2 with a resolved commit.
 	rows := state.ReadSources(filepath.Join(repo.OMK, "sources.tsv"))
-	if len(rows) != 1 || rows[0].Layer != "project" || rows[0].Source != src2 {
-		t.Fatalf("post-reheal sources.tsv = %+v, want one {project %s -} row", rows, src2)
+	if len(rows) != 1 || rows[0].Layer != "1" || rows[0].Source != src2 {
+		t.Fatalf("post-reheal sources.tsv = %+v, want one {1 %s -} row", rows, src2)
 	}
 	eq(t, "reheal commit", rows[0].Commit, wantResolvedCommit(t, src2))
 }

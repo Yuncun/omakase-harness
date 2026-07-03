@@ -14,13 +14,25 @@ the payload no longer ships, unless it was edited locally.
   run after `share`: `omakase init you/harness`. A real local path with the same shape wins
   over the shorthand.
 - `--source <git-url|path>` — install from a custom harness (a `payload/` tree plus an
-  `omakase.manifest`). The omakase base harness's payload is layered UNDER the custom harness's
-  payload (base machinery underneath, the custom harness's delta winning on overlap), so a
-  custom harness ships only its delta and relies on base machinery without keeping its own copy
-  — the same base+delta merge `tools/build.sh` bakes into a bundle, done at install time.
-  Refuses (placing nothing) if the merged hook wiring references a `.omakase/*.sh` script
-  neither side ships. The custom harness is remembered; a later bare `init` refreshes and
-  reinstalls it.
+  `omakase.manifest`). No harness installed yet: the omakase base harness's payload is
+  layered UNDER the custom harness's payload (base machinery underneath, the custom
+  harness's delta winning on overlap), so a custom harness ships only its delta and
+  relies on base machinery without keeping its own copy — the same base+delta merge
+  `tools/build.sh` bakes into a bundle, done at install time. One harness already
+  installed and this source names the SAME one: repairs it. (Design intent, Phase 4,
+  not yet shipped: repair at the recorded pin, offline, with `update` the only verb
+  that fetches anything newer. Today a repair re-fetches the source's ref and
+  re-records whatever commit currently resolves — `sources.tsv` records the resolved
+  commit on every install/repair, but nothing reads it back to skip the fetch.) One
+  harness installed and this source names a DIFFERENT one: **stacks** it on top — both
+  harnesses' files stay live, the new one wins where both ship the same path (printed as `stacked <new> on
+  top of <old>` plus one `^ overrides` line per shadowed path). Two harnesses already
+  installed: a third, different source is refused (exit 1, nothing changed) — remove
+  one first (`omakase remove <source>`). Refuses (placing nothing) if the merged hook
+  wiring references a `.omakase/*.sh` script neither side ships. Each installed
+  harness is remembered; a later bare `init` refreshes and reinstalls all of them —
+  again, design intent is "at their recorded pins"; today it re-fetches each one's ref
+  and re-records whatever commit currently resolves.
 - `--cut-over` — also untrack (`git rm --cached`) every payload path the repo currently
   tracks, so the installed copy takes over. Guarded: refuses without
   `OMAKASE_CUTOVER_CONFIRM=1`.
@@ -28,13 +40,26 @@ the payload no longer ships, unless it was edited locally.
 ### `status.sh [--markdown]`
 
 Prints the installed harness: the inventory grouped by origin (committed, injected,
-personal), the hook wiring, the run ledger, and the paths hidden via `.git/info/exclude`.
+global), the hook wiring, the run ledger, and the paths hidden via `.git/info/exclude`.
 `--markdown` emits formatted Markdown. Read-only.
 
-### `remove.sh`
+### `remove.sh [<source>]`
 
-Uninstalls hooks, deletes exactly the untracked files `init` placed, and strips the
-omakase block from `.git/info/exclude`. Tracked files are never touched.
+With no argument: uninstalls hooks, deletes exactly the untracked files `init`
+placed, and strips the omakase block from `.git/info/exclude`. Tracked files are
+never touched.
+
+With `<source>`: removes just that one harness (matched by its source string or its
+`source#ref` label) and restores whatever it had shadowed from the OTHER installed
+harness — offline, no network fetch. Un-reroute is wired to **removing the BOTTOM
+harness only**: that hands the root instruction slot back to the surviving harness
+(see the instruction file mapping below), moving its own rerouted `AGENTS.md` back to
+the root if nothing else claims the slot. Removing the TOP harness never un-reroutes,
+even in the narrow case where the TOP harness ended up owning the slot — that survivor
+stays stuck in `CLAUDE.local.md` (a known, deferred limitation; see v2-design.md §8).
+An unrecognized `<source>` errors and changes nothing. With
+only one harness installed, `remove <source>` for it behaves exactly like the
+no-argument form.
 
 ### `share.sh [<name>]`
 
@@ -77,23 +102,25 @@ lines.
 
 ## Instruction file mapping
 
-A harness ships ONE instruction file, `payload/AGENTS.md`. This table is the per-layer,
+A harness ships ONE instruction file, `payload/AGENTS.md`. This table is the
 per-path fan-out `init` applies to it (and to an explicitly shipped `CLAUDE.md` or
 `.github/copilot-instructions.md`) — the mirror of the literal data table in the binary
 (v2 design §7); swap rows here and there together when the AGENTS.md standard converges.
 `rel` is matched as a repo-root-relative path, never a basename (`AGENTS.md` is the ROOT
-one only; `docs/AGENTS.md` falls through to "as-is"). Overlap between layers is whole-file,
-higher layer wins — never a content merge.
+one only; `docs/AGENTS.md` falls through to "as-is"). Overlap between harnesses is
+whole-file, later-installed harness wins — never a content merge. Root-slot ownership is
+temporal, not role-based: whichever installed harness FIRST ships a root `AGENTS.md`
+owns the slot for as long as it stays installed.
 
-| Payload file | Layer | Claude Code | Copilot CLI |
+| Payload file | Root slot | Claude Code | Copilot CLI |
 |---|---|---|---|
-| `AGENTS.md` | project | placed as-is + bridge `CLAUDE.md → AGENTS.md` (symlink; **only if** no layer and no committed file provides `CLAUDE.md`) | reads root `AGENTS.md` natively — nothing extra placed |
-| `CLAUDE.md` (shipped explicitly) | any | as-is; whole-file, later layer wins; committed copy skipped as always | reads root `CLAUDE.md` natively |
-| `AGENTS.md` | personal | **rerouted to `CLAUDE.local.md`** — Claude's additive gitignored slot; personal instructions ADD to the project's, never replace | **honest gap — DECIDED, §8** (Copilot has no per-repo gitignored personal slot; personal instructions are Claude-only for now) |
-| `.github/copilot-instructions.md` | any | — | as-is (file-level exclude under the shared `.github` topdir) |
+| `AGENTS.md` | free (no committed `AGENTS.md`/`CLAUDE.md` at root, and no already-installed harness owns the slot) | placed as-is at root + bridge `CLAUDE.md → AGENTS.md` (symlink; **only if** nothing already provides `CLAUDE.md`) | reads root `AGENTS.md` natively — nothing extra placed |
+| `AGENTS.md` | taken | **rerouted to `CLAUDE.local.md`** — Claude Code's additive, gitignored slot; these instructions ADD to whatever owns the root slot, never replace it | **honest gap — §8** (Copilot has no per-repo gitignored additive slot; a rerouted file is Claude-only for now) |
+| `CLAUDE.md` (shipped explicitly) | n/a | as-is; whole-file, later harness wins; committed copy skipped as always | reads root `CLAUDE.md` natively |
+| `.github/copilot-instructions.md` | n/a | — | as-is (file-level exclude under the shared `.github` topdir) |
 
 The bridge symlink hashes its target string (`AGENTS.md`), is a normal placed row owned by
-the project layer, and is reversed by `remove` like any other placement.
+the root-slot-owning harness, and is reversed by `remove` like any other placement.
 
 ## Path classification
 

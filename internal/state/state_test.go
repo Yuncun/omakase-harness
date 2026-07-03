@@ -486,8 +486,8 @@ func TestWriteSourcesHappyPathExactBytes(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "sources.tsv")
 	rows := []SourceRow{
-		{Layer: "project", Source: "https://github.com/owner/repo", Ref: "main", Commit: "abc123", Epoch: "1700000000"},
-		{Layer: "personal", Source: "https://github.com/me/dotfiles", Ref: "-", Commit: "-", Epoch: "1700000002"},
+		{Layer: "1", Source: "https://github.com/owner/repo", Ref: "main", Commit: "abc123", Epoch: "1700000000"},
+		{Layer: "2", Source: "https://github.com/me/dotfiles", Ref: "-", Commit: "-", Epoch: "1700000002"},
 	}
 	if err := WriteSources(p, rows); err != nil {
 		t.Fatalf("WriteSources: %v", err)
@@ -497,29 +497,12 @@ func TestWriteSourcesHappyPathExactBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Hand-computed literal per the frozen format (design §5): one row bottom-to-top.
-	want := "project\thttps://github.com/owner/repo\tmain\tabc123\t1700000000\n" +
-		"personal\thttps://github.com/me/dotfiles\t-\t-\t1700000002\n"
+	// Hand-computed literal per the frozen format (GC6): one row bottom-to-top,
+	// layer = the ordinal string ("1" bottom, "2" top).
+	want := "1\thttps://github.com/owner/repo\tmain\tabc123\t1700000000\n" +
+		"2\thttps://github.com/me/dotfiles\t-\t-\t1700000002\n"
 	if string(got) != want {
 		t.Errorf("WriteSources bytes = %q, want %q", got, want)
-	}
-}
-
-func TestWriteSourcesPersonalOffRowExactBytes(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "sources.tsv")
-	rows := []SourceRow{{Layer: "personal", Source: "off", Ref: "-", Commit: "-", Epoch: "1700000003"}}
-	if err := WriteSources(p, rows); err != nil {
-		t.Fatalf("WriteSources: %v", err)
-	}
-
-	got, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "personal\toff\t-\t-\t1700000003\n"
-	if string(got) != want {
-		t.Errorf("WriteSources(personal off) bytes = %q, want %q", got, want)
 	}
 }
 
@@ -544,7 +527,7 @@ func TestWriteSourcesEmptyRowsTruncates(t *testing.T) {
 func TestWriteSourcesRefusesEmptyField(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "sources.tsv")
-	rows := []SourceRow{{Layer: "project", Source: "", Ref: "-", Commit: "-", Epoch: "1700000000"}}
+	rows := []SourceRow{{Layer: "1", Source: "", Ref: "-", Commit: "-", Epoch: "1700000000"}}
 	if err := WriteSources(p, rows); err == nil {
 		t.Error("WriteSources with an empty field: want error, got nil")
 	}
@@ -556,7 +539,7 @@ func TestWriteSourcesRefusesEmptyField(t *testing.T) {
 func TestWriteSourcesRefusesTabInField(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "sources.tsv")
-	rows := []SourceRow{{Layer: "project", Source: "owner/re\tpo", Ref: "-", Commit: "-", Epoch: "1700000000"}}
+	rows := []SourceRow{{Layer: "1", Source: "owner/re\tpo", Ref: "-", Commit: "-", Epoch: "1700000000"}}
 	if err := WriteSources(p, rows); err == nil {
 		t.Error("WriteSources with a tab embedded in a field: want error, got nil")
 	}
@@ -565,21 +548,33 @@ func TestWriteSourcesRefusesTabInField(t *testing.T) {
 func TestWriteSourcesRefusesNewlineInField(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "sources.tsv")
-	rows := []SourceRow{{Layer: "project", Source: "owner/repo", Ref: "-", Commit: "abc\ndef", Epoch: "1700000000"}}
+	rows := []SourceRow{{Layer: "1", Source: "owner/repo", Ref: "-", Commit: "abc\ndef", Epoch: "1700000000"}}
 	if err := WriteSources(p, rows); err == nil {
 		t.Error("WriteSources with a newline embedded in a field: want error, got nil")
 	}
 }
 
-func TestWriteSourcesRefusesUnknownLayer(t *testing.T) {
+// TestWriteSourcesAcceptsLayerOutsideOldClosedSet pins the Phase 3.5 behavior
+// change: WriteSources no longer refuses a Layer value outside the deleted
+// {"project","personal"} closed set (see the Phase 3 TestWriteSourcesRefusesUnknownLayer
+// this replaces). Layer is now an opaque ordinal string assigned by the caller
+// from the row's stack position ("1" bottom, "2" top, and onward) — WriteSources
+// only guards the SHARED empty/tab/newline invariant every field gets, same as
+// Source/Ref/Commit/Epoch.
+func TestWriteSourcesAcceptsLayerOutsideOldClosedSet(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "sources.tsv")
-	rows := []SourceRow{{Layer: "base", Source: "owner/repo", Ref: "-", Commit: "-", Epoch: "1700000000"}}
-	if err := WriteSources(p, rows); err == nil {
-		t.Error(`WriteSources with Layer="base": want error, got nil`)
+	rows := []SourceRow{{Layer: "3", Source: "owner/repo", Ref: "-", Commit: "-", Epoch: "1700000000"}}
+	if err := WriteSources(p, rows); err != nil {
+		t.Errorf(`WriteSources with Layer="3" (outside the old {project,personal} set): want nil, got %v`, err)
 	}
-	if _, err := os.Stat(p); !os.IsNotExist(err) {
-		t.Error("WriteSources refused an unknown layer but still wrote a file")
+	want := "3\towner/repo\t-\t-\t1700000000\n"
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Errorf("WriteSources bytes = %q, want %q", got, want)
 	}
 }
 
@@ -678,28 +673,30 @@ func currentUmaskT(t *testing.T) os.FileMode {
 	return os.FileMode(u)
 }
 
-// ---------------------------------------------------------------- PersonalOff
-
-func TestPersonalOffTrue(t *testing.T) {
+// TestWriteSourcesReadSourcesRoundTripOrdinalLayers is the core Phase 3.5
+// table test (GC6): a write of two rows -- ordinal layer "1" at the bottom,
+// "2" at the top -- read back through ReadSources returns the same rows in
+// the same order, byte for byte. Neither WriteSources nor ReadSources
+// interprets the Layer string itself; it round-trips as an opaque field.
+func TestWriteSourcesReadSourcesRoundTripOrdinalLayers(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sources.tsv")
 	rows := []SourceRow{
-		{Layer: "project", Source: "owner/repo", Ref: "-", Commit: "-", Epoch: "1"},
-		{Layer: "personal", Source: "off", Ref: "-", Commit: "-", Epoch: "2"},
+		{Layer: "1", Source: "owner/repo", Ref: "main", Commit: "abc123", Epoch: "1700000000"},
+		{Layer: "2", Source: "owner/dotfiles", Ref: "-", Commit: "def456", Epoch: "1700000002"},
 	}
-	if !PersonalOff(rows) {
-		t.Error("PersonalOff = false, want true")
+	if err := WriteSources(p, rows); err != nil {
+		t.Fatalf("WriteSources: %v", err)
 	}
-}
 
-func TestPersonalOffFalseNoRows(t *testing.T) {
-	if PersonalOff(nil) {
-		t.Error("PersonalOff(nil) = true, want false")
+	got := ReadSources(p)
+	if len(got) != len(rows) {
+		t.Fatalf("round trip: got %d rows, want %d: %+v", len(got), len(rows), got)
 	}
-}
-
-func TestPersonalOffFalseDifferentSource(t *testing.T) {
-	rows := []SourceRow{{Layer: "personal", Source: "owner/dotfiles", Ref: "-", Commit: "-", Epoch: "1"}}
-	if PersonalOff(rows) {
-		t.Error("PersonalOff = true, want false (personal layer present but not off)")
+	for i := range rows {
+		if got[i] != rows[i] {
+			t.Errorf("round trip row %d = %+v, want %+v (bottom-to-top order must be preserved)", i, got[i], rows[i])
+		}
 	}
 }
 
@@ -713,7 +710,7 @@ func TestSynthesizeSourcesFromV1Source(t *testing.T) {
 	if !ok {
 		t.Fatal("SynthesizeSources = false, want true")
 	}
-	want := SourceRow{Layer: "project", Source: "owner/repo", Ref: "-", Commit: "-", Epoch: "1700000000"}
+	want := SourceRow{Layer: "1", Source: "owner/repo", Ref: "-", Commit: "-", Epoch: "1700000000"}
 	if len(rows) != 1 || rows[0] != want {
 		t.Errorf("SynthesizeSources = %+v, want [%+v]", rows, want)
 	}
@@ -727,7 +724,7 @@ func TestSynthesizeSourcesSplitsRef(t *testing.T) {
 	if !ok {
 		t.Fatal("SynthesizeSources = false, want true")
 	}
-	want := SourceRow{Layer: "project", Source: "https://github.com/owner/repo", Ref: "v1.2.3", Commit: "-", Epoch: "1700000000"}
+	want := SourceRow{Layer: "1", Source: "https://github.com/owner/repo", Ref: "v1.2.3", Commit: "-", Epoch: "1700000000"}
 	if len(rows) != 1 || rows[0] != want {
 		t.Errorf("SynthesizeSources = %+v, want [%+v]", rows, want)
 	}
@@ -744,7 +741,7 @@ func TestSynthesizeSourcesFirstHashOnlySplits(t *testing.T) {
 	if !ok {
 		t.Fatal("SynthesizeSources = false, want true")
 	}
-	want := SourceRow{Layer: "project", Source: "owner/repo", Ref: "v1#extra", Commit: "-", Epoch: "1700000000"}
+	want := SourceRow{Layer: "1", Source: "owner/repo", Ref: "v1#extra", Commit: "-", Epoch: "1700000000"}
 	if len(rows) != 1 || rows[0] != want {
 		t.Errorf("SynthesizeSources = %+v, want [%+v]", rows, want)
 	}
@@ -761,7 +758,7 @@ func TestSynthesizeSourcesAbsentBoth(t *testing.T) {
 func TestSynthesizeSourcesAbsentWhenSourcesTSVPresent(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "source", "owner/repo\n")
-	writeFile(t, dir, "sources.tsv", "project\towner/repo\t-\t-\t1\n")
+	writeFile(t, dir, "sources.tsv", "1\towner/repo\t-\t-\t1\n")
 
 	rows, ok := SynthesizeSources(dir, "1700000000")
 	if ok || rows != nil {
@@ -805,7 +802,7 @@ func TestSynthesizeSourcesLocalPathWithHashNotSplit(t *testing.T) {
 	if !ok {
 		t.Fatal("SynthesizeSources = false, want true")
 	}
-	want := SourceRow{Layer: "project", Source: sub, Ref: "-", Commit: "-", Epoch: "1700000000"}
+	want := SourceRow{Layer: "1", Source: sub, Ref: "-", Commit: "-", Epoch: "1700000000"}
 	if len(rows) != 1 || rows[0] != want {
 		t.Errorf("SynthesizeSources(local path containing '#') = %+v, want [%+v]", rows, want)
 	}
@@ -824,7 +821,7 @@ func TestSynthesizeSourcesNonexistentPathLookingStringStillSplits(t *testing.T) 
 	if !ok {
 		t.Fatal("SynthesizeSources = false, want true")
 	}
-	want := SourceRow{Layer: "project", Source: "/no/such/dir/my", Ref: "project", Commit: "-", Epoch: "1700000000"}
+	want := SourceRow{Layer: "1", Source: "/no/such/dir/my", Ref: "project", Commit: "-", Epoch: "1700000000"}
 	if len(rows) != 1 || rows[0] != want {
 		t.Errorf("SynthesizeSources(nonexistent path-looking string) = %+v, want [%+v]", rows, want)
 	}

@@ -30,7 +30,7 @@ func TestStatusSynthesizesSilently(t *testing.T) {
 	}
 	// The synthesis happened silently and wrote a byte-frozen v1-migration row.
 	got := readFile(t, sources)
-	const wantPrefix = "project\tacme/harness\t-\t-\t" // commit "-" (never guessed), ref split
+	const wantPrefix = "1\tacme/harness\t-\t-\t" // layer "1" (Phase 3.5 ordinal), commit "-" (never guessed)
 	if !strings.HasPrefix(got, wantPrefix) || !strings.HasSuffix(got, "\n") {
 		t.Errorf("sources.tsv = %q, want prefix %q + epoch + newline", got, wantPrefix)
 	}
