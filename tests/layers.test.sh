@@ -50,7 +50,7 @@ skip(){ echo "  SKIP: $1"; }
 # ---- EXACT expected bytes, COPIED from the Go source (never retyped) ----
 # init.go:887 / :889 (the two new summary lines; %s is the personal label, filled per
 # scenario). personal.go:137/:155/:161/:170/:455 (the verb's lines). migrate.go:71/:138.
-SKIPPED_LINE="omakase: personal harness skipped in this repo (init --no-personal was set; re-init after 'omakase personal' changes to reconsider)."
+SKIPPED_LINE="omakase: personal harness skipped in this repo (init --no-personal is remembered)."
 CLEARED_LINE="omakase: personal harness cleared."
 APPLY_OFF_LINE="omakase: this repo has personal layering off (init --no-personal); not applied here."
 GC8_LINE="omakase: this repo predates layered state — run omakase init once first"

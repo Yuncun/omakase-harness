@@ -101,6 +101,15 @@ func detectMixedEra(omk string, rows []state.SourceRow, stderr io.Writer) {
 
 	// Axis 2: a personal row is recorded but NO placed.tsv row carries its label
 	// (col 3) — a v1 orphan sweep ate the personal layer's files.
+	//
+	// Two known caveats, both accepted (triaged, not fixed): (a) false-positive
+	// if EVERY personal path is git-tracked — placement skips a tracked dest, so
+	// no placed.tsv row ever carries the personal label and this fires on a repo
+	// no v1 tool touched; init doesn't cure it either (contrived in practice:
+	// CLAUDE.local.md is essentially never tracked). (b) both axes are gated on
+	// $OMK/source existing (the loop above returns early when it's absent), so
+	// axis 2 can never fire for a personal-over-base stack (no project layer ->
+	// no $OMK/source) — a no-project repo self-heals via init/off instead.
 	for _, r := range rows {
 		if r.Layer != "personal" || r.Source == "off" {
 			continue

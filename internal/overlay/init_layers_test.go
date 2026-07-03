@@ -393,7 +393,7 @@ func TestNoPersonalRoundTrip(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.local.md")); err == nil {
 		t.Error("bare re-init placed a personal layer despite the remembered off-row")
 	}
-	wantSkip := "omakase: personal harness skipped in this repo (init --no-personal was set; re-init after 'omakase personal' changes to reconsider).\n"
+	wantSkip := "omakase: personal harness skipped in this repo (init --no-personal is remembered).\n"
 	if !strings.Contains(o2.String(), wantSkip) {
 		t.Errorf("bare re-init missing the skipped line:\n got:\n%s\nwant substr: %q", o2.String(), wantSkip)
 	}

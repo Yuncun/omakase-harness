@@ -352,6 +352,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		for _, s := range specs {
 			rels, werr := walkPayload(s.payloadDir)
 			if werr != nil {
+				fmt.Fprintf(stderr, "omakase: failed to scan the %s layer payload: %s\n", s.layer, werr)
 				return 1
 			}
 			mapped := make([]string, 0, len(rels))
@@ -886,7 +887,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	if personalActive {
 		fmt.Fprintf(stdout, "omakase: personal harness layered on top (%s) — omakase personal off to remove it everywhere.\n", personalLabel)
 	} else if priorOff && !noPersonal {
-		fmt.Fprintln(stdout, "omakase: personal harness skipped in this repo (init --no-personal was set; re-init after 'omakase personal' changes to reconsider).")
+		fmt.Fprintln(stdout, "omakase: personal harness skipped in this repo (init --no-personal is remembered).")
 	}
 	for _, p := range placed {
 		if p != "" {

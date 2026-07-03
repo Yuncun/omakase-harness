@@ -63,6 +63,11 @@ A FIXED three-role stack — this is the entire mental model:
     project harness  (the one remembered source; `init other/src` replaces it)
     personal harness (the one global setting; on top)
 
+On a `--source` install, the base payload folds INTO the project layer (base+delta
+= the project store; there is no separate base store), so `$OMK/layers/` holds
+project(+personal) — the three-role stack above is the MENTAL model, not always
+three physical stores.
+
 - Overlap = **whole-file replacement, higher layer wins**. Never content merging —
   not for instructions, not for `lefthook-local.yml`.
 - One exception, owned by the instruction mapping table (§8): a personal layer's
@@ -74,9 +79,16 @@ A FIXED three-role stack — this is the entire mental model:
   (from `$OMK/layers/<layer>/files/`), rewriting the placed.tsv row (source + sha256);
   delete the path if nothing below ships it (untracked + hash-match rule; local edits
   warned and kept). Deterministic, offline.
-- Layer rebuild ordering (worktree race): `$OMK/layers/` and `payload-snapshot/` are
-  rebuilt (tmp + rename) BEFORE any working-tree deletions, so a post-checkout hook
-  racing a removal never heals from a stale mix.
+- Layer rebuild ordering (worktree race): only `$OMK/layers/<layer>/` is rebuilt
+  tmp + rename; `payload-snapshot/` is RemoveAll'd and rebuilt in place (no tmp
+  dir). The safety property lives in the READER instead: ensure-present.sh skips
+  a placed row whose snapshot copy is missing, so a hook racing a mid-rebuild
+  snapshot can only skip a heal, never heal from wrong bytes. The
+  rebuilt-before-deletions ordering itself holds for `personal off` (snapshot
+  rebuilt before any working-tree deletion). init's de-layer path (`--no-personal`
+  over an already-layered repo) does the reverse — it sweeps the personal-only
+  files from the working tree, THEN rebuilds the snapshot — a seconds-wide
+  benign window, covered by the same reader mitigation.
 - The fail-closed wiring guard runs against the MERGED tree.
 
 ## 5. State under `$GIT_COMMON_DIR/omakase` (`$OMK`)
