@@ -141,7 +141,9 @@ func BuildLayerStore(omk string, layer LayerName, label string, payloadDir strin
 		origin[destRel] = sourceDescr
 
 		dst := filepath.Join(tmpFiles, destRel)
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		// safeMkdirAll refuses a symlinked parent under the store's files/ root, so
+		// no store entry is ever written through a directory-symlink out of tmpFiles.
+		if err := safeMkdirAll(tmpFiles, filepath.Dir(dst)); err != nil {
 			return failErr(fmt.Errorf("overlay: BuildLayerStore: creating dir for %q: %w", destRel, err))
 		}
 		if err := copy(dst); err != nil {
@@ -244,7 +246,7 @@ type MergedView struct {
 //
 // Pure function: no I/O, no ordering requirement on the caller beyond
 // "bottom-to-top", and no requirement that every LayerName appear.
-func MergeLayers(sets []*LayerSet) *MergedView {
+func MergeLayers(sets []*LayerSet) (*MergedView, error) {
 	winner := make(map[string]*LayerSet)
 	for _, set := range sets {
 		for _, rel := range set.Rels {
@@ -258,7 +260,54 @@ func MergeLayers(sets []*LayerSet) *MergedView {
 	}
 	sort.Strings(rels)
 
-	return &MergedView{Rels: rels, Winner: winner}
+	// Symlink/file-vs-directory conflict: the merged view contains a LEAF entry P
+	// (every rel here is a file or symlink, never a directory) AND another entry
+	// beneath "P/". Two independent sources contributed those — one shipping P as a
+	// file/symlink, the other shipping something inside P as if P were a directory.
+	// A single git tree can never express that (git forbids the conflicting
+	// entries); only a stacked/merged view can, and it is malformed — the Phase 3.5
+	// stacked-parent traversal in structural form. Refuse fail-closed, naming both
+	// paths and both source labels, before any caller places a byte.
+	if parent, child, found := prefixConflict(rels); found {
+		return nil, fmt.Errorf("omakase: harness conflict — %s",
+			symlinkDirConflictMsg(parent, winner[parent].Label, child, winner[child].Label))
+	}
+
+	return &MergedView{Rels: rels, Winner: winner}, nil
+}
+
+// prefixConflict reports the first (parent, child) pair in rels where parent is
+// also a path-prefix of child at a segment boundary — i.e. rels contains both a
+// path P and another entry under "P/". It sorts a copy so the result is
+// deterministic (the lexically-first parent, then its lexically-first child) and
+// so all of a parent's descendants sit in one contiguous run right after it.
+// String-prefix-but-not-path-prefix pairs (`data` vs `database.md`) and siblings
+// under a shared real directory (`a/b`, `a/c`) are NOT conflicts.
+func prefixConflict(rels []string) (parent, child string, found bool) {
+	sorted := append([]string(nil), rels...)
+	sort.Strings(sorted)
+	for i := 0; i < len(sorted); i++ {
+		p := sorted[i]
+		for j := i + 1; j < len(sorted); j++ {
+			if !strings.HasPrefix(sorted[j], p) {
+				break // sorted: no later entry can share p as a prefix either
+			}
+			if strings.HasPrefix(sorted[j], p+"/") {
+				return p, sorted[j], true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// symlinkDirConflictMsg formats the shared body of the file/symlink-vs-directory
+// refusal: leaf entry `parent` (from `labelParent`) collides with `child` (from
+// `labelChild`) placed beneath it. MergeLayers prefixes it "omakase: harness
+// conflict — "; RunInit wraps it in its "refusing to install — …" line.
+func symlinkDirConflictMsg(parent, labelParent, child, labelChild string) string {
+	return fmt.Sprintf(
+		"%q (from %s) is placed as a file or symlink but %q (from %s) would be placed beneath it — a harness cannot map one path to both a file and a directory",
+		parent, labelParent, child, labelChild)
 }
 
 // rerouteMarker is the name of the §7 slot-fallback sidecar file inside a
@@ -456,7 +505,10 @@ func RemoveLayer(root, common, omk string, recorded []state.SourceRow, removeIdx
 	}
 	for _, r := range liveSurvivorRows {
 		dst := filepath.Join(snap, r.Rel)
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		// safeMkdirAll refuses a symlinked parent under the snapshot root, so the
+		// survivor's copy is never written through a directory-symlink out of snap.
+		if err := safeMkdirAll(snap, filepath.Dir(dst)); err != nil {
+			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
 		if err := CopyEntry(filepath.Join(survivorFilesDir, r.Rel), dst); err != nil {
@@ -621,8 +673,11 @@ func foldBaseUnder(deltaDir string, stderr io.Writer) (string, int) {
 	}
 	for _, rel := range rels {
 		dst := filepath.Join(merged, rel)
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		// safeMkdirAll refuses a symlinked parent under the re-fold staging root, so
+		// the delta is never overlaid THROUGH a base directory-symlink out of merged.
+		if err := safeMkdirAll(merged, filepath.Dir(dst)); err != nil {
 			os.RemoveAll(merged)
+			fmt.Fprintln(stderr, err.Error())
 			return "", 1
 		}
 		if err := os.RemoveAll(dst); err != nil { // rm -rf: also clears a base DIR at this path

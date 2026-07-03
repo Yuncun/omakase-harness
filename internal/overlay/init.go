@@ -425,10 +425,12 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	if len(specs) > 0 {
 		staging, lbl, merr := buildMergedStaging(specs)
 		if merr != nil {
-			// Fail-closed BEFORE any guard or placement: two payload files fight over
-			// one destination (the §7 AGENTS.md + explicit CLAUDE.local.md case). No
-			// store touched, nothing placed.
-			fmt.Fprintf(stderr, "omakase: refusing to install — %s (two payload files map to one path; nothing was placed).\n", merr)
+			// Fail-closed BEFORE any guard or placement: either two payload files
+			// fight over one destination (the §7 AGENTS.md + explicit CLAUDE.local.md
+			// case) or a file/symlink collides with a directory beneath it (the
+			// stacked-parent conflict). merr describes which. No store touched,
+			// nothing placed.
+			fmt.Fprintf(stderr, "omakase: refusing to install — %s; nothing was placed.\n", merr)
 			return 1
 		}
 		defer os.RemoveAll(staging)
@@ -859,7 +861,13 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		if rel == "" {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Join(omk, "payload-snapshot", filepath.Dir(rel)), 0o755); err != nil {
+		// safeMkdirAll refuses a symlinked parent under the snapshot root (twin of
+		// the RemoveLayer snapshot rebuild): the placed set never pairs a leaf `data`
+		// with a `data/loot` beneath it, but guard the snapshot mirror the same way
+		// so no copy is ever written through a directory-symlink out of the snapshot.
+		snapRoot := filepath.Join(omk, "payload-snapshot")
+		if err := safeMkdirAll(snapRoot, filepath.Join(snapRoot, filepath.Dir(rel))); err != nil {
+			fmt.Fprintf(stderr, "omakase: %v\n", err)
 			return 1
 		}
 		if err := CopyEntry(filepath.Join(root, rel), filepath.Join(omk, "payload-snapshot", rel)); err != nil {
@@ -994,7 +1002,12 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 // unlink) and chmod +x iff the dest is a *.sh regular file (never a symlink).
 func placeFile(src, rel, root string, umask os.FileMode, stderr io.Writer) int {
 	dest := filepath.Join(root, rel)
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+	// safeMkdirAll (not os.MkdirAll): refuse a symlink anywhere in dest's parent
+	// chain under root — a prior placement (or a stacked lower layer) may have put
+	// a directory-symlink at a parent, and writing the child THROUGH it would land
+	// outside the repo. Surfaced fail-closed, never swallowed.
+	if err := safeMkdirAll(root, filepath.Dir(dest)); err != nil {
+		fmt.Fprintf(stderr, "omakase: %v\n", err)
 		return 1
 	}
 	if isDir(dest) && !isSymlink(dest) {

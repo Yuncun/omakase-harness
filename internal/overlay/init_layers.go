@@ -115,6 +115,17 @@ func buildMergedStaging(specs []layerSpec) (staging string, labelByRel map[strin
 		return "", nil, e
 	}
 
+	// Pre-check the merged DEST-rel set for a file/symlink-vs-directory conflict
+	// BEFORE placing a single byte: one layer shipping `data` (a file/symlink) and
+	// another shipping `data/loot` (an entry beneath it) is a malformed harness —
+	// the Phase 3.5 stacked-parent traversal in structural form. Refuse fail-closed
+	// with the two conflicting paths and their two source labels. (The safeMkdirAll
+	// guard in `place` below is the order-independent backstop; this early check
+	// gives the clear, labelled message and guarantees ZERO placement.)
+	if e := checkStagingPrefixConflict(specs); e != nil {
+		return fail(e)
+	}
+
 	labelByRel = make(map[string]string)
 	for _, spec := range specs {
 		rels, werr := walkPayload(spec.payloadDir)
@@ -127,11 +138,14 @@ func buildMergedStaging(specs []layerSpec) (staging string, labelByRel map[strin
 		origin := make(map[string]string, len(rels)+1)
 		place := func(sourceDescr, dest string, doCopy func(dst string) error) error {
 			if prev, dup := origin[dest]; dup {
-				return fmt.Errorf("layer %q: %q and %q both map to %q", spec.layer, prev, sourceDescr, dest)
+				return fmt.Errorf("layer %q: %q and %q both map to %q (two payload files map to one path)", spec.layer, prev, sourceDescr, dest)
 			}
 			origin[dest] = sourceDescr
 			dst := filepath.Join(staging, dest)
-			if e := os.MkdirAll(filepath.Dir(dst), 0o755); e != nil {
+			// safeMkdirAll refuses a symlinked parent under the staging root: a
+			// lower layer's directory-symlink must never become the path a higher
+			// layer's child is written through (the Phase 3.5 stacked traversal).
+			if e := safeMkdirAll(staging, filepath.Dir(dst)); e != nil {
 				return e
 			}
 			if e := doCopy(dst); e != nil {
@@ -164,4 +178,41 @@ func buildMergedStaging(specs []layerSpec) (staging string, labelByRel map[strin
 		}
 	}
 	return staging, labelByRel, nil
+}
+
+// checkStagingPrefixConflict resolves each spec's DEST rels the same way
+// buildMergedStaging's place loop does (fresh specs route through MapInstruction;
+// pre-mapped specs are already dest rels; a bridge adds "CLAUDE.md") and reports a
+// file/symlink-vs-directory conflict across the merged view — a leaf entry P and
+// another entry beneath "P/" contributed by two layers. It walks the payloads (no
+// mutation) and returns the labelled refusal, or nil when the view is well-formed.
+func checkStagingPrefixConflict(specs []layerSpec) error {
+	labelOf := make(map[string]string)
+	var union []string
+	note := func(dest, label string) {
+		if _, seen := labelOf[dest]; !seen {
+			union = append(union, dest)
+		}
+		labelOf[dest] = label // higher layer wins, matching the place loop
+	}
+	for _, spec := range specs {
+		rels, werr := walkPayload(spec.payloadDir)
+		if werr != nil {
+			return werr
+		}
+		for _, rel := range rels {
+			dest := rel
+			if !spec.preMapped {
+				dest, _ = MapInstruction(rel, spec.rootSlotFree)
+			}
+			note(dest, spec.label)
+		}
+		if spec.bridge {
+			note("CLAUDE.md", spec.label)
+		}
+	}
+	if parent, child, found := prefixConflict(union); found {
+		return fmt.Errorf("%s", symlinkDirConflictMsg(parent, labelOf[parent], child, labelOf[child]))
+	}
+	return nil
 }

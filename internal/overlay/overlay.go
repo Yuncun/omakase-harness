@@ -84,6 +84,60 @@ func CopyEntry(src, dst string) error {
 	return out.Close()
 }
 
+// safeMkdirAll creates dir (like os.MkdirAll, 0o755) but refuses to follow a
+// symlink planted as any path component BELOW root. It lstat-walks every
+// component from root down to dir and returns a non-nil error the moment an
+// EXISTING component is a symlink — never following it (os.MkdirAll would).
+//
+// This closes the Phase 3.5 stacked-parent traversal: a merge of two harnesses
+// can put a directory-symlink `data` (from one layer) and a file `data/loot`
+// (from another) into one view; a bare os.MkdirAll(dir) for the child would
+// resolve `data` through the symlink and let CopyEntry write the child to the
+// symlink's outside target. safeMkdirAll refuses instead.
+//
+// root is the boundary the copy must stay within (the repo root for the
+// working-tree place loop; the staging/store root for the merge/store copies).
+// root itself is assumed to exist and is NOT re-checked — only components
+// strictly under it, which are exactly the ones a payload can introduce. This
+// matters on macOS/darwin where root's own path may legitimately contain
+// symlinks (e.g. /var -> /private/var under $TMPDIR); those never surface here
+// because we only ever lstat components below root. dir must be root or a
+// descendant of root; anything else is refused.
+func safeMkdirAll(root, dir string) error {
+	root = filepath.Clean(root)
+	dir = filepath.Clean(dir)
+
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return fmt.Errorf("overlay: safeMkdirAll: %q is not under root %q: %w", dir, root, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("overlay: safeMkdirAll: %q escapes root %q", dir, root)
+	}
+
+	if rel != "." {
+		cur := root
+		for _, seg := range strings.Split(rel, string(filepath.Separator)) {
+			cur = filepath.Join(cur, seg)
+			info, lerr := os.Lstat(cur)
+			if lerr != nil {
+				// From here down nothing exists (or the path is unreadable); no
+				// existing component can be a symlink, so os.MkdirAll below
+				// creates real directories the rest of the way (or fails cleanly).
+				break
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("overlay: safeMkdirAll: refusing to create %q: path component %q is a symlink — a harness payload placed a directory symlink here and following it would write outside %q", dir, cur, root)
+			}
+		}
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("overlay: safeMkdirAll: creating %q: %w", dir, err)
+	}
+	return nil
+}
+
 // SameFile ports same_file (bin/init.sh:416-422): true iff a and b count as
 // identical for the "leave it, it already matches the payload" check.
 //   - If EITHER path is a symlink, compare their readlink TARGET STRINGS —

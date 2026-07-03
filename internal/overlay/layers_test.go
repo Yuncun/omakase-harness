@@ -428,7 +428,10 @@ func TestMergeLayers_OverlapMatrix(t *testing.T) {
 	middle := &LayerSet{Layer: LayerName("2"), Label: "acme/harness", Rels: []string{"AGENTS.md", "lefthook.yml", "shared-by-all.md"}}
 	top := &LayerSet{Layer: LayerName("3"), Label: "you/harness", Rels: []string{"CLAUDE.local.md", "shared-by-all.md"}}
 
-	view := MergeLayers([]*LayerSet{bottom, middle, top})
+	view, err := MergeLayers([]*LayerSet{bottom, middle, top})
+	if err != nil {
+		t.Fatalf("MergeLayers errored on a valid overlap stack: %v", err)
+	}
 
 	wantRels := []string{"AGENTS.md", "CLAUDE.local.md", "base-only.md", "lefthook.yml", "shared-by-all.md"}
 	if !slices.Equal(view.Rels, wantRels) {
@@ -456,7 +459,10 @@ func TestMergeLayers_OverlapMatrix(t *testing.T) {
 // TestMergeLayers_Empty pins the trivial empty-input case: no sets, no rels,
 // no winners, no panic.
 func TestMergeLayers_Empty(t *testing.T) {
-	view := MergeLayers(nil)
+	view, err := MergeLayers(nil)
+	if err != nil {
+		t.Fatalf("MergeLayers(nil) errored: %v", err)
+	}
 	if len(view.Rels) != 0 {
 		t.Errorf("Rels = %v, want empty", view.Rels)
 	}
