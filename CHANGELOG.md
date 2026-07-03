@@ -5,6 +5,23 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added
+- **Layers + the `personal` verb (v2 design §4/§5/§7/§9).** A repo can now hold a *project*
+  harness and your *personal* harness at once, stacked highest-layer-wins (whole-file, never
+  merged). `init` records the stack in `$OMK/sources.tsv` (bottom-to-top) and each layer's
+  full file set under `$OMK/layers/<layer>/`; `placed.tsv` keeps its frozen 5 columns, with
+  the winning layer's label in the existing column 3. A personal harness is one global
+  setting (`${XDG_CONFIG_HOME:-~/.config}/omakase/personal`), auto-layered on every future
+  `init`. A personal `AGENTS.md` is rerouted to Claude Code's additive `CLAUDE.local.md`
+  slot (it adds to the project's instructions, never shadows them); a project `AGENTS.md`
+  still gains the `CLAUDE.md → AGENTS.md` bridge symlink unless a layer or the repo already
+  provides `CLAUDE.md`. New verb `omakase personal [<source> | off]` prints/sets/clears the
+  setting and, in an initialized repo, applies or unlayers it immediately. `init
+  --no-personal` persistently opts a repo out. Migration is lazy and read-only: the first v2
+  verb in a v1 repo synthesizes `sources.tsv` from `$OMK/source` (commit `-`, never guessed);
+  a v1 tool that later disagrees with the recorded stack is detected and rehealed on the next
+  `init`. Covered black-box end-to-end by `tests/layers.test.sh`.
+
 ### Changed
 - Renamed the inventory script `bin/show.sh` → `bin/status.sh` so it matches the `status`
   verb it has served since the command-surface redesign (the 0.16.0 entry below noted the
