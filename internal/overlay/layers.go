@@ -685,6 +685,31 @@ func RemoveLayer(root, common, omk string, recorded []state.SourceRow, removeIdx
 	return 0
 }
 
+// wiringStrandedRefs reports the .omakase/*.sh scripts filesDir's
+// lefthook-local.yml references but that filesDir does not itself ship — the same
+// fail-closed wiring check init runs (wiringRefs + a per-ref existence test),
+// applied to a SURVIVOR tree so `remove <source>` can refuse before mutation when
+// unlayering would leave the surviving wiring pointing at a script only the
+// removed layer supplied (which would fail every commit with exit 127). Returns a
+// leading-space-joined list of the missing refs, or "" when nothing is stranded
+// (including no lefthook-local.yml at all). Mirrors init.go's install-time guard.
+// (Relocated here from init.go by the single-source cut: init.go reverted to its
+// Phase-2 body, which never defined this; its sole caller is RemoveLayer, and it
+// is deleted wholesale with this file in the layer-machinery cleanup.)
+func wiringStrandedRefs(filesDir string) string {
+	wiring := filepath.Join(filesDir, "lefthook-local.yml")
+	if !fileRegular(wiring) {
+		return ""
+	}
+	missing := ""
+	for _, ref := range wiringRefs(wiring) {
+		if !fileRegular(filepath.Join(filesDir, ref)) {
+			missing += " " + ref
+		}
+	}
+	return missing
+}
+
 // refuseStrandedWiring prints the Fix G (#11) refuse-before-mutation message —
 // removing removedLabel would strand the surviving harness's hook wiring, which
 // references the named script(s) the survivor does not ship — and returns exit 1.

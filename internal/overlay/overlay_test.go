@@ -454,3 +454,57 @@ func TestDeletePlacedWithRealGitUntracked(t *testing.T) {
 		t.Errorf(".claude was not pruned away")
 	}
 }
+
+// ---------------------------------------------------------------- safeMkdirAll
+//
+// safeMkdirAll is the security primitive both init place guards (placeFile and
+// the payload-snapshot copy loop) call instead of a bare os.MkdirAll: it refuses
+// to create a directory whose parent chain passes THROUGH a symlink, so a payload
+// that ships a directory symlink at a parent path cannot make a later child write
+// land outside the repo. This is the single-payload unit coverage of that guard;
+// it must never silently degrade to a bare os.MkdirAll.
+
+// TestSafeMkdirAllRefusesSymlinkedParent: a symlink at a parent component makes
+// safeMkdirAll refuse (never following it), and no directory is created through
+// the symlink at the symlink's target.
+func TestSafeMkdirAllRefusesSymlinkedParent(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+
+	// A payload placed `data` as a directory symlink pointing outside the repo.
+	if err := os.Symlink(outside, filepath.Join(root, "data")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := safeMkdirAll(root, filepath.Join(root, "data", "loot"))
+	if err == nil {
+		t.Fatal("safeMkdirAll followed a symlinked parent (want a fail-closed refusal)")
+	}
+	// The refusal must not have created anything through the symlink.
+	if _, statErr := os.Stat(filepath.Join(outside, "loot")); !os.IsNotExist(statErr) {
+		t.Errorf("safeMkdirAll wrote through the symlink to %s (statErr=%v)", filepath.Join(outside, "loot"), statErr)
+	}
+}
+
+// TestSafeMkdirAllCreatesRealNestedDir: with no symlink in the way, safeMkdirAll
+// creates the full nested path as real directories (the ordinary success path).
+func TestSafeMkdirAllCreatesRealNestedDir(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "a", "b", "c")
+	if err := safeMkdirAll(root, dir); err != nil {
+		t.Fatalf("safeMkdirAll on a clean path: %v", err)
+	}
+	info, err := os.Lstat(dir)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("nested dir not created as a real directory: info=%v err=%v", info, err)
+	}
+}
+
+// TestSafeMkdirAllRefusesEscape: a target outside root is refused before any
+// filesystem mutation.
+func TestSafeMkdirAllRefusesEscape(t *testing.T) {
+	root := t.TempDir()
+	if err := safeMkdirAll(root, filepath.Join(filepath.Dir(root), "elsewhere")); err == nil {
+		t.Fatal("safeMkdirAll accepted a path escaping root (want a refusal)")
+	}
+}

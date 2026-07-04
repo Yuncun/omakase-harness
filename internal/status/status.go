@@ -15,7 +15,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Yuncun/omakase-harness/internal/overlay"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
@@ -50,16 +49,6 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 
 	home := os.Getenv("HOME")
 	placed := filepath.Join(repo.OMK, "placed.tsv")
-
-	// v1→v2 migration (design §9): the first v2 run of ANY verb synthesizes
-	// sources.tsv from $OMK/source, silently. status DOES write it (a $OMK write,
-	// never the working tree), but stays byte-identical on stdout/stderr because
-	// status renders nothing from sources.tsv — the synthesis is invisible. It is a
-	// no-op when $OMK is absent (status must never CREATE $OMK), and the write is
-	// best-effort (a read-only filesystem never turns status into an error — the
-	// next mutating verb retries). Called BEFORE the placed.tsv read below. Any
-	// mixed-era warning routes to stderr, matching every other verb.
-	overlay.EnsureSources(repo.OMK, stderr)
 
 	// Step 1 (bin/status.sh:276-302): placed.tsv absent -> pre-0.10 if
 	// placed.list exists, else not-installed. Both render + exit 0.

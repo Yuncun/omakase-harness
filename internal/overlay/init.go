@@ -38,10 +38,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/Yuncun/omakase-harness/internal/harness"
 	"github.com/Yuncun/omakase-harness/internal/lefthook"
@@ -180,330 +178,63 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// crypto/sha256, so that "need shasum" error is unreachable (Global
 	// Constraint 9) and omitted.
 
-	// ---- v1→v2 migration (design §9) ----
-	// EnsureSources (migrate.go) reads the prior sources.tsv and, for a still-v1
-	// repo ($OMK/source present, no sources.tsv), synthesizes + writes it once,
-	// silently — and prints the mixed-era warning when a v1 tool rewrote $OMK/source
-	// out from under a v2 sources.tsv (init REHEALS below by re-fetching the recorded
-	// stack and re-recording sources.tsv with resolved commits). `recorded` is the
-	// authoritative layer stack, bottom-to-top, with ordinal labels ("1","2").
-	// sourcesExisted is captured BEFORE EnsureSources so the end-of-run
-	// faithful-rewrite branch reflects the TRUE pre-run on-disk state — GC2 (a
-	// base-only repo has no $OMK/source, so EnsureSources synthesizes nothing and
-	// writes no file) holds.
-	sourcesPath := filepath.Join(omk, "sources.tsv")
-	sourcesExisted := fileRegular(sourcesPath)
-	recorded := EnsureSources(omk, stderr)
-
-	// resolveBase resolves the BASE-layer payload dir the plain-install way
-	// (bin/init.sh:199): OMAKASE_PAYLOAD overrides, else the binary-relative
-	// ../payload default. Used only by a base-only install (no source). Returns
-	// (dir, true) or prints the "payload dir not found" line and returns (_, false).
-	resolveBase := func() (string, bool) {
-		b := os.Getenv("OMAKASE_PAYLOAD")
-		if b == "" {
-			b = defaultPayload()
-		}
-		b = strings.TrimSuffix(b, "/")
-		if info, statErr := os.Stat(b); statErr != nil || !info.IsDir() {
-			fmt.Fprintf(stderr, "omakase: payload dir not found at %s\n", b)
-			return "", false
-		}
-		return b, true
-	}
-
-	// ---- resolve the target layer stack (Phase 3.5 decision table) ----
-	// A CLI source arg that already matches a recorded layer REPAIRS that layer at
-	// its pin (no reorder); a NEW source STACKS on top (cap 2); a bare init re-applies
-	// the recorded stack at its pins; a base override (OMAKASE_PAYLOAD) or an empty
-	// stack takes the v1 base-only path (GC1/GC2).
-	explicitSource := source != ""
-	cliExpanded, cliRef := "", ""
-	if explicitSource {
-		cliExpanded, cliRef = expandSource(source)
-	}
-	matchIdx := -1
-	if explicitSource && cliExpanded != "" {
-		for i := range recorded {
-			if recorded[i].Source == cliExpanded {
-				matchIdx = i
-				break
-			}
+	// ---- source precedence (bin/init.sh:152-154) ----
+	// Payload precedence: --source flag > OMAKASE_PAYLOAD env > remembered
+	// source ($OMK/source) > the ../payload default. A remembered source only
+	// wins when neither a flag nor OMAKASE_PAYLOAD is set.
+	if source == "" && os.Getenv("OMAKASE_PAYLOAD") == "" {
+		if first := state.FirstLine(filepath.Join(omk, "source")); first != "" {
+			source = first
 		}
 	}
-
-	// bottomRemembered is the v1 remembered bottom source ($OMK/source). On a bare
-	// init it re-derives the bottom layer — the §9 reheal signal when a v1 tool
-	// rewrote it out from under sources.tsv (recorded). Normally it equals
-	// recorded[0]'s source, so it is a no-op.
-	bottomRemembered := state.FirstLine(filepath.Join(omk, "source"))
-
-	narrateStack := false
-	stackLabelA, stackLabelB := "", ""
-	var plan []layerPlan
-	switch {
-	case explicitSource && cliExpanded == "":
-		// pathological "#ref" that expanded to an empty source: v1 treats it as no
-		// source — base-only, matching the current post-expansion install decision.
-	case explicitSource && matchIdx >= 0:
-		// REPAIR the matched layer at the CLI pin; reuse the others. No reorder.
-		for i := range recorded {
-			pl := layerPlan{source: recorded[i].Source, ref: unRefField(recorded[i].Ref), epoch: recorded[i].Epoch, commit: recorded[i].Commit}
-			if i == matchIdx {
-				pl.ref = cliRef
-				pl.refetch = true
-			}
-			plan = append(plan, pl)
-		}
-	case explicitSource:
-		// NEW source (matchIdx < 0).
-		if len(recorded) >= 2 {
-			// GC8 cap: a third distinct source errors and mutates NOTHING (this is
-			// BEFORE any fetch/expand of $OMK or the working tree — EnsureSources only
-			// read an existing sources.tsv on a 2-stack, it wrote nothing).
-			fmt.Fprintf(stderr, "omakase: this repo already has 2 harnesses (%s, %s) — remove one first: omakase remove <source>\n",
-				reassembleSource(recorded[0]), reassembleSource(recorded[1]))
-			return 1
-		}
-		for i := range recorded { // reuse the 0-or-1 recorded layer(s) beneath the new top
-			plan = append(plan, layerPlan{source: recorded[i].Source, ref: unRefField(recorded[i].Ref), epoch: recorded[i].Epoch, commit: recorded[i].Commit})
-		}
-		plan = append(plan, layerPlan{source: cliExpanded, ref: cliRef, refetch: true}) // new top: epoch "" → now
-		if len(recorded) == 1 {
-			narrateStack = true
-			stackLabelA = reassembleSource(recorded[0])
-			stackLabelB = displayLabel(cliExpanded, cliRef)
-		}
-	case os.Getenv("OMAKASE_PAYLOAD") != "":
-		// env base override, no source arg: base-only, ignoring the recorded stack
-		// (GC1 — TestOmakasePayloadOverridesRememberedSource).
-	case len(recorded) > 0 || bottomRemembered != "":
-		// bare init: re-apply the recorded stack at its pins (repair all). The BOTTOM
-		// layer's source is re-derived from $OMK/source (the §9 reheal signal); upper
-		// layers come from sources.tsv. When $OMK/source agrees with recorded[0] (the
-		// normal case) the bottom row's epoch + commit are preserved, so a plain bare
-		// re-init leaves sources.tsv byte-identical.
-		bottomSrc, bottomRef := "", ""
-		if len(recorded) > 0 {
-			bottomSrc, bottomRef = recorded[0].Source, unRefField(recorded[0].Ref)
-		}
-		if bottomRemembered != "" {
-			bottomSrc, bottomRef = expandSource(bottomRemembered)
-		}
-		bottomEpoch, bottomCommit := "", ""
-		if len(recorded) > 0 && recorded[0].Source == bottomSrc {
-			bottomEpoch, bottomCommit = recorded[0].Epoch, recorded[0].Commit
-		}
-		plan = append(plan, layerPlan{source: bottomSrc, ref: bottomRef, refetch: true, epoch: bottomEpoch, commit: bottomCommit})
-		for i := 1; i < len(recorded); i++ {
-			plan = append(plan, layerPlan{source: recorded[i].Source, ref: unRefField(recorded[i].Ref), refetch: true, epoch: recorded[i].Epoch, commit: recorded[i].Commit})
-		}
-	default:
-		// no source, no recorded, no override: base-only.
+	// ---- shorthand / ref / local-dir-absolutize (bin/init.sh:160-171) ----
+	// Applies to BOTH a freshly given source and a remembered one, so a bare
+	// re-run round-trips a pinned ref; skipped when SOURCE is empty or already
+	// names an existing local path. The #ref split can leave SOURCE empty (a
+	// pathological "#ref"), so the install-arm decision below tests the
+	// POST-expansion value, exactly as v1 does.
+	sourceRef := ""
+	if source != "" {
+		source, sourceRef = expandSource(source)
 	}
 
-	// ---- fetch/reuse each layer, assemble specs + sources.tsv rows ----
-	// A fresh layer is fetched and mapped through the §7 slot-fallback rule
-	// (rootSlotFree computed bottom-to-top: the first layer to place a root AGENTS.md
-	// owns the slot; later layers, and any layer under a committed root instruction
-	// file, reroute to CLAUDE.local.md). A reused layer copies its persisted store's
-	// files/ tree as-is (offline, no re-fetch). The BOTTOM layer folds the base under
-	// its delta (runSource); a stacked layer ships its delta alone (fetchSource).
-	epoch := strconv.FormatInt(time.Now().Unix(), 10)
-	sourceLabel := "payload" // placed.tsv col3 fallback for the base-only path
+	// ---- payload resolution: --source merge, or the plain default ----
+	// A non-empty (post-expansion) source fetches into the disposable cache and
+	// merges the base payload UNDER the source delta (bin/init.sh:172-197);
+	// otherwise PAYLOAD is OMAKASE_PAYLOAD or the binary-relative default
+	// (bin/init.sh:199). sourceLabel (placed.tsv column 3), rememberedSource
+	// ($OMK/source) and recommends (the summary) are source-only; a plain install
+	// leaves them at their neutral defaults, matching v1's SOURCE_LABEL=payload
+	// and empty SOURCE/recommends.
+	sourceLabel := "payload" // bin/init.sh:103 (the source arm overrides this)
 	rememberedSource := ""
 	recommends := ""
-
-	// ---- Pass 1: fetch/reuse each layer, resolving its payloadDir + metadata,
-	// WITHOUT deciding the root slot yet. The slot decision below is cut-over-aware
-	// (Fix F): a committed instruction file --cut-over will untrack must NOT count
-	// as taking the slot, and that depends on what the payload SHIPS — which is only
-	// known after the fetch. Fetching does not depend on the slot decision (rootSlotFree
-	// is only USED in the spec/mapping pass), so this split is behavior-preserving. ----
-	type fetchedLayer struct {
-		ordinal    LayerName
-		source     string // plan source string (sources.tsv col2)
-		ref        string // plan ref ("" = none), for the sources.tsv ref column
-		label      string // displayLabel / runSource label (spec + fellBack narration)
-		payloadDir string
-		preMapped  bool
-		rowEpoch   string
-		rowCommit  string
-	}
-	var fetched []fetchedLayer
-	for i := range plan {
-		ordinal := LayerName(strconv.Itoa(i + 1))
-		pl := plan[i]
-		storeDir := filepath.Join(omk, "layers", string(ordinal))
-		refetch := pl.refetch || !isDir(storeDir) // a missing store must be (re)built
-		fl := fetchedLayer{ordinal: ordinal, source: pl.source, ref: pl.ref, label: displayLabel(pl.source, pl.ref)}
-		fl.rowEpoch = pl.epoch
-		if fl.rowEpoch == "" {
-			fl.rowEpoch = epoch
-		}
-		fl.rowCommit = pl.commit
-		if fl.rowCommit == "" {
-			fl.rowCommit = "-"
-		}
-		if refetch {
-			if i == 0 {
-				res, code := runSource(pl.source, pl.ref, defaultPayload(), stdout, stderr)
-				if code != 0 {
-					return code // runSource printed the message + cleaned any staging dir
-				}
-				defer os.RemoveAll(res.merged) // v1's EXIT-trap cleanup (bin/init.sh:63-68)
-				fl.payloadDir = res.payload
-				fl.label = res.label
-				rememberedSource = res.remembered
-				recommends = res.recommends
-			} else {
-				pDir, _, code := fetchSource(pl.source, pl.ref, stdout, stderr)
-				if code != 0 {
-					return code
-				}
-				fl.payloadDir = pDir
-			}
-			fl.rowCommit = resolvedCommit(pl.source)
-		} else {
-			// Reuse the persisted store's post-mapping files/ tree (preMapped).
-			fl.payloadDir = filepath.Join(storeDir, "files")
-			fl.preMapped = true
-		}
-		fetched = append(fetched, fl)
-	}
-
-	// ---- cut-over slot awareness (Fix F) ----
-	// A committed root instruction file the payload ALSO ships is untracked by
-	// --cut-over below (the cut runs before the place loop, exactly as legacy does),
-	// freeing the root slot — so it must NOT count as taking the slot here. Whether
-	// the payload ships that canonical path is read from the fetched payload dirs
-	// (pre-mapping rels: a canonical AGENTS.md, not the CLAUDE.local.md its fallback
-	// would reroute to). With the slot freed, the payload's AGENTS.md is placed at the
-	// root and the cut set (built from the merged staging below, which now carries
-	// AGENTS.md at the root rather than a reroute) untracks it — matching legacy.
-	committedInstr := gitTracked(root, "AGENTS.md") || gitTracked(root, "CLAUDE.md")
-	if cutover {
-		payloadShips := func(want string) bool {
-			for _, fl := range fetched {
-				rels, _ := walkPayload(fl.payloadDir)
-				for _, rel := range rels {
-					if rel == want {
-						return true
-					}
-				}
-			}
-			return false
-		}
-		committedAGENTS := gitTracked(root, "AGENTS.md") && !payloadShips("AGENTS.md")
-		committedCLAUDE := gitTracked(root, "CLAUDE.md") && !payloadShips("CLAUDE.md")
-		committedInstr = committedAGENTS || committedCLAUDE
-	}
-
-	// ---- Pass 2: decide the root slot bottom-to-top, assemble specs + sources.tsv rows. ----
-	rootTaken := committedInstr
-	rootOwnerIdx := -1
-	var specs []layerSpec
-	var stackRows []state.SourceRow
-	var fellBackLabels []string
-	for i := range fetched {
-		fl := fetched[i]
-		rootSlotFree := !rootTaken
-		spec := layerSpec{layer: fl.ordinal, label: fl.label, payloadDir: fl.payloadDir, rootSlotFree: rootSlotFree, preMapped: fl.preMapped}
-		if !fl.preMapped && !rootSlotFree && lexists(filepath.Join(fl.payloadDir, "AGENTS.md")) {
-			fellBackLabels = append(fellBackLabels, fl.label) // GC5 slot-fallback narration
-		}
-
-		// Root-slot ownership: a fresh layer owns it iff it placed a root AGENTS.md
-		// while the slot was free; a reused store owns it iff its files/ carry one.
-		owns := lexists(filepath.Join(spec.payloadDir, "AGENTS.md"))
-		if !spec.preMapped {
-			owns = owns && rootSlotFree
-		}
-		if owns {
-			rootTaken = true
-			if rootOwnerIdx < 0 {
-				rootOwnerIdx = i
-			}
-		}
-
-		specs = append(specs, spec)
-		stackRows = append(stackRows, state.SourceRow{Layer: string(fl.ordinal), Source: fl.source, Ref: refField(fl.ref), Commit: fl.rowCommit, Epoch: fl.rowEpoch})
-	}
-
-	// §7 bridge: the root-slot-owning layer may ALSO place a CLAUDE.md -> AGENTS.md
-	// symlink. BridgeWanted stays project-keyed (Phase 3.5 kept it as-is), so the
-	// owning layer's post-mapping rels are keyed under LayerProject and every other
-	// layer under its ordinal (so the "CLAUDE.md anywhere suppresses" scan still sees
-	// them). Only a FRESH owner adds the bridge; a reused store already carries its own.
-	if rootOwnerIdx >= 0 && !specs[rootOwnerIdx].preMapped {
-		bridgeSets := make(map[LayerName][]string, len(specs))
-		var ownerMapped []string
-		for i := range specs {
-			rels, werr := walkPayload(specs[i].payloadDir)
-			if werr != nil {
-				fmt.Fprintf(stderr, "omakase: failed to scan layer %s payload: %s\n", specs[i].layer, werr)
-				return 1
-			}
-			mapped := make([]string, 0, len(rels))
-			for _, rel := range rels {
-				if specs[i].preMapped {
-					mapped = append(mapped, rel)
-				} else {
-					dest, _ := MapInstruction(rel, specs[i].rootSlotFree)
-					mapped = append(mapped, dest)
-				}
-			}
-			key := specs[i].layer
-			if i == rootOwnerIdx {
-				key = LayerProject
-				ownerMapped = mapped
-			}
-			bridgeSets[key] = mapped
-		}
-		tracksCLAUDE := gitTracked(root, "CLAUDE.md")
-		// LIVE/merged bridge (all-layers rule): a higher layer's explicit CLAUDE.md
-		// suppresses the bridge in the working tree, so the live CLAUDE.md is that
-		// explicit file, not a bridge symlink.
-		if BridgeWanted(LayerProject, bridgeSets, tracksCLAUDE) {
-			specs[rootOwnerIdx].bridge = true
-		}
-		// PERSISTED store bridge (Fix E — single-layer rule): what a fresh install
-		// of the root-owner's OWN payload alone would produce, exactly as
-		// RemoveLayer's re-fold derives it. Never suppressed by ANOTHER layer's
-		// CLAUDE.md — the stored bottom layer must carry its own bridge so a later
-		// top-removal (which carries layers/1 through verbatim) restores it.
-		if BridgeWanted(LayerProject, map[LayerName][]string{LayerProject: ownerMapped}, tracksCLAUDE) {
-			specs[rootOwnerIdx].storeBridge = true
-		}
-	}
-
-	// ---- assemble the placement tree ----
-	// A base-only install (no source layers) takes the v1 path VERBATIM — no merged
-	// staging, no layers/, no sources.tsv (GC2 invariance). Any stack routes through
-	// buildMergedStaging: higher-layer-wins whole-file replacement (design §4), placed
-	// per-row with the WINNING layer's label (labelByRel).
 	var payload string
-	var labelByRel map[string]string
-	if len(specs) > 0 {
-		staging, lbl, merr := buildMergedStaging(specs)
-		if merr != nil {
-			// Fail-closed BEFORE any guard or placement: either two payload files
-			// fight over one destination (the §7 AGENTS.md + explicit CLAUDE.local.md
-			// case) or a file/symlink collides with a directory beneath it (the
-			// stacked-parent conflict). merr describes which. No store touched,
-			// nothing placed.
-			fmt.Fprintf(stderr, "omakase: refusing to install — %s; nothing was placed.\n", merr)
-			return 1
+	if source != "" {
+		res, code := runSource(source, sourceRef, defaultPayload(), stdout, stderr)
+		if code != 0 {
+			return code // runSource printed the message + cleaned any staging dir
 		}
-		defer os.RemoveAll(staging)
-		payload = staging
-		labelByRel = lbl
+		defer os.RemoveAll(res.merged) // v1's EXIT-trap cleanup (bin/init.sh:63-68)
+		payload = res.payload
+		sourceLabel = res.label
+		rememberedSource = res.remembered
+		recommends = res.recommends
 	} else {
-		base, ok := resolveBase()
-		if !ok {
-			return 1
+		// OMAKASE_PAYLOAD overrides; otherwise the binary-relative ../payload
+		// default (dist/omakase => repo root => payload/, same as bin/../payload).
+		payload = os.Getenv("OMAKASE_PAYLOAD")
+		if payload == "" {
+			payload = defaultPayload()
 		}
-		payload = base
+	}
+	// Strip ONE trailing slash so ${f#"$PAYLOAD"/} derives clean rel values (a
+	// pathological OMAKASE_PAYLOAD=/ collapses to "" and is rejected below). A
+	// no-op for the merge staging dir / cache (trailing-slash-free by construction).
+	payload = strings.TrimSuffix(payload, "/")
+	if info, statErr := os.Stat(payload); statErr != nil || !info.IsDir() {
+		fmt.Fprintf(stderr, "omakase: payload dir not found at %s\n", payload)
+		return 1
 	}
 
 	// ---- walk the payload (Global Constraint 6, the one sanctioned divergence)
@@ -695,26 +426,6 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "  init --cut-over (guarded) to untrack the file and let the injected copy take over.")
 	}
 
-	// ---- persist each FRESH stack layer's store (design §4/§5: $OMK/layers/<layer>/) ----
-	// Built tmp+rename HERE — after every refusal-capable guard has passed (wiring,
-	// lefthook, incumbent, cut-over) and before the place loop's and the orphan
-	// sweep's working-tree mutations. So a refusal above leaves $OMK/layers/
-	// untouched, and a post-checkout heal racing a removal never observes a partial
-	// store (design §4 rebuild ordering / GC3). A base-only install has no specs and
-	// builds NOTHING (GC2). A reused (preMapped) layer's store already exists and is
-	// left byte-untouched — only freshly fetched layers are (re)built. Each store is
-	// the layer's FULL post-mapping file set — the shadow-restore source `remove
-	// <source>` needs (Task 4).
-	for _, s := range specs {
-		if s.preMapped {
-			continue // reused store already persisted
-		}
-		if _, blErr := BuildLayerStore(omk, s.layer, s.label, s.payloadDir, s.rootSlotFree, s.storeBridge); blErr != nil {
-			fmt.Fprintln(stderr, blErr.Error())
-			return 1
-		}
-	}
-
 	umask := currentUmask()
 
 	// ---- place loop (bin/init.sh:455-497) ----
@@ -885,48 +596,14 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
-
-	// ---- sources.tsv: the layer stack, bottom-to-top, ordinal labels (design §5/§9) ----
-	// stackRows was assembled during the fetch/reuse loop: one row per layer, ordinal
-	// label "1"/"2" by stack position (GC6), commit = the resolved sha recorded at
-	// fetch (or the preserved commit of a reused layer), epoch preserved for an
-	// already-recorded layer and stamped now for a freshly added one. Written only
-	// when there is a row to record OR the file already exists (then rewritten
-	// faithfully); a bare base-only install with no prior sources.tsv writes nothing
-	// (GC2).
-	if len(stackRows) > 0 || sourcesExisted {
-		rowsToWrite := stackRows
-		if len(rowsToWrite) == 0 {
-			rowsToWrite = recorded // faithful rewrite of an existing file we add nothing to
-		}
-		if err := state.WriteSources(sourcesPath, rowsToWrite); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-	}
-
-	// labelFor is placed.tsv column 3: the WINNING layer's label for a layered
-	// install (a base row says "payload"; any other layer's row is its source
-	// label, "source" or "source#ref"), else the base-only sourceLabel
-	// ("payload"). Every layered placed rel is in labelByRel; the fallback
-	// covers the base-only path (labelByRel is nil).
-	labelFor := func(rel string) string {
-		if labelByRel != nil {
-			if l, ok := labelByRel[rel]; ok {
-				return l
-			}
-		}
-		return sourceLabel
-	}
 	var rows []state.PlacedRow
 	for _, rel := range placed {
 		if rel == "" {
 			continue
 		}
-		// safeMkdirAll refuses a symlinked parent under the snapshot root (twin of
-		// the RemoveLayer snapshot rebuild): the placed set never pairs a leaf `data`
-		// with a `data/loot` beneath it, but guard the snapshot mirror the same way
-		// so no copy is ever written through a directory-symlink out of the snapshot.
+		// safeMkdirAll (not os.MkdirAll): refuse a symlink anywhere in the snapshot
+		// parent chain — no snapshot copy is ever written THROUGH a directory-symlink
+		// out of the snapshot root. Surfaced fail-closed, never swallowed.
 		snapRoot := filepath.Join(omk, "payload-snapshot")
 		if err := safeMkdirAll(snapRoot, filepath.Join(snapRoot, filepath.Dir(rel))); err != nil {
 			fmt.Fprintf(stderr, "omakase: %v\n", err)
@@ -945,7 +622,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		rows = append(rows, state.PlacedRow{
 			Rel:     rel,
 			Kind:    harness.KindOf(rel),
-			Src:     labelFor(rel),
+			Src:     sourceLabel,
 			Hash:    state.HashOf(filepath.Join(root, rel)),
 			Enabled: "1",
 		})
@@ -991,35 +668,6 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 
 	// ---- summary (bin/init.sh:652-685) ----
 	fmt.Fprintf(stdout, "omakase: placed %d file(s), overwrote %d to match payload, skipped %d committed path(s).\n", len(placed), len(overwrote), len(skipped))
-	// GC5 slot-fallback narration: a freshly placed layer whose canonical root
-	// AGENTS.md could not take the root slot (a committed root instruction file, or a
-	// lower layer already owns it) landed at CLAUDE.local.md instead, one line per layer.
-	for _, label := range fellBackLabels {
-		fmt.Fprintf(stdout, "omakase: instructions from %s -> CLAUDE.local.md (root slot taken)\n", label)
-	}
-	// GC5 stacking narration: a second source stacked on top of the first. The
-	// override lines name every LIVE (previously-placed) path the new top layer now
-	// wins, sorted by rel — the diff of placed.tsv column 3 before/after.
-	if narrateStack {
-		fmt.Fprintf(stdout, "omakase: stacked %s on top of %s\n", stackLabelB, stackLabelA)
-		var overrides []string
-		for _, rel := range priorPaths {
-			// Fix D: an override line asserts the new top layer's copy is now IN
-			// EFFECT at a live path. A rel that the merged view says B wins
-			// (labelByRel==stackLabelB) but that the place loop did NOT actually
-			// write this run — because the repo has since COMMITTED it, so the
-			// committed file wins and B's copy was skipped (printed as `~ skipped
-			// (committed…)`) — must NOT be narrated as overridden. Require the rel
-			// to be in the run's actually-placed set, never merely in the merged view.
-			if rel != "" && labelByRel[rel] == stackLabelB && contains(placed, rel) {
-				overrides = append(overrides, rel)
-			}
-		}
-		sort.Strings(overrides)
-		for _, rel := range overrides {
-			fmt.Fprintf(stdout, "  ^ overrides %s: %s\n", stackLabelA, rel)
-		}
-	}
 	for _, p := range placed {
 		if p != "" {
 			fmt.Fprintf(stdout, "  + %s\n", p)
@@ -1072,9 +720,9 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 func placeFile(src, rel, root string, umask os.FileMode, stderr io.Writer) int {
 	dest := filepath.Join(root, rel)
 	// safeMkdirAll (not os.MkdirAll): refuse a symlink anywhere in dest's parent
-	// chain under root — a prior placement (or a stacked lower layer) may have put
-	// a directory-symlink at a parent, and writing the child THROUGH it would land
-	// outside the repo. Surfaced fail-closed, never swallowed.
+	// chain under root — a prior placement may have put a directory-symlink at a
+	// parent, and writing the child THROUGH it would land outside the repo.
+	// Surfaced fail-closed, never swallowed.
 	if err := safeMkdirAll(root, filepath.Dir(dest)); err != nil {
 		fmt.Fprintf(stderr, "omakase: %v\n", err)
 		return 1
@@ -1134,28 +782,6 @@ func walkPayload(payload string) ([]string, error) {
 		return nil
 	})
 	return rels, err
-}
-
-// wiringStrandedRefs reports the .omakase/*.sh scripts filesDir's
-// lefthook-local.yml references but that filesDir does not itself ship — the same
-// fail-closed wiring check init runs (wiringRefs + a per-ref existence test),
-// applied to a SURVIVOR tree so `remove <source>` can refuse before mutation when
-// unlayering would leave the surviving wiring pointing at a script only the
-// removed layer supplied (which would fail every commit with exit 127). Returns a
-// leading-space-joined list of the missing refs, or "" when nothing is stranded
-// (including no lefthook-local.yml at all). Mirrors init.go's install-time guard.
-func wiringStrandedRefs(filesDir string) string {
-	wiring := filepath.Join(filesDir, "lefthook-local.yml")
-	if !fileRegular(wiring) {
-		return ""
-	}
-	missing := ""
-	for _, ref := range wiringRefs(wiring) {
-		if !fileRegular(filepath.Join(filesDir, ref)) {
-			missing += " " + ref
-		}
-	}
-	return missing
 }
 
 // wiringRefs reproduces the wiring scan (bin/init.sh:218): from lefthook-local.yml,
