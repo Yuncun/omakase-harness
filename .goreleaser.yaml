@@ -1,0 +1,69 @@
+# GoReleaser config — cross-compiles the omakase binary and uploads it to a
+# GitHub Release. Driven by .github/workflows/release.yml on a vX.Y.Z tag push.
+#
+# HOLD-AT-PUBLISH: nothing here runs until someone pushes a vX.Y.Z tag, and even
+# then `release.draft: true` uploads the artifacts to a DRAFT release that a
+# maintainer must click Publish on. Runbook: docs/releasing.md.
+#
+# The Homebrew tap block at the bottom is commented out until the
+# Yuncun/homebrew-tap repo exists — see it (and docs/releasing.md) for the
+# enabling steps.
+version: 2
+
+project_name: omakase
+
+builds:
+  - id: omakase
+    main: ./cmd/omakase
+    binary: omakase
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: omakase
+    formats: [tar.gz]
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  # Upload to a DRAFT release; the maintainer reviews the artifacts and notes,
+  # then clicks Publish. This is the outward "publish line" — see docs/releasing.md.
+  draft: true
+  # A re-tagged version replaces its stale draft instead of piling up a second
+  # one — otherwise the rejected draft stays one Publish click from shipping.
+  replace_existing_draft: true
+
+# Homebrew tap — enable when the Yuncun/homebrew-tap repo exists; full steps in
+# docs/releasing.md. (homebrew_casks is GoReleaser v2's replacement for the
+# deprecated `brews`; validated against 2.16.) NOTE: the cask pushes in the SAME
+# unattended run that creates the release, so enabling this also requires
+# `draft: false` above — a cask pointing at a draft release 404s for users.
+#
+# homebrew_casks:
+#   - name: omakase
+#     repository:
+#       owner: Yuncun
+#       name: homebrew-tap
+#       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+#     homepage: "https://github.com/Yuncun/omakase-harness"
+#     description: "Install a repo's local dev harness as a gitignored overlay"
+#     license: MIT

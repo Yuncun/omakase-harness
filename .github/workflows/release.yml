@@ -1,0 +1,49 @@
+name: release
+
+# Runs only on a version-tag push. GoReleaser cross-compiles the binary
+# (.goreleaser.yaml) and uploads it to a DRAFT GitHub Release — a maintainer
+# reviews and clicks Publish. Runbook: docs/releasing.md.
+on:
+  push:
+    # Semver only — a looser "v*" would also fire on habitual v2-* working tags
+    # and goreleaser would happily draft-release them.
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: write # create the release + upload artifacts
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history: goreleaser derives the changelog from tag..tag
+          # goreleaser reads history locally and talks to the API via env-scoped
+          # GITHUB_TOKEN below — no step needs a persisted git credential.
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Preflight — a tag can point at any commit, so re-prove it here with the
+      # SAME checks as tests.yml (Go vet/test/build plus every sh suite; the sh
+      # suites are the release gate that exercises the built binary end-to-end).
+      - name: Go vet, test, build
+        run: |
+          go vet ./... && go test ./... && CGO_ENABLED=0 go build -o dist/omakase ./cmd/omakase
+      - run: npm install -g lefthook
+      - name: Run test suites
+        run: |
+          export LEFTHOOK_BIN="$(command -v lefthook)"
+          rc=0
+          for t in tests/*.test.sh; do
+            echo "=== $t ==="
+            bash "$t" || rc=1
+          done
+          exit $rc
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

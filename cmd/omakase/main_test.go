@@ -87,6 +87,45 @@ func TestPersonalVerbDeregistered(t *testing.T) {
 	}
 }
 
+// TestRunVersion pins the top-level version flag: `omakase --version` prints
+// the build-metadata line to stdout and exits 0. On a plain `go build` (no
+// -ldflags) the injected vars keep their defaults, so the line is exactly the
+// dev string; release builds overwrite version/commit/date via
+// .goreleaser.yaml's ldflags. `--version` is deliberately the ONLY spelling:
+// "-v" and a bare "version" must keep taking the unknown-command path, so "-v"
+// stays free for a future verbose flag and "version" never shadows a future
+// verb — pinned below alongside the flag itself.
+func TestRunVersion(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := run([]string{"omakase", "--version"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	if got, want := stdout.String(), "omakase dev (commit none, built unknown)\n"; got != want {
+		t.Errorf("stdout = %q, want %q", got, want)
+	}
+	if got := stderr.String(); got != "" {
+		t.Errorf("stderr = %q, want empty", got)
+	}
+
+	for _, arg := range []string{"-v", "version"} {
+		t.Run(arg+" is not a version alias", func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+
+			code := run([]string{"omakase", arg}, &stdout, &stderr)
+
+			if code != 2 {
+				t.Errorf("exit code = %d, want 2 (unknown command)", code)
+			}
+			if got, want := stderr.String(), "omakase: unknown command \""+arg+"\"\n"; got != want {
+				t.Errorf("stderr = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestRunUnknownCommand(t *testing.T) {
 	cases := []struct {
 		name string
