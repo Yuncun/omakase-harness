@@ -10,9 +10,9 @@ installed (untracked) file to match payload and warns. Removes a previously plac
 the payload no longer ships, unless it was edited locally.
 
 - `<owner/repo[#ref]>` — positional shorthand for `--source https://github.com/owner/repo`,
-  optionally pinned to a branch or tag with `#ref`. This is the shareable install line others
-  run after `share`: `omakase init you/harness`. A real local path with the same shape wins
-  over the shorthand.
+  optionally pinned to a branch or tag with `#ref`. This is the install line for a custom
+  harness a repo publishes: `omakase init you/harness`. A real local path with the same
+  shape wins over the shorthand.
 - `--source <git-url|path>` — install from a custom harness (a `payload/` tree plus an
   `omakase.manifest`). No harness installed yet: the omakase base harness's payload is
   layered UNDER the custom harness's payload (base machinery underneath, the custom
@@ -60,19 +60,6 @@ stays stuck in `CLAUDE.local.md` (a known, deferred limitation; see v2-design.md
 An unrecognized `<source>` errors and changes nothing. With
 only one harness installed, `remove <source>` for it behaves exactly like the
 no-argument form.
-
-### `share.sh [<name>]`
-
-The inverse of `init`. Captures the current repo's harness into a NEW harness repo created
-as a sibling directory (`../<name>`, default `<reponame>-harness`): writes `payload/`,
-scaffolds `omakase.manifest` + a `README.md` carrying the install line, and runs `git init` +
-commit so it is ready to push. Prints the publish command and the one-line install others run
-(`omakase init you/<name>`). Never changes the source repo. Wraps `import.sh`.
-
-### `import.sh <source-repo>`
-
-The capture step behind `share`. Reads a project's harness files into `payload/`
-(`OMAKASE_PAYLOAD` sets the destination). Read-only on the project it reads. Not an adopter command.
 
 ## Environment
 
