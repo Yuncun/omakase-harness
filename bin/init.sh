@@ -452,7 +452,17 @@ install_script() {  # $1 = sibling basename in bin/, $2 = destination path under
     || { echo "omakase: failed to install $1 -> $2" >&2; exit 1; }
 }
 
-placed=(); skipped=(); overwrote=()
+# Prior enabled state (the menu's off switches): a path disabled in the previous ledger
+# stays disabled across re-init — it is NOT placed, and its row is re-recorded with
+# enabled=0 (snapshot still carries the payload copy so `omakase menu --enable` can
+# restore it without another init).
+prior_disabled=""
+if [ -f "$OMK/placed.tsv" ]; then
+  prior_disabled="$(awk -F'\t' '$5=="0"{print $1}' "$OMK/placed.tsv" 2>/dev/null || true)"
+fi
+was_disabled() { [ -n "$prior_disabled" ] && printf '%s\n' "$prior_disabled" | grep -Fxq -- "$1"; }
+
+placed=(); skipped=(); overwrote=(); declined=()
 while IFS= read -r -d '' f; do
   rel="${f#"$PAYLOAD"/}"
   dest="$ROOT/$rel"
@@ -461,6 +471,8 @@ while IFS= read -r -d '' f; do
   if git -C "$ROOT" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1; then
     skipped+=("$rel"); echo "omakase: SKIP (already tracked) $rel" >&2; continue
   fi
+  # Deliberately disabled (omakase menu): respect the choice — do not place.
+  if was_disabled "$rel"; then declined+=("$rel"); continue; fi
   # Fresh placement: nothing there yet.
   if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
     place_file "$f" "$rel"; placed+=("$rel"); continue
@@ -509,7 +521,7 @@ if [ -f "$OMK/placed.tsv" ]; then
   while IFS=$'\t' read -r rel kind src hash enabled; do
     [ -z "$rel" ] && continue
     still=0
-    for p in "${placed[@]:-}"; do [ "$p" = "$rel" ] && { still=1; break; }; done
+    for p in "${placed[@]:-}" "${declined[@]:-}"; do [ "$p" = "$rel" ] && { still=1; break; }; done
     [ "$still" -eq 1 ] && continue
     git -C "$ROOT" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1 && continue   # tracked: upstream owns it (collision guard warned above)
     { [ -e "$ROOT/$rel" ] || [ -L "$ROOT/$rel" ]; } || continue                  # already gone
@@ -533,7 +545,7 @@ add_prefix(){ case " ${prefixes[*]:-} " in *" $1 "*) ;; *) prefixes+=("$1");; es
 # HARNESS_SHARED_TOPDIRS in lib-harness-paths.sh) is excluded file-by-file instead, so we
 # never hide the project's OWN untracked files under it.
 is_shared_topdir(){ local d; for d in "${HARNESS_SHARED_TOPDIRS[@]}"; do [ "$1" = "$d" ] && return 0; done; return 1; }
-for rel in "${placed[@]:-}"; do
+for rel in "${placed[@]:-}" "${declined[@]:-}"; do
   [ -n "$rel" ] || continue
   if is_shared_topdir "${rel%%/*}"; then add_prefix "$rel"; else add_prefix "${rel%%/*}"; fi
 done
@@ -598,14 +610,21 @@ mkdir -p "$OMK/payload-snapshot"
 # same source. A plain payload install leaves any remembered source in place — the
 # precedence above (flag > env > remembered) already decides who wins.
 if [ -n "$SOURCE" ]; then printf '%s\n' "$SOURCE${SOURCE_REF:+#$SOURCE_REF}" > "$OMK/source"; fi
-# TODO(when: anything writes enabled=0): merge prior enabled values instead of
-# hardcoding 1 — wholesale regeneration silently re-enables declined artifacts.
+# Prior enabled values are merged (declined paths were diverted into declined[] above,
+# never placed): a placed row is written enabled=1, a declined row enabled=0 — with its
+# payload copy still snapshotted so `omakase menu --enable` can restore it init-free.
 : > "$OMK/placed.tsv"
 for rel in "${placed[@]:-}"; do
   [ -z "$rel" ] && continue
   mkdir -p "$OMK/payload-snapshot/$(dirname "$rel")"
   cp -P "$ROOT/$rel" "$OMK/payload-snapshot/$rel"
   printf '%s\t%s\t%s\t%s\t%s\n' "$rel" "$(kind_of "$rel")" "$SOURCE_LABEL" "$(hash_of "$ROOT/$rel")" 1 >> "$OMK/placed.tsv"
+done
+for rel in "${declined[@]:-}"; do
+  [ -z "$rel" ] && continue
+  mkdir -p "$OMK/payload-snapshot/$(dirname "$rel")"
+  cp -P "$PAYLOAD/$rel" "$OMK/payload-snapshot/$rel"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$rel" "$(kind_of "$rel")" "$SOURCE_LABEL" "$(hash_of "$PAYLOAD/$rel")" 0 >> "$OMK/placed.tsv"
 done
 rm -f "$OMK/placed.list"   # pre-0.10 record — superseded by the ledger
 

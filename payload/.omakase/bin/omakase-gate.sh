@@ -91,6 +91,15 @@ if [ "${!skipvar:-0}" = "1" ]; then
   exit 0
 fi
 
+# (2b) menu bypass — a gate named in .git/omakase/disabled-gates (written by omakase
+# menu) is skipped VISIBLY: the same audited-bypass contract as (2), but persistent
+# until re-enabled instead of per-invocation.
+if [ -n "$common" ] && [ -f "$common/omakase/disabled-gates" ] \
+   && grep -Fxq -- "$NAME" "$common/omakase/disabled-gates" 2>/dev/null; then
+  echo "omakase-gate[$NAME]: disabled via omakase menu - skipping (re-enable: omakase menu)"
+  exit 0
+fi
+
 # (3) --glob scope: run only when a changed file in the range matches. Base resolves
 # fail-OPEN (unresolvable -> skip, never a raw git error); the threat model is omission.
 if [ -n "$GLOB" ]; then
