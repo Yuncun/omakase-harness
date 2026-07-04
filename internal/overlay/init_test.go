@@ -1042,6 +1042,49 @@ func TestPlaceFileRefusesRealDir(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------- symlink escape (security)
+//
+// safeMkdirAll (internal/overlay/overlay.go) is the guard both init.go call sites lean on
+// instead of a bare os.MkdirAll: it refuses to create a directory whose parent chain passes
+// through an existing SYMLINK, so a payload write can never land outside the repo through a
+// symlinked parent. TestSafeMkdirAllRefusesSymlinkedParent (overlay_test.go) only calls the
+// primitive directly — swapping every init.go call site to os.MkdirAll would leave that test
+// (and the rest of the suite) green. This test drives the guard END TO END through RunInit's
+// real placeFile call site (init.go:726) so a future refactor that quietly drops safeMkdirAll
+// there is caught by the wiring, not just the primitive.
+//
+// Setup: the TARGET repo has an untracked directory symlink "evil" pointing OUTSIDE the repo
+// (left behind by some earlier step, or attacker-controlled). The payload being installed now
+// ships a plain file "evil/pwned" underneath that same name. Following the symlink would write
+// pwned outside the repo entirely, at $OUTSIDE_DIR/pwned. safeMkdirAll must refuse before that
+// write happens.
+func TestPlaceFileRefusesSymlinkedParentInRepo(t *testing.T) {
+	dir, _ := initRepo(t)
+	stubLefthook(t)
+
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dir, "evil")); err != nil {
+		t.Fatal(err)
+	}
+
+	p := t.TempDir()
+	t.Setenv("OMAKASE_PAYLOAD", p)
+	writeFile(t, filepath.Join(p, "evil", "pwned"), "malicious content\n")
+
+	var stdout, stderr strings.Builder
+	code := RunInit(nil, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 (a symlinked parent in the repo must be refused); stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "safeMkdirAll: refusing to create") {
+		t.Errorf("stderr missing the safeMkdirAll refusal:\n%s", stderr.String())
+	}
+	eq(t, "stdout (nothing placed)", stdout.String(), "")
+	if _, err := os.Stat(filepath.Join(outside, "pwned")); !os.IsNotExist(err) {
+		t.Errorf("write escaped through the symlink: %s exists (statErr=%v)", filepath.Join(outside, "pwned"), err)
+	}
+}
+
 // TestTrackedWorktreeincludeNotice: a git-tracked .worktreeinclude is left
 // untouched (appending would be a committed footprint) — init prints the notice
 // to stderr and writes no wtinc block (bin/init.sh:547-549).
