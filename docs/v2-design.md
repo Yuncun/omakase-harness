@@ -1,26 +1,45 @@
 # omakase v2 — design
 
-Status: LOCKED 2026-07-02. This document is the contract for the v2 implementation;
-when it and the code disagree during the build, this document wins until amended.
-§8 is provisional — it is deliberately the cheapest decision in the design to reverse
-(one mapping-table row, no state impact). Amended 2026-07-03 (Phase 3.5): §1, §3, §4,
-§5, §7, §8, §12, §13 rewritten for the init-stack surface that replaced the original
-`personal` verb/global-setting design — see the CHANGELOG for why.
+> **SUPERSEDED 2026-07-03.** A YAGNI audit cut this design's stacking (two harnesses
+> at once), instruction-reroute (`CLAUDE.local.md`), migration, pins, and gate-toggle
+> (`enable`/`disable`) surface before any of it reached a release. **The shipped
+> product is a 3-verb (`init` / `remove` / `status`) SINGLE-harness overlay** —
+> `init` installs or repairs one harness; a different source REPLACES it (v1
+> orphan-sweep), it does not stack; `remove` is a bare, argument-free total teardown.
+> See [`docs/reference.md`](reference.md) for the current contract and
+> [`CHANGELOG.md`](../CHANGELOG.md) for what was removed and why. Everything below
+> this note — most of it now historical — describes the CUT design as it stood before
+> the revert; do not read any of it as shipped behavior. §1-§3 and §5 carry inline
+> corrections; §4 and §6-§13 are kept verbatim as a design record of what was built,
+> then reverted, and why.
 
-## 1. What v2 is
+Status: LOCKED 2026-07-02 (superseded 2026-07-03, see above). This document was the
+contract for the v2 implementation; when it and the code disagreed during the build,
+this document won until amended. §8 is provisional — it is deliberately the cheapest
+decision in the design to reverse (one mapping-table row, no state impact). Amended
+2026-07-03 (Phase 3.5): §1, §3, §4, §5, §7, §8, §12, §13 rewritten for the init-stack
+surface that replaced the original `personal` verb/global-setting design — see the
+CHANGELOG for why. That init-stack surface was itself reverted later the same day; see
+the supersession note above.
 
-Two changes, one rewrite:
+## 1. What v2 is [CUT — see supersession note above]
 
-1. **Layers.** Today a second `init` replaces the first source wholesale. v2 lets a
-   repo hold two harnesses at once: run `init` again with a DIFFERENT source and it
-   STACKS on top of the first instead of replacing it — the newer one wins where both
-   ship the same path, capped at two, always narrated on stdout. `omakase remove
-   <source>` drops back to one. There are no roles ("project" vs "personal") and
-   nothing layers in automatically — precedence is purely temporal (the order you ran
-   `init`), and every harness on the stack is one you explicitly asked for.
-2. **Toggles + pins.** Gates can be persistently disabled per-repo (`omakase disable
-   <gate>`), and every source records the commit it was installed at (`update` is the
-   only verb that moves pins).
+This section described two changes that were built, then reverted; neither shipped.
+**A second `init` replaces the first source wholesale — same as v1 — today**, exactly
+as it always did:
+
+1. **Layers (CUT, never shipped).** The design called for a repo to hold two harnesses
+   at once: run `init` again with a DIFFERENT source and it would STACK on top of the
+   first instead of replacing it — the newer one winning where both ship the same
+   path, capped at two, narrated on stdout. `omakase remove <source>` would drop back
+   to one. This was built (Phase 3.5) and then reverted by the 2026-07-03 slim-cut:
+   there is no stacking, no roles, and no `remove <source>` in the shipped binary — a
+   different source replaces the installed harness (sweeping its orphaned files), and
+   `remove` is bare and total.
+2. **Toggles + pins (CUT, never shipped).** The design called for gates to be
+   persistently disabled per-repo (`omakase disable <gate>`) and for every source to
+   record the commit it was installed at (`update` as the sole verb that moves pins).
+   None of this was built; there is no `enable`/`disable`/`update` verb.
 
 The install-time machinery (today `bin/*.sh`, ~1,400 lines of bash) becomes **one Go
 static binary** with subcommands. Everything that runs at *hook time* on contributors'
@@ -37,43 +56,49 @@ to POSIX sh is allowed only under the Phase 0 compat suite
 tools in an adopter's command list. Authors write a repo with `payload/` +
 `omakase.manifest` by hand, per docs/authoring.md.
 
-## 2. The pitch (README first paragraph)
+## 2. The pitch (README first paragraph) [CUT — see supersession note above]
 
-> omakase installs a project's quality gates, git hooks, and agent instructions into any
-> repo as an invisible overlay — run `init` again with a different source to stack your
-> own harness on top — with zero committed footprint: nothing ever reaches a PR, and
-> `omakase remove` puts everything back exactly.
+The design called for this pitch, which sells the stacking behavior that was later
+reverted; it never shipped and is not the current README wording:
 
-## 3. Verb surface (6 verbs, flat, no interactive menu)
+> ~~omakase installs a project's quality gates, git hooks, and agent instructions into
+> any repo as an invisible overlay — run `init` again with a different source to stack
+> your own harness on top — with zero committed footprint: nothing ever reaches a PR,
+> and `omakase remove` puts everything back exactly.~~
 
-| Verb | Args | One meaning |
+The shipped pitch (see `README.md`) is single-harness: `init` installs one harness as
+an invisible overlay with zero committed footprint; a different source replaces it
+rather than stacking; `omakase remove` puts everything back exactly.
+
+## 3. Verb surface [CUT — see supersession note above]
+
+The 6-verb table below was the design's target and was never fully built; only
+`init` / `status` / `remove` shipped, and `init`/`remove` shipped in their v1,
+single-harness shape (no stacking, no `remove <source>`). Kept as a historical record
+of the wider design that was cut:
+
+| Verb | Args (design intent, NOT shipped as described) | One meaning |
 |---|---|---|
 | `init` | `[owner/repo[#ref] \| --source <url\|path>] [--cut-over]` | Install, stack, or repair. No source recorded yet: installs it (v1 parity). Same source recorded again: repairs that harness. A DIFFERENT source, one already recorded: **stacks** it on top — the new harness's files win where both ship the same path, narrated (`stacked <B> on top of <A>` + one `^ overrides <A>: <path>` line per shadowed path). Two sources already recorded and a third, different one given: refused (exit 1, nothing touched) — "remove one first". Bare `init` (no source): re-places every recorded harness. **Pins are RECORDED now** (`sources.tsv` captures each layer's resolved commit on every install/repair) **but not yet ENFORCED**: today both a same-source repair and a bare `init` re-fetch each layer's ref and re-record whatever commit currently resolves — the same "refresh to latest" v1 always did. Repair-at-recorded-pin (offline, no fetch) and `update` becoming the sole pin-mover are Phase 4 work (§13). `--cut-over` unchanged from v1 (guarded by `OMAKASE_CUTOVER_CONFIRM=1`). |
-| `update` | `[<source>] [--check]` | **Not yet built (Phase 4, §13).** Design intent: the ONLY pin-mover. Fetch the named source's latest ref (default: every recorded source), resolve to a new commit, record it, re-overlay. Prints `old → new` per source. `--check` = read-only dry run ("9f3c2ab → 4d21e77, 12 commits behind"). Today `init`/bare `init` already do the "fetch + re-record" half (see the `init` row) — `update` as a distinct, sole pin-moving verb has not shipped. |
-| `status` | `[--markdown]` | Read-only, question-first (identity / footprint / guards / inventory). **Today**: identity names only the BOTTOM layer's source (v1-byte-parity — no commit shown, no second harness named there); each Injected row instead carries its own winning layer's source label (`from <label>`), which is how a stacked second harness becomes visible today. Guards chart shows `off — omakase enable <name>` for disabled gates (with age + reason). Stale disabled-gates rows (name no longer wired) are flagged. **Not yet built:** a live-stack-order identity line (`source@short-commit` per layer) and an explicit shadow-with-consequence flag ("`you/b`'s CLAUDE.md shadows `you/a` — `you/a`'s instructions no longer load in Claude Code") are design intent, not shipped. |
-| `enable` | `<gate>` | Remove the gate's row from `$OMK/disabled-gates` (atomic rewrite). Prints what turned back on. |
-| `disable` | `<gate> [--reason <text>]` | Append `name<TAB>epoch<TAB>reason` to `$OMK/disabled-gates`. Persistent per-clone, shared across worktrees. Validates the name against wired gates; refuses unknown names, printing the valid list. The hook prints an audited one-line OFF notice on every skip — never silent. |
-| `remove` | `[<source>]` | Bare: total teardown, v1 semantics verbatim — hooks out, every placed file deleted, exclude block stripped, `$OMK` deleted. Works directly on v1 state. With a source: remove just that one harness, restoring what it overrode from the other (offline — no network); with only one harness installed, this is the same as bare `remove` (there is no third state — the base ships inside the binary, not as an installed layer of its own). Unknown source name: error, exit 1, nothing touched. |
+| `update` | `[<source>] [--check]` | **Not built; cut.** Design intent: the ONLY pin-mover. Fetch the named source's latest ref (default: every recorded source), resolve to a new commit, record it, re-overlay. Prints `old → new` per source. `--check` = read-only dry run ("9f3c2ab → 4d21e77, 12 commits behind"). |
+| `status` | `[--markdown]` | Read-only, question-first (identity / footprint / guards / inventory). Design intent described a live stack-order identity line and a shadow-with-consequence flag for a second, stacked harness — moot, since stacking was cut. |
+| `enable` | `<gate>` | **Not built; cut.** Would have removed the gate's row from `$OMK/disabled-gates` (atomic rewrite). |
+| `disable` | `<gate> [--reason <text>]` | **Not built; cut.** Would have appended `name<TAB>epoch<TAB>reason` to `$OMK/disabled-gates`, persistent per-clone. |
+| `remove` | `[<source>]` | Design intent: bare = total teardown (v1 semantics); `<source>` = remove just that one harness. **What shipped: `remove` takes no `<source>` argument at all — argv is ignored — and is always the bare, total teardown.** There is no per-source removal. |
 
-Deliberate v1 behavior change #1 (Phase 4 — design intent, NOT YET SHIPPED): **bare
-`init` will stop meaning "fetch latest"** (v1's cache refresh hard-reset to the remote
-default branch — de facto an update). The intent is bare `init` repairs at recorded
-pins, offline, and `update` becomes the sole verb that advances a pin. Today, bare
-`init` (and a same-source repair `init`) still behave like v1: they re-fetch each
-layer's ref and re-record whatever commit currently resolves — `sources.tsv` captures
-that resolved commit (the recording half of the design is built), but nothing reads it
-back to skip the fetch. Transition mitigation, once shipped: `init` prints `pinned at
-<short-commit> — omakase update to refresh` on every run until the wording ships in
-docs + skills.
+**What actually shipped (3 verbs, single harness — see `docs/reference.md`):** `init
+[<owner/repo[#ref]> | --source <url|path>] [--cut-over]` installs or repairs ONE
+harness; a different source REPLACES the installed one (v1 orphan-sweep), it does not
+stack. `remove` (no arguments) is a bare total teardown. `status [--markdown]` is
+read-only. `update`, `enable`, `disable` do not exist.
 
-Deliberate v1 behavior change #2: **a second `init` with a different source now stacks
-instead of replacing.** v1's second `init` replaced the remembered source wholesale and
-orphan-swept every file the old source had placed. v2's second `init <source>` keeps
-the first harness's files live and stacks the new one on top of it — nothing is swept,
-both harnesses' files coexist, and the newer one wins only where both ship the same
-path. `omakase remove <source>` is the new way to drop back to one harness.
+The two "deliberate v1 behavior change" paragraphs that followed this table in the
+locked design (a pin-based bare `init`, and a stacking second `init`) describe changes
+that were never shipped or were shipped then reverted; `init` behaves exactly as v1
+did — bare `init` re-fetches and re-records the latest commit (no offline pin-repair),
+and a second `init` with a different source replaces rather than stacks.
 
-## 4. Layering model
+## 4. Layering model [CUT — never shipped in this form; see supersession note above]
 
 A TEMPORAL stack, capped at two — this is the entire mental model:
 
@@ -127,14 +152,17 @@ always three physical stores.
 
 | Artifact | Frozen contract |
 |---|---|
-| `placed.tsv` | Exactly 5 columns `path<TAB>kind<TAB>source<TAB>sha256<TAB>enabled`, one row per LIVE placed file (the merged winning view). **No 6th column, ever**: the sh readers (`ensure-present.sh:28`, `verify-overlay.sh:12`, `remove.sh:55`) parse `read -r rel kind src hash enabled` — an appended column is absorbed into `$enabled` and flips verification fail-open. A writer-side format test must enforce ≤5 columns. Layer identity rides in the EXISTING col 3: `payload` for a base-only install (the v1 label, pinned by placed.test.sh), otherwise the WINNING layer's source label (`source` or `source#ref`) — never the layer ordinal number — display-only, no sh reader parses it. |
+| `placed.tsv` | Exactly 5 columns `path<TAB>kind<TAB>source<TAB>sha256<TAB>enabled`, one row per placed file. **No 6th column, ever**: the sh readers (`ensure-present.sh:28`, `verify-overlay.sh:12`, `remove.sh:55`) parse `read -r rel kind src hash enabled` — an appended column is absorbed into `$enabled` and flips verification fail-open. A writer-side format test must enforce ≤5 columns. Col 3 is `payload` for a base-only install (the v1 label, pinned by placed.test.sh), otherwise the one installed source's label (`source` or `source#ref`) — there is only ever one source, never a layer stack, so this is not a "winning layer" label. |
 | exclude block | `# >>> omakase-harness >>>` / `# <<< omakase-harness <<<` markers, verbatim. |
 | sha256 semantics | A symlink hashes its readlink TARGET STRING; digest tool = shasum (macOS) / sha256sum (elsewhere), identical output required. |
-| `payload-snapshot/` | Still the MERGED effective tree ensure-present heals from. |
-| `ledger.tsv` | `epoch<TAB>name<TAB>verdict<TAB>sha` gate-run records; disabled skips write NO row (parity with the env bypass) so the pass/fail join in status is untouched. |
-| `$OMK/source` | Still written, one line = the BOTTOM layer's source, so any stale v1 tooling stays coherent. Rewritten to the survivor's source when a bottom-layer `remove <source>` leaves it as the sole layer (§4) — otherwise a later bare `init` would resurrect the removed harness. |
+| `payload-snapshot/` | The effective placed tree ensure-present heals from. |
+| `ledger.tsv` | `epoch<TAB>name<TAB>verdict<TAB>sha` gate-run records. |
+| `$OMK/source` | One line = the one recorded source (v1 semantics, unchanged). There is no "bottom layer" — a repo holds exactly one installed harness — so there is no survivor to rewrite this to; a different `init <source>` simply overwrites this file with the new source, same as v1. |
 
-**NEW (strict additions; only `disabled-gates` is read by hook-time sh):**
+**NEW additions from the cut design — none of this shipped (CUT, see supersession
+note above). `sources.tsv`, `disabled-gates`, and `$OMK/layers/` do not exist in the
+codebase; there is no gate-toggle state and no layer store.** Kept for the historical
+record of what the locked design called for:
 
 | File | Format | Purpose |
 |---|---|---|
@@ -143,7 +171,7 @@ always three physical stores.
 | `layers/<n>/files/` + `layers/<n>/placed.tsv` | Each layer's FULL post-mapping file set (incl. currently-shadowed paths), same 5-col layout. | Shadow-restore source for `remove <source>` / bottom-layer re-fold. |
 | `layers/<n>/rerouted` | One line per rerouted path, `<dest><TAB><original>` (in practice at most one: `CLAUDE.local.md<TAB>AGENTS.md`). Lives OUTSIDE `layers/<n>/files/` — never leaks into `placed.tsv`, the exclude block, or the snapshot. | Sidecar marker recording that this layer's canonical `AGENTS.md` fell back to `CLAUDE.local.md` (§7). Read only by a BOTTOM-layer `remove <source>`, to un-reroute the survivor's instructions back to the root slot (suppressed if a committed root instruction file still blocks it). Preserved when a store is reused untouched; recomputed from scratch on every store rebuild. |
 
-## 6. Gate toggles — mechanics
+## 6. Gate toggles — mechanics [CUT — not built; see supersession note above]
 
 The gate primitive (`payload/.omakase/bin/omakase-gate.sh`, bash — see §1) gains ONE
 check right after the existing `OMAKASE_SKIP_<NAME>` env bypass (the check itself is
@@ -167,7 +195,7 @@ different axes; disabling a gate must not delete its files).
 from its embedded base payload (offline) and fixes its placed.tsv row — a toggle is never
 a silent no-op.
 
-## 7. Instruction files — thin mapping, no merging
+## 7. Instruction files — thin mapping, no merging [CUT — reroute/bridge never shipped; omakase places instruction files verbatim, see docs/reference.md]
 
 Canonical authoring rule: a harness ships ONE instruction file, `payload/AGENTS.md`.
 A literal data table in the binary (mirrored in docs/reference.md; swap rows when the
@@ -224,7 +252,7 @@ naming directories whose `AGENTS.md` Copilot reads) could carry a per-user addit
 slot — rejected for now because it requires mutating the user's shell profile, which
 omakase never does.
 
-## 9. Migration from v1 (grafts from design C, both judges)
+## 9. Migration from v1 (grafts from design C, both judges) [CUT — moot, since no stacking/pins shipped; see supersession note above]
 
 - **Lazy, read-only synthesis:** first v2 run of ANY verb in a v1 repo synthesizes
   `sources.tsv` from `$OMK/source` with `commit = '-'` (never guessed), touching no
@@ -281,7 +309,7 @@ motion as a lefthook re-pin.
 | a layer's pin only refreshes at `init`/`update`, never automatically | by design; no daemon |
 | binary release blast radius | hook-time is sh; remove works offline from cache; checksum-pinned bootstrap |
 
-## 13. Implementation plan
+## 13. Implementation plan [Superseded — phases 3.5+ were built then reverted; see supersession note above]
 
 | Phase | Deliverable | Gate |
 |---|---|---|

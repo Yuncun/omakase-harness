@@ -15,9 +15,9 @@ time instead.) If your wiring references a `.omakase/*.sh` neither you nor the b
 
 Start from the base harness repo or an existing custom harness, edit `payload/`, and publish. The
 smallest worked example is [`examples/sample-harness/`](../examples/sample-harness/) — one rule,
-one gate, and the wiring; copy it and edit the three files under `payload/`. To
-capture the harness files already living inside a project, run `bin/import.sh /path/to/project`,
-which reads that project's harness files into `payload/` and leaves the project untouched.
+one gate, and the wiring; copy it and edit the three files under `payload/`. There is no capture
+tool: build `payload/` and `omakase.manifest` by hand, moving in whatever files a project already
+has in place.
 
 ## Public surface (the stability contract)
 

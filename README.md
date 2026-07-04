@@ -29,14 +29,13 @@ Any other environment, including GitHub Copilot CLI and a plain shell:
     bash /path/to/omakase/bin/init.sh
 
 The Claude Code plugin wraps the same `bin/` scripts behind `/omakase:*` skills
-(`/omakase:init`, `/omakase:status`, `/omakase:remove`, `/omakase:share`).
+(`/omakase:init`, `/omakase:status`, `/omakase:remove`).
 
 ## Commands
 
     init.sh [<owner/repo> | --source <url>]   overlay the harness, exclude it from git, install hooks
     status.sh [--markdown]                       print what is installed and what runs when
     remove.sh                                  delete the placed files, uninstall hooks, restore the repo
-    share.sh [<name>]                          capture this repo's harness into a new, publishable harness repo
 
 `init` installs lefthook if absent, fetching a pinned, checksum-verified binary into a
 per-machine cache. Flags and environment variables are in the [reference](docs/reference.md).

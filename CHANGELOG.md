@@ -5,6 +5,30 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Removed — 2026-07-03 slim-cut
+- **Reverted to a 3-verb, single-harness overlay** (`init` / `remove` / `status`). A
+  YAGNI audit found the layered design below (Phases 3-3.5) had no real user demand
+  behind it and cut the whole surface before any of it reached a release: two-harness
+  stacking (a second `init <source>` stacking on top instead of replacing, `remove
+  <source>` unlayering one harness), the `AGENTS.md` → `CLAUDE.local.md` instruction
+  reroute and its `CLAUDE.md` bridge symlink, the v1→v2 migration and mixed-era
+  detection, pins (`sources.tsv`, per-source resolved-commit recording), the `update`
+  verb, and `enable`/`disable` gate toggles are all gone. `init` is back to plain v1
+  semantics: install, repair the same source, or replace a different one (sweeping the
+  old source's orphaned files) — it never stacks. `remove` takes no arguments — argv is
+  ignored — and is always a bare, total teardown; there is no `remove <source>`.
+  Instruction files are placed VERBATIM, exactly as a harness ships them: no reroute, no
+  synthesized bridge, no root-slot fallback. `sources.tsv` and the `$OMK/layers/` store
+  are deleted; `$OMK/source` (one line, frozen v1 format) is the only remembered-source
+  record. `share`/`import` stay removed (cut earlier in this same effort, before this
+  entry). `docs/v2-design.md` is marked superseded and kept only as a historical record;
+  `docs/reference.md` describes the current contract.
+- **Fixed:** `init --source` repairing an already-installed harness while offline used to
+  brick the repair when the source's cache refresh failed (no network, no fallback). It
+  now falls back to reusing the last good cached copy instead of failing the repair.
+- **Deferred, not merely postponed:** persistent gate toggles (`enable`/`disable`) are
+  cut outright — no plan to rebuild them without a concrete need surfacing.
+
 ### Added
 - **Layers + the `personal` verb (v2 design §4/§5/§7/§9).** A repo can now hold a *project*
   harness and your *personal* harness at once, stacked highest-layer-wins (whole-file, never
