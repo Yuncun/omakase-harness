@@ -1,0 +1,65 @@
+# GoReleaser config — cross-compiles the omakase binary and uploads it to a
+# GitHub Release. Driven by .github/workflows/release.yml on a `v*` tag push.
+#
+# HOLD-AT-PUBLISH: nothing here runs until someone pushes a vX.Y.Z tag, and even
+# then `release.draft: true` uploads the artifacts to a DRAFT release that a
+# maintainer must click Publish on. Runbook: docs/releasing.md.
+#
+# The Homebrew tap block at the bottom is commented out until the
+# Yuncun/homebrew-tap repo exists — uncomment it to have each release update the
+# formula automatically.
+version: 2
+
+project_name: omakase
+
+builds:
+  - id: omakase
+    main: ./cmd/omakase
+    binary: omakase
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: omakase
+    formats: [tar.gz]
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  # Upload to a DRAFT release; the maintainer reviews the artifacts and notes,
+  # then clicks Publish. This is the outward "publish line" — see docs/releasing.md.
+  draft: true
+
+# Homebrew tap — enable when the Yuncun/homebrew-tap repo exists. Uncomment,
+# then a `v*` release pushes an updated formula to that repo (needs a token with
+# write access to it; see docs/releasing.md).
+#
+# brews:
+#   - name: omakase
+#     repository:
+#       owner: Yuncun
+#       name: homebrew-tap
+#     homepage: "https://github.com/Yuncun/omakase-harness"
+#     description: "Install a repo's local dev harness as a gitignored overlay"
+#     license: MIT
+#     test: |
+#       system "#{bin}/omakase", "--version"

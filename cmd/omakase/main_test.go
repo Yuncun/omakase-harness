@@ -87,6 +87,31 @@ func TestPersonalVerbDeregistered(t *testing.T) {
 	}
 }
 
+// TestRunVersion pins the top-level version flag: `omakase --version`, `-v`,
+// and `version` each print the build-metadata line to stdout and exit 0. On a
+// plain `go build` (no -ldflags) the injected vars keep their defaults, so the
+// line is exactly the dev string; release builds overwrite version/commit/date
+// via .goreleaser.yaml's ldflags.
+func TestRunVersion(t *testing.T) {
+	for _, arg := range []string{"--version", "-v", "version"} {
+		t.Run(arg, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+
+			code := run([]string{"omakase", arg}, &stdout, &stderr)
+
+			if code != 0 {
+				t.Errorf("exit code = %d, want 0", code)
+			}
+			if got, want := stdout.String(), "omakase dev (commit none, built unknown)\n"; got != want {
+				t.Errorf("stdout = %q, want %q", got, want)
+			}
+			if got := stderr.String(); got != "" {
+				t.Errorf("stderr = %q, want empty", got)
+			}
+		})
+	}
+}
+
 func TestRunUnknownCommand(t *testing.T) {
 	cases := []struct {
 		name string
