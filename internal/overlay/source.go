@@ -221,8 +221,23 @@ func fetchSource(src, sourceRef string, stdout, stderr io.Writer) (payloadDir, r
 	// checkout sequence.
 	if isDir(filepath.Join(cache, ".git")) {
 		if !refreshCache(cache) {
-			fmt.Fprintf(stderr, "omakase: source cache at %s is stale or corrupt — discarding and re-cloning (a cache is disposable)\n", cache)
-			os.RemoveAll(cache)
+			// A refresh failure can mean two different things: the cache is
+			// genuinely corrupt (falls through to reclone below, unchanged), or
+			// the fetch merely could not reach the remote (offline/transient) —
+			// in which case the on-disk checkout is still a usable copy. A bare-
+			// init repair must survive with no network, so only discard the
+			// cache when it does NOT look like a healthy, reusable checkout:
+			// `git` itself considers it structurally sound (HEAD resolves, no
+			// network needed) AND it still carries a manifest + payload/.
+			// Otherwise this is the pre-existing stale/corrupt-cache path.
+			if cacheGitHealthy(cache) &&
+				fileRegular(filepath.Join(cache, "omakase.manifest")) &&
+				isDir(filepath.Join(cache, "payload")) {
+				fmt.Fprintf(stderr, "omakase: could not refresh source cache at %s — reusing the cached copy (offline?)\n", cache)
+			} else {
+				fmt.Fprintf(stderr, "omakase: source cache at %s is stale or corrupt — discarding and re-cloning (a cache is disposable)\n", cache)
+				os.RemoveAll(cache)
+			}
 		}
 	}
 	if !isDir(filepath.Join(cache, ".git")) {
@@ -405,6 +420,17 @@ func copyTree(src, dst string) error {
 	})
 }
 
+// cacheGitHealthy reports whether cache/.git is a structurally sound git
+// checkout — HEAD resolves to a real object — checked with a purely local git
+// operation (no network). A repo with a mangled ref store (e.g. a corrupted
+// .git/HEAD) fails this even if payload/ + omakase.manifest are still present
+// on disk from an earlier clone; a healthy clone whose remote has merely gone
+// unreachable passes it. This is the signal that tells a failed refreshCache
+// apart from a genuinely corrupt cache (see fetchSource's refresh block).
+func cacheGitHealthy(cache string) bool {
+	return gitCacheQuiet(cache, "rev-parse", "--verify", "-q", "HEAD")
+}
+
 // gitCacheQuiet runs `git -C cache <args...>` with all child output discarded
 // (nil Stdout/Stderr => the null device), returning whether it exited 0 —
 // v1's `git -C "$cache" ... >/dev/null 2>&1`.
@@ -421,31 +447,4 @@ func gitCacheOut(cache string, args ...string) string {
 		return ""
 	}
 	return strings.TrimRight(string(out), "\n")
-}
-
-// resolvedCommit is sources.tsv column 4 for a project or personal row (design
-// §9: "First real init/update records resolved commits"; plan GC4: "commit =
-// full sha via `git -C <cache> rev-parse HEAD` after checkout"). Call this
-// AFTER a fetchSource (direct, or via runSource) for src has already
-// succeeded — the cache dir is recomputed from src via sourceCacheDir rather
-// than threaded back through sourceResult/fetchSource's return values: the
-// slug is a pure function of src, and re-running `rev-parse HEAD` against the
-// cache fetchSource just populated is cheap.
-//
-// fetchSource's own clone step (bin/init.sh:104-138) always runs `git clone`
-// into the cache, even when src names a local directory (git clones a local
-// path just as it would a remote URL, producing a full .git checkout there
-// too) — so in every currently reachable success path the cache DOES have a
-// .git dir. The "no .git" arm below is therefore defensive, not exercised by
-// any test: GC4 also specifies "-" for "a non-git local path", so it is kept
-// as the documented fallback rather than assuming rev-parse can never fail.
-func resolvedCommit(src string) string {
-	cache := sourceCacheDir(src)
-	if !isDir(filepath.Join(cache, ".git")) {
-		return "-"
-	}
-	if sha := gitCacheOut(cache, "rev-parse", "HEAD"); sha != "" {
-		return sha
-	}
-	return "-"
 }

@@ -497,6 +497,67 @@ func TestSourceCorruptCacheReclone(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------- offline repair (Task 2)
+
+// TestFetchSourceReusesCacheWhenRefreshFails (red-first, GC9: no network used):
+// pins the cache-brick fix. A prior fetch leaves a healthy, valid cache (.git +
+// omakase.manifest + payload/). The cache's remote then goes dark (repointed at
+// a nonexistent local path — no network involved) and the source itself
+// disappears too, so BOTH refreshCache's `git fetch` and any reclone attempt
+// (which would clone from `src` verbatim) are impossible — the genuinely
+// offline case a bare-init repair must survive. fetchSource must reuse the
+// retained cache and succeed, instead of deleting the only usable copy and
+// then failing to reclone with nothing to fall back to.
+func TestFetchSourceReusesCacheWhenRefreshFails(t *testing.T) {
+	srcTestEnv(t)
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: reuse\nversion: 9.9\n")
+	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "g.sh"), "ORIGINAL\n")
+	commitAll(t, src, "v1")
+
+	// Prime a real, healthy cache via the normal fetch path.
+	var o1, e1 strings.Builder
+	payloadDir1, _, code1 := fetchSource(src, "", &o1, &e1)
+	if code1 != 0 {
+		t.Fatalf("priming fetch failed: code=%d stderr=%q", code1, e1.String())
+	}
+	cache := sourceCacheDir(src)
+	if !isDir(filepath.Join(cache, ".git")) {
+		t.Fatalf("priming fetch did not leave a cache at %s", cache)
+	}
+
+	// Go dark: repoint the cache's own remote at a nonexistent local path (a
+	// missing local path fails `git fetch` immediately, no network needed), and
+	// remove the source directory itself so a reclone attempt — which uses
+	// `src` verbatim, not the cache's remote — has nothing to clone from either.
+	deadRemote := filepath.Join(t.TempDir(), "gone", "nowhere.git")
+	runGitT(t, cache, "remote", "set-url", "origin", deadRemote)
+	if err := os.RemoveAll(src); err != nil {
+		t.Fatal(err)
+	}
+
+	var o2, e2 strings.Builder
+	payloadDir2, _, code2 := fetchSource(src, "", &o2, &e2)
+	if code2 != 0 {
+		t.Fatalf("fetchSource with a dead remote must still succeed from the retained cache; code=%d stdout=%q stderr=%q", code2, o2.String(), e2.String())
+	}
+	eq(t, "reused payload dir", payloadDir2, payloadDir1)
+	if !isDir(filepath.Join(cache, ".git")) {
+		t.Error("cache dir was deleted despite being a healthy, usable, retained copy")
+	}
+	if !isDir(filepath.Join(cache, "payload")) {
+		t.Error("cache payload/ was deleted despite being a healthy, usable, retained copy")
+	}
+	eq(t, "retained gate content", readFileT(t, filepath.Join(cache, "payload", ".omakase", "gates", "g.sh")), "ORIGINAL\n")
+	if !strings.Contains(e2.String(), "reusing the cached copy") {
+		t.Errorf("no offline-reuse notice on stderr:\n%s", e2.String())
+	}
+	if strings.Contains(e2.String(), "stale or corrupt") {
+		t.Errorf("wrongly reported the retained cache as corrupt:\n%s", e2.String())
+	}
+}
+
 // ---------------------------------------------------------------- merge semantics
 
 // TestMergeSourceWinsOverlap (red-first): base and source both ship a file at
