@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # omakase-harness — the single source of truth for "which repo paths are agent-harness
 # artifacts, and what kind each is." Sourced by init.sh (records the kind in the provenance
-# ledger), status.sh (inventory + committed-surface scan), and import.sh (capture locations).
+# ledger) and status.sh (inventory + committed-surface scan).
 # NOT executed directly: defines one function + three path lists and runs nothing at source
 # time. Safe under the callers' `set -euo pipefail` — the arrays are never empty, so there
 # is no unbound-array expansion under bash 3.2 + set -u.
@@ -55,8 +55,10 @@ kind_of() {
   esac
 }
 
-# import.sh capture locations — single files and whole dirs it walks ON DISK to mirror an
-# existing harness into payload/ (see import.sh rule 1). Keep in step with kind_of above.
+# Harness-owned paths — the anti-drift lock's source list; tests/harness-paths.test.sh asserts
+# every HARNESS_LOC_DIRS entry classifies to a real kind above. No capture tool reads these
+# arrays today — a harness author places files by hand, see docs/harness-surface.md. Keep in
+# step with kind_of above.
 HARNESS_LOC_FILES=(AGENTS.md CLAUDE.md .github/copilot-instructions.md lefthook-local.yml lefthook.yml .pre-commit-config.yaml .claude/settings.json)
 HARNESS_LOC_DIRS=(.claude/rules .claude/skills .claude/commands .claude/agents .claude/hooks .github/skills .github/instructions .github/prompts .github/chatmodes .github/hooks .omakase .husky .githooks)
 
