@@ -1,13 +1,13 @@
 # GoReleaser config — cross-compiles the omakase binary and uploads it to a
-# GitHub Release. Driven by .github/workflows/release.yml on a `v*` tag push.
+# GitHub Release. Driven by .github/workflows/release.yml on a vX.Y.Z tag push.
 #
 # HOLD-AT-PUBLISH: nothing here runs until someone pushes a vX.Y.Z tag, and even
 # then `release.draft: true` uploads the artifacts to a DRAFT release that a
 # maintainer must click Publish on. Runbook: docs/releasing.md.
 #
 # The Homebrew tap block at the bottom is commented out until the
-# Yuncun/homebrew-tap repo exists — uncomment it to have each release update the
-# formula automatically.
+# Yuncun/homebrew-tap repo exists — see it (and docs/releasing.md) for the
+# enabling steps.
 version: 2
 
 project_name: omakase
