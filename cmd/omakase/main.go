@@ -45,8 +45,9 @@ func run(argv []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	switch argv[1] {
-	case "--version", "-v", "version":
+	// Exactly one spelling on purpose: "-v" stays free for a future verbose
+	// flag, and a bare "version" word would shadow any future verb of that name.
+	if argv[1] == "--version" {
 		fmt.Fprintf(stdout, "omakase %s (commit %s, built %s)\n", version, commit, date)
 		return 0
 	}
