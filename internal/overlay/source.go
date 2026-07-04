@@ -221,8 +221,23 @@ func fetchSource(src, sourceRef string, stdout, stderr io.Writer) (payloadDir, r
 	// checkout sequence.
 	if isDir(filepath.Join(cache, ".git")) {
 		if !refreshCache(cache) {
-			fmt.Fprintf(stderr, "omakase: source cache at %s is stale or corrupt — discarding and re-cloning (a cache is disposable)\n", cache)
-			os.RemoveAll(cache)
+			// A refresh failure can mean two different things: the cache is
+			// genuinely corrupt (falls through to reclone below, unchanged), or
+			// the fetch merely could not reach the remote (offline/transient) —
+			// in which case the on-disk checkout is still a usable copy. A bare-
+			// init repair must survive with no network, so only discard the
+			// cache when it does NOT look like a healthy, reusable checkout:
+			// `git` itself considers it structurally sound (HEAD resolves, no
+			// network needed) AND it still carries a manifest + payload/.
+			// Otherwise this is the pre-existing stale/corrupt-cache path.
+			if cacheGitHealthy(cache) &&
+				fileRegular(filepath.Join(cache, "omakase.manifest")) &&
+				isDir(filepath.Join(cache, "payload")) {
+				fmt.Fprintf(stderr, "omakase: could not refresh source cache at %s — reusing the cached copy (offline?)\n", cache)
+			} else {
+				fmt.Fprintf(stderr, "omakase: source cache at %s is stale or corrupt — discarding and re-cloning (a cache is disposable)\n", cache)
+				os.RemoveAll(cache)
+			}
 		}
 	}
 	if !isDir(filepath.Join(cache, ".git")) {
@@ -403,6 +418,17 @@ func copyTree(src, dst string) error {
 		}
 		return nil // skip other special files (fifos/sockets) — a payload never ships them
 	})
+}
+
+// cacheGitHealthy reports whether cache/.git is a structurally sound git
+// checkout — HEAD resolves to a real object — checked with a purely local git
+// operation (no network). A repo with a mangled ref store (e.g. a corrupted
+// .git/HEAD) fails this even if payload/ + omakase.manifest are still present
+// on disk from an earlier clone; a healthy clone whose remote has merely gone
+// unreachable passes it. This is the signal that tells a failed refreshCache
+// apart from a genuinely corrupt cache (see fetchSource's refresh block).
+func cacheGitHealthy(cache string) bool {
+	return gitCacheQuiet(cache, "rev-parse", "--verify", "-q", "HEAD")
 }
 
 // gitCacheQuiet runs `git -C cache <args...>` with all child output discarded
