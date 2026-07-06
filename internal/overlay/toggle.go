@@ -90,9 +90,10 @@ func GateOn(repo *state.Repo, name string) error {
 
 // healGateScript self-updates a placed gate script that predates the
 // disabled-gates check (step 2b): without it, a disabled gate would keep
-// blocking. Snapshot + ledger hash move in the same step — verify-overlay is
-// fail-closed on drift, so a healed file with a stale recorded hash would
-// block every push.
+// blocking. Snapshot + ledger hash move in the same step — a healed file
+// with a stale recorded hash would read as drift everywhere the ledger
+// hash is compared (status's drift flag, ensure-present's warn), phantom
+// noise pinned on omakase's own edit.
 func healGateScript(repo *state.Repo) error {
 	const rel = ".omakase/bin/omakase-gate.sh"
 	dest := filepath.Join(repo.Root, rel)
