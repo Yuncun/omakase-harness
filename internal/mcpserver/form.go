@@ -150,8 +150,14 @@ func Diff(fields []Field, content map[string]any) []Op {
 			continue
 		}
 		if s, ok := f.Default.(string); ok && s == keepAsIs {
+			// The server-side enum schema restricts this field to the three
+			// declared values, so the SDK rejects anything else before it
+			// reaches us today. Checking explicitly for allOn/allOff (rather
+			// than "anything that isn't keepAsIs") means a future SDK that
+			// relaxes that validation can't turn stray junk into a
+			// destructive group-off by falling through this branch.
 			choice, ok := got.(string)
-			if !ok || choice == keepAsIs {
+			if !ok || (choice != allOn && choice != allOff) {
 				continue
 			}
 			ops = append(ops, Op{IsGate: f.IsGate, Group: f.Group, Rel: f.Rel, Children: f.Children, On: choice == allOn})

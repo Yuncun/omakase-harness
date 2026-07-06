@@ -267,6 +267,51 @@ func TestMenuUntouchedSubmit(t *testing.T) {
 	}
 }
 
+// A client that accepts with content omitted (nil, not even an empty
+// object) must not crash the server. Upstream (go-sdk v1.6.1 ->
+// jsonschema-go v0.4.3): a nil map[string]any passes the SDK's server-side
+// object validation (a nil map still reports Kind() == Map) but then reaches
+// ApplyDefaults, which assigns straight into that map to backfill declared
+// defaults and panics with "assignment to entry in nil map" — inside
+// req.Session.Elicit, before menuHandler ever sees a result. Regression for
+// finding C1: this must be recovered and folded into the same graceful
+// fallback as "client can't elicit at all", and the session must still be
+// usable afterwards.
+func TestMenuAcceptWithNilContentDoesNotCrash(t *testing.T) {
+	dir, repo := placedFixture(t)
+	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		return &mcp.ElicitResult{Action: "accept"}, nil // Content deliberately omitted (nil map)
+	}
+	cs := connect(t, dir, eh)
+
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"})
+	if err != nil {
+		t.Fatalf("CallTool(menu) with nil-content accept killed the connection: %v", err)
+	}
+	if out := text(t, res); !strings.Contains(out, "--disable") {
+		t.Errorf("nil-content accept did not fall back to the flag hint:\n%s", out)
+	}
+
+	if !lexists(filepath.Join(dir, "AGENTS.md")) {
+		t.Errorf("AGENTS.md removed despite nil-content accept producing no ops")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	if i := placedIndex(rows, "AGENTS.md"); i < 0 || rows[i].Enabled != "1" {
+		t.Errorf("ledger disturbed by nil-content accept: %+v", rows)
+	}
+
+	// The session must survive the recovered panic: a further call on the
+	// same connection has to succeed, not fail because the server (or the
+	// process) died with it.
+	statusRes, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "status"})
+	if err != nil {
+		t.Fatalf("CallTool(status) after nil-content accept: %v", err)
+	}
+	if statusRes.IsError {
+		t.Fatalf("status IsError after nil-content accept: %s", text(t, statusRes))
+	}
+}
+
 // A client with no elicitation capability gets the instructive fallback, not
 // a protocol error.
 func TestMenuWithoutElicitationCapability(t *testing.T) {

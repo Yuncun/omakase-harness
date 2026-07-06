@@ -96,7 +96,7 @@ func menuHandler(root string) mcp.ToolHandler {
 		if len(fields) == 0 {
 			return textResult("Nothing to toggle — this repo has no omakase consent items. The status tool shows the full picture.", false), nil
 		}
-		res, err := req.Session.Elicit(ctx, &mcp.ElicitParams{
+		res, err := elicit(ctx, req.Session, &mcp.ElicitParams{
 			Message:         menuMessage(repo, len(fields)),
 			RequestedSchema: schema,
 		})
@@ -113,6 +113,28 @@ func menuHandler(root string) mcp.ToolHandler {
 		ops := Diff(fields, res.Content)
 		return textResult(apply(repo, ops), false), nil
 	}
+}
+
+// elicit wraps Session.Elicit with a panic recover. WHY: a spec-loose client
+// can reply {"action":"accept"} with content omitted or null — a nil
+// map[string]any that passes go-sdk's server-side object validation (a nil
+// map still has Kind() == Map) but then reaches jsonschema-go's
+// ApplyDefaults, which assigns straight into that map to backfill defaults
+// and panics with "assignment to entry in nil map" (go-sdk v1.6.1 ->
+// jsonschema-go v0.4.3, validate.go's applyDefaults). go-sdk does not
+// recover panics inside tool handlers, so an unrecovered panic here would
+// kill the whole `omakase mcp` process and the human's session with it. The
+// consent surface has to survive a client that gets this wrong, so the
+// panic is caught here and folded into the same err != nil branch that
+// already handles "client can't elicit" — same graceful fallback text,
+// whether the client refused to elicit or elicited badly.
+func elicit(ctx context.Context, session *mcp.ServerSession, params *mcp.ElicitParams) (res *mcp.ElicitResult, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("elicitation failed: %v", r)
+		}
+	}()
+	return session.Elicit(ctx, params)
 }
 
 // menuMessage is the text above the form: what checking a box means and the

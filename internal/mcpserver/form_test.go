@@ -111,6 +111,22 @@ func TestDiff(t *testing.T) {
 	}
 }
 
+// A junk string on a partial group's enum field (something other than the
+// three declared choices) emits no op — Diff must not treat "anything but
+// keep as-is" as "all off". This only matters if a future SDK relaxes the
+// server-side enum validation that rejects junk today; the test guards the
+// hardened branch directly at the Diff layer.
+func TestDiffPartialGroupJunkChoiceIsNoOp(t *testing.T) {
+	fields, _, err := BuildForm(sampleItems())
+	if err != nil {
+		t.Fatalf("BuildForm: %v", err)
+	}
+	ops := Diff(fields, map[string]any{"dir:.claude/skills": "banana"})
+	if len(ops) != 0 {
+		t.Errorf("junk choice: ops = %+v, want none", ops)
+	}
+}
+
 // A fully-on group is a plain boolean field, and turning it off diffs to one
 // group Op.
 func TestBuildFormWholeGroupBoolean(t *testing.T) {
