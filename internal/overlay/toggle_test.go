@@ -156,3 +156,44 @@ func TestFileOffNotPlaced(t *testing.T) {
 		t.Fatalf("FileOff on unplaced path: got %v, want ErrNotPlaced", err)
 	}
 }
+
+// ------------------------------------------------------------ consent merge
+
+// Re-init must not resurrect a file the developer toggled off (consent merge),
+// and must refresh its snapshot so a later FileOn restores the NEW payload copy.
+func TestReinitPreservesDeclined(t *testing.T) {
+	dir, repo := placeSingleGate(t)
+	rel := ".omakase/gates/example.sh"
+
+	if err := FileOff(repo, rel); err != nil {
+		t.Fatalf("FileOff: %v", err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("re-init exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	full := filepath.Join(dir, rel)
+	if lexists(full) {
+		t.Errorf("declined file resurrected by re-init: %s", full)
+	}
+
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	idx := placedIndex(rows, rel)
+	if idx < 0 {
+		t.Fatalf("ledger row missing after re-init")
+	}
+	eq(t, "Enabled", rows[idx].Enabled, "0")
+
+	// snapshot is refreshed from the CURRENT payload copy even though the file
+	// itself was never re-placed on disk.
+	snap := filepath.Join(repo.OMK, "payload-snapshot", rel)
+	eq(t, "snapshot content", readFileT(t, snap), gateContent)
+
+	// A later FileOn restores that refreshed snapshot.
+	if err := FileOn(repo, rel); err != nil {
+		t.Fatalf("FileOn: %v", err)
+	}
+	eq(t, "restored content", readFileT(t, full), gateContent)
+}

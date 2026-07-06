@@ -426,6 +426,18 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "  init --cut-over (guarded) to untrack the file and let the injected copy take over.")
 	}
 
+	// ---- consent merge ----
+	// A row a prior toggle disabled (enabled=0) stays disabled across re-init:
+	// the file is not re-placed, but its snapshot + ledger row are refreshed so
+	// `omakase status --enable` can restore the CURRENT payload copy later.
+	declined := map[string]bool{}
+	for _, row := range state.ReadPlaced(filepath.Join(omk, "placed.tsv")) {
+		if row.Enabled == "0" {
+			declined[row.Rel] = true
+		}
+	}
+	var declinedKept []string
+
 	umask := currentUmask()
 
 	// ---- place loop (bin/init.sh:455-497) ----
@@ -437,6 +449,11 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		if gitTracked(root, rel) {
 			skipped = append(skipped, rel)
 			fmt.Fprintf(stderr, "omakase: SKIP (already tracked) %s\n", rel)
+			continue
+		}
+		if declined[rel] {
+			declinedKept = append(declinedKept, rel)
+			fmt.Fprintf(stderr, "omakase: SKIP (toggled off) %s — re-enable: omakase status --enable %s\n", rel, rel)
 			continue
 		}
 		// Fresh placement: nothing there yet.
@@ -513,7 +530,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "omakase: .worktreeinclude is tracked — leaving it untouched (re-run omakase init inside a new manual worktree to install it there).")
 	}
 	isDirRoot := func(p string) bool { return isDir(filepath.Join(root, p)) }
-	prefixes := DerivePrefixes(placed, harness.SharedTopdirs, isDirRoot, lefthookTracked, wtincTracked)
+	prefixes := DerivePrefixes(append(append([]string{}, placed...), declinedKept...), harness.SharedTopdirs, isDirRoot, lefthookTracked, wtincTracked)
 
 	if err := os.MkdirAll(filepath.Dir(exclude), 0o755); err != nil {
 		return 1
@@ -625,6 +642,24 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			Src:     sourceLabel,
 			Hash:    state.HashOf(filepath.Join(root, rel)),
 			Enabled: "1",
+		})
+	}
+	for _, rel := range declinedKept {
+		src := filepath.Join(payload, rel)
+		snapRoot := filepath.Join(omk, "payload-snapshot")
+		if err := safeMkdirAll(snapRoot, filepath.Join(snapRoot, filepath.Dir(rel))); err != nil {
+			fmt.Fprintf(stderr, "omakase: %v\n", err)
+			return 1
+		}
+		if err := CopyEntry(src, filepath.Join(snapRoot, rel)); err != nil {
+			return 1
+		}
+		rows = append(rows, state.PlacedRow{
+			Rel:     rel,
+			Kind:    harness.KindOf(rel),
+			Src:     sourceLabel,
+			Hash:    state.HashOf(src), // hash of what WOULD be placed (payload copy)
+			Enabled: "0",
 		})
 	}
 	if err := state.WritePlaced(filepath.Join(omk, "placed.tsv"), rows); err != nil {
