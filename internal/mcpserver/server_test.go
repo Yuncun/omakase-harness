@@ -33,11 +33,14 @@ func placedIndex(rows []state.PlacedRow, rel string) int {
 	return -1
 }
 
-// placedFixture builds a git repo with one placed rule file (AGENTS.md) and a
+// placedFixture builds a git repo with one placed rule file (AGENTS.md), two
+// placed skill files under .claude/skills/ (a.md, b.md — >= 2 path separators,
+// so internal/tui/items.go groups them under "dir:.claude/skills"), and a
 // lefthook stub whose `dump` output declares one omakase pre-commit gate
-// (smoke) — the minimal repo where LiveItems yields both a toggleable file
-// and a toggleable gate. It chdirs into the repo (status.Run resolves the
-// repo from the working directory) and returns the dir plus discovered Repo.
+// (smoke) — the minimal repo where LiveItems yields a toggleable file, a
+// toggleable group, and a toggleable gate. It chdirs into the repo
+// (status.Run resolves the repo from the working directory) and returns the
+// dir plus discovered Repo.
 func placedFixture(t *testing.T) (string, *state.Repo) {
 	t.Helper()
 	dir := t.TempDir()
@@ -74,6 +77,16 @@ func placedFixture(t *testing.T) (string, *state.Repo) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(payload, "AGENTS.md"), []byte("# agents\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skills := filepath.Join(payload, ".claude", "skills")
+	if err := os.MkdirAll(skills, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skills, "a.md"), []byte("# skill a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skills, "b.md"), []byte("# skill b\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("OMAKASE_PAYLOAD", payload)
@@ -265,6 +278,126 @@ func TestMenuWithoutElicitationCapability(t *testing.T) {
 	}
 	if out := text(t, res); !strings.Contains(out, "--disable") {
 		t.Errorf("fallback text missing flag hint:\n%s", out)
+	}
+}
+
+// Accepting the form with a whole group flipped off applies it to every
+// child: both files leave the working tree, both ledger rows go enabled=0,
+// and the summary names the group and the file count.
+func TestMenuGroupOff(t *testing.T) {
+	dir, repo := placedFixture(t)
+	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"dir:.claude/skills": false}}, nil
+	}
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"})
+	if err != nil {
+		t.Fatalf("CallTool(menu): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("menu IsError: %s", text(t, res))
+	}
+	if lexists(filepath.Join(dir, ".claude", "skills", "a.md")) {
+		t.Errorf("a.md still present after group off")
+	}
+	if lexists(filepath.Join(dir, ".claude", "skills", "b.md")) {
+		t.Errorf("b.md still present after group off")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	for _, rel := range []string{".claude/skills/a.md", ".claude/skills/b.md"} {
+		if i := placedIndex(rows, rel); i < 0 || rows[i].Enabled != "0" {
+			t.Errorf("ledger not enabled=0 for %s after group off: %+v", rel, rows)
+		}
+	}
+	if out := text(t, res); !strings.Contains(out, ".claude/skills/ → all off (2 files)") {
+		t.Errorf("summary does not name the group change:\n%s", out)
+	}
+}
+
+// A tracked child refuses to toggle (omakase never deletes committed files):
+// the group op still applies to the untracked sibling, and the summary
+// reports the partial refusal rather than aborting the whole batch.
+func TestMenuGroupPartialRefusal(t *testing.T) {
+	dir, repo := placedFixture(t)
+	for _, args := range [][]string{
+		{"-C", dir, "add", "-f", ".claude/skills/a.md"},
+		{"-C", dir, "commit", "-q", "-m", "track a.md"},
+	} {
+		cmd := exec.Command("git", args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"dir:.claude/skills": false}}, nil
+	}
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"})
+	if err != nil {
+		t.Fatalf("CallTool(menu): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("menu IsError: %s", text(t, res))
+	}
+	if out := text(t, res); !strings.Contains(out, "1 of 2 refused") {
+		t.Errorf("summary does not report the partial refusal:\n%s", out)
+	}
+	if !lexists(filepath.Join(dir, ".claude", "skills", "a.md")) {
+		t.Errorf("tracked a.md was deleted despite the refusal")
+	}
+	if lexists(filepath.Join(dir, ".claude", "skills", "b.md")) {
+		t.Errorf("untracked b.md still present after the group op")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	if i := placedIndex(rows, ".claude/skills/a.md"); i < 0 || rows[i].Enabled != "1" {
+		t.Errorf("refused a.md's ledger row changed: %+v", rows)
+	}
+	if i := placedIndex(rows, ".claude/skills/b.md"); i < 0 || rows[i].Enabled != "0" {
+		t.Errorf("ledger not enabled=0 for b.md after group off: %+v", rows)
+	}
+}
+
+// A partially-off group ("keep as-is" submitted unchanged) leaves the mixed
+// state alone; submitting "all on" restores every child, including the ones
+// already on.
+func TestMenuGroupPartialRoundTrip(t *testing.T) {
+	dir, repo := placedFixture(t)
+	if err := overlay.FileOff(repo, ".claude/skills/b.md"); err != nil {
+		t.Fatalf("arrange: FileOff(b.md): %v", err)
+	}
+
+	keep := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"dir:.claude/skills": "keep as-is"}}, nil
+	}
+	cs := connect(t, dir, keep)
+	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"}); err != nil {
+		t.Fatalf("menu keep-as-is: %v", err)
+	}
+	if !lexists(filepath.Join(dir, ".claude", "skills", "a.md")) {
+		t.Errorf("keep-as-is disturbed a.md")
+	}
+	if lexists(filepath.Join(dir, ".claude", "skills", "b.md")) {
+		t.Errorf("keep-as-is restored b.md")
+	}
+
+	on := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"dir:.claude/skills": "all on"}}, nil
+	}
+	cs2 := connect(t, dir, on)
+	if _, err := cs2.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"}); err != nil {
+		t.Fatalf("menu all-on: %v", err)
+	}
+	if !lexists(filepath.Join(dir, ".claude", "skills", "a.md")) {
+		t.Errorf("a.md missing after all-on")
+	}
+	if !lexists(filepath.Join(dir, ".claude", "skills", "b.md")) {
+		t.Errorf("b.md not restored by all-on")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	for _, rel := range []string{".claude/skills/a.md", ".claude/skills/b.md"} {
+		if i := placedIndex(rows, rel); i < 0 || rows[i].Enabled != "1" {
+			t.Errorf("ledger not enabled=1 for %s after all-on: %+v", rel, rows)
+		}
 	}
 }
 
