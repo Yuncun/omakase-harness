@@ -1,0 +1,88 @@
+// This file (toggle.go) is the scriptable side of per-item consent:
+// `omakase status --disable <name>` / `--enable <name>`. <name> resolves in
+// order: placed path -> placed-path group directory -> gate name (gates are
+// accepted unseen, matching OMAKASE_SKIP_* semantics).
+package status
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/Yuncun/omakase-harness/internal/overlay"
+	"github.com/Yuncun/omakase-harness/internal/state"
+)
+
+func runToggle(off bool, name string, stdout, stderr io.Writer) int {
+	wd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "omakase: not inside a git repo")
+		return 1
+	}
+	repo, err := state.Discover(wd)
+	if err != nil {
+		fmt.Fprintln(stderr, "omakase: not inside a git repo")
+		return 1
+	}
+
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	var targets []string // placed rels; empty -> treat name as a gate
+	for _, r := range rows {
+		if r.Rel == name {
+			targets = []string{name}
+			break
+		}
+	}
+	if len(targets) == 0 { // group directory: every placed rel under it
+		p := strings.TrimSuffix(name, "/") + "/"
+		for _, r := range rows {
+			if strings.HasPrefix(r.Rel, p) {
+				targets = append(targets, r.Rel)
+			}
+		}
+	}
+
+	if len(targets) == 0 { // gate
+		if off {
+			if err := overlay.GateOff(repo, name); err != nil {
+				fmt.Fprintf(stderr, "omakase: %v\n", err)
+				return 1
+			}
+			fmt.Fprintf(stdout, "omakase: gate '%s' off — skipped visibly at commit/push until re-enabled (omakase status --enable %s)\n", name, name)
+		} else {
+			if err := overlay.GateOn(repo, name); err != nil {
+				fmt.Fprintf(stderr, "omakase: %v\n", err)
+				return 1
+			}
+			fmt.Fprintf(stdout, "omakase: gate '%s' back on\n", name)
+		}
+		return 0
+	}
+
+	code := 0
+	for _, rel := range targets {
+		var terr error
+		if off {
+			terr = overlay.FileOff(repo, rel)
+		} else {
+			terr = overlay.FileOn(repo, rel)
+		}
+		switch {
+		case terr == nil && off:
+			fmt.Fprintf(stdout, "omakase: %s removed (restorable — omakase status --enable %s)\n", rel, rel)
+		case terr == nil:
+			fmt.Fprintf(stdout, "omakase: %s restored\n", rel)
+		case errors.Is(terr, overlay.ErrTracked), errors.Is(terr, overlay.ErrEdited),
+			errors.Is(terr, overlay.ErrNotPlaced), errors.Is(terr, overlay.ErrNoSnapshot):
+			fmt.Fprintf(stderr, "omakase: REFUSING: %v\n", terr)
+			code = 1
+		default:
+			fmt.Fprintf(stderr, "omakase: %v\n", terr)
+			code = 1
+		}
+	}
+	return code
+}

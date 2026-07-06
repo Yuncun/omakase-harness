@@ -29,6 +29,23 @@ var schemeRe = regexp.MustCompile(`^[a-z][a-z]*://`)
 func Run(argv []string, stdout, stderr io.Writer) int {
 	md := len(argv) > 0 && (argv[0] == "--markdown" || argv[0] == "-m" || argv[0] == "md")
 
+	// --plain forces the static page; --disable/--enable are the scriptable
+	// twins of the interactive screen's Enter (agents cannot drive a TUI).
+	plain := false
+	for i := 0; i < len(argv); i++ {
+		switch argv[i] {
+		case "--plain":
+			plain = true
+		case "--disable", "--enable":
+			if i+1 >= len(argv) {
+				fmt.Fprintf(stderr, "omakase: %s needs a gate name or placed path\n", argv[i])
+				return 2
+			}
+			return runToggle(argv[i] == "--disable", argv[i+1], stdout, stderr)
+		}
+	}
+	_ = plain // consumed by the interactive dispatch (Task 8)
+
 	// OMAKASE_ICON: default 🥡, used only in the md installed header
 	// (bin/status.sh:18, Global Constraint 6).
 	icon := os.Getenv("OMAKASE_ICON")
