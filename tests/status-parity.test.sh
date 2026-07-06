@@ -35,6 +35,21 @@ skip(){ echo "  SKIP: $1"; }
 [ -n "$LEFTHOOK" ] && export PATH="$(dirname "$LEFTHOOK"):$PATH"
 HAVE_LH=0; { [ -n "$LEFTHOOK" ] && [ -x "$LEFTHOOK" ]; } && HAVE_LH=1
 
+# Freeze the Go module + build caches to their real locations. Several scenarios
+# pin $HOME to a fixture (P1/P8/P11) or an empty dir to control the personal
+# inventory, which also relocates the default $HOME/go caches. Without this, the
+# shim's incremental `go build` (bin/status.sh:14) runs under that empty $HOME,
+# finds a cold module cache, and re-downloads the whole tree — printing
+# "go: downloading …" to stderr and diverging from the legacy bash's silent
+# stderr. This was moot until the binary gained the bubbletea dependency tree
+# (Task 8's interactive screen); before that cmd/omakase was pure-stdlib and a
+# cold-cache rebuild downloaded nothing. env(1) in run_impl does not reset these,
+# so the export survives the HOME override.
+if command -v go >/dev/null 2>&1; then
+  export GOMODCACHE="$(go env GOMODCACHE)"
+  export GOCACHE="$(go env GOCACHE)"
+fi
+
 # --- build/skip gate: only skip when there is NO binary AND NO go to build one ---
 if [ ! -x "$BIN" ] && ! command -v go >/dev/null 2>&1; then
   echo "SKIP: dist/omakase absent and go not on PATH — the parity gate cannot run"
