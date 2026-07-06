@@ -1,11 +1,13 @@
 // Package templates embeds the three hook-time sh scripts
-// (bin/ensure-present.sh, bin/verify-overlay.sh, bin/install-guards.sh) and
+// (bin/ensure-present.sh, bin/verify-overlay.sh, bin/install-guards.sh) plus
+// the payload's gate primitive (payload/.omakase/bin/omakase-gate.sh), and
 // installs them atomically. These live under internal/templates/files/ as
-// BYTE-IDENTICAL DUPLICATES of their bin/ originals -- go:embed cannot
-// reference a path outside its own package directory, so they cannot be the
-// SAME file on disk. TestEmbeddedMatchesBin (templates_test.go) reads each
-// bin/ original at test time and asserts equality; keep the two copies in
-// lockstep by hand whenever a bin/ original changes. bin/ensure-present.sh,
+// BYTE-IDENTICAL DUPLICATES of their bin/ (or payload/) originals -- go:embed
+// cannot reference a path outside its own package directory, so they cannot
+// be the SAME file on disk. TestEmbeddedMatchesBin and
+// TestEmbeddedGateMatchesPayload (templates_test.go) read each original at
+// test time and assert equality; keep every copy in lockstep by hand
+// whenever a bin/ or payload gate original changes. bin/ensure-present.sh,
 // bin/verify-overlay.sh, and bin/install-guards.sh themselves are untouched
 // this phase (Global Constraint 5).
 package templates
@@ -16,7 +18,7 @@ import (
 	"os"
 )
 
-//go:embed files/ensure-present.sh files/verify-overlay.sh files/install-guards.sh
+//go:embed files/ensure-present.sh files/verify-overlay.sh files/install-guards.sh files/omakase-gate.sh
 var files embed.FS
 
 // Install writes the embedded script `name` (e.g. "ensure-present.sh") to

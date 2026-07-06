@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/Yuncun/omakase-harness/internal/state"
+	"github.com/Yuncun/omakase-harness/internal/templates"
 )
 
 var (
@@ -43,7 +44,8 @@ func DisabledGates(omk string) map[string]bool {
 }
 
 // GateOff lists name in disabled-gates (idempotent) after healing the placed
-// gate script (Task 5 fills healGateScript in; until then it returns nil).
+// gate script (healGateScript below) so an old, pre-Task-1 placed copy — one
+// that has never checked disabled-gates — gets rewritten first.
 func GateOff(repo *state.Repo, name string) error {
 	if name == "" || strings.ContainsAny(name, " \t\n") {
 		return fmt.Errorf("invalid gate name %q", name)
@@ -86,8 +88,38 @@ func GateOn(repo *state.Repo, name string) error {
 	return rewriteFile(disabledGatesPath(repo.OMK), []byte(content))
 }
 
-// healGateScript is a stub until Task 5 (embedded-script self-heal).
-func healGateScript(repo *state.Repo) error { return nil }
+// healGateScript self-updates a placed gate script that predates the
+// disabled-gates check (step 2b): without it, a disabled gate would keep
+// blocking. Snapshot + ledger hash move in the same step — verify-overlay is
+// fail-closed on drift, so a healed file with a stale recorded hash would
+// block every push.
+func healGateScript(repo *state.Repo) error {
+	const rel = ".omakase/bin/omakase-gate.sh"
+	dest := filepath.Join(repo.Root, rel)
+	b, err := os.ReadFile(dest)
+	if err != nil {
+		return nil // no placed gate script — nothing depends on healing
+	}
+	if strings.Contains(string(b), "disabled-gates") {
+		return nil
+	}
+	if err := templates.Install("omakase-gate.sh", dest); err != nil {
+		return err
+	}
+	snap := filepath.Join(repo.OMK, "payload-snapshot", rel)
+	if lexists(snap) {
+		if err := CopyEntry(dest, snap); err != nil {
+			return err
+		}
+	}
+	ledger := filepath.Join(repo.OMK, "placed.tsv")
+	rows := state.ReadPlaced(ledger)
+	if idx := placedIndex(rows, rel); idx >= 0 {
+		rows[idx].Hash = state.HashOf(dest)
+		return state.WritePlaced(ledger, rows)
+	}
+	return nil
+}
 
 func placedIndex(rows []state.PlacedRow, rel string) int {
 	for i, r := range rows {
