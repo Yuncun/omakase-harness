@@ -574,7 +574,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// shipping a top-level .worktreeinclude) — re-deriving only suppressed the
 	// APPENDED wiring entry DerivePrefixes adds when wtincTracked is false, not
 	// one contributed by the placed-path loop.
-	if !wtincTracked && len(placed) > 0 {
+	if !wtincTracked && len(placed)+len(declinedKept) > 0 {
 		wtinc := filepath.Join(root, ".worktreeinclude")
 		if err := touch(wtinc); err != nil {
 			return 1

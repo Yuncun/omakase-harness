@@ -197,3 +197,41 @@ func TestReinitPreservesDeclined(t *testing.T) {
 	}
 	eq(t, "restored content", readFileT(t, full), gateContent)
 }
+
+// TestReinitAllDeclinedStillWritesWorktreeinclude: when the ONLY placed file
+// is toggled off before re-init, placed ends up empty but declinedKept holds
+// that row — the .worktreeinclude block must still be (re)written from the
+// same prefixes used for .git/info/exclude, not silently skipped.
+//
+// .worktreeinclude is removed right after the first init (simulating it being
+// absent — e.g. a fresh checkout of this untracked, per-worktree file) so the
+// assertion actually distinguishes the buggy gate (skip => file stays absent)
+// from the fix (gate fires on declinedKept => file is recreated). Leaving the
+// file in place from the first init would pass either way, since nothing else
+// touches it once written.
+func TestReinitAllDeclinedStillWritesWorktreeinclude(t *testing.T) {
+	dir, repo := placeSingleGate(t)
+	rel := ".omakase/gates/example.sh"
+	wtinc := filepath.Join(dir, ".worktreeinclude")
+
+	if err := os.Remove(wtinc); err != nil {
+		t.Fatalf("remove %s: %v", wtinc, err)
+	}
+
+	if err := FileOff(repo, rel); err != nil {
+		t.Fatalf("FileOff: %v", err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("re-init exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	content, err := os.ReadFile(wtinc)
+	if err != nil {
+		t.Fatalf("read %s: %v", wtinc, err)
+	}
+	if !strings.Contains(string(content), ".omakase") {
+		t.Errorf(".worktreeinclude missing .omakase entry: %q", string(content))
+	}
+}
