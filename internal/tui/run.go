@@ -24,8 +24,8 @@ import (
 // run (e.g. it cannot open the tty). Callers must have verified stdout is a real
 // terminal (status.interactiveTerminal).
 func Run(repo *state.Repo, header, footprint string) int {
-	items, machinery := liveItems(repo)
-	m := NewModel(header, footprint, items, machinery, &repoToggler{repo}, func() ([]Item, int) { return liveItems(repo) })
+	items, machinery := LiveItems(repo)
+	m := NewModel(header, footprint, items, machinery, &repoToggler{repo}, func() ([]Item, int) { return LiveItems(repo) })
 	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "omakase: %v\n", err)
 		return 1
@@ -33,12 +33,12 @@ func Run(repo *state.Repo, header, footprint string) int {
 	return 0
 }
 
-// liveItems re-derives the Item list and machinery count from the repo on disk:
+// LiveItems re-derives the Item list and machinery count from the repo on disk:
 // the placed ledger, the resolved lefthook gate rows, the disabled-gates set,
 // and the repo's tracked harness files (so a committed harness file shows as a
 // view-only row). It is called both to seed the model and, via the reload
 // closure, after every successful toggle so the screen reflects the new state.
-func liveItems(repo *state.Repo) ([]Item, int) {
+func LiveItems(repo *state.Repo) ([]Item, int) {
 	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
 	gates := GateRows(repo.Root)
 	disabled := overlay.DisabledGates(repo.OMK)
