@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,24 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/overlay"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
+
+// lexists is `[ -e p ] || [ -L p ]` (copied from internal/overlay/init.go's
+// test-visible twin — test helpers are not importable across packages).
+func lexists(p string) bool {
+	_, err := os.Lstat(p)
+	return err == nil
+}
+
+// placedIndex finds rel's row in a placed.tsv read (copied from
+// internal/overlay/toggle.go's test-visible twin, same reason as lexists).
+func placedIndex(rows []state.PlacedRow, rel string) int {
+	for i, r := range rows {
+		if r.Rel == rel {
+			return i
+		}
+	}
+	return -1
+}
 
 // placedFixture builds a git repo with one placed rule file (AGENTS.md) and a
 // lefthook stub whose `dump` output declares one omakase pre-commit gate
@@ -141,5 +160,132 @@ func TestToolListAndMenuMeta(t *testing.T) {
 	}
 	if v, _ := byName["menu"].Meta["anthropic/requiresUserInteraction"].(bool); !v {
 		t.Errorf("menu tool _meta missing anthropic/requiresUserInteraction=true: %v", byName["menu"].Meta)
+	}
+}
+
+// Accepting the form with one file flipped off applies it: the file leaves
+// the working tree, the ledger row goes enabled=0, and the summary names it.
+func TestMenuAppliesFileOff(t *testing.T) {
+	dir, repo := placedFixture(t)
+	var sawSchema string
+	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		b, _ := json.Marshal(req.Params.RequestedSchema)
+		sawSchema = string(b)
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": false}}, nil
+	}
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"})
+	if err != nil {
+		t.Fatalf("CallTool(menu): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("menu IsError: %s", text(t, res))
+	}
+	if !strings.Contains(sawSchema, `"file:AGENTS.md"`) || !strings.Contains(sawSchema, `"gate:smoke"`) {
+		t.Errorf("elicited schema missing expected fields: %s", sawSchema)
+	}
+	if lexists(filepath.Join(dir, "AGENTS.md")) {
+		t.Errorf("AGENTS.md still present after menu off")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	if i := placedIndex(rows, "AGENTS.md"); i < 0 || rows[i].Enabled != "0" {
+		t.Errorf("ledger not enabled=0 after menu off: %+v", rows)
+	}
+	if out := text(t, res); !strings.Contains(out, "AGENTS.md") || !strings.Contains(out, "off") {
+		t.Errorf("summary does not name the change:\n%s", out)
+	}
+}
+
+// Toggling the gate off lands in disabled-gates via the same backend as the
+// screen and the --disable flag.
+func TestMenuAppliesGateOff(t *testing.T) {
+	dir, repo := placedFixture(t)
+	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"gate:smoke": false}}, nil
+	}
+	cs := connect(t, dir, eh)
+	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"}); err != nil {
+		t.Fatalf("CallTool(menu): %v", err)
+	}
+	if !overlay.DisabledGates(repo.OMK)["smoke"] {
+		t.Errorf("gate smoke not in disabled-gates after menu off")
+	}
+}
+
+// Declining changes nothing.
+func TestMenuDecline(t *testing.T) {
+	dir, repo := placedFixture(t)
+	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		return &mcp.ElicitResult{Action: "decline"}, nil
+	}
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"})
+	if err != nil {
+		t.Fatalf("CallTool(menu): %v", err)
+	}
+	if !lexists(filepath.Join(dir, "AGENTS.md")) {
+		t.Errorf("decline still removed AGENTS.md")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	if i := placedIndex(rows, "AGENTS.md"); i < 0 || rows[i].Enabled != "1" {
+		t.Errorf("decline altered the ledger: %+v", rows)
+	}
+	if out := text(t, res); !strings.Contains(out, "no changes") {
+		t.Errorf("decline summary = %q, want mention of no changes", out)
+	}
+}
+
+// Submitting the form untouched (all defaults echoed back) changes nothing.
+func TestMenuUntouchedSubmit(t *testing.T) {
+	dir, _ := placedFixture(t)
+	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": true, "gate:smoke": true}}, nil
+	}
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"})
+	if err != nil {
+		t.Fatalf("CallTool(menu): %v", err)
+	}
+	if !lexists(filepath.Join(dir, "AGENTS.md")) {
+		t.Errorf("untouched submit removed AGENTS.md")
+	}
+	if out := text(t, res); !strings.Contains(out, "no changes") && !strings.Contains(out, "No changes") {
+		t.Errorf("untouched-submit summary = %q", out)
+	}
+}
+
+// A client with no elicitation capability gets the instructive fallback, not
+// a protocol error.
+func TestMenuWithoutElicitationCapability(t *testing.T) {
+	dir, _ := placedFixture(t)
+	cs := connect(t, dir, nil)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"})
+	if err != nil {
+		t.Fatalf("CallTool(menu): %v", err)
+	}
+	if out := text(t, res); !strings.Contains(out, "--disable") {
+		t.Errorf("fallback text missing flag hint:\n%s", out)
+	}
+}
+
+// Menu round-trip: off then back on restores the file from the snapshot.
+func TestMenuFileBackOn(t *testing.T) {
+	dir, _ := placedFixture(t)
+	off := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": false}}, nil
+	}
+	cs := connect(t, dir, off)
+	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"}); err != nil {
+		t.Fatalf("menu off: %v", err)
+	}
+	on := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": true}}, nil
+	}
+	cs2 := connect(t, dir, on)
+	if _, err := cs2.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"}); err != nil {
+		t.Fatalf("menu on: %v", err)
+	}
+	if !lexists(filepath.Join(dir, "AGENTS.md")) {
+		t.Errorf("AGENTS.md not restored by menu on")
 	}
 }

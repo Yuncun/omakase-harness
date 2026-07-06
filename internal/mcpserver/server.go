@@ -14,8 +14,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/Yuncun/omakase-harness/internal/overlay"
 	"github.com/Yuncun/omakase-harness/internal/state"
 	"github.com/Yuncun/omakase-harness/internal/status"
+	"github.com/Yuncun/omakase-harness/internal/tui"
 )
 
 // fallbackHelp is what a human gets when the form cannot be shown — the
@@ -77,11 +79,123 @@ func statusHandler() mcp.ToolHandler {
 	}
 }
 
-// menuHandler is stubbed in Task 2 and implemented in Task 3.
+// menuHandler raises the consent form and applies exactly what the human
+// changed. Every state read happens per call so the form always reflects the
+// repo as it is now.
 func menuHandler(root string) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return textResult("The omakase menu is not available in this build. "+fallbackHelp, false), nil
+		repo, err := state.Discover(root)
+		if err != nil {
+			return textResult("omakase: not inside a git repo", true), nil
+		}
+		items, _ := tui.LiveItems(repo)
+		fields, schema, err := BuildForm(items)
+		if err != nil {
+			return textResult("omakase: could not build the menu: "+err.Error(), true), nil
+		}
+		if len(fields) == 0 {
+			return textResult("Nothing to toggle — this repo has no omakase consent items. The status tool shows the full picture.", false), nil
+		}
+		res, err := req.Session.Elicit(ctx, &mcp.ElicitParams{
+			Message:         menuMessage(repo, len(fields)),
+			RequestedSchema: schema,
+		})
+		if err != nil {
+			// A client that never set an ElicitationHandler doesn't advertise the
+			// elicitation capability, so Elicit fails here rather than showing a
+			// form — the instructive fallback, not a protocol error, since the
+			// human still needs a way to make the change.
+			return textResult("This client could not show the omakase form ("+err.Error()+"). "+fallbackHelp, false), nil
+		}
+		if res.Action != "accept" {
+			return textResult("Menu closed — no changes made.", false), nil
+		}
+		ops := Diff(fields, res.Content)
+		return textResult(apply(repo, ops), false), nil
 	}
+}
+
+// menuMessage is the text above the form: what checking a box means and the
+// promise that submit is the only thing that changes state.
+func menuMessage(repo *state.Repo, n int) string {
+	return fmt.Sprintf("omakase consent menu — %d item(s) in %s.\nChecked = enabled. Adjust anything, then submit; nothing changes until you do, and declining changes nothing.", n, repo.Root)
+}
+
+// toggleGate dispatches to the same GateOff/GateOn backend the interactive
+// screen and the --disable/--enable flags use, picking by op.On rather than
+// calling Off unconditionally — GateOff/GateOn are individually idempotent,
+// but only one of them is the actually-requested direction.
+func toggleGate(repo *state.Repo, op Op) error {
+	if op.On {
+		return overlay.GateOn(repo, op.Rel)
+	}
+	return overlay.GateOff(repo, op.Rel)
+}
+
+// toggleFile dispatches to FileOff/FileOn by the requested direction. Picking
+// by `on` (rather than always calling FileOff and conditionally overriding
+// with FileOn, as a naive symmetry with toggleGate might suggest) matters
+// here in a way it doesn't for gates: an unconditional FileOff on a file
+// that's already on for real (an untouched member of a group being switched
+// to "all on") would delete it before FileOn restores it from the snapshot —
+// a needless delete+restore that turns into data loss if the restore then
+// fails. tui/model.go's applyGroup uses this same if/else shape.
+func toggleFile(repo *state.Repo, rel string, on bool) error {
+	if on {
+		return overlay.FileOn(repo, rel)
+	}
+	return overlay.FileOff(repo, rel)
+}
+
+// apply runs each requested change through the same overlay backend as the
+// interactive screen and the --disable/--enable flags. Refusals (tracked,
+// locally edited) do not abort the batch — every outcome is reported so the
+// human sees exactly what happened.
+func apply(repo *state.Repo, ops []Op) string {
+	if len(ops) == 0 {
+		return "Submitted with no changes — everything stays as it was."
+	}
+	var b strings.Builder
+	applied := 0
+	for _, op := range ops {
+		to := "off"
+		if op.On {
+			to = "on"
+		}
+		switch {
+		case op.IsGate:
+			if err := toggleGate(repo, op); err != nil {
+				fmt.Fprintf(&b, "  ✗ gate %s → %s: %v\n", op.Rel, to, err)
+			} else {
+				applied++
+				fmt.Fprintf(&b, "  ✓ gate %s → %s\n", op.Rel, to)
+			}
+		case op.Group:
+			var failed []string
+			for _, rel := range op.Children {
+				if err := toggleFile(repo, rel, op.On); err != nil {
+					failed = append(failed, fmt.Sprintf("%s: %v", rel, err))
+				}
+			}
+			if len(failed) == 0 {
+				applied++
+				fmt.Fprintf(&b, "  ✓ %s/ → all %s (%d files)\n", op.Rel, to, len(op.Children))
+			} else {
+				fmt.Fprintf(&b, "  ✗ %s/ → all %s: %d of %d refused\n", op.Rel, to, len(failed), len(op.Children))
+				for _, f := range failed {
+					fmt.Fprintf(&b, "      %s\n", f)
+				}
+			}
+		default:
+			if err := toggleFile(repo, op.Rel, op.On); err != nil {
+				fmt.Fprintf(&b, "  ✗ %s → %s: %v\n", op.Rel, to, err)
+			} else {
+				applied++
+				fmt.Fprintf(&b, "  ✓ %s → %s\n", op.Rel, to)
+			}
+		}
+	}
+	return fmt.Sprintf("Applied %d of %d change(s):\n%sRun the status tool to see the updated page.", applied, len(ops), b.String())
 }
 
 // textResult wraps text as a single-content tool result.
