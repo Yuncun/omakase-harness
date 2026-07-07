@@ -441,7 +441,7 @@ func toggleGate(repo *state.Repo, op Op) error {
 	if op.On {
 		return overlay.GateOn(repo, op.Rel)
 	}
-	return overlay.GateOff(repo, op.Rel)
+	return overlay.GateOff(repo, op.Rel, os.Stderr)
 }
 
 // toggleFile dispatches to FileOff/FileOn by the requested direction. Picking

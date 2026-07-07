@@ -47,7 +47,7 @@ func runToggle(off bool, name string, stdout, stderr io.Writer) int {
 
 	if len(targets) == 0 { // gate
 		if off {
-			if err := overlay.GateOff(repo, name); err != nil {
+			if err := overlay.GateOff(repo, name, stderr); err != nil {
 				fmt.Fprintf(stderr, "omakase: %v\n", err)
 				return 1
 			}

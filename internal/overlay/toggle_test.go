@@ -2,6 +2,7 @@ package overlay
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,10 +32,10 @@ func placeSingleGate(t *testing.T) (string, *state.Repo) {
 func TestGateOffOnIdempotent(t *testing.T) {
 	_, repo := placeSingleGate(t)
 
-	if err := GateOff(repo, "example"); err != nil {
+	if err := GateOff(repo, "example", io.Discard); err != nil {
 		t.Fatalf("GateOff: %v", err)
 	}
-	if err := GateOff(repo, "example"); err != nil {
+	if err := GateOff(repo, "example", io.Discard); err != nil {
 		t.Fatalf("GateOff (second call): %v", err)
 	}
 	content := readFileT(t, filepath.Join(repo.OMK, "disabled-gates"))
@@ -84,7 +85,7 @@ func TestGateOffHealsOldGateScript(t *testing.T) {
 		t.Fatalf("fixture invalid: placed gate script already contains 'disabled-gates' before healing")
 	}
 
-	if err := GateOff(repo, "anything"); err != nil {
+	if err := GateOff(repo, "anything", io.Discard); err != nil {
 		t.Fatalf("GateOff: %v", err)
 	}
 
@@ -102,6 +103,34 @@ func TestGateOffHealsOldGateScript(t *testing.T) {
 		t.Fatalf("ledger row missing for %s", rel)
 	}
 	eq(t, "ledger Hash", rows[idx].Hash, state.HashOf(placed))
+}
+
+// A git-TRACKED placed gate script must NOT be healed (overwritten) by a gate
+// toggle — omakase never rewrites a committed file. GateOff still records the
+// disable, but warns that the tracked, pre-2b script won't honor it until the
+// repo updates the script itself, and leaves the script untouched. (Fix B /
+// finding 2)
+func TestGateOffSkipsTrackedGateScript(t *testing.T) {
+	dir, repo := initRepo(t)
+	rel := ".omakase/bin/omakase-gate.sh"
+	const staleStub = "#!/usr/bin/env bash\n# tracked, customized gate script predating the menu-bypass check\nexit 0\n"
+	writeFile(t, filepath.Join(dir, rel), staleStub)
+	runGitT(t, dir, "add", "-f", rel) // staged counts as tracked (gitTracked -> ls-files)
+
+	var warn strings.Builder
+	if err := GateOff(repo, "smoke", &warn); err != nil {
+		t.Fatalf("GateOff: %v", err)
+	}
+
+	if got := readFileT(t, filepath.Join(dir, rel)); got != staleStub {
+		t.Errorf("tracked gate script was rewritten:\n got: %q\nwant: %q", got, staleStub)
+	}
+	if w := warn.String(); !strings.Contains(w, "tracked") || !strings.Contains(w, "disabled-gates") {
+		t.Errorf("GateOff warning missing/weak for tracked script: %q", w)
+	}
+	if !DisabledGates(repo.OMK)["smoke"] {
+		t.Errorf("disabled-gates did not record 'smoke' despite the tracked-script skip")
+	}
 }
 
 // ---------------------------------------------------------------- files

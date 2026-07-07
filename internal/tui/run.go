@@ -85,7 +85,7 @@ func splitNUL(b []byte) []string {
 // operations against one repo.
 type repoToggler struct{ repo *state.Repo }
 
-func (t *repoToggler) GateOff(name string) error { return overlay.GateOff(t.repo, name) }
+func (t *repoToggler) GateOff(name string) error { return overlay.GateOff(t.repo, name, os.Stderr) }
 func (t *repoToggler) GateOn(name string) error  { return overlay.GateOn(t.repo, name) }
 func (t *repoToggler) FileOff(rel string) error  { return overlay.FileOff(t.repo, rel) }
 

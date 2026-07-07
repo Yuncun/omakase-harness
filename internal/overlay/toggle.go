@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -45,12 +46,13 @@ func DisabledGates(omk string) map[string]bool {
 
 // GateOff lists name in disabled-gates (idempotent) after healing the placed
 // gate script (healGateScript below) so an old, pre-Task-1 placed copy — one
-// that has never checked disabled-gates — gets rewritten first.
-func GateOff(repo *state.Repo, name string) error {
+// that has never checked disabled-gates — gets rewritten first. warn receives
+// the one-line notice when the gate script is committed and cannot be healed.
+func GateOff(repo *state.Repo, name string, warn io.Writer) error {
 	if name == "" || strings.ContainsAny(name, " \t\n") {
 		return fmt.Errorf("invalid gate name %q", name)
 	}
-	if err := healGateScript(repo); err != nil {
+	if err := healGateScript(repo, warn); err != nil {
 		return err
 	}
 	if DisabledGates(repo.OMK)[name] {
@@ -94,7 +96,7 @@ func GateOn(repo *state.Repo, name string) error {
 // with a stale recorded hash would read as drift everywhere the ledger
 // hash is compared (status's drift flag, ensure-present's warn), phantom
 // noise pinned on omakase's own edit.
-func healGateScript(repo *state.Repo) error {
+func healGateScript(repo *state.Repo, warn io.Writer) error {
 	const rel = ".omakase/bin/omakase-gate.sh"
 	dest := filepath.Join(repo.Root, rel)
 	b, err := os.ReadFile(dest)
@@ -102,6 +104,15 @@ func healGateScript(repo *state.Repo) error {
 		return nil // no placed gate script — nothing depends on healing
 	}
 	if strings.Contains(string(b), "disabled-gates") {
+		return nil // already 2b-capable (tracked or not) — nothing to heal
+	}
+	// omakase never rewrites a committed file; healing a tracked gate script
+	// would be the one write path in this package without that guard. The
+	// tracked script predates the disabled-gates check, so the disable is still
+	// recorded but won't take effect until the repo updates the script itself —
+	// say that plainly and skip, touching neither snapshot nor ledger.
+	if gitTracked(repo.Root, rel) {
+		fmt.Fprintf(warn, "omakase: WARNING — tracked gate script %s predates disabled-gates support — the disable will not take effect until the repo updates it.\n", rel)
 		return nil
 	}
 	if err := templates.Install("omakase-gate.sh", dest); err != nil {
