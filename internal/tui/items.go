@@ -74,11 +74,7 @@ type Item struct {
 // whether it is machinery (counted by BuildItems, never itemized). Verbatim
 // from the Task 6 brief — every case is load-bearing, do not edit.
 func stageOf(rel, kind string) (Stage, bool) {
-	switch {
-	case strings.HasPrefix(rel, ".omakase/"),
-		rel == "lefthook.yml", rel == "lefthook-local.yml", rel == ".worktreeinclude",
-		strings.HasPrefix(rel, ".lefthook/"), strings.HasPrefix(rel, ".husky/"),
-		strings.HasPrefix(rel, ".githooks/"):
+	if harness.IsMachinery(rel) {
 		return StageOther, true
 	}
 	switch kind {
@@ -93,6 +89,17 @@ func stageOf(rel, kind string) (Stage, bool) {
 	default:
 		return StageOther, false
 	}
+}
+
+// IsMachinery reports whether rel is harness machinery (the .omakase/ tree,
+// lefthook wiring, .worktreeinclude, and the hook dirs) — the paths BuildItems
+// counts but never offers as a consent item. The scriptable CLI toggle surface
+// reuses this so `omakase status --disable <machinery>` refuses instead of
+// deleting the harness's own plumbing. The machinery verdict depends only on
+// rel, so kind is irrelevant here.
+func IsMachinery(rel string) bool {
+	_, mach := stageOf(rel, "")
+	return mach
 }
 
 // groupKey returns the first two `/`-separated segments of rel — the

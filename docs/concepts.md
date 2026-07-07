@@ -51,8 +51,11 @@ behavior:
 - `--glob '<pats>'`: space-separated path globs; the gate is skipped when no changed file
   matches.
 
-Every run appends to the scorecard, visible in `omakase status`. The single audited bypass
-is `OMAKASE_SKIP_<NAME>=1` (name upper-cased, `-`→`_`).
+Every run appends to the scorecard, visible in `omakase status`. Two audited bypasses
+exist: `OMAKASE_SKIP_<NAME>=1` (name upper-cased, `-`→`_`) skips one invocation, and a
+persistent per-gate toggle (`omakase status --disable <gate>`, the interactive screen, or
+the MCP menu) records the gate in the git dir's `omakase/disabled-gates` until re-enabled.
+Both announce the skip on every hook run — a bypassed gate is never silent.
 
 ## State
 

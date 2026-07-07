@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Yuncun/omakase-harness/internal/harness"
 	"github.com/Yuncun/omakase-harness/internal/overlay"
@@ -26,6 +27,12 @@ import (
 func Run(repo *state.Repo, header, footprint string) int {
 	items, machinery := LiveItems(repo)
 	m := NewModel(header, footprint, items, machinery, &repoToggler{repo}, func() ([]Item, int) { return LiveItems(repo) })
+	// Query the terminal's background before the Program acquires the tty, so
+	// AdaptiveColor styles resolve without a mid-run OSC query (which can hang
+	// while Bubble Tea owns input). This was bubbletea's package init before we
+	// patched it out (third_party/bubbletea): the query belongs HERE, on the one
+	// path that is actually about to draw, not at import time in every verb.
+	_ = lipgloss.HasDarkBackground()
 	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "omakase: %v\n", err)
 		return 1
@@ -85,7 +92,7 @@ func splitNUL(b []byte) []string {
 // operations against one repo.
 type repoToggler struct{ repo *state.Repo }
 
-func (t *repoToggler) GateOff(name string) error { return overlay.GateOff(t.repo, name) }
+func (t *repoToggler) GateOff(name string) error { return overlay.GateOff(t.repo, name, os.Stderr) }
 func (t *repoToggler) GateOn(name string) error  { return overlay.GateOn(t.repo, name) }
 func (t *repoToggler) FileOff(rel string) error  { return overlay.FileOff(t.repo, rel) }
 

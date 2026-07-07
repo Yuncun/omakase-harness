@@ -104,3 +104,19 @@ func bashGlobMatch(pattern, s string) bool {
 
 	return strings.HasSuffix(s, parts[len(parts)-1])
 }
+
+// IsMachinery reports whether rel is harness machinery — the paths that keep
+// the harness itself running (.omakase/ tree, lefthook wiring, hook dirs,
+// .worktreeinclude). Machinery is never a consent item: the TUI and MCP menu
+// filter it out, the scriptable toggles refuse it, and init ignores a stale
+// enabled=0 ledger row for it (a pre-guard binary could record one).
+func IsMachinery(rel string) bool {
+	switch {
+	case strings.HasPrefix(rel, ".omakase/"),
+		rel == "lefthook.yml", rel == "lefthook-local.yml", rel == ".worktreeinclude",
+		strings.HasPrefix(rel, ".lefthook/"), strings.HasPrefix(rel, ".husky/"),
+		strings.HasPrefix(rel, ".githooks/"):
+		return true
+	}
+	return false
+}

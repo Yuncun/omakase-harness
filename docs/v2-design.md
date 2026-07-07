@@ -3,13 +3,18 @@
 > **SUPERSEDED 2026-07-03.** A YAGNI audit cut this design's stacking (two harnesses
 > at once), instruction-reroute (`CLAUDE.local.md`), migration, pins, and gate-toggle
 > (`enable`/`disable`) surface before any of it reached a release. **The shipped
-> product is a 3-verb (`init` / `remove` / `status`) SINGLE-harness overlay** —
+> product is a SINGLE-harness overlay — verbs `init` / `remove` / `status`, joined
+> 2026-07 by `mcp` (the consent menu; see the note below)** —
 > `init` installs or repairs one harness; a different source REPLACES it (v1
 > orphan-sweep), it does not stack; `remove` is a bare, argument-free total teardown.
 > See [`docs/reference.md`](reference.md) for the current contract and
 > [`CHANGELOG.md`](../CHANGELOG.md) for what was removed and why. Everything below
 > this note — most of it now historical — describes the CUT design as it stood before
-> the revert; do not read any of it as shipped behavior. §1-§3 and §5 carry inline
+> the revert; do not read any of it as shipped behavior. (One piece has since
+> shipped in a NEW shape this doc does not describe: the 2026-07 consent-menu stack
+> rebuilt gate/file toggles as `omakase status`'s interactive screen plus
+> `omakase mcp` — [`docs/reference.md`](reference.md) is the contract for those.)
+> §1-§3 and §5 carry inline
 > corrections; §4 and §6-§13 are kept verbatim as a design record of what was built,
 > then reverted, and why.
 
@@ -90,7 +95,10 @@ of the wider design that was cut:
 [<owner/repo[#ref]> | --source <url|path>] [--cut-over]` installs or repairs ONE
 harness; a different source REPLACES the installed one (v1 orphan-sweep), it does not
 stack. `remove` (no arguments) is a bare total teardown. `status [--markdown]` is
-read-only. `update`, `enable`, `disable` do not exist.
+read-only. `update`, `enable`, `disable` do not exist as verbs. *[2026-07
+correction: the consent-menu stack later rebuilt toggling as `status
+--disable/--enable` and the interactive/MCP menu — see `docs/reference.md`;
+`update` still does not exist.]*
 
 The two "deliberate v1 behavior change" paragraphs that followed this table in the
 locked design (a pin-based bare `init`, and a stacking second `init`) describe changes
@@ -159,10 +167,12 @@ always three physical stores.
 | `ledger.tsv` | `epoch<TAB>name<TAB>verdict<TAB>sha` gate-run records. |
 | `$OMK/source` | One line = the one recorded source (v1 semantics, unchanged). There is no "bottom layer" — a repo holds exactly one installed harness — so there is no survivor to rewrite this to; a different `init <source>` simply overwrites this file with the new source, same as v1. |
 
-**NEW additions from the cut design — none of this shipped (CUT, see supersession
-note above). `sources.tsv`, `disabled-gates`, and `$OMK/layers/` do not exist in the
-codebase; there is no gate-toggle state and no layer store.** Kept for the historical
-record of what the locked design called for:
+**NEW additions from the cut design — none of this shipped as designed (CUT, see
+supersession note above). `sources.tsv` and `$OMK/layers/` do not exist in the
+codebase; there is no layer store.** *[2026-07 correction: a `disabled-gates` file
+DOES now exist — the consent-menu stack rebuilt it in a simpler shape (one gate
+name per line, no epoch/reason columns) — see `docs/reference.md`.]* Kept for the
+historical record of what the locked design called for:
 
 | File | Format | Purpose |
 |---|---|---|

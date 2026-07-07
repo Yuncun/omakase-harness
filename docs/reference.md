@@ -32,11 +32,39 @@ the payload no longer ships, unless it was edited locally.
   tracks, so the installed copy takes over. Guarded: refuses without
   `OMAKASE_CUTOVER_CONFIRM=1`.
 
-### `status.sh [--markdown]`
+### `status.sh [--markdown | --plain | --disable <name> | --enable <name>]`
 
-Prints the installed harness: the inventory grouped by origin (committed, injected,
-global), the hook wiring, the run ledger, and the paths hidden via `.git/info/exclude`.
-`--markdown` emits formatted Markdown. Read-only.
+On a real terminal, `status` opens the interactive consent screen: every steering
+file and gate as a row (arrows to move, Enter/Space to toggle, q to quit).
+Everywhere else — pipes, scripts, agents — it prints the same static page as
+always: the inventory grouped by origin (committed, injected, global), the hook
+wiring, the run ledger, and the paths hidden via `.git/info/exclude`.
+
+- `--plain` — force the static page on a terminal too. Read-only.
+- `--markdown` — the static page as formatted Markdown. Read-only.
+- `--disable <name>` / `--enable <name>` — the scriptable twins of the screen's
+  toggle. `<name>` is a wired gate name, a placed path, or a placed top-level
+  directory (a group). Disabling a FILE removes it from the working tree (the
+  snapshot keeps a copy; `--enable` restores it; a locally edited file refuses
+  the toggle rather than lose the edits). Disabling a GATE records it in the
+  git dir's `omakase/disabled-gates`; the hook still announces the skip on
+  every run — a bypassed gate is never silent — until `--enable` clears it.
+  Machinery (`.omakase/`, the lefthook wiring) refuses to toggle. A name that
+  matches nothing errors (exit 2).
+- `--help` — usage.
+
+Consent survives re-init: a file toggled off stays off across `init` (its
+ledger row and snapshot refresh, so a later `--enable` restores the CURRENT
+payload copy), and a disabled gate stays recorded.
+
+### `omakase mcp`
+
+Binary-only verb (no `.sh` shim): a stdio MCP server that serves the same
+consent surface inside agent hosts. Tools: `status` (the read-only page) and
+`menu` (the per-item consent form, rendered natively by hosts that support MCP
+elicitation — Claude Code and Copilot CLI both do; plain text elsewhere).
+Nothing applies until the human submits the form. Register it from the target
+repo, e.g.: `claude mcp add omakase -- /path/to/omakase mcp`.
 
 ### `remove.sh`
 

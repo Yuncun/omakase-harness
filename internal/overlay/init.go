@@ -432,7 +432,11 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// `omakase status --enable` can restore the CURRENT payload copy later.
 	declined := map[string]bool{}
 	for _, row := range state.ReadPlaced(filepath.Join(omk, "placed.tsv")) {
-		if row.Enabled == "0" {
+		// Machinery is never a consent item (the toggles refuse it), so an
+		// enabled=0 machinery row can only be a pre-guard binary's leftover —
+		// honoring it would keep the gate primitive missing on every re-init.
+		// Ignore it: init re-places the file and the row returns to enabled=1.
+		if row.Enabled == "0" && !harness.IsMachinery(row.Rel) {
 			declined[row.Rel] = true
 		}
 	}
@@ -663,6 +667,19 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		})
 	}
 	if err := state.WritePlaced(filepath.Join(omk, "placed.tsv"), rows); err != nil {
+		return 1
+	}
+
+	// Heal a placed gate script that a stale (pre-2b) payload just (re)placed —
+	// the documented distribution-chain state after a base-binary upgrade whose
+	// harness payload has not been rebuilt. Without this, a bare re-init would
+	// revert an already-healed script to the pre-2b copy, silently re-arming a
+	// gate the human disabled while every consent surface still shows it off.
+	// healGateScript no-ops when the script is absent, already 2b-capable, or
+	// git-tracked (warning), and otherwise rewrites it + refreshes snapshot and
+	// ledger hash so drift detection stays quiet.
+	if err := healGateScript(repo, stderr, false); err != nil {
+		fmt.Fprintf(stderr, "omakase: %v\n", err)
 		return 1
 	}
 	removeF(filepath.Join(omk, "placed.list")) // pre-0.10 record — superseded

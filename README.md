@@ -34,11 +34,14 @@ The Claude Code plugin wraps the same `bin/` scripts behind `/omakase:*` skills
 ## Commands
 
     init.sh [<owner/repo> | --source <url>]   overlay the harness, exclude it from git, install hooks
-    status.sh [--markdown]                       print what is installed and what runs when
+    status.sh                                  the menu: see and toggle every steering file and gate
+                                               (interactive on a terminal; static page when piped)
     remove.sh                                  delete the placed files, uninstall hooks, restore the repo
 
 `init` installs lefthook if absent, fetching a pinned, checksum-verified binary into a
-per-machine cache. Flags and environment variables are in the [reference](docs/reference.md).
+per-machine cache. `omakase mcp` serves the same status + consent menu inside Claude
+Code and Copilot CLI. Flags and environment variables are in the
+[reference](docs/reference.md).
 
 ## How it works
 

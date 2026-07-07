@@ -28,6 +28,28 @@ var schemeRe = regexp.MustCompile(`^[a-z][a-z]*://`)
 // the current directory and writes the report to stdout. Not inside a git repo:
 // the one stderr line + exit 1 (bin/status.sh:20). Exit 0 otherwise.
 func Run(argv []string, stdout, stderr io.Writer) int {
+	// --help/-h short-circuits to usage — scanned first so `status --help` on
+	// a real terminal prints help rather than launching the interactive
+	// screen. Any OTHER unrecognized dash-flag is an error: a typo like
+	// `--enabel smoke` must not exit 0 with the page (an automation would read
+	// that as "re-enabled, green") — the legacy fallback (bin/legacy/status.sh)
+	// enforces the same rule in lockstep. Bare words keep falling through
+	// (parity; `md` is a real alias).
+	known := map[string]bool{
+		"--markdown": true, "-m": true, "--plain": true,
+		"--disable": true, "--enable": true,
+	}
+	for _, a := range argv {
+		if a == "--help" || a == "-h" {
+			printStatusUsage(stdout)
+			return 0
+		}
+		if strings.HasPrefix(a, "-") && !known[a] {
+			fmt.Fprintf(stderr, "omakase: unknown flag %s (see omakase status --help)\n", a)
+			return 2
+		}
+	}
+
 	md := len(argv) > 0 && (argv[0] == "--markdown" || argv[0] == "-m" || argv[0] == "md")
 
 	// --plain forces the static page; --disable/--enable are the scriptable
@@ -85,7 +107,20 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 	if basever == "" { // ${basever:-?} renders "?" when empty (bin/status.sh:323)
 		basever = "?"
 	}
-	nplaced := state.CountNonEmptyLines(placed)
+	// Count injected files by consent state: legacy counted every ledger row
+	// (`grep -c .`), but this stack's toggles are the first writers of
+	// enabled=0 rows — a declined file keeps its row but has no file on disk, so
+	// the all-rows count would overstate the footprint. Count enabled rows for
+	// the headline and note declined rows separately. An all-enabled repo has
+	// no enabled=0 rows, so the output stays byte-identical to legacy.
+	nInjected, nToggledOff := 0, 0
+	for _, r := range state.ReadPlaced(placed) {
+		if r.Enabled == "0" {
+			nToggledOff++
+		} else {
+			nInjected++
+		}
+	}
 
 	// Interactive dispatch (Task 8): on a real terminal, and only for the
 	// default page (not --markdown, not the scriptable --plain), hand off to
@@ -96,21 +131,51 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		if srcdisp != "" {
 			hdr = hname + " · " + srcdisp
 		}
-		foot := fmt.Sprintf("%d injected · 0 committed · all gitignored (.git/info/exclude)", nplaced)
+		foot := fmt.Sprintf("%d injected%s · 0 committed · all gitignored (.git/info/exclude)", nInjected, toggledOffSuffix(nToggledOff))
 		return tui.Run(repo, hdr, foot)
 	}
 
 	if md {
-		renderMarkdown(stdout, repo, home, icon, hname, srcdisp, basever, nplaced)
+		renderMarkdown(stdout, repo, home, icon, hname, srcdisp, basever, nInjected, nToggledOff)
 		return 0
 	}
-	renderTerminal(stdout, repo, home, hname, srcdisp, basever, nplaced)
+	renderTerminal(stdout, repo, home, hname, srcdisp, basever, nInjected, nToggledOff)
 	return 0
+}
+
+// toggledOffSuffix is " (k toggled off)" when k>0, else "" — appended after the
+// injected count so a page whose consent state has diverged from the ledger
+// says so, while an all-enabled page (k==0) stays byte-identical to legacy
+// output (the status-parity fence).
+func toggledOffSuffix(nToggledOff int) string {
+	if nToggledOff > 0 {
+		return fmt.Sprintf(" (%d toggled off)", nToggledOff)
+	}
+	return ""
+}
+
+// printStatusUsage prints the `omakase status` flag surface. The stack's new
+// state-writing flags (--disable/--enable) and the interactive-on-TTY screen
+// were undocumented, and unknown flags fall through silently; this handler is
+// the discoverable surface for both.
+func printStatusUsage(w io.Writer) {
+	fmt.Fprint(w, `usage: omakase status [--markdown|--plain] [--disable NAME | --enable NAME]
+
+  (no flags)      on a real terminal, open the interactive consent screen;
+                  otherwise print the status page
+  --markdown, -m  print the status page as markdown
+  --plain         force the printed status page (never the interactive screen)
+  --disable NAME  turn a gate off, or remove a placed file/dir; NAME is a wired
+                  gate name or a placed path. Recorded so commits/pushes skip it
+                  until re-enabled.
+  --enable NAME   undo a --disable: restore the file/dir or re-arm the gate
+  --help, -h      show this help
+`)
 }
 
 // renderMarkdown is the md page (bin/status.sh:320-335): the script owns the
 // formatting so `omakase status` relays it verbatim. Question-first order.
-func renderMarkdown(w io.Writer, repo *state.Repo, home, icon, hname, srcdisp, basever string, nplaced int) {
+func renderMarkdown(w io.Writer, repo *state.Repo, home, icon, hname, srcdisp, basever string, nInjected, nToggledOff int) {
 	fmt.Fprintf(w, "## %s %s\n", icon, hname)
 	fmt.Fprintln(w)
 	if srcdisp != "" {
@@ -119,7 +184,7 @@ func renderMarkdown(w io.Writer, repo *state.Repo, home, icon, hname, srcdisp, b
 		fmt.Fprintf(w, "base omakase %s · installed in `%s`\n", basever, repo.Root)
 	}
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "**Zero footprint** — %d file(s) injected, 0 committed; all gitignored via `.git/info/exclude` (invisible to git).\n", nplaced)
+	fmt.Fprintf(w, "**Zero footprint** — %d file(s) injected%s, 0 committed; all gitignored via `.git/info/exclude` (invisible to git).\n", nInjected, toggledOffSuffix(nToggledOff))
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "### Guards — what runs when you commit / push")
 	fmt.Fprintln(w)
@@ -132,7 +197,7 @@ func renderMarkdown(w io.Writer, repo *state.Repo, home, icon, hname, srcdisp, b
 
 // renderTerminal is the default page (bin/status.sh:338-354): optional branded
 // banner, then the same question-first order as markdown.
-func renderTerminal(w io.Writer, repo *state.Repo, home, hname, srcdisp, basever string, nplaced int) {
+func renderTerminal(w io.Writer, repo *state.Repo, home, hname, srcdisp, basever string, nInjected, nToggledOff int) {
 	// Banner (bin/status.sh:340-341, `bash "$BANNER" 2>/dev/null || true`): if
 	// present, run it at the INVOCATION cwd (no `cd`), pass its stdout through,
 	// discard stderr, ignore failure.
@@ -149,7 +214,7 @@ func renderTerminal(w io.Writer, repo *state.Repo, home, hname, srcdisp, basever
 	} else {
 		fmt.Fprintf(w, "installed in %s (base omakase %s)\n", repo.Root, basever)
 	}
-	fmt.Fprintf(w, "zero footprint: %d injected, 0 committed, all gitignored (.git/info/exclude)\n", nplaced)
+	fmt.Fprintf(w, "zero footprint: %d injected%s, 0 committed, all gitignored (.git/info/exclude)\n", nInjected, toggledOffSuffix(nToggledOff))
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "GUARDS — what runs when you commit / push")
 	RenderGuards(w, repo.Root, repo.OMK, false)

@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,6 +21,10 @@ import (
 var (
 	ErrTracked    = errors.New("tracked by git — omakase never deletes committed files")
 	ErrEdited     = errors.New("differs from what init placed (local edits?) — refusing to delete")
+	// ErrEditedKeep is FileOn's twin of ErrEdited: same local-edit detection,
+	// but the refused operation is an overwrite (snapshot restore), not a
+	// delete — the message must not claim the opposite operation.
+	ErrEditedKeep = errors.New("differs from what init placed (local edits?) — refusing to overwrite")
 	ErrNotPlaced  = errors.New("not in the omakase ledger")
 	ErrNoSnapshot = errors.New("no snapshot to restore from — run omakase init first")
 )
@@ -45,12 +50,13 @@ func DisabledGates(omk string) map[string]bool {
 
 // GateOff lists name in disabled-gates (idempotent) after healing the placed
 // gate script (healGateScript below) so an old, pre-Task-1 placed copy — one
-// that has never checked disabled-gates — gets rewritten first.
-func GateOff(repo *state.Repo, name string) error {
+// that has never checked disabled-gates — gets rewritten first. warn receives
+// the one-line notice when the gate script is committed and cannot be healed.
+func GateOff(repo *state.Repo, name string, warn io.Writer) error {
 	if name == "" || strings.ContainsAny(name, " \t\n") {
 		return fmt.Errorf("invalid gate name %q", name)
 	}
-	if err := healGateScript(repo); err != nil {
+	if err := healGateScript(repo, warn, true); err != nil {
 		return err
 	}
 	if DisabledGates(repo.OMK)[name] {
@@ -94,7 +100,7 @@ func GateOn(repo *state.Repo, name string) error {
 // with a stale recorded hash would read as drift everywhere the ledger
 // hash is compared (status's drift flag, ensure-present's warn), phantom
 // noise pinned on omakase's own edit.
-func healGateScript(repo *state.Repo) error {
+func healGateScript(repo *state.Repo, warn io.Writer, disableInFlight bool) error {
 	const rel = ".omakase/bin/omakase-gate.sh"
 	dest := filepath.Join(repo.Root, rel)
 	b, err := os.ReadFile(dest)
@@ -102,6 +108,20 @@ func healGateScript(repo *state.Repo) error {
 		return nil // no placed gate script — nothing depends on healing
 	}
 	if strings.Contains(string(b), "disabled-gates") {
+		return nil // already 2b-capable (tracked or not) — nothing to heal
+	}
+	// omakase never rewrites a committed file; healing a tracked gate script
+	// would be the one write path in this package without that guard. The
+	// tracked script predates the disabled-gates check, so the disable is still
+	// recorded but won't take effect until the repo updates the script itself —
+	// say that plainly and skip, touching neither snapshot nor ledger.
+	if gitTracked(repo.Root, rel) {
+		// Warn only when a disable is in play — GateOff always is; a routine
+		// bare init with an empty disabled-gates has nothing to warn about and
+		// would otherwise nag on every refresh, forever.
+		if disableInFlight || len(DisabledGates(repo.OMK)) > 0 {
+			fmt.Fprintf(warn, "omakase: WARNING — tracked gate script %s predates disabled-gates support — disabled gates will not take effect until the repo updates it.\n", rel)
+		}
 		return nil
 	}
 	if err := templates.Install("omakase-gate.sh", dest); err != nil {
@@ -168,6 +188,18 @@ func FileOn(repo *state.Repo, rel string) error {
 	if gitTracked(repo.Root, rel) {
 		return fmt.Errorf("%s: %w", rel, ErrTracked)
 	}
+	// Symmetric with FileOff's ErrEdited guard: an on-disk copy that differs
+	// from the ledger hash is a local edit. A group/bulk "all on" calls FileOn
+	// on every child, already-on ones included, so restoring the snapshot over
+	// an edited, still-enabled file would silently destroy that edit. Refuse
+	// instead. A toggled-off file has no on-disk copy (FileOff deleted it), so
+	// this never blocks the real restore.
+	full := filepath.Join(repo.Root, rel)
+	if lexists(full) {
+		if h := state.HashOf(full); h != "" && rows[idx].Hash != "" && h != rows[idx].Hash {
+			return fmt.Errorf("%s: %w", rel, ErrEditedKeep)
+		}
+	}
 	snap := filepath.Join(repo.OMK, "payload-snapshot", rel)
 	if !lexists(snap) {
 		return fmt.Errorf("%s: %w", rel, ErrNoSnapshot)
@@ -175,10 +207,10 @@ func FileOn(repo *state.Repo, rel string) error {
 	if err := safeMkdirAll(repo.Root, filepath.Join(repo.Root, filepath.Dir(rel))); err != nil {
 		return err
 	}
-	if err := CopyEntry(snap, filepath.Join(repo.Root, rel)); err != nil {
+	if err := CopyEntry(snap, full); err != nil {
 		return err
 	}
 	rows[idx].Enabled = "1"
-	rows[idx].Hash = state.HashOf(filepath.Join(repo.Root, rel))
+	rows[idx].Hash = state.HashOf(full)
 	return state.WritePlaced(ledger, rows)
 }
