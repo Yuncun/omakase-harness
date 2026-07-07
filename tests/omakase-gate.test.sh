@@ -206,6 +206,19 @@ printf '%s\tpre-commit\told-gate\tpass\t40\t%s\n' 1700000000 "$(cd "$REPOU" && g
 [ -f "$COMMONU/omakase/ledger.tsv.pre-v2.bak" ] && pass "upgrade: pre-v2 ledger rotated to .pre-v2.bak" || fail "pre-v2 ledger not rotated"
 { [ ! -f "$COMMONU/omakase/ledger.tsv" ] || ! awk -F'\t' 'NF>=6{f=1} END{exit f?0:1}' "$COMMONU/omakase/ledger.tsv"; } && pass "upgrade: the live ledger no longer holds 6-col rows" || fail "6-col rows survived in the live ledger"
 
+echo "== Cycle D: disabled-gates file skips the gate visibly =="
+REPO_D="$TMP/disabled"; newrepo "$REPO_D"
+COMMON_D="$( cd "$REPO_D" && cd "$(git rev-parse --git-common-dir)" && pwd )"
+mkdir -p "$COMMON_D/omakase"
+printf 'noisy\n' > "$COMMON_D/omakase/disabled-gates"
+OUT="$( cd "$REPO_D" && bash "$GATE" noisy --step 'exit 7' 2>&1 )"; RC=$?
+{ [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "disabled via omakase"; } && pass "listed gate skips visibly (exit 0)" || fail "listed gate skips visibly (rc=$RC out=$OUT)"
+OUT="$( cd "$REPO_D" && bash "$GATE" other --step 'exit 7' 2>&1 )"; RC=$?
+[ "$RC" -eq 7 ] && pass "unlisted gate still runs" || fail "unlisted gate still runs (rc=$RC)"
+: > "$COMMON_D/omakase/disabled-gates"
+OUT="$( cd "$REPO_D" && bash "$GATE" noisy --step 'exit 7' 2>&1 )"; RC=$?
+[ "$RC" -eq 7 ] && pass "re-enabled gate runs again" || fail "re-enabled gate runs again (rc=$RC)"
+
 rm -rf "$TMP"
 echo ""
 [ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }

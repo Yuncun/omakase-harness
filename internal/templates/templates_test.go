@@ -31,6 +31,25 @@ func TestEmbeddedMatchesBin(t *testing.T) {
 	}
 }
 
+// TestEmbeddedGateMatchesPayload is the lockstep test for the payload gate
+// script: internal/templates/files/omakase-gate.sh is a DUPLICATE of
+// payload/.omakase/bin/omakase-gate.sh, not the bin/ trio (go:embed still
+// cannot reach outside its own package directory). Keep the two copies in
+// lockstep by hand whenever the payload original changes.
+func TestEmbeddedGateMatchesPayload(t *testing.T) {
+	got, err := files.ReadFile("files/omakase-gate.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile(filepath.Join("..", "..", "payload", ".omakase", "bin", "omakase-gate.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("internal/templates/files/omakase-gate.sh has drifted from payload/.omakase/bin/omakase-gate.sh -- keep them in lockstep")
+	}
+}
+
 // TestInstallAtomic covers the temp+rename+chmod install path
 // (bin/init.sh:450-453's install_script): the destination ends up with the
 // embedded bytes, mode 0755, and no ".tmp" left behind.

@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/Yuncun/omakase-harness/internal/state"
+	"github.com/Yuncun/omakase-harness/internal/tui"
 )
 
 // schemeRe strips a leading URL scheme (lowercase only) for srcDisplay
@@ -29,6 +30,21 @@ var schemeRe = regexp.MustCompile(`^[a-z][a-z]*://`)
 func Run(argv []string, stdout, stderr io.Writer) int {
 	md := len(argv) > 0 && (argv[0] == "--markdown" || argv[0] == "-m" || argv[0] == "md")
 
+	// --plain forces the static page; --disable/--enable are the scriptable
+	// twins of the interactive screen's Enter (agents cannot drive a TUI).
+	plain := false
+	for i := 0; i < len(argv); i++ {
+		switch argv[i] {
+		case "--plain":
+			plain = true
+		case "--disable", "--enable":
+			if i+1 >= len(argv) {
+				fmt.Fprintf(stderr, "omakase: %s needs a gate name or placed path\n", argv[i])
+				return 2
+			}
+			return runToggle(argv[i] == "--disable", argv[i+1], stdout, stderr)
+		}
+	}
 	// OMAKASE_ICON: default 🥡, used only in the md installed header
 	// (bin/status.sh:18, Global Constraint 6).
 	icon := os.Getenv("OMAKASE_ICON")
@@ -70,6 +86,19 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		basever = "?"
 	}
 	nplaced := state.CountNonEmptyLines(placed)
+
+	// Interactive dispatch (Task 8): on a real terminal, and only for the
+	// default page (not --markdown, not the scriptable --plain), hand off to
+	// the live interactive screen. It sits AFTER the placed.tsv-absent early
+	// returns above, so not-installed / pre-0.10 repos keep the plain page.
+	if !md && !plain && interactiveTerminal() {
+		hdr := hname
+		if srcdisp != "" {
+			hdr = hname + " · " + srcdisp
+		}
+		foot := fmt.Sprintf("%d injected · 0 committed · all gitignored (.git/info/exclude)", nplaced)
+		return tui.Run(repo, hdr, foot)
+	}
 
 	if md {
 		renderMarkdown(stdout, repo, home, icon, hname, srcdisp, basever, nplaced)

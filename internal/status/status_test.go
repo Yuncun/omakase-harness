@@ -179,6 +179,32 @@ func TestStatusRunTermBannerCwd(t *testing.T) {
 	}
 }
 
+// TestPipedStatusNeverInteractive is the regression fence for the Task 8
+// interactive dispatch: status.Run given bytes.Buffer writers (never *os.File)
+// must still emit the plain terminal page, never enter the TUI. It passes both
+// BEFORE the dispatch exists (no TUI path at all) and AFTER (interactiveTerminal
+// gates on the PROCESS's os.Stdin/os.Stdout, which under `go test` is a pipe,
+// not a terminal), so it can be committed first as the fence the dispatch is
+// built against.
+func TestPipedStatusNeverInteractive(t *testing.T) {
+	repo, home, lh := buildStatusFixture(t)
+	pinStatusEnv(t, repo, home, lh)
+
+	var stdout, stderr bytes.Buffer
+	code := Run(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (stderr: %s)", code, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
+	}
+	// The plain terminal identity line — proof the static page rendered into
+	// the buffer rather than an alt-screen program taking over the tty.
+	if want := "harness — acme/harness"; !strings.HasPrefix(stdout.String(), want) {
+		t.Errorf("piped status did not render the plain identity line; first line = %q, want prefix %q", firstLine(stdout.String()), want)
+	}
+}
+
 func TestStatusNotARepo(t *testing.T) {
 	t.Chdir(t.TempDir()) // not a git repo
 
