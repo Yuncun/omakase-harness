@@ -467,3 +467,48 @@ func TestMenuFileBackOn(t *testing.T) {
 		t.Errorf("AGENTS.md not restored by menu on")
 	}
 }
+
+// The expand argument dissolves groups into per-file rows, and a single file
+// inside a group can be toggled alone — the granularity the collapsed menu
+// deliberately gives up.
+func TestMenuExpandTogglesSingleGroupMember(t *testing.T) {
+	dir, repo := placedFixture(t)
+	var sawSchema string
+	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		b, _ := json.Marshal(req.Params.RequestedSchema)
+		sawSchema = string(b)
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": false}}, nil
+	}
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "menu",
+		Arguments: map[string]any{"expand": true},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(menu, expand): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("menu IsError: %s", text(t, res))
+	}
+	for _, want := range []string{`"file:.claude/skills/a.md"`, `"file:.claude/skills/b.md"`} {
+		if !strings.Contains(sawSchema, want) {
+			t.Errorf("expanded schema missing %s:\n%s", want, sawSchema)
+		}
+	}
+	if strings.Contains(sawSchema, `"dir:`) {
+		t.Errorf("expanded schema still contains a group field:\n%s", sawSchema)
+	}
+	if lexists(filepath.Join(dir, ".claude/skills/b.md")) {
+		t.Errorf("b.md still present after expanded menu off")
+	}
+	if !lexists(filepath.Join(dir, ".claude/skills/a.md")) {
+		t.Errorf("a.md was removed — sibling must be untouched")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	if i := placedIndex(rows, ".claude/skills/b.md"); i < 0 || rows[i].Enabled != "0" {
+		t.Errorf("b.md ledger row not enabled=0: %+v", rows)
+	}
+	if i := placedIndex(rows, ".claude/skills/a.md"); i < 0 || rows[i].Enabled != "1" {
+		t.Errorf("a.md ledger row changed: %+v", rows)
+	}
+}

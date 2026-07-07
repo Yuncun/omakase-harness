@@ -22,7 +22,7 @@ func sampleItems() []tui.Item {
 // Only toggleable items become fields, with the exact key formats from the
 // spec; the tracked row is absent.
 func TestBuildFormFieldsAndKeys(t *testing.T) {
-	fields, schema, err := BuildForm(sampleItems())
+	fields, schema, err := BuildForm(sampleItems(), false)
 	if err != nil {
 		t.Fatalf("BuildForm: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestBuildFormFieldsAndKeys(t *testing.T) {
 // The raw schema keeps section order: file before group before gate, because
 // hosts render properties in declaration order.
 func TestBuildFormPreservesOrder(t *testing.T) {
-	_, schema, err := BuildForm(sampleItems())
+	_, schema, err := BuildForm(sampleItems(), false)
 	if err != nil {
 		t.Fatalf("BuildForm: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestBuildFormPreservesOrder(t *testing.T) {
 // Booleans default to the current state; a partially-off group is a 3-value
 // enum defaulting to "keep as-is".
 func TestBuildFormDefaults(t *testing.T) {
-	fields, schema, err := BuildForm(sampleItems())
+	fields, schema, err := BuildForm(sampleItems(), false)
 	if err != nil {
 		t.Fatalf("BuildForm: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestBuildFormDefaults(t *testing.T) {
 // Diff: unchanged, missing, and keep-as-is values emit nothing; real changes
 // emit one Op each carrying the group children for Task 3's apply loop.
 func TestDiff(t *testing.T) {
-	fields, _, err := BuildForm(sampleItems())
+	fields, _, err := BuildForm(sampleItems(), false)
 	if err != nil {
 		t.Fatalf("BuildForm: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestDiff(t *testing.T) {
 // server-side enum validation that rejects junk today; the test guards the
 // hardened branch directly at the Diff layer.
 func TestDiffPartialGroupJunkChoiceIsNoOp(t *testing.T) {
-	fields, _, err := BuildForm(sampleItems())
+	fields, _, err := BuildForm(sampleItems(), false)
 	if err != nil {
 		t.Fatalf("BuildForm: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestBuildFormWholeGroupBoolean(t *testing.T) {
 		Children: []tui.ChildRef{{Rel: ".claude/skills/a.md", Enabled: true}, {Rel: ".claude/skills/b.md", Enabled: true}},
 		Enabled:  true, Count: 2,
 	}}
-	fields, _, err := BuildForm(items)
+	fields, _, err := BuildForm(items, false)
 	if err != nil {
 		t.Fatalf("BuildForm: %v", err)
 	}
@@ -145,5 +145,41 @@ func TestBuildFormWholeGroupBoolean(t *testing.T) {
 	ops := Diff(fields, map[string]any{"dir:.claude/skills": false})
 	if len(ops) != 1 || !ops[0].Group || ops[0].On {
 		t.Errorf("ops = %+v, want one group off Op", ops)
+	}
+}
+
+// With expand, groups dissolve into one file field per member — the full
+// per-file view — keeping section order, per-child defaults, and no enum
+// (each file is a plain boolean, even in a mixed group).
+func TestBuildFormExpanded(t *testing.T) {
+	fields, schema, err := BuildForm(sampleItems(), true)
+	if err != nil {
+		t.Fatalf("BuildForm: %v", err)
+	}
+	wantKeys := []string{"file:AGENTS.md", "file:.claude/skills/a.md", "file:.claude/skills/b.md", "gate:smoke"}
+	if len(fields) != len(wantKeys) {
+		t.Fatalf("fields = %d, want %d: %+v", len(fields), len(wantKeys), fields)
+	}
+	for i, w := range wantKeys {
+		if fields[i].Key != w {
+			t.Errorf("fields[%d].Key = %q, want %q", i, fields[i].Key, w)
+		}
+	}
+	if d, ok := fields[2].Default.(bool); !ok || d {
+		t.Errorf("disabled child default = %v, want boolean false", fields[2].Default)
+	}
+	s := string(schema)
+	if strings.Contains(s, "dir:") || strings.Contains(s, keepAsIs) {
+		t.Errorf("expanded schema still has group fields or the mixed-group enum:\n%s", s)
+	}
+	iA := strings.Index(s, `"file:.claude/skills/a.md"`)
+	iGate := strings.Index(s, `"gate:smoke"`)
+	if iA < 0 || iGate < 0 || iA > iGate {
+		t.Errorf("expanded schema order wrong (a.md=%d gate=%d):\n%s", iA, iGate, s)
+	}
+
+	ops := Diff(fields, map[string]any{"file:.claude/skills/b.md": true})
+	if len(ops) != 1 || ops[0].Group || ops[0].IsGate || ops[0].Rel != ".claude/skills/b.md" || !ops[0].On {
+		t.Errorf("ops = %+v, want one file on Op for b.md", ops)
 	}
 }

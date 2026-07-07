@@ -68,10 +68,25 @@ func stageShort(s tui.Stage) string {
 // JSON schema as ordered raw bytes — hosts render properties in declaration
 // order, so the form reads in the same dev-loop order as the screen. Only
 // toggleable items become fields; tracked files and machinery stay on the
-// status page.
-func BuildForm(items []tui.Item) ([]Field, json.RawMessage, error) {
+// status page. With expand, every group member becomes its own file field —
+// the full per-file view of the status page — instead of one row per
+// directory; the mixed-group enum disappears because each file is just a
+// boolean.
+func BuildForm(items []tui.Item, expand bool) ([]Field, json.RawMessage, error) {
 	var fields []Field
 	var props strings.Builder
+	emit := func(f Field, title string) error {
+		prop, err := propertyJSON(f, title)
+		if err != nil {
+			return err
+		}
+		if props.Len() > 0 {
+			props.WriteByte(',')
+		}
+		props.WriteString(prop)
+		fields = append(fields, f)
+		return nil
+	}
 	for _, it := range items {
 		if !it.Toggleable {
 			continue
@@ -83,6 +98,14 @@ func BuildForm(items []tui.Item) ([]Field, json.RawMessage, error) {
 			f.Key = "gate:" + it.Rel
 			f.Default = it.Enabled
 			title = fmt.Sprintf("[%s] gate: %s", stageShort(it.Stage), it.Label)
+		case it.Group && expand:
+			for _, c := range it.Children {
+				cf := Field{Key: "file:" + c.Rel, Rel: c.Rel, Default: c.Enabled}
+				if err := emit(cf, fmt.Sprintf("[%s] %s", stageShort(it.Stage), c.Rel)); err != nil {
+					return nil, nil, err
+				}
+			}
+			continue
 		case it.Group:
 			f.Key = "dir:" + it.Rel
 			for _, c := range it.Children {
@@ -106,15 +129,9 @@ func BuildForm(items []tui.Item) ([]Field, json.RawMessage, error) {
 			f.Default = it.Enabled
 		}
 
-		prop, err := propertyJSON(f, title)
-		if err != nil {
+		if err := emit(f, title); err != nil {
 			return nil, nil, err
 		}
-		if props.Len() > 0 {
-			props.WriteByte(',')
-		}
-		props.WriteString(prop)
-		fields = append(fields, f)
 	}
 	schema := json.RawMessage(`{"type":"object","properties":{` + props.String() + `}}`)
 	return fields, schema, nil

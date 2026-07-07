@@ -59,8 +59,8 @@ func NewServer(root string) *mcp.Server {
 	srv.AddTool(&mcp.Tool{
 		Name:        "menu",
 		Title:       "omakase menu",
-		Description: "Open the omakase consent menu: a form the HUMAN fills in to enable/disable individual harness files and gates. The host shows the form directly to the user — never answer it on their behalf.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+		Description: "Open the omakase consent menu: a form the HUMAN fills in to enable/disable individual harness files and gates. The host shows the form directly to the user — never answer it on their behalf. Set expand=true when the user asks for the full/expanded menu (every file as its own row instead of one row per directory).",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"expand":{"type":"boolean","description":"Show every file as its own row instead of collapsing directories into one row (default false)."}}}`),
 		Meta:        mcp.Meta{"anthropic/requiresUserInteraction": true},
 	}, menuHandler(root))
 	return srv
@@ -81,15 +81,24 @@ func statusHandler() mcp.ToolHandler {
 
 // menuHandler raises the consent form and applies exactly what the human
 // changed. Every state read happens per call so the form always reflects the
-// repo as it is now.
+// repo as it is now. The optional expand argument swaps the one-row-per-
+// directory view for one row per file; a malformed arguments payload is
+// treated as expand=false rather than an error, because the collapsed menu is
+// always a safe answer.
 func menuHandler(root string) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			Expand bool `json:"expand"`
+		}
+		if len(req.Params.Arguments) > 0 {
+			_ = json.Unmarshal(req.Params.Arguments, &args)
+		}
 		repo, err := state.Discover(root)
 		if err != nil {
 			return textResult("omakase: not inside a git repo", true), nil
 		}
 		items, _ := tui.LiveItems(repo)
-		fields, schema, err := BuildForm(items)
+		fields, schema, err := BuildForm(items, args.Expand)
 		if err != nil {
 			return textResult("omakase: could not build the menu: "+err.Error(), true), nil
 		}
