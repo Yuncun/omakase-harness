@@ -665,6 +665,19 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	if err := state.WritePlaced(filepath.Join(omk, "placed.tsv"), rows); err != nil {
 		return 1
 	}
+
+	// Heal a placed gate script that a stale (pre-2b) payload just (re)placed —
+	// the documented distribution-chain state after a base-binary upgrade whose
+	// harness payload has not been rebuilt. Without this, a bare re-init would
+	// revert an already-healed script to the pre-2b copy, silently re-arming a
+	// gate the human disabled while every consent surface still shows it off.
+	// healGateScript no-ops when the script is absent, already 2b-capable, or
+	// git-tracked (warning), and otherwise rewrites it + refreshes snapshot and
+	// ledger hash so drift detection stays quiet.
+	if err := healGateScript(repo, stderr); err != nil {
+		fmt.Fprintf(stderr, "omakase: %v\n", err)
+		return 1
+	}
 	removeF(filepath.Join(omk, "placed.list")) // pre-0.10 record — superseded
 
 	// ---- install the three hook-time templates (bin/init.sh:612-643) ----
