@@ -205,6 +205,37 @@ func TestPipedStatusNeverInteractive(t *testing.T) {
 	}
 }
 
+// Once a file is toggled off (enabled=0), the zero-footprint count must reflect
+// consent state: N counts enabled rows only, with a "(k toggled off)" note, so
+// the page whose whole point is showing consent state no longer overstates
+// what is on disk. All-enabled output stays byte-identical (the parity fence).
+// (Fix G / finding 9)
+func TestStatusFootprintCountsConsentState(t *testing.T) {
+	repo, home, lh := buildStatusFixture(t)
+	// Mark normal.txt disabled (as FileOff would), leaving the machinery gate
+	// row enabled -> 1 injected, 1 toggled off.
+	placedTSV := "normal.txt\tdoc\tacme/harness\t" + sha256Hex("normal-body\n") + "\t0\n" +
+		".omakase/bin/omakase-gate.sh\tgate\tacme/harness\tdeadbeef\t1\n"
+	writeOMK(t, repo.OMK, "placed.tsv", placedTSV)
+	pinStatusEnv(t, repo, home, lh)
+
+	var md, mdErr bytes.Buffer
+	if code := Run([]string{"--markdown"}, &md, &mdErr); code != 0 {
+		t.Fatalf("md exit = %d (stderr=%q)", code, mdErr.String())
+	}
+	if !strings.Contains(md.String(), "1 file(s) injected (1 toggled off)") {
+		t.Errorf("markdown footprint missing consent count:\n%s", md.String())
+	}
+
+	var term, termErr bytes.Buffer
+	if code := Run(nil, &term, &termErr); code != 0 {
+		t.Fatalf("term exit = %d (stderr=%q)", code, termErr.String())
+	}
+	if !strings.Contains(term.String(), "1 injected (1 toggled off)") {
+		t.Errorf("terminal footprint missing consent count:\n%s", term.String())
+	}
+}
+
 func TestStatusNotARepo(t *testing.T) {
 	t.Chdir(t.TempDir()) // not a git repo
 

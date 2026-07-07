@@ -312,7 +312,17 @@ hname="omakase-harness"
 if [ -n "$src" ]; then n="${src%%#*}"; n="${n%.git}"; n="${n%/}"; hname="${n##*/}"; fi
 srcdisp="$(printf '%s' "$src" | sed -e 's,^[a-z][a-z]*://,,' -e 's,/$,,')"
 basever=""; [ -s "$ROOT/.omakase/VERSION" ] && basever="$(head -n1 "$ROOT/.omakase/VERSION" 2>/dev/null || true)"
-nplaced=0; [ -f "$PLACED" ] && nplaced="$(grep -c . "$PLACED" 2>/dev/null || echo 0)"
+# Injected count by consent state: enabled=0 rows (a file toggled off — deleted
+# on disk, row kept) are the first-ever writers of a 0 in column 5, so they are
+# reported separately rather than inflating the injected count. Kept in lockstep
+# with internal/status/status.go (the parity gate proves both agree); an
+# all-enabled ledger has no 0 rows, so the output is byte-identical to before.
+ninjected=0; ntoggled=0
+if [ -f "$PLACED" ]; then
+  ninjected="$(awk -F'\t' '$1!=""&&$5!="0"{c++} END{print c+0}' "$PLACED" 2>/dev/null || echo 0)"
+  ntoggled="$(awk -F'\t' '$1!=""&&$5=="0"{c++} END{print c+0}' "$PLACED" 2>/dev/null || echo 0)"
+fi
+toggled_suffix=""; [ "$ntoggled" -gt 0 ] && toggled_suffix=" ($ntoggled toggled off)"
 
 # ============================ Markdown mode ============================
 # The script emits the final Markdown; `omakase status` relays it verbatim. Order is
@@ -324,7 +334,7 @@ if [ "$FORMAT" = md ]; then
   if [ -n "$srcdisp" ]; then echo "\`$srcdisp\` · base omakase ${basever:-?} · installed in \`$ROOT\`"
   else echo "base omakase ${basever:-?} · installed in \`$ROOT\`"; fi
   echo
-  echo "**Zero footprint** — $nplaced file(s) injected, 0 committed; all gitignored via \`.git/info/exclude\` (invisible to git)."
+  echo "**Zero footprint** — $ninjected file(s) injected$toggled_suffix, 0 committed; all gitignored via \`.git/info/exclude\` (invisible to git)."
   echo
   echo "### Guards — what runs when you commit / push"
   echo
@@ -342,7 +352,7 @@ BANNER="$ROOT/.omakase/bin/omakase-banner.sh"
 if [ -f "$BANNER" ]; then bash "$BANNER" 2>/dev/null || true; fi
 if [ -n "$srcdisp" ]; then echo "$hname — $srcdisp · base omakase ${basever:-?} · installed in $ROOT"
 else echo "installed in $ROOT (base omakase ${basever:-?})"; fi
-echo "zero footprint: $nplaced injected, 0 committed, all gitignored (.git/info/exclude)"
+echo "zero footprint: $ninjected injected$toggled_suffix, 0 committed, all gitignored (.git/info/exclude)"
 echo
 
 echo "GUARDS — what runs when you commit / push"
