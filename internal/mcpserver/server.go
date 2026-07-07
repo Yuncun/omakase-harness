@@ -103,14 +103,15 @@ func menuHandler(root string) mcp.ToolHandler {
 		}
 		items, _ := tui.LiveItems(repo)
 
+		if !args.Expand && args.Variant == "triage" {
+			return textResult(triageFlow(ctx, req.Session, repo, items), false), nil
+		}
+
 		var fields []Field
 		var schema json.RawMessage
 		switch {
 		case args.Expand:
 			fields, schema, err = BuildForm(items, true)
-		case args.Variant == "triage":
-			// Task 2 replaces this case with a call to triageFlow.
-			fallthrough
 		case args.Variant == "preset":
 			// Task 3 replaces this case with a call to presetFlow.
 			fallthrough
@@ -171,6 +172,81 @@ func elicit(ctx context.Context, session *mcp.ServerSession, params *mcp.ElicitP
 // promise that submit is the only thing that changes state.
 func menuMessage(repo *state.Repo, n int) string {
 	return fmt.Sprintf("omakase consent menu — %d item(s) in %s.\nChecked = enabled. Adjust anything, then submit; nothing changes until you do, and declining changes nothing.", n, repo.Root)
+}
+
+// triageFlow runs the triage variant's elicitation chain: one form listing
+// only what needs attention (off files/gates, a mixed group's off children)
+// plus a bulk-change row and an "open the full list" escape hatch, then —
+// only when the human asks for it — a second, full expanded form whose
+// defaults already carry the first form's edits. THE TRANSACTION RULE binds
+// both forms: nothing is applied to the repo until the LAST form in the
+// chain is accepted, a decline or elicit error at either form applies
+// nothing, and the final ops are computed once, against the state `items`
+// already captured — never against whatever the repo drifted to mid-chain.
+func triageFlow(ctx context.Context, session *mcp.ServerSession, repo *state.Repo, items []tui.Item) string {
+	fields, schema, flagged, err := BuildTriageForm(items)
+	if err != nil {
+		return "omakase: could not build the triage form: " + err.Error()
+	}
+	res, err := elicit(ctx, session, &mcp.ElicitParams{
+		Message:         triageMessage(repo, items, flagged),
+		RequestedSchema: schema,
+	})
+	if err != nil {
+		// First form of the chain: an elicit-capability failure gets the same
+		// instructive fallback as the collapsed menu, per the transaction rule.
+		return "This client could not show the omakase form (" + err.Error() + "). " + fallbackHelp
+	}
+	if res.Action != "accept" {
+		return "Menu closed — no changes made."
+	}
+
+	ops, openFull := TriageOps(fields, res.Content, items)
+	if !openFull {
+		return apply(repo, ops)
+	}
+
+	pending := ApplyOps(items, ops)
+	fullFields, fullSchema, err := BuildForm(pending, true)
+	if err != nil {
+		return "omakase: could not build the full form: " + err.Error()
+	}
+	res2, err := elicit(ctx, session, &mcp.ElicitParams{
+		Message:         menuMessage(repo, len(fullFields)),
+		RequestedSchema: fullSchema,
+	})
+	if err != nil || res2.Action != "accept" {
+		// Mid-chain: an elicit error behaves like a decline, not the
+		// first-form fallback — the human already saw a working form once.
+		return "Menu closed — no changes made."
+	}
+	finalOps := EffectiveOps(fullFields, res2.Content, stateByKey(items))
+	return apply(repo, finalOps)
+}
+
+// triageMessage is the text above the triage form: the flagged count, what
+// stays on unconditionally (tracked, not consent-gated, no row at all), and
+// the same "nothing changes until submit" promise every menu form makes.
+func triageMessage(repo *state.Repo, items []tui.Item, flagged int) string {
+	total := countToggleable(items)
+	var b strings.Builder
+	fmt.Fprintf(&b, "omakase triage — %d items in %s · %d on at defaults (hidden).\n", total, repo.Root, total-flagged)
+	var tracked []string
+	for _, it := range items {
+		if !it.Toggleable {
+			tracked = append(tracked, it.Label)
+		}
+	}
+	if len(tracked) > 0 {
+		fmt.Fprintf(&b, "Always on, tracked in the repo: %s.\n", strings.Join(tracked, ", "))
+	}
+	if flagged == 0 {
+		b.WriteString("Nothing needs attention — everything is on at defaults.\n")
+	} else {
+		fmt.Fprintf(&b, "%d item(s) need your attention:\n", flagged)
+	}
+	b.WriteString("Nothing changes until you submit.")
+	return b.String()
 }
 
 // toggleGate dispatches to the same GateOff/GateOn backend the interactive

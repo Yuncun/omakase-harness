@@ -370,3 +370,163 @@ func TestEffectiveOps(t *testing.T) {
 		}
 	})
 }
+
+// BuildTriageForm flags only what needs attention: the mixed group's one off
+// child gets its own row (the on sibling gets none), the fully-on file and
+// fully-on gate get no rows either, the two synthetic rows land last, and
+// the non-toggleable tracked row is absent — same rule as BuildForm.
+func TestBuildTriageForm(t *testing.T) {
+	fields, schema, flagged, err := BuildTriageForm(sampleItems())
+	if err != nil {
+		t.Fatalf("BuildTriageForm: %v", err)
+	}
+	if flagged != 1 {
+		t.Fatalf("flagged = %d, want 1: %+v", flagged, fields)
+	}
+	if len(fields) != 3 {
+		t.Fatalf("fields = %d, want 3 (1 flagged + bulk + open): %+v", len(fields), fields)
+	}
+	if fields[0].Key != "file:.claude/skills/b.md" {
+		t.Errorf("fields[0].Key = %q, want the off child's file row", fields[0].Key)
+	}
+	if fields[1].Key != keyBulk || fields[2].Key != keyOpenFull {
+		t.Errorf("synthetic fields = %+v, want bulk then open, in that order and last", fields[1:])
+	}
+	s := string(schema)
+	for _, want := range []string{`"` + bulkNone + `"`, `"` + bulkAllOn + `"`, `"` + bulkAllOff + `"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("schema missing bulk choice %s:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "tracked.md") {
+		t.Errorf("schema contains non-toggleable row: %s", s)
+	}
+	iFlag := strings.Index(s, `"file:.claude/skills/b.md"`)
+	iBulk := strings.Index(s, `"`+keyBulk+`"`)
+	iOpen := strings.Index(s, `"`+keyOpenFull+`"`)
+	if iFlag < 0 || iBulk < 0 || iOpen < 0 || !(iFlag < iBulk && iBulk < iOpen) {
+		t.Errorf("schema order wrong (flag=%d bulk=%d open=%d):\n%s", iFlag, iBulk, iOpen, s)
+	}
+}
+
+// A fully-enabled repo has nothing to flag: only the two synthetic rows
+// survive.
+func TestBuildTriageFormAllOnRepo(t *testing.T) {
+	items := []tui.Item{
+		{Label: "AGENTS.md", Rel: "AGENTS.md", Stage: tui.StageSessionStart, Toggleable: true, Enabled: true},
+		{Label: ".claude/skills/", Rel: ".claude/skills", Stage: tui.StageOnDemand, Group: true, Toggleable: true,
+			Children: []tui.ChildRef{{Rel: ".claude/skills/a.md", Enabled: true}, {Rel: ".claude/skills/b.md", Enabled: true}},
+			Enabled:  true, Count: 2},
+		{Label: "smoke", Rel: "smoke", Stage: tui.StagePreCommit, IsGate: true, Toggleable: true, Enabled: true},
+	}
+	fields, _, flagged, err := BuildTriageForm(items)
+	if err != nil {
+		t.Fatalf("BuildTriageForm: %v", err)
+	}
+	if flagged != 0 {
+		t.Fatalf("flagged = %d, want 0: %+v", flagged, fields)
+	}
+	if len(fields) != 2 || fields[0].Key != keyBulk || fields[1].Key != keyOpenFull {
+		t.Fatalf("fields = %+v, want only bulk + open", fields)
+	}
+}
+
+// A flagged row turned on, with no bulk change submitted, emits exactly one
+// file Op — the same rule Diff applies to any single field.
+func TestTriageOpsRowOnly(t *testing.T) {
+	items := sampleItems()
+	fields, _, _, err := BuildTriageForm(items)
+	if err != nil {
+		t.Fatalf("BuildTriageForm: %v", err)
+	}
+	ops, openFull := TriageOps(fields, map[string]any{"file:.claude/skills/b.md": true}, items)
+	if openFull {
+		t.Errorf("openFull = true, want false")
+	}
+	if len(ops) != 1 || ops[0].Group || ops[0].IsGate || ops[0].Rel != ".claude/skills/b.md" || !ops[0].On {
+		t.Fatalf("ops = %+v, want one file Op b.md -> on", ops)
+	}
+}
+
+// Bulk "everything off" targets every toggleable item, not just the flagged
+// ones: the already-on file and gate each get an Op, and the mixed group
+// (no row overridden) collapses into one group Op since it has an on child.
+func TestTriageOpsBulkAllOff(t *testing.T) {
+	items := sampleItems()
+	fields, _, _, err := BuildTriageForm(items)
+	if err != nil {
+		t.Fatalf("BuildTriageForm: %v", err)
+	}
+	ops, openFull := TriageOps(fields, map[string]any{keyBulk: bulkAllOff}, items)
+	if openFull {
+		t.Errorf("openFull = true, want false")
+	}
+	if len(ops) != 3 {
+		t.Fatalf("ops = %+v, want 3 (file, group, gate)", ops)
+	}
+	byRel := map[string]Op{}
+	for _, op := range ops {
+		byRel[op.Rel] = op
+	}
+	if op, ok := byRel["AGENTS.md"]; !ok || op.On || op.Group || op.IsGate {
+		t.Errorf("AGENTS.md op = %+v, want file -> off", op)
+	}
+	if op, ok := byRel[".claude/skills"]; !ok || op.On || !op.Group || len(op.Children) != 2 {
+		t.Errorf("skills op = %+v, want group -> off with 2 children", op)
+	}
+	if op, ok := byRel["smoke"]; !ok || op.On || !op.IsGate {
+		t.Errorf("smoke op = %+v, want gate -> off", op)
+	}
+}
+
+// A mixed group's overridden child row can't be folded into a single group
+// Op alongside a bulk change, so it dissolves into one file Op per child:
+// the overridden child gets its row value, the untouched sibling gets the
+// bulk target.
+func TestTriageOpsRowOverridesBulk(t *testing.T) {
+	items := sampleItems()
+	fields, _, _, err := BuildTriageForm(items)
+	if err != nil {
+		t.Fatalf("BuildTriageForm: %v", err)
+	}
+	content := map[string]any{keyBulk: bulkAllOff, "file:.claude/skills/b.md": true}
+	ops, _ := TriageOps(fields, content, items)
+	if len(ops) != 4 {
+		t.Fatalf("ops = %+v, want 4 (AGENTS.md, a.md, b.md, smoke)", ops)
+	}
+	byRel := map[string]Op{}
+	for _, op := range ops {
+		byRel[op.Rel] = op
+	}
+	if op, ok := byRel[".claude/skills/a.md"]; !ok || op.On || op.Group {
+		t.Errorf("a.md op = %+v, want file -> off", op)
+	}
+	if op, ok := byRel[".claude/skills/b.md"]; !ok || !op.On || op.Group {
+		t.Errorf("b.md op = %+v, want file -> on", op)
+	}
+	if op, ok := byRel["AGENTS.md"]; !ok || op.On {
+		t.Errorf("AGENTS.md op = %+v, want off", op)
+	}
+	if op, ok := byRel["smoke"]; !ok || op.On {
+		t.Errorf("smoke op = %+v, want off", op)
+	}
+}
+
+// open:full=true is returned regardless of what else was submitted, so a
+// chain flow can carry the same-call's ops forward as the next form's
+// pending defaults.
+func TestTriageOpsOpenFull(t *testing.T) {
+	items := sampleItems()
+	fields, _, _, err := BuildTriageForm(items)
+	if err != nil {
+		t.Fatalf("BuildTriageForm: %v", err)
+	}
+	content := map[string]any{keyOpenFull: true, "file:.claude/skills/b.md": true}
+	ops, openFull := TriageOps(fields, content, items)
+	if !openFull {
+		t.Fatalf("openFull = false, want true")
+	}
+	if len(ops) != 1 || ops[0].Rel != ".claude/skills/b.md" || !ops[0].On {
+		t.Fatalf("ops = %+v, want one file Op b.md -> on", ops)
+	}
+}

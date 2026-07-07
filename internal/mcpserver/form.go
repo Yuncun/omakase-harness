@@ -22,6 +22,20 @@ const (
 	allOff   = "all off"
 )
 
+// Enum values and synthetic keys for the triage variant's bulk-change and
+// open-full-list rows (Task 2). bulkNone is the default — "don't touch
+// anything the flagged rows above didn't already say" — and is spelled
+// distinctly from keepAsIs because it means something different: keepAsIs
+// preserves ONE mixed group's existing split, bulkNone leaves EVERY item
+// alone.
+const (
+	bulkNone    = "no bulk change"
+	bulkAllOn   = "everything on"
+	bulkAllOff  = "everything off"
+	keyBulk     = "bulk:"
+	keyOpenFull = "open:full"
+)
+
 // Field is one form property: the schema key, the item it controls, and the
 // default sent to the client. Diff compares submissions against Default, so
 // only fields the human actually changed become operations.
@@ -149,9 +163,15 @@ func propertyJSON(f Field, title string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if s, ok := f.Default.(string); ok && s == keepAsIs {
-		return fmt.Sprintf(`%s:{"type":"string","title":%s,"enum":["%s","%s","%s"],"default":"%s"}`,
-			key, t, keepAsIs, allOn, allOff, keepAsIs), nil
+	if s, ok := f.Default.(string); ok {
+		switch s {
+		case keepAsIs:
+			return fmt.Sprintf(`%s:{"type":"string","title":%s,"enum":["%s","%s","%s"],"default":"%s"}`,
+				key, t, keepAsIs, allOn, allOff, keepAsIs), nil
+		case bulkNone:
+			return fmt.Sprintf(`%s:{"type":"string","title":%s,"enum":["%s","%s","%s"],"default":"%s"}`,
+				key, t, bulkNone, bulkAllOn, bulkAllOff, bulkNone), nil
+		}
 	}
 	return fmt.Sprintf(`%s:{"type":"boolean","title":%s,"default":%v}`, key, t, f.Default.(bool)), nil
 }
@@ -330,4 +350,227 @@ func Diff(fields []Field, content map[string]any) []Op {
 		ops = append(ops, Op{IsGate: f.IsGate, Group: f.Group, Rel: f.Rel, Children: f.Children, On: want})
 	}
 	return ops
+}
+
+// countToggleable is the "ALL <n> items" the triage variant's bulk row and
+// message refer to: top-level toggleable items, the same units BuildForm's
+// collapsed shape emits as fields (a group is one item, not one per child).
+func countToggleable(items []tui.Item) int {
+	n := 0
+	for _, it := range items {
+		if it.Toggleable {
+			n++
+		}
+	}
+	return n
+}
+
+// BuildTriageForm builds the triage variant's first form: a row for every
+// item that needs attention (something off), plus a bulk-change row and an
+// escape hatch to the full expanded list. An already-on file or gate and a
+// fully-on group get no row — they're folded into the message's "on at
+// defaults (hidden)" count instead. flagged counts only the rows built from
+// actual items, not the two synthetic rows appended after them.
+func BuildTriageForm(items []tui.Item) ([]Field, json.RawMessage, int, error) {
+	var fields []Field
+	var props strings.Builder
+	emit := func(f Field, title string) error {
+		prop, err := propertyJSON(f, title)
+		if err != nil {
+			return err
+		}
+		if props.Len() > 0 {
+			props.WriteByte(',')
+		}
+		props.WriteString(prop)
+		fields = append(fields, f)
+		return nil
+	}
+
+	for _, it := range items {
+		if !it.Toggleable {
+			continue
+		}
+		switch {
+		case it.IsGate:
+			if it.Enabled {
+				continue
+			}
+			f := Field{Key: "gate:" + it.Rel, Rel: it.Rel, IsGate: true, Default: false}
+			title := fmt.Sprintf("[%s] gate: %s — currently off", stageShort(it.Stage), it.Label)
+			if err := emit(f, title); err != nil {
+				return nil, nil, 0, err
+			}
+		case it.Group && it.PartialOff:
+			// Mixed group: one row per OFF child only — the on children stay
+			// hidden, same as any other already-on item.
+			for _, c := range it.Children {
+				if c.Enabled {
+					continue
+				}
+				f := Field{Key: "file:" + c.Rel, Rel: c.Rel, Default: false}
+				title := fmt.Sprintf("[%s] %s — currently off", stageShort(it.Stage), c.Rel)
+				if err := emit(f, title); err != nil {
+					return nil, nil, 0, err
+				}
+			}
+		case it.Group:
+			if it.Enabled {
+				continue // fully on: nothing to flag
+			}
+			f := Field{Key: "dir:" + it.Rel, Rel: it.Rel, Group: true, Default: false}
+			for _, c := range it.Children {
+				f.Children = append(f.Children, c.Rel)
+			}
+			title := fmt.Sprintf("[%s] %s (%d files) — currently off", stageShort(it.Stage), it.Label, it.Count)
+			if err := emit(f, title); err != nil {
+				return nil, nil, 0, err
+			}
+		default:
+			if it.Enabled {
+				continue
+			}
+			f := Field{Key: "file:" + it.Rel, Rel: it.Rel, Default: false}
+			title := fmt.Sprintf("[%s] %s — currently off", stageShort(it.Stage), it.Label)
+			if err := emit(f, title); err != nil {
+				return nil, nil, 0, err
+			}
+		}
+	}
+	flagged := len(fields)
+
+	total := countToggleable(items)
+	bulkTitle := fmt.Sprintf("bulk change to ALL %d items", total)
+	if err := emit(Field{Key: keyBulk, Default: bulkNone}, bulkTitle); err != nil {
+		return nil, nil, 0, err
+	}
+	openTitle := fmt.Sprintf("open the full %d-item list next", total)
+	if err := emit(Field{Key: keyOpenFull, Default: false}, openTitle); err != nil {
+		return nil, nil, 0, err
+	}
+
+	schema := json.RawMessage(`{"type":"object","properties":{` + props.String() + `}}`)
+	return fields, schema, flagged, nil
+}
+
+// groupDiff reports whether any child of the group item it differs from
+// target, and returns the children's rels in ledger order for a group Op's
+// Children field.
+func groupDiff(it tui.Item, target bool) (bool, []string) {
+	children := make([]string, len(it.Children))
+	diff := false
+	for i, c := range it.Children {
+		children[i] = c.Rel
+		if c.Enabled != target {
+			diff = true
+		}
+	}
+	return diff, children
+}
+
+// TriageOps turns a triage-form submission into the ops to apply, plus
+// whether the human asked to see the full list next. With no bulk row set,
+// the flagged rows are the only source of ops — the trailing two synthetic
+// fields are sliced off first so Diff never sees keyOpenFull's plain boolean
+// (which has no real item behind it) or keyBulk's non-bool value.
+//
+// With a bulk row set, it targets EVERY toggleable item in `items`, not just
+// the flagged ones — an already-on file, gate, or fully-on group is a bulk
+// target too. A flagged row's own submission always wins over the bulk value
+// for that same item. A mixed group with one overridden child can't be
+// expressed as a single group Op (one Op is one On value), so it dissolves
+// into one file Op per child instead: the untouched children get the bulk
+// target, the overridden one gets its row value.
+func TriageOps(fields []Field, content map[string]any, items []tui.Item) (ops []Op, openFull bool) {
+	if v, ok := content[keyOpenFull].(bool); ok {
+		openFull = v
+	}
+
+	flagged := fields
+	if n := len(fields); n >= 2 {
+		flagged = fields[:n-2]
+	}
+
+	var target bool
+	bulkSet := true
+	switch choice, _ := content[keyBulk].(string); choice {
+	case bulkAllOn:
+		target = true
+	case bulkAllOff:
+		target = false
+	default:
+		bulkSet = false
+	}
+	if !bulkSet {
+		return Diff(flagged, content), openFull
+	}
+
+	overrides := map[string]bool{}
+	for _, f := range flagged {
+		got, present := content[f.Key]
+		if !present {
+			continue
+		}
+		want, ok := got.(bool)
+		if !ok || want == f.Default.(bool) {
+			continue
+		}
+		overrides[f.Key] = want
+	}
+
+	for _, it := range items {
+		if !it.Toggleable {
+			continue
+		}
+		switch {
+		case it.IsGate:
+			want := target
+			if v, ok := overrides["gate:"+it.Rel]; ok {
+				want = v
+			}
+			if want != it.Enabled {
+				ops = append(ops, Op{IsGate: true, Rel: it.Rel, On: want})
+			}
+		case it.Group && it.PartialOff:
+			childOverridden := false
+			for _, c := range it.Children {
+				if _, ok := overrides["file:"+c.Rel]; ok {
+					childOverridden = true
+					break
+				}
+			}
+			if !childOverridden {
+				if diff, children := groupDiff(it, target); diff {
+					ops = append(ops, Op{Group: true, Rel: it.Rel, Children: children, On: target})
+				}
+				continue
+			}
+			for _, c := range it.Children {
+				want := target
+				if v, ok := overrides["file:"+c.Rel]; ok {
+					want = v
+				}
+				if want != c.Enabled {
+					ops = append(ops, Op{Rel: c.Rel, On: want})
+				}
+			}
+		case it.Group:
+			want := target
+			if v, ok := overrides["dir:"+it.Rel]; ok {
+				want = v
+			}
+			if diff, children := groupDiff(it, want); diff {
+				ops = append(ops, Op{Group: true, Rel: it.Rel, Children: children, On: want})
+			}
+		default:
+			want := target
+			if v, ok := overrides["file:"+it.Rel]; ok {
+				want = v
+			}
+			if want != it.Enabled {
+				ops = append(ops, Op{Rel: it.Rel, On: want})
+			}
+		}
+	}
+	return ops, openFull
 }

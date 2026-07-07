@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Yuncun/omakase-harness/internal/overlay"
 	"github.com/Yuncun/omakase-harness/internal/state"
+	"github.com/Yuncun/omakase-harness/internal/tui"
 )
 
 // lexists is `[ -e p ] || [ -L p ]` (copied from internal/overlay/init.go's
@@ -123,6 +125,26 @@ func connect(t *testing.T, root string, eh func(context.Context, *mcp.ElicitRequ
 	}
 	t.Cleanup(func() { cs.Close() })
 	return cs
+}
+
+// scriptedElicit runs a different step for each successive Elicit call — the
+// chain flows (triage, preset, sections) answer form 1 differently from form
+// 2, and a step can assert on what a later form's schema actually asked for
+// (e.g. a chain's pending edits carried into the next question's defaults).
+// Any call past the scripted steps fails the test loudly rather than hanging
+// or silently declining, since an unscripted extra call means the flow chose
+// to elicit again when it shouldn't have.
+func scriptedElicit(t *testing.T, steps ...func(*testing.T, *mcp.ElicitRequest) *mcp.ElicitResult) func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+	t.Helper()
+	i := 0
+	return func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		if i >= len(steps) {
+			t.Fatalf("elicit called more times (%d) than scripted (%d)", i+1, len(steps))
+		}
+		step := steps[i]
+		i++
+		return step(t, req), nil
+	}
 }
 
 // text flattens a tool result to its first text content for assertions.
@@ -535,5 +557,173 @@ func TestMenuExpandTogglesSingleGroupMember(t *testing.T) {
 	}
 	if i := placedIndex(rows, ".claude/skills/a.md"); i < 0 || rows[i].Enabled != "1" {
 		t.Errorf("a.md ledger row changed: %+v", rows)
+	}
+}
+
+// The triage variant's single-form path: turning on the one flagged row
+// (the mixed group's off child) restores it without touching its on
+// sibling, in one round trip (no open-full chain).
+func TestMenuTriageSingleForm(t *testing.T) {
+	dir, repo := placedFixture(t)
+	if err := overlay.FileOff(repo, ".claude/skills/b.md"); err != nil {
+		t.Fatalf("arrange: FileOff(b.md): %v", err)
+	}
+	eh := scriptedElicit(t, func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": true}}
+	})
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "menu",
+		Arguments: map[string]any{"variant": "triage"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(menu, triage): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("menu IsError: %s", text(t, res))
+	}
+	if !lexists(filepath.Join(dir, ".claude/skills/a.md")) {
+		t.Errorf("a.md removed, want untouched")
+	}
+	if !lexists(filepath.Join(dir, ".claude/skills/b.md")) {
+		t.Errorf("b.md not restored")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	if i := placedIndex(rows, ".claude/skills/b.md"); i < 0 || rows[i].Enabled != "1" {
+		t.Errorf("b.md ledger not enabled=1: %+v", rows)
+	}
+	if i := placedIndex(rows, ".claude/skills/a.md"); i < 0 || rows[i].Enabled != "1" {
+		t.Errorf("a.md ledger changed: %+v", rows)
+	}
+}
+
+// Declining the triage form applies nothing, per the transaction rule.
+func TestMenuTriageDeclineAppliesNothing(t *testing.T) {
+	dir, repo := placedFixture(t)
+	if err := overlay.FileOff(repo, ".claude/skills/b.md"); err != nil {
+		t.Fatalf("arrange: FileOff(b.md): %v", err)
+	}
+	eh := scriptedElicit(t, func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+		return &mcp.ElicitResult{Action: "decline"}
+	})
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "menu",
+		Arguments: map[string]any{"variant": "triage"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(menu, triage): %v", err)
+	}
+	if out := text(t, res); out != "Menu closed — no changes made." {
+		t.Errorf("decline output = %q, want exact closed text", out)
+	}
+	if lexists(filepath.Join(dir, ".claude/skills/b.md")) {
+		t.Errorf("decline restored b.md")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	if i := placedIndex(rows, ".claude/skills/b.md"); i < 0 || rows[i].Enabled != "0" {
+		t.Errorf("decline altered the ledger: %+v", rows)
+	}
+}
+
+// Asking to open the full list chains into a second, expanded form whose
+// defaults already carry form 1's edits (ApplyOps pre-seeding) — accepting
+// form 2 unchanged still applies form 1's b.md-on edit, proving the pending
+// state, not the stale original, reached the second form.
+func TestMenuTriageOpenFullChain(t *testing.T) {
+	dir, repo := placedFixture(t)
+	if err := overlay.FileOff(repo, ".claude/skills/b.md"); err != nil {
+		t.Fatalf("arrange: FileOff(b.md): %v", err)
+	}
+	wantTitle := fmt.Sprintf("[%s] %s", stageShort(tui.StageOnDemand), ".claude/skills/b.md")
+	eh := scriptedElicit(t,
+		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{
+				keyOpenFull: true, "file:.claude/skills/b.md": true,
+			}}
+		},
+		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+			// The SDK re-serializes RequestedSchema through its own typed
+			// jsonschema.Schema (a map internally), so property/key order isn't
+			// preserved across the wire — assert on the decoded value instead
+			// of a literal JSON substring.
+			b, _ := json.Marshal(req.Params.RequestedSchema)
+			var decoded struct {
+				Properties map[string]struct {
+					Title   string `json:"title"`
+					Default any    `json:"default"`
+				} `json:"properties"`
+			}
+			if err := json.Unmarshal(b, &decoded); err != nil {
+				t.Fatalf("decode second form schema: %v\n%s", err, b)
+			}
+			prop, ok := decoded.Properties["file:.claude/skills/b.md"]
+			if !ok {
+				t.Fatalf("second form schema missing file:.claude/skills/b.md:\n%s", b)
+			}
+			if prop.Title != wantTitle {
+				t.Errorf("b.md title = %q, want %q", prop.Title, wantTitle)
+			}
+			if want, ok := prop.Default.(bool); !ok || !want {
+				t.Errorf("b.md default = %v, want pending true (form 1's edit carried forward)", prop.Default)
+			}
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{}}
+		},
+	)
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "menu",
+		Arguments: map[string]any{"variant": "triage"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(menu, triage): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("menu IsError: %s", text(t, res))
+	}
+	if !lexists(filepath.Join(dir, ".claude/skills/b.md")) {
+		t.Errorf("b.md not enabled after open-full chain")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	if i := placedIndex(rows, ".claude/skills/b.md"); i < 0 || rows[i].Enabled != "1" {
+		t.Errorf("b.md ledger not enabled=1: %+v", rows)
+	}
+}
+
+// A decline on the SECOND form of the open-full chain applies nothing, even
+// though form 1 already computed a b.md-on edit — the transaction rule's
+// "nothing applies until the LAST form is accepted".
+func TestMenuTriageChainDeclineSecondForm(t *testing.T) {
+	dir, repo := placedFixture(t)
+	if err := overlay.FileOff(repo, ".claude/skills/b.md"); err != nil {
+		t.Fatalf("arrange: FileOff(b.md): %v", err)
+	}
+	eh := scriptedElicit(t,
+		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{
+				keyOpenFull: true, "file:.claude/skills/b.md": true,
+			}}
+		},
+		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+			return &mcp.ElicitResult{Action: "decline"}
+		},
+	)
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "menu",
+		Arguments: map[string]any{"variant": "triage"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(menu, triage): %v", err)
+	}
+	if out := text(t, res); out != "Menu closed — no changes made." {
+		t.Errorf("chain-decline output = %q, want exact closed text", out)
+	}
+	if lexists(filepath.Join(dir, ".claude/skills/b.md")) {
+		t.Errorf("b.md enabled despite second-form decline")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	if i := placedIndex(rows, ".claude/skills/b.md"); i < 0 || rows[i].Enabled != "0" {
+		t.Errorf("b.md ledger changed despite decline: %+v", rows)
 	}
 }
