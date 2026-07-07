@@ -102,6 +102,9 @@ func menuHandler(root string) mcp.ToolHandler {
 			return textResult("omakase: not inside a git repo", true), nil
 		}
 		items, _ := tui.LiveItems(repo)
+		// Collapse a gate wired at >1 hook to one item so no variant emits a
+		// duplicate "gate:<name>" field or double-counts its op (finding 8).
+		items = dedupeGates(items)
 
 		if !args.Expand && args.Variant == "triage" {
 			return textResult(triageFlow(ctx, req.Session, repo, items), false), nil

@@ -101,6 +101,51 @@ type Op struct {
 	On       bool
 }
 
+// dedupeGates collapses gate items that share a name into one. lefthook can
+// wire the same gate at both pre-commit and pre-push, which tui.BuildItems
+// surfaces as two gate items with the same Rel; left as-is every form builder
+// below would emit two "gate:<name>" fields — a duplicate JSON schema key and a
+// double-counted op for one real change (gates are name-keyed in
+// disabled-gates). Applied once where items enter the server so every variant
+// and every ops path sees one gate item per name. The survivor keeps the first
+// occurrence's position and, when the gate runs on more than one hook, gains a
+// "(hook, hook)" label suffix so the row still names every hook it runs on.
+// Non-gate items pass through untouched, in order.
+func dedupeGates(items []tui.Item) []tui.Item {
+	hooks := map[string][]string{}
+	for _, it := range items {
+		if it.IsGate {
+			hooks[it.Rel] = append(hooks[it.Rel], gateHook(it.Stage))
+		}
+	}
+	seen := map[string]bool{}
+	out := make([]tui.Item, 0, len(items))
+	for _, it := range items {
+		if !it.IsGate {
+			out = append(out, it)
+			continue
+		}
+		if seen[it.Rel] {
+			continue
+		}
+		seen[it.Rel] = true
+		if hs := hooks[it.Rel]; len(hs) > 1 {
+			it.Label = fmt.Sprintf("%s (%s)", it.Rel, strings.Join(hs, ", "))
+		}
+		out = append(out, it)
+	}
+	return out
+}
+
+// gateHook names the hook a gate item's stage represents, for a merged gate's
+// multi-hook label. Gate items only ever carry StagePreCommit or StagePrePush.
+func gateHook(s tui.Stage) string {
+	if s == tui.StagePrePush {
+		return "pre-push"
+	}
+	return "pre-commit"
+}
+
 // stageShort is the compact section tag used in field titles — the screen's
 // full headers (tui.StageTitle) are too long for a form row.
 func stageShort(s tui.Stage) string {

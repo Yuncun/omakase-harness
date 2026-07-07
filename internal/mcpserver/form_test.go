@@ -19,6 +19,52 @@ func sampleItems() []tui.Item {
 	}
 }
 
+// A gate wired at both pre-commit and pre-push surfaces as two gate items with
+// the same Rel; dedupeGates must collapse them to one so the form emits one
+// "gate:<name>" field (no duplicate schema key) and Diff produces one op — with
+// a label that still names both hooks. (Fix F / finding 8)
+func TestDedupeGatesOneFieldPerName(t *testing.T) {
+	items := []tui.Item{
+		{Label: "smoke", Rel: "smoke", Stage: tui.StagePreCommit, IsGate: true, Toggleable: true, Enabled: true},
+		{Label: "smoke", Rel: "smoke", Stage: tui.StagePrePush, IsGate: true, Toggleable: true, Enabled: true},
+	}
+	deduped := dedupeGates(items)
+
+	nGate, label := 0, ""
+	for _, it := range deduped {
+		if it.IsGate {
+			nGate++
+			label = it.Label
+		}
+	}
+	if nGate != 1 {
+		t.Fatalf("dedupeGates left %d gate items, want 1", nGate)
+	}
+	if !strings.Contains(label, "pre-commit") || !strings.Contains(label, "pre-push") {
+		t.Errorf("deduped gate label %q does not name both hooks", label)
+	}
+
+	fields, schema, err := BuildForm(deduped, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateFields := 0
+	for _, f := range fields {
+		if f.IsGate {
+			gateFields++
+		}
+	}
+	if gateFields != 1 {
+		t.Fatalf("BuildForm emitted %d gate fields, want 1", gateFields)
+	}
+	if n := strings.Count(string(schema), `"gate:smoke"`); n != 1 {
+		t.Errorf("schema has %d 'gate:smoke' keys, want 1:\n%s", n, schema)
+	}
+	if ops := Diff(fields, map[string]any{"gate:smoke": rowDisabled}); len(ops) != 1 {
+		t.Fatalf("Diff produced %d ops, want 1: %+v", len(ops), ops)
+	}
+}
+
 // Only toggleable items become fields, with the exact key formats from the
 // spec; the tracked row is absent.
 func TestBuildFormFieldsAndKeys(t *testing.T) {
