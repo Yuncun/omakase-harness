@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/Yuncun/omakase-harness/internal/mcpserver"
 	"github.com/Yuncun/omakase-harness/internal/overlay"
 	"github.com/Yuncun/omakase-harness/internal/status"
 )
@@ -34,6 +35,9 @@ var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 	},
 	"remove": func(argv []string, stdout, stderr io.Writer) int {
 		return overlay.RunRemove(argv[2:], stdout, stderr)
+	},
+	"mcp": func(argv []string, stdout, stderr io.Writer) int {
+		return mcpserver.Run(argv[2:], stdout, stderr)
 	},
 }
 

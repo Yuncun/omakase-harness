@@ -69,6 +69,28 @@ func TestRunRemoveDispatch(t *testing.T) {
 	}
 }
 
+// TestRunMcpDispatch proves the registry wires "mcp" to mcpserver.Run: run from
+// OUTSIDE any git repo (a fresh t.TempDir), it must reach mcpserver.Run's own
+// repo-discovery failure ("not inside a git repo", exit 1) rather than the
+// dispatcher's unknown-command path — mirrors TestRunRemoveDispatch, since mcp
+// has no --help/usage text to probe either.
+func TestRunMcpDispatch(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"omakase", "mcp"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if got := stdout.String(); got != "" {
+		t.Errorf("stdout = %q, want empty", got)
+	}
+	if got, want := stderr.String(), "omakase: not inside a git repo\n"; got != want {
+		t.Errorf("stderr = %q, want %q", got, want)
+	}
+}
+
 // TestPersonalVerbDeregistered proves Phase 3.5 removed the `personal` verb: it
 // is no longer in the registry, so `omakase personal` falls through to the
 // dispatcher's unknown-command path (exit 2), never a handler.
