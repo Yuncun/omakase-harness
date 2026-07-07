@@ -36,6 +36,21 @@ const (
 	keyOpenFull = "open:full"
 )
 
+// Enum values and synthetic key for the preset variant's single posture
+// question (Task 3). Order matters: BuildPresetForm's enum choices must
+// appear in exactly this order. postureAllOn/postureAllOff happen to spell
+// the same English phrases as bulkAllOn/bulkAllOff — the two variants never
+// build the same schema, so the shared wording only matters to a human
+// reading both, not to the code.
+const (
+	postureKeep      = "keep current"
+	postureAllOn     = "everything on"
+	postureGuards    = "guards only"
+	postureAllOff    = "everything off"
+	postureCustomize = "customize item-by-item…"
+	keyPosture       = "posture:"
+)
+
 // Field is one form property: the schema key, the item it controls, and the
 // default sent to the client. Diff compares submissions against Default, so
 // only fields the human actually changed become operations.
@@ -171,6 +186,9 @@ func propertyJSON(f Field, title string) (string, error) {
 		case bulkNone:
 			return fmt.Sprintf(`%s:{"type":"string","title":%s,"enum":["%s","%s","%s"],"default":"%s"}`,
 				key, t, bulkNone, bulkAllOn, bulkAllOff, bulkNone), nil
+		case postureKeep:
+			return fmt.Sprintf(`%s:{"type":"string","title":%s,"enum":["%s","%s","%s","%s","%s"],"default":"%s"}`,
+				key, t, postureKeep, postureAllOn, postureGuards, postureAllOff, postureCustomize, postureKeep), nil
 		}
 	}
 	return fmt.Sprintf(`%s:{"type":"boolean","title":%s,"default":%v}`, key, t, f.Default.(bool)), nil
@@ -573,4 +591,69 @@ func TriageOps(fields []Field, content map[string]any, items []tui.Item) (ops []
 		}
 	}
 	return ops, openFull
+}
+
+// BuildPresetForm builds the preset variant's only form: a single posture
+// question rather than a per-item checklist. items is accepted for
+// signature symmetry with the other Build* functions (and so a future
+// posture could read the repo's shape), but today's five postures don't
+// depend on it — presetFlow's message, not this schema, is what reports the
+// current on/off split.
+func BuildPresetForm(items []tui.Item) ([]Field, json.RawMessage, error) {
+	f := Field{Key: keyPosture, Default: postureKeep}
+	prop, err := propertyJSON(f, "posture")
+	if err != nil {
+		return nil, nil, err
+	}
+	schema := json.RawMessage(`{"type":"object","properties":{` + prop + `}}`)
+	return []Field{f}, schema, nil
+}
+
+// PresetOps turns a posture choice into the ops to apply. keepCurrent and
+// any unrecognized string (a stale reply, a client that ignores the enum)
+// both mean "change nothing" — customize item-by-item… is handled entirely
+// by presetFlow's chain to the full form and never reaches here. The three
+// one-shot postures each reduce to a per-item target: everything on/off
+// targets every toggleable item the same way; guards only targets gates ON
+// (defenses stay running) and every standalone file or group OFF (the
+// injected-instructions noise this posture strips). A group is one op for
+// the whole group — groupDiff's "does any child differ from target" check —
+// same as PresetOps' sibling TriageOps' bulk path, so a mixed group with any
+// child off gets pulled fully to target rather than left half-mixed. Ops are
+// only emitted where the target differs from the item's current state.
+func PresetOps(choice string, items []tui.Item) []Op {
+	var target func(it tui.Item) bool
+	switch choice {
+	case postureAllOn:
+		target = func(tui.Item) bool { return true }
+	case postureAllOff:
+		target = func(tui.Item) bool { return false }
+	case postureGuards:
+		target = func(it tui.Item) bool { return it.IsGate }
+	default:
+		return nil
+	}
+
+	var ops []Op
+	for _, it := range items {
+		if !it.Toggleable {
+			continue
+		}
+		want := target(it)
+		switch {
+		case it.IsGate:
+			if want != it.Enabled {
+				ops = append(ops, Op{IsGate: true, Rel: it.Rel, On: want})
+			}
+		case it.Group:
+			if diff, children := groupDiff(it, want); diff {
+				ops = append(ops, Op{Group: true, Rel: it.Rel, Children: children, On: want})
+			}
+		default:
+			if want != it.Enabled {
+				ops = append(ops, Op{Rel: it.Rel, On: want})
+			}
+		}
+	}
+	return ops
 }

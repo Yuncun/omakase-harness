@@ -690,6 +690,124 @@ func TestMenuTriageOpenFullChain(t *testing.T) {
 	}
 }
 
+// The preset variant's guards-only posture strips everything but the gates:
+// the standalone file and both group members leave the working tree, while
+// the already-on gate stays enabled — one form, no chain.
+func TestMenuPresetGuardsOnly(t *testing.T) {
+	dir, repo := placedFixture(t)
+	eh := scriptedElicit(t, func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{keyPosture: postureGuards}}
+	})
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "menu",
+		Arguments: map[string]any{"variant": "preset"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(menu, preset): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("menu IsError: %s", text(t, res))
+	}
+	if lexists(filepath.Join(dir, "AGENTS.md")) {
+		t.Errorf("AGENTS.md still present after guards-only preset")
+	}
+	if lexists(filepath.Join(dir, ".claude/skills/a.md")) {
+		t.Errorf("a.md still present after guards-only preset")
+	}
+	if lexists(filepath.Join(dir, ".claude/skills/b.md")) {
+		t.Errorf("b.md still present after guards-only preset")
+	}
+	if overlay.DisabledGates(repo.OMK)["smoke"] {
+		t.Errorf("gate smoke disabled after guards-only preset, want still on")
+	}
+}
+
+// Choosing customize item-by-item… chains into the full expanded form,
+// defaulted to the CURRENT state (not to a posture the human never picked):
+// accepting form 2 with only b.md flipped on changes exactly b.md, leaving
+// its already-on sibling and the standalone file untouched.
+func TestMenuPresetCustomizeChain(t *testing.T) {
+	dir, repo := placedFixture(t)
+	if err := overlay.FileOff(repo, ".claude/skills/b.md"); err != nil {
+		t.Fatalf("arrange: FileOff(b.md): %v", err)
+	}
+	var sawSchema string
+	eh := scriptedElicit(t,
+		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{keyPosture: postureCustomize}}
+		},
+		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+			b, _ := json.Marshal(req.Params.RequestedSchema)
+			sawSchema = string(b)
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": true}}
+		},
+	)
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "menu",
+		Arguments: map[string]any{"variant": "preset"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(menu, preset): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("menu IsError: %s", text(t, res))
+	}
+	if !strings.Contains(sawSchema, `"file:.claude/skills/a.md"`) || !strings.Contains(sawSchema, `"file:AGENTS.md"`) {
+		t.Errorf("second form schema not the full expanded form: %s", sawSchema)
+	}
+	if !lexists(filepath.Join(dir, "AGENTS.md")) {
+		t.Errorf("AGENTS.md removed, want untouched")
+	}
+	if !lexists(filepath.Join(dir, ".claude/skills/a.md")) {
+		t.Errorf("a.md removed, want untouched")
+	}
+	if !lexists(filepath.Join(dir, ".claude/skills/b.md")) {
+		t.Errorf("b.md not restored")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	if i := placedIndex(rows, ".claude/skills/b.md"); i < 0 || rows[i].Enabled != "1" {
+		t.Errorf("b.md ledger not enabled=1: %+v", rows)
+	}
+	if i := placedIndex(rows, "AGENTS.md"); i < 0 || rows[i].Enabled != "1" {
+		t.Errorf("AGENTS.md ledger changed: %+v", rows)
+	}
+}
+
+// Declining the second form of the customize chain applies nothing, per the
+// transaction rule — even though form 1 already picked the customize
+// posture, no ops exist until the LAST form is accepted.
+func TestMenuPresetCustomizeDecline(t *testing.T) {
+	dir, repo := placedFixture(t)
+	eh := scriptedElicit(t,
+		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{keyPosture: postureCustomize}}
+		},
+		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+			return &mcp.ElicitResult{Action: "decline"}
+		},
+	)
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "menu",
+		Arguments: map[string]any{"variant": "preset"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(menu, preset): %v", err)
+	}
+	if out := text(t, res); out != "Menu closed — no changes made." {
+		t.Errorf("chain-decline output = %q, want exact closed text", out)
+	}
+	if !lexists(filepath.Join(dir, "AGENTS.md")) {
+		t.Errorf("decline removed AGENTS.md")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	if i := placedIndex(rows, "AGENTS.md"); i < 0 || rows[i].Enabled != "1" {
+		t.Errorf("decline altered the ledger: %+v", rows)
+	}
+}
+
 // A decline on the SECOND form of the open-full chain applies nothing, even
 // though form 1 already computed a b.md-on edit — the transaction rule's
 // "nothing applies until the LAST form is accepted".

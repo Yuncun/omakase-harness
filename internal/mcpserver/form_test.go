@@ -530,3 +530,94 @@ func TestTriageOpsOpenFull(t *testing.T) {
 		t.Fatalf("ops = %+v, want one file Op b.md -> on", ops)
 	}
 }
+
+// BuildPresetForm's whole form is a single string-enum field: the five
+// postures in declaration order, defaulting to keep current — the human
+// answers one question instead of a per-item checklist.
+func TestBuildPresetForm(t *testing.T) {
+	fields, schema, err := BuildPresetForm(sampleItems())
+	if err != nil {
+		t.Fatalf("BuildPresetForm: %v", err)
+	}
+	if len(fields) != 1 || fields[0].Key != keyPosture {
+		t.Fatalf("fields = %+v, want exactly one %q field", fields, keyPosture)
+	}
+	if d, ok := fields[0].Default.(string); !ok || d != postureKeep {
+		t.Errorf("default = %v, want %q", fields[0].Default, postureKeep)
+	}
+	s := string(schema)
+	if !strings.Contains(s, `"title":"posture"`) {
+		t.Errorf("schema missing posture title:\n%s", s)
+	}
+	wantOrder := []string{postureKeep, postureAllOn, postureGuards, postureAllOff, postureCustomize}
+	last := -1
+	for _, w := range wantOrder {
+		i := strings.Index(s, `"`+w+`"`)
+		if i < 0 {
+			t.Fatalf("schema missing choice %q:\n%s", w, s)
+		}
+		if i < last {
+			t.Errorf("choice %q out of declared order in schema:\n%s", w, s)
+		}
+		last = i
+	}
+}
+
+// keep current asks for no change at all: the posture question is purely
+// informational in that branch, so PresetOps must emit nothing.
+func TestPresetOpsKeepCurrent(t *testing.T) {
+	if ops := PresetOps(postureKeep, sampleItems()); ops != nil {
+		t.Errorf("ops = %+v, want nil", ops)
+	}
+}
+
+// guards only keeps consent gates running (already-on smoke gets no op) and
+// strips everything else — the standalone file and the mixed group both
+// collapse to a single off op each; the non-toggleable tracked row never
+// enters the picture.
+func TestPresetOpsGuardsOnly(t *testing.T) {
+	items := sampleItems()
+	ops := PresetOps(postureGuards, items)
+	if len(ops) != 2 {
+		t.Fatalf("ops = %+v, want 2 (file off + group off)", ops)
+	}
+	byRel := map[string]Op{}
+	for _, op := range ops {
+		byRel[op.Rel] = op
+	}
+	if op, ok := byRel["AGENTS.md"]; !ok || op.On || op.Group || op.IsGate {
+		t.Errorf("AGENTS.md op = %+v, want file -> off", op)
+	}
+	if op, ok := byRel[".claude/skills"]; !ok || op.On || !op.Group || len(op.Children) != 2 {
+		t.Errorf("skills op = %+v, want group -> off with 2 children", op)
+	}
+	if _, ok := byRel["smoke"]; ok {
+		t.Errorf("gate smoke got an op, want none (already on)")
+	}
+	if _, ok := byRel["tracked.md"]; ok {
+		t.Errorf("non-toggleable tracked.md got an op, want none")
+	}
+}
+
+// everything on only touches what isn't already on: AGENTS.md and smoke are
+// already on and get no op, and the mixed group collapses to one group-on
+// op covering both children.
+func TestPresetOpsAllOn(t *testing.T) {
+	items := sampleItems()
+	ops := PresetOps(postureAllOn, items)
+	if len(ops) != 1 {
+		t.Fatalf("ops = %+v, want 1 (group on only)", ops)
+	}
+	op := ops[0]
+	if !op.Group || op.Rel != ".claude/skills" || !op.On || len(op.Children) != 2 {
+		t.Errorf("op = %+v, want group .claude/skills -> on with 2 children", op)
+	}
+}
+
+// A choice outside the declared enum (a client that ignores the schema, or
+// a stale form reply) is treated the same as keep current: no ops.
+func TestPresetOpsJunk(t *testing.T) {
+	if ops := PresetOps("banana", sampleItems()); ops != nil {
+		t.Errorf("ops = %+v, want nil", ops)
+	}
+}

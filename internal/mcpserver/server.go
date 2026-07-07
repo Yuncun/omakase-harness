@@ -106,15 +106,15 @@ func menuHandler(root string) mcp.ToolHandler {
 		if !args.Expand && args.Variant == "triage" {
 			return textResult(triageFlow(ctx, req.Session, repo, items), false), nil
 		}
+		if !args.Expand && args.Variant == "preset" {
+			return textResult(presetFlow(ctx, req.Session, repo, items), false), nil
+		}
 
 		var fields []Field
 		var schema json.RawMessage
 		switch {
 		case args.Expand:
 			fields, schema, err = BuildForm(items, true)
-		case args.Variant == "preset":
-			// Task 3 replaces this case with a call to presetFlow.
-			fallthrough
 		case args.Variant == "sections":
 			// Task 4 replaces this case with a call to sectionsFlow.
 			fallthrough
@@ -247,6 +247,83 @@ func triageMessage(repo *state.Repo, items []tui.Item, flagged int) string {
 	}
 	b.WriteString("Nothing changes until you submit.")
 	return b.String()
+}
+
+// presetFlow runs the preset variant's elicitation chain: one question
+// asking for an overall posture, then — only for the customize item-by-item…
+// escape hatch — a second, full expanded form defaulted to items' CURRENT
+// state (not to whatever the posture question's other choices would have
+// done, since picking customize means starting from what's on disk today).
+// A plain Diff against that form is therefore correct, unlike the triage
+// chain's EffectiveOps: nothing upstream of this form has already changed
+// the defaults. THE TRANSACTION RULE binds both forms: nothing is applied to
+// the repo until the LAST form in the chain is accepted, a decline or elicit
+// error at either form applies nothing, and the one-shot postures apply
+// PresetOps computed against the same `items` snapshot the question was
+// built from — never against whatever the repo drifted to mid-chain.
+func presetFlow(ctx context.Context, session *mcp.ServerSession, repo *state.Repo, items []tui.Item) string {
+	// The single posture field is only consulted by key below (never diffed
+	// against a Field list the way the collapsed menu and triage flows are),
+	// so BuildPresetForm's Field slice has no further use here.
+	_, schema, err := BuildPresetForm(items)
+	if err != nil {
+		return "omakase: could not build the preset form: " + err.Error()
+	}
+	res, err := elicit(ctx, session, &mcp.ElicitParams{
+		Message:         presetMessage(repo, items),
+		RequestedSchema: schema,
+	})
+	if err != nil {
+		// First form of the chain: an elicit-capability failure gets the same
+		// instructive fallback as the collapsed menu, per the transaction rule.
+		return "This client could not show the omakase form (" + err.Error() + "). " + fallbackHelp
+	}
+	if res.Action != "accept" {
+		return "Menu closed — no changes made."
+	}
+
+	choice, _ := res.Content[keyPosture].(string)
+	if choice != postureCustomize {
+		return apply(repo, PresetOps(choice, items))
+	}
+
+	fullFields, fullSchema, err := BuildForm(items, true)
+	if err != nil {
+		return "omakase: could not build the full form: " + err.Error()
+	}
+	res2, err := elicit(ctx, session, &mcp.ElicitParams{
+		Message:         menuMessage(repo, len(fullFields)),
+		RequestedSchema: fullSchema,
+	})
+	if err != nil || res2.Action != "accept" {
+		// Mid-chain: an elicit error behaves like a decline, not the
+		// first-form fallback — the human already saw a working form once.
+		return "Menu closed — no changes made."
+	}
+	return apply(repo, Diff(fullFields, res2.Content))
+}
+
+// presetMessage is the text above the posture question: the current on/off
+// split, so "keep current" has a concrete meaning, plus the same "nothing
+// changes until submit" promise every menu form makes. off counts any
+// toggleable item not fully enabled — including a partially-off group — so a
+// repo that already has SOME customization gets the "(customized)" note
+// rather than reading as a clean, untouched install.
+func presetMessage(repo *state.Repo, items []tui.Item) string {
+	total := countToggleable(items)
+	on := 0
+	for _, it := range items {
+		if it.Toggleable && it.Enabled {
+			on++
+		}
+	}
+	off := total - on
+	note := ""
+	if off > 0 {
+		note = " (customized)"
+	}
+	return fmt.Sprintf("omakase preset — %d items in %s · currently %d on / %d off%s.\nNothing changes until you submit.",
+		total, repo.Root, on, off, note)
 }
 
 // toggleGate dispatches to the same GateOff/GateOn backend the interactive
