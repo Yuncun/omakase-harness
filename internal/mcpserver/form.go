@@ -14,8 +14,19 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/tui"
 )
 
-// Enum values for a partially-off group field. A boolean cannot express
-// "leave the mixed state alone", so mixed groups get these three choices.
+// Row-level enum values for a single item's on/off state. Hosts render a
+// string enum as visible text ("enabled"/"disabled"); a boolean field renders
+// as a near-illegible checkbox glyph, so every per-item row (a standalone
+// file, a gate, a whole group, an expanded group member) uses this two-choice
+// enum instead of true/false.
+const (
+	rowEnabled  = "enabled"
+	rowDisabled = "disabled"
+)
+
+// Enum values for a partially-off group field. rowEnabled/rowDisabled only
+// has two choices, which still cannot express "leave the mixed state alone",
+// so a mixed group gets this dedicated third choice alongside all-on/all-off.
 const (
 	keepAsIs = "keep as-is"
 	allOn    = "all on"
@@ -76,7 +87,7 @@ type Field struct {
 	IsGate   bool
 	Group    bool
 	Children []string  // group fields: member rels in ledger order
-	Default  any       // bool, or keepAsIs/bulkNone/postureKeep/sectionKeep for an enum field
+	Default  any       // rowEnabled/rowDisabled for a leaf's on/off state; keepAsIs/bulkNone/postureKeep/sectionKeep for their own enum fields; bool only for the triage open-full action row
 	Stage    tui.Stage // sections variant only: which stage this field's "open…" choice re-opens; zero value (StageSessionStart) is harmless noise on every other Field kind, which never reads it
 }
 
@@ -116,8 +127,8 @@ func stageShort(s tui.Stage) string {
 // toggleable items become fields; tracked files and machinery stay on the
 // status page. With expand, every group member becomes its own file field —
 // the full per-file view of the status page — instead of one row per
-// directory; the mixed-group enum disappears because each file is just a
-// boolean.
+// directory; the mixed-group enum disappears because each file gets its own
+// enabled/disabled row instead.
 func BuildForm(items []tui.Item, expand bool) ([]Field, json.RawMessage, error) {
 	var fields []Field
 	var props strings.Builder
@@ -142,11 +153,11 @@ func BuildForm(items []tui.Item, expand bool) ([]Field, json.RawMessage, error) 
 		switch {
 		case it.IsGate:
 			f.Key = "gate:" + it.Rel
-			f.Default = it.Enabled
+			f.Default = rowState(it.Enabled)
 			title = fmt.Sprintf("[%s] gate: %s", stageShort(it.Stage), it.Label)
 		case it.Group && expand:
 			for _, c := range it.Children {
-				cf := Field{Key: "file:" + c.Rel, Rel: c.Rel, Default: c.Enabled}
+				cf := Field{Key: "file:" + c.Rel, Rel: c.Rel, Default: rowState(c.Enabled)}
 				if err := emit(cf, fmt.Sprintf("[%s] %s", stageShort(it.Stage), c.Rel)); err != nil {
 					return nil, nil, err
 				}
@@ -168,11 +179,11 @@ func BuildForm(items []tui.Item, expand bool) ([]Field, json.RawMessage, error) 
 				f.Default = keepAsIs
 				title = fmt.Sprintf("%s — %d/%d on", title, on, it.Count)
 			} else {
-				f.Default = it.Enabled
+				f.Default = rowState(it.Enabled)
 			}
 		default:
 			f.Key = "file:" + it.Rel
-			f.Default = it.Enabled
+			f.Default = rowState(it.Enabled)
 		}
 
 		if err := emit(f, title); err != nil {
@@ -181,6 +192,15 @@ func BuildForm(items []tui.Item, expand bool) ([]Field, json.RawMessage, error) 
 	}
 	schema := json.RawMessage(`{"type":"object","properties":{` + props.String() + `}}`)
 	return fields, schema, nil
+}
+
+// rowState renders a leaf's current on/off state as the enabled/disabled
+// string every item row's enum uses in place of a bare boolean.
+func rowState(on bool) string {
+	if on {
+		return rowEnabled
+	}
+	return rowDisabled
 }
 
 // propertyJSON renders one schema property, marshaling every dynamic string
@@ -213,6 +233,9 @@ func propertyJSON(f Field, title string) (string, error) {
 		case postureKeep:
 			return fmt.Sprintf(`%s:{"type":"string","title":%s,"enum":["%s","%s","%s","%s","%s"],"default":"%s"}`,
 				key, t, postureKeep, postureAllOn, postureGuards, postureAllOff, postureCustomize, postureKeep), nil
+		case rowEnabled, rowDisabled:
+			return fmt.Sprintf(`%s:{"type":"string","title":%s,"enum":["%s","%s"],"default":"%s"}`,
+				key, t, rowEnabled, rowDisabled, s), nil
 		}
 	}
 	return fmt.Sprintf(`%s:{"type":"boolean","title":%s,"default":%v}`, key, t, f.Default.(bool)), nil
@@ -326,13 +349,14 @@ func stateByKey(items []tui.Item) map[string]bool {
 
 // EffectiveOps computes the ops a chain flow (Tasks 2-4) needs to apply at
 // the end of a chain, from an expanded-shape submission — every field here
-// is a plain boolean, never the mixed-group enum, because a chain question
-// only ever asks about leaves. A field's effective value is the submitted
-// bool when present and well-typed, else the field's Default: a chain step
-// the human never touched still carries forward whatever an earlier step in
-// the same chain already set as that field's Default. One Op is emitted per
-// field whose effective value differs from original[field.Key]; fields
-// missing from original (not part of the pre-chain baseline) are skipped.
+// is a two-choice enabled/disabled row, never the mixed-group enum, because a
+// chain question only ever asks about leaves. A field's effective value is
+// the submitted choice when present and one of the two declared strings,
+// else the field's Default: a chain step the human never touched still
+// carries forward whatever an earlier step in the same chain already set as
+// that field's Default. One Op is emitted per field whose effective value
+// differs from original[field.Key]; fields missing from original (not part
+// of the pre-chain baseline) are skipped.
 func EffectiveOps(fields []Field, content map[string]any, original map[string]bool) []Op {
 	var ops []Op
 	for _, f := range fields {
@@ -340,17 +364,17 @@ func EffectiveOps(fields []Field, content map[string]any, original map[string]bo
 		if !known {
 			continue
 		}
-		def, ok := f.Default.(bool)
+		def, ok := f.Default.(string)
 		if !ok {
 			// The mixed-group enum default (keepAsIs) is not part of the
-			// all-boolean expanded shape this helper serves; skip rather
-			// than guess at an enum's "effective" boolean.
+			// enabled/disabled expanded shape this helper serves; skip rather
+			// than guess at an enum's "effective" state.
 			continue
 		}
-		effective := def
+		effective := def == rowEnabled
 		if got, present := content[f.Key]; present {
-			if b, ok := got.(bool); ok {
-				effective = b
+			if s, ok := got.(string); ok && (s == rowEnabled || s == rowDisabled) {
+				effective = s == rowEnabled
 			}
 		}
 		if effective == orig {
@@ -371,19 +395,37 @@ func Diff(fields []Field, content map[string]any) []Op {
 		if !present {
 			continue
 		}
-		if s, ok := f.Default.(string); ok && s == keepAsIs {
-			// The server-side enum schema restricts this field to the three
-			// declared values, so the SDK rejects anything else before it
-			// reaches us today. Checking explicitly for allOn/allOff (rather
-			// than "anything that isn't keepAsIs") means a future SDK that
-			// relaxes that validation can't turn stray junk into a
-			// destructive group-off by falling through this branch.
-			choice, ok := got.(string)
-			if !ok || (choice != allOn && choice != allOff) {
+		if s, ok := f.Default.(string); ok {
+			switch s {
+			case keepAsIs:
+				// The server-side enum schema restricts this field to the three
+				// declared values, so the SDK rejects anything else before it
+				// reaches us today. Checking explicitly for allOn/allOff (rather
+				// than "anything that isn't keepAsIs") means a future SDK that
+				// relaxes that validation can't turn stray junk into a
+				// destructive group-off by falling through this branch.
+				choice, ok := got.(string)
+				if !ok || (choice != allOn && choice != allOff) {
+					continue
+				}
+				ops = append(ops, Op{IsGate: f.IsGate, Group: f.Group, Rel: f.Rel, Children: f.Children, On: choice == allOn})
+				continue
+			case rowEnabled, rowDisabled:
+				// Same hardening as the keepAsIs branch above: check explicitly
+				// for the OTHER declared choice, not "anything that isn't the
+				// default", so a future SDK that relaxes enum validation can't
+				// turn stray junk into a toggle.
+				other := rowEnabled
+				if s == rowEnabled {
+					other = rowDisabled
+				}
+				choice, ok := got.(string)
+				if !ok || choice != other {
+					continue
+				}
+				ops = append(ops, Op{IsGate: f.IsGate, Group: f.Group, Rel: f.Rel, Children: f.Children, On: choice == rowEnabled})
 				continue
 			}
-			ops = append(ops, Op{IsGate: f.IsGate, Group: f.Group, Rel: f.Rel, Children: f.Children, On: choice == allOn})
-			continue
 		}
 		want, ok := got.(bool)
 		if !ok || want == f.Default.(bool) {
@@ -444,7 +486,7 @@ func BuildTriageForm(items []tui.Item) ([]Field, json.RawMessage, int, error) {
 			if it.Enabled {
 				continue
 			}
-			f := Field{Key: "gate:" + it.Rel, Rel: it.Rel, IsGate: true, Default: false}
+			f := Field{Key: "gate:" + it.Rel, Rel: it.Rel, IsGate: true, Default: rowDisabled}
 			title := fmt.Sprintf("[%s] gate: %s — currently off", stageShort(it.Stage), it.Label)
 			if err := emit(f, title); err != nil {
 				return nil, nil, 0, err
@@ -456,7 +498,7 @@ func BuildTriageForm(items []tui.Item) ([]Field, json.RawMessage, int, error) {
 				if c.Enabled {
 					continue
 				}
-				f := Field{Key: "file:" + c.Rel, Rel: c.Rel, Default: false}
+				f := Field{Key: "file:" + c.Rel, Rel: c.Rel, Default: rowDisabled}
 				title := fmt.Sprintf("[%s] %s — currently off", stageShort(it.Stage), c.Rel)
 				if err := emit(f, title); err != nil {
 					return nil, nil, 0, err
@@ -466,7 +508,7 @@ func BuildTriageForm(items []tui.Item) ([]Field, json.RawMessage, int, error) {
 			if it.Enabled {
 				continue // fully on: nothing to flag
 			}
-			f := Field{Key: "dir:" + it.Rel, Rel: it.Rel, Group: true, Default: false}
+			f := Field{Key: "dir:" + it.Rel, Rel: it.Rel, Group: true, Default: rowDisabled}
 			for _, c := range it.Children {
 				f.Children = append(f.Children, c.Rel)
 			}
@@ -478,7 +520,7 @@ func BuildTriageForm(items []tui.Item) ([]Field, json.RawMessage, int, error) {
 			if it.Enabled {
 				continue
 			}
-			f := Field{Key: "file:" + it.Rel, Rel: it.Rel, Default: false}
+			f := Field{Key: "file:" + it.Rel, Rel: it.Rel, Default: rowDisabled}
 			title := fmt.Sprintf("[%s] %s — currently off", stageShort(it.Stage), it.Label)
 			if err := emit(f, title); err != nil {
 				return nil, nil, 0, err
@@ -559,11 +601,16 @@ func TriageOps(fields []Field, content map[string]any, items []tui.Item) (ops []
 		if !present {
 			continue
 		}
-		want, ok := got.(bool)
-		if !ok || want == f.Default.(bool) {
+		// A flagged row's Default is always rowDisabled (BuildTriageForm only
+		// rows what's currently off), so the same hardening as Diff's
+		// rowEnabled/rowDisabled branch applies: only a submitted rowEnabled
+		// or rowDisabled that differs from Default counts as an override,
+		// never a junk-valued or wrong-typed choice.
+		choice, ok := got.(string)
+		if !ok || choice == f.Default.(string) || (choice != rowEnabled && choice != rowDisabled) {
 			continue
 		}
-		overrides[f.Key] = want
+		overrides[f.Key] = choice == rowEnabled
 	}
 
 	for _, it := range items {
@@ -771,11 +818,11 @@ func BuildSectionsForm(items []tui.Item) ([]Field, json.RawMessage, error) {
 	return fields, schema, nil
 }
 
-// BuildSectionForm builds one stage's expanded-shape boolean rows — the same
-// per-child dissolution BuildForm's expand path uses (groups dissolve into
-// one field per member) — scoped to just this stage's items. A sections
-// sub-form always uses this expanded shape, never the mixed-group enum,
-// because a stage that reaches this form was already picked "open this
+// BuildSectionForm builds one stage's expanded-shape enabled/disabled rows —
+// the same per-child dissolution BuildForm's expand path uses (groups
+// dissolve into one field per member) — scoped to just this stage's items. A
+// sections sub-form always uses this expanded shape, never the mixed-group
+// enum, because a stage that reaches this form was already picked "open this
 // section…" over "all on"/"all off" specifically to edit individual members.
 func BuildSectionForm(items []tui.Item, stage tui.Stage) ([]Field, json.RawMessage, error) {
 	var scoped []tui.Item

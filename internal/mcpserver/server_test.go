@@ -206,7 +206,7 @@ func TestMenuAppliesFileOff(t *testing.T) {
 	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
 		b, _ := json.Marshal(req.Params.RequestedSchema)
 		sawSchema = string(b)
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": false}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": rowDisabled}}, nil
 	}
 	cs := connect(t, dir, eh)
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"})
@@ -236,7 +236,7 @@ func TestMenuAppliesFileOff(t *testing.T) {
 func TestMenuAppliesGateOff(t *testing.T) {
 	dir, repo := placedFixture(t)
 	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"gate:smoke": false}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"gate:smoke": rowDisabled}}, nil
 	}
 	cs := connect(t, dir, eh)
 	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"}); err != nil {
@@ -274,7 +274,7 @@ func TestMenuDecline(t *testing.T) {
 func TestMenuUntouchedSubmit(t *testing.T) {
 	dir, _ := placedFixture(t)
 	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": true, "gate:smoke": true}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": rowEnabled, "gate:smoke": rowEnabled}}, nil
 	}
 	cs := connect(t, dir, eh)
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"})
@@ -341,7 +341,7 @@ func TestMenuAcceptWithNilContentDoesNotCrash(t *testing.T) {
 func TestMenuUnknownVariantIsCollapsed(t *testing.T) {
 	dir, _ := placedFixture(t)
 	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": true, "gate:smoke": true}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": rowEnabled, "gate:smoke": rowEnabled}}, nil
 	}
 	cs := connect(t, dir, eh)
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
@@ -379,7 +379,7 @@ func TestMenuWithoutElicitationCapability(t *testing.T) {
 func TestMenuGroupOff(t *testing.T) {
 	dir, repo := placedFixture(t)
 	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"dir:.claude/skills": false}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"dir:.claude/skills": rowDisabled}}, nil
 	}
 	cs := connect(t, dir, eh)
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"})
@@ -421,7 +421,7 @@ func TestMenuGroupPartialRefusal(t *testing.T) {
 		}
 	}
 	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"dir:.claude/skills": false}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"dir:.claude/skills": rowDisabled}}, nil
 	}
 	cs := connect(t, dir, eh)
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"})
@@ -497,14 +497,14 @@ func TestMenuGroupPartialRoundTrip(t *testing.T) {
 func TestMenuFileBackOn(t *testing.T) {
 	dir, _ := placedFixture(t)
 	off := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": false}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": rowDisabled}}, nil
 	}
 	cs := connect(t, dir, off)
 	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"}); err != nil {
 		t.Fatalf("menu off: %v", err)
 	}
 	on := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": true}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": rowEnabled}}, nil
 	}
 	cs2 := connect(t, dir, on)
 	if _, err := cs2.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"}); err != nil {
@@ -524,7 +524,7 @@ func TestMenuExpandTogglesSingleGroupMember(t *testing.T) {
 	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
 		b, _ := json.Marshal(req.Params.RequestedSchema)
 		sawSchema = string(b)
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": false}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": rowDisabled}}, nil
 	}
 	cs := connect(t, dir, eh)
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
@@ -569,7 +569,7 @@ func TestMenuTriageSingleForm(t *testing.T) {
 		t.Fatalf("arrange: FileOff(b.md): %v", err)
 	}
 	eh := scriptedElicit(t, func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": true}}
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": rowEnabled}}
 	})
 	cs := connect(t, dir, eh)
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
@@ -639,7 +639,7 @@ func TestMenuTriageOpenFullChain(t *testing.T) {
 	eh := scriptedElicit(t,
 		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
 			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{
-				keyOpenFull: true, "file:.claude/skills/b.md": true,
+				keyOpenFull: true, "file:.claude/skills/b.md": rowEnabled,
 			}}
 		},
 		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
@@ -664,8 +664,8 @@ func TestMenuTriageOpenFullChain(t *testing.T) {
 			if prop.Title != wantTitle {
 				t.Errorf("b.md title = %q, want %q", prop.Title, wantTitle)
 			}
-			if want, ok := prop.Default.(bool); !ok || !want {
-				t.Errorf("b.md default = %v, want pending true (form 1's edit carried forward)", prop.Default)
+			if want, ok := prop.Default.(string); !ok || want != rowEnabled {
+				t.Errorf("b.md default = %v, want pending %q (form 1's edit carried forward)", prop.Default, rowEnabled)
 			}
 			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{}}
 		},
@@ -776,7 +776,7 @@ func TestMenuPresetCustomizeChain(t *testing.T) {
 		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
 			b, _ := json.Marshal(req.Params.RequestedSchema)
 			sawSchema = string(b)
-			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": true}}
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": rowEnabled}}
 		},
 	)
 	cs := connect(t, dir, eh)
@@ -935,7 +935,7 @@ func TestMenuSectionsOpenChain(t *testing.T) {
 			if len(decoded.Properties) != 2 {
 				t.Fatalf("second form has %d properties, want 2 (only the two skill rows): %s", len(decoded.Properties), b)
 			}
-			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": true}}
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": rowEnabled}}
 		},
 	)
 	cs := connect(t, dir, eh)
@@ -1016,11 +1016,11 @@ func TestMenuSectionsTwoOpens(t *testing.T) {
 		},
 		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
 			calls++
-			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": true}}
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": rowEnabled}}
 		},
 		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
 			calls++
-			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"gate:smoke": false}}
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"gate:smoke": rowDisabled}}
 		},
 	)
 	cs := connect(t, dir, eh)
@@ -1056,7 +1056,7 @@ func TestMenuTriageChainDeclineSecondForm(t *testing.T) {
 	eh := scriptedElicit(t,
 		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
 			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{
-				keyOpenFull: true, "file:.claude/skills/b.md": true,
+				keyOpenFull: true, "file:.claude/skills/b.md": rowEnabled,
 			}}
 		},
 		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {

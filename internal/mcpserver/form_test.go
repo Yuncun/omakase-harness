@@ -60,21 +60,25 @@ func TestBuildFormPreservesOrder(t *testing.T) {
 	}
 }
 
-// Booleans default to the current state; a partially-off group is a 3-value
-// enum defaulting to "keep as-is".
+// Item rows default to the current state spelled out as "enabled"/"disabled"
+// (hosts render a string enum as visible text, unlike a checkbox); a
+// partially-off group is a 3-value enum defaulting to "keep as-is".
 func TestBuildFormDefaults(t *testing.T) {
 	fields, schema, err := BuildForm(sampleItems(), false)
 	if err != nil {
 		t.Fatalf("BuildForm: %v", err)
 	}
-	if d, ok := fields[0].Default.(bool); !ok || !d {
-		t.Errorf("file default = %v, want true", fields[0].Default)
+	if d, ok := fields[0].Default.(string); !ok || d != rowEnabled {
+		t.Errorf("file default = %v, want %q", fields[0].Default, rowEnabled)
 	}
 	if d, ok := fields[1].Default.(string); !ok || d != "keep as-is" {
 		t.Errorf("partial group default = %v, want %q", fields[1].Default, "keep as-is")
 	}
+	if d, ok := fields[2].Default.(string); !ok || d != rowEnabled {
+		t.Errorf("gate default = %v, want %q", fields[2].Default, rowEnabled)
+	}
 	s := string(schema)
-	for _, want := range []string{`"keep as-is"`, `"all on"`, `"all off"`, `"default":true`} {
+	for _, want := range []string{`"keep as-is"`, `"all on"`, `"all off"`, `"enum":["enabled","disabled"]`, `"default":"enabled"`} {
 		if !strings.Contains(s, want) {
 			t.Errorf("schema missing %s:\n%s", want, s)
 		}
@@ -92,12 +96,12 @@ func TestDiff(t *testing.T) {
 	if ops := Diff(fields, map[string]any{}); len(ops) != 0 {
 		t.Errorf("empty content: ops = %+v, want none", ops)
 	}
-	same := map[string]any{"file:AGENTS.md": true, "dir:.claude/skills": "keep as-is", "gate:smoke": true}
+	same := map[string]any{"file:AGENTS.md": rowEnabled, "dir:.claude/skills": "keep as-is", "gate:smoke": rowEnabled}
 	if ops := Diff(fields, same); len(ops) != 0 {
 		t.Errorf("all-defaults content: ops = %+v, want none", ops)
 	}
 
-	changed := map[string]any{"file:AGENTS.md": false, "dir:.claude/skills": "all off", "gate:smoke": true}
+	changed := map[string]any{"file:AGENTS.md": rowDisabled, "dir:.claude/skills": "all off", "gate:smoke": rowEnabled}
 	ops := Diff(fields, changed)
 	if len(ops) != 2 {
 		t.Fatalf("ops = %+v, want 2", ops)
@@ -108,6 +112,21 @@ func TestDiff(t *testing.T) {
 	if !ops[1].Group || ops[1].Rel != ".claude/skills" || ops[1].On ||
 		len(ops[1].Children) != 2 || ops[1].Children[0] != ".claude/skills/a.md" {
 		t.Errorf("ops[1] = %+v, want group .claude/skills -> all off with 2 children", ops[1])
+	}
+}
+
+// A junk string on an item row's enabled/disabled enum (something other than
+// the two declared choices) emits no op — the same hardening Diff applies to
+// the mixed-group enum's keepAsIs branch, now guarding the row-level enum
+// too.
+func TestDiffItemRowJunkChoiceIsNoOp(t *testing.T) {
+	fields, _, err := BuildForm(sampleItems(), false)
+	if err != nil {
+		t.Fatalf("BuildForm: %v", err)
+	}
+	ops := Diff(fields, map[string]any{"file:AGENTS.md": "banana"})
+	if len(ops) != 0 {
+		t.Errorf("junk choice: ops = %+v, want none", ops)
 	}
 }
 
@@ -127,9 +146,9 @@ func TestDiffPartialGroupJunkChoiceIsNoOp(t *testing.T) {
 	}
 }
 
-// A fully-on group is a plain boolean field, and turning it off diffs to one
-// group Op.
-func TestBuildFormWholeGroupBoolean(t *testing.T) {
+// A fully-on group is a plain enabled/disabled enum field (not the 3-choice
+// mixed enum), and turning it off diffs to one group Op.
+func TestBuildFormWholeGroupEnum(t *testing.T) {
 	items := []tui.Item{{
 		Label: ".claude/skills/", Rel: ".claude/skills", Stage: tui.StageOnDemand, Group: true, Toggleable: true,
 		Children: []tui.ChildRef{{Rel: ".claude/skills/a.md", Enabled: true}, {Rel: ".claude/skills/b.md", Enabled: true}},
@@ -139,18 +158,19 @@ func TestBuildFormWholeGroupBoolean(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildForm: %v", err)
 	}
-	if d, ok := fields[0].Default.(bool); !ok || !d {
-		t.Fatalf("whole group default = %v, want boolean true", fields[0].Default)
+	if d, ok := fields[0].Default.(string); !ok || d != rowEnabled {
+		t.Fatalf("whole group default = %v, want %q", fields[0].Default, rowEnabled)
 	}
-	ops := Diff(fields, map[string]any{"dir:.claude/skills": false})
+	ops := Diff(fields, map[string]any{"dir:.claude/skills": rowDisabled})
 	if len(ops) != 1 || !ops[0].Group || ops[0].On {
 		t.Errorf("ops = %+v, want one group off Op", ops)
 	}
 }
 
 // With expand, groups dissolve into one file field per member — the full
-// per-file view — keeping section order, per-child defaults, and no enum
-// (each file is a plain boolean, even in a mixed group).
+// per-file view — keeping section order, per-child defaults, and no 3-choice
+// mixed-group enum (each file gets its own enabled/disabled row, even in a
+// mixed group).
 func TestBuildFormExpanded(t *testing.T) {
 	fields, schema, err := BuildForm(sampleItems(), true)
 	if err != nil {
@@ -165,8 +185,8 @@ func TestBuildFormExpanded(t *testing.T) {
 			t.Errorf("fields[%d].Key = %q, want %q", i, fields[i].Key, w)
 		}
 	}
-	if d, ok := fields[2].Default.(bool); !ok || d {
-		t.Errorf("disabled child default = %v, want boolean false", fields[2].Default)
+	if d, ok := fields[2].Default.(string); !ok || d != rowDisabled {
+		t.Errorf("disabled child default = %v, want %q", fields[2].Default, rowDisabled)
 	}
 	s := string(schema)
 	if strings.Contains(s, "dir:") || strings.Contains(s, keepAsIs) {
@@ -178,7 +198,7 @@ func TestBuildFormExpanded(t *testing.T) {
 		t.Errorf("expanded schema order wrong (a.md=%d gate=%d):\n%s", iA, iGate, s)
 	}
 
-	ops := Diff(fields, map[string]any{"file:.claude/skills/b.md": true})
+	ops := Diff(fields, map[string]any{"file:.claude/skills/b.md": rowEnabled})
 	if len(ops) != 1 || ops[0].Group || ops[0].IsGate || ops[0].Rel != ".claude/skills/b.md" || !ops[0].On {
 		t.Errorf("ops = %+v, want one file on Op for b.md", ops)
 	}
@@ -347,21 +367,28 @@ func TestEffectiveOps(t *testing.T) {
 	})
 
 	t.Run("submitted value overrides default back to original -> no op", func(t *testing.T) {
-		ops := EffectiveOps(fields, map[string]any{"gate:smoke": true}, original)
+		ops := EffectiveOps(fields, map[string]any{"gate:smoke": rowEnabled}, original)
 		if len(ops) != 0 {
 			t.Errorf("ops = %+v, want none (submission restores original)", ops)
 		}
 	})
 
-	t.Run("junk-typed submission falls back to default", func(t *testing.T) {
+	t.Run("junk-valued submission falls back to default", func(t *testing.T) {
 		ops := EffectiveOps(fields, map[string]any{"gate:smoke": "banana"}, original)
 		if len(ops) != 1 || !ops[0].IsGate || ops[0].Rel != "smoke" || ops[0].On {
 			t.Fatalf("ops = %+v, want default (off) to win over junk submission", ops)
 		}
 	})
 
+	t.Run("junk-typed submission falls back to default", func(t *testing.T) {
+		ops := EffectiveOps(fields, map[string]any{"gate:smoke": true}, original)
+		if len(ops) != 1 || !ops[0].IsGate || ops[0].Rel != "smoke" || ops[0].On {
+			t.Fatalf("ops = %+v, want default (off) to win over wrong-typed submission", ops)
+		}
+	})
+
 	t.Run("field missing from original is skipped", func(t *testing.T) {
-		extra := append([]Field{{Key: "file:new.md", Rel: "new.md", Default: true}}, fields...)
+		extra := append([]Field{{Key: "file:new.md", Rel: "new.md", Default: rowEnabled}}, fields...)
 		ops := EffectiveOps(extra, map[string]any{}, original)
 		for _, op := range ops {
 			if op.Rel == "new.md" {
@@ -439,7 +466,7 @@ func TestTriageOpsRowOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildTriageForm: %v", err)
 	}
-	ops, openFull := TriageOps(fields, map[string]any{"file:.claude/skills/b.md": true}, items)
+	ops, openFull := TriageOps(fields, map[string]any{"file:.claude/skills/b.md": rowEnabled}, items)
 	if openFull {
 		t.Errorf("openFull = true, want false")
 	}
@@ -489,7 +516,7 @@ func TestTriageOpsRowOverridesBulk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildTriageForm: %v", err)
 	}
-	content := map[string]any{keyBulk: bulkAllOff, "file:.claude/skills/b.md": true}
+	content := map[string]any{keyBulk: bulkAllOff, "file:.claude/skills/b.md": rowEnabled}
 	ops, _ := TriageOps(fields, content, items)
 	if len(ops) != 4 {
 		t.Fatalf("ops = %+v, want 4 (AGENTS.md, a.md, b.md, smoke)", ops)
@@ -521,7 +548,7 @@ func TestTriageOpsOpenFull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildTriageForm: %v", err)
 	}
-	content := map[string]any{keyOpenFull: true, "file:.claude/skills/b.md": true}
+	content := map[string]any{keyOpenFull: true, "file:.claude/skills/b.md": rowEnabled}
 	ops, openFull := TriageOps(fields, content, items)
 	if !openFull {
 		t.Fatalf("openFull = false, want true")
@@ -682,11 +709,11 @@ func TestBuildSectionForm(t *testing.T) {
 			t.Errorf("fields[%d].Key = %q, want %q", i, fields[i].Key, w)
 		}
 	}
-	if d, ok := fields[0].Default.(bool); !ok || !d {
-		t.Errorf("a.md default = %v, want true", fields[0].Default)
+	if d, ok := fields[0].Default.(string); !ok || d != rowEnabled {
+		t.Errorf("a.md default = %v, want %q", fields[0].Default, rowEnabled)
 	}
-	if d, ok := fields[1].Default.(bool); !ok || d {
-		t.Errorf("b.md default = %v, want false", fields[1].Default)
+	if d, ok := fields[1].Default.(string); !ok || d != rowDisabled {
+		t.Errorf("b.md default = %v, want %q", fields[1].Default, rowDisabled)
 	}
 	s := string(schema)
 	if strings.Contains(s, "dir:") || strings.Contains(s, "gate:") || strings.Contains(s, "AGENTS.md") {

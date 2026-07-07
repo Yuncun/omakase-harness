@@ -171,7 +171,7 @@ func elicit(ctx context.Context, session *mcp.ServerSession, params *mcp.ElicitP
 // menuMessage is the text above the form: what checking a box means and the
 // promise that submit is the only thing that changes state.
 func menuMessage(repo *state.Repo, n int) string {
-	return fmt.Sprintf("omakase consent menu — %d item(s) in %s.\nChecked = enabled. Adjust anything, then submit; nothing changes until you do, and declining changes nothing.", n, repo.Root)
+	return fmt.Sprintf("omakase consent menu — %d item(s) in %s.\nEach row shows enabled or disabled. Adjust anything, then submit; nothing changes until you do, and declining changes nothing.", n, repo.Root)
 }
 
 // triageFlow runs the triage variant's elicitation chain: one form listing
