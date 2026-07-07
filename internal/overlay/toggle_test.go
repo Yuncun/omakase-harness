@@ -198,6 +198,96 @@ func TestFileOffNotPlaced(t *testing.T) {
 	}
 }
 
+// FileOn must refuse a locally edited, still-enabled file rather than silently
+// restoring the snapshot over it — the symmetric guard to FileOff's ErrEdited.
+// Without it, a group/bulk "all on" (which calls FileOn on every child,
+// already-on ones included) destroys an edited on-child with a success message.
+// (Fix A / findings 6+10)
+func TestFileOnRefusesEdited(t *testing.T) {
+	dir, repo := placeSingleGate(t)
+	rel := ".omakase/gates/example.sh"
+	full := filepath.Join(dir, rel)
+
+	f, err := os.OpenFile(full, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("# local edit\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	edited := readFileT(t, full)
+
+	err = FileOn(repo, rel)
+	if !errors.Is(err, ErrEdited) {
+		t.Fatalf("FileOn on edited path: got %v, want ErrEdited", err)
+	}
+	if got := readFileT(t, full); got != edited {
+		t.Errorf("edited file was overwritten by FileOn:\n got: %q\nwant: %q", got, edited)
+	}
+}
+
+// twoRulePayload ships two files under .claude/rules/, forming a real group,
+// and points OMAKASE_PAYLOAD at it.
+func twoRulePayload(t *testing.T) string {
+	t.Helper()
+	p := t.TempDir()
+	writeFile(t, filepath.Join(p, ".claude", "rules", "a.md"), "rule a\n")
+	writeFile(t, filepath.Join(p, ".claude", "rules", "b.md"), "rule b\n")
+	t.Setenv("OMAKASE_PAYLOAD", p)
+	return p
+}
+
+func placeTwoRules(t *testing.T) (string, *state.Repo) {
+	t.Helper()
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+	twoRulePayload(t)
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("init exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	return dir, repo
+}
+
+// Group turn-on must not clobber an edited, still-enabled sibling: with b.md
+// toggled off (the group is now mixed) and a.md locally edited, restoring the
+// group calls FileOn on BOTH children. FileOn(a.md) must refuse (ErrEdited,
+// edit intact) while FileOn(b.md) restores the toggled-off sibling. (Fix A,
+// group case)
+func TestFileOnGroupSkipsEditedSibling(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	a := ".claude/rules/a.md"
+	b := ".claude/rules/b.md"
+
+	if err := FileOff(repo, b); err != nil {
+		t.Fatalf("FileOff(b): %v", err)
+	}
+	fullA := filepath.Join(dir, a)
+	f, err := os.OpenFile(fullA, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("edited\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	editedA := readFileT(t, fullA)
+
+	if err := FileOn(repo, a); !errors.Is(err, ErrEdited) {
+		t.Fatalf("FileOn(edited a): got %v, want ErrEdited", err)
+	}
+	if got := readFileT(t, fullA); got != editedA {
+		t.Errorf("edited sibling clobbered by group turn-on:\n got: %q\nwant: %q", got, editedA)
+	}
+	if err := FileOn(repo, b); err != nil {
+		t.Fatalf("FileOn(b): %v", err)
+	}
+	if !lexists(filepath.Join(dir, b)) {
+		t.Errorf("b.md not restored by group turn-on")
+	}
+}
+
 // ------------------------------------------------------------ consent merge
 
 // Re-init must not resurrect a file the developer toggled off (consent merge),

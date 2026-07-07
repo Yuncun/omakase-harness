@@ -168,6 +168,18 @@ func FileOn(repo *state.Repo, rel string) error {
 	if gitTracked(repo.Root, rel) {
 		return fmt.Errorf("%s: %w", rel, ErrTracked)
 	}
+	// Symmetric with FileOff's ErrEdited guard: an on-disk copy that differs
+	// from the ledger hash is a local edit. A group/bulk "all on" calls FileOn
+	// on every child, already-on ones included, so restoring the snapshot over
+	// an edited, still-enabled file would silently destroy that edit. Refuse
+	// instead. A toggled-off file has no on-disk copy (FileOff deleted it), so
+	// this never blocks the real restore.
+	full := filepath.Join(repo.Root, rel)
+	if lexists(full) {
+		if h := state.HashOf(full); h != "" && rows[idx].Hash != "" && h != rows[idx].Hash {
+			return fmt.Errorf("%s: %w", rel, ErrEdited)
+		}
+	}
 	snap := filepath.Join(repo.OMK, "payload-snapshot", rel)
 	if !lexists(snap) {
 		return fmt.Errorf("%s: %w", rel, ErrNoSnapshot)
@@ -175,10 +187,10 @@ func FileOn(repo *state.Repo, rel string) error {
 	if err := safeMkdirAll(repo.Root, filepath.Join(repo.Root, filepath.Dir(rel))); err != nil {
 		return err
 	}
-	if err := CopyEntry(snap, filepath.Join(repo.Root, rel)); err != nil {
+	if err := CopyEntry(snap, full); err != nil {
 		return err
 	}
 	rows[idx].Enabled = "1"
-	rows[idx].Hash = state.HashOf(filepath.Join(repo.Root, rel))
+	rows[idx].Hash = state.HashOf(full)
 	return state.WritePlaced(ledger, rows)
 }
