@@ -9,7 +9,11 @@
 > See [`docs/reference.md`](reference.md) for the current contract and
 > [`CHANGELOG.md`](../CHANGELOG.md) for what was removed and why. Everything below
 > this note — most of it now historical — describes the CUT design as it stood before
-> the revert; do not read any of it as shipped behavior. §1-§3 and §5 carry inline
+> the revert; do not read any of it as shipped behavior. (One piece has since
+> shipped in a NEW shape this doc does not describe: the 2026-07 consent-menu stack
+> rebuilt gate/file toggles as `omakase status`'s interactive screen plus
+> `omakase mcp` — [`docs/reference.md`](reference.md) is the contract for those.)
+> §1-§3 and §5 carry inline
 > corrections; §4 and §6-§13 are kept verbatim as a design record of what was built,
 > then reverted, and why.
 

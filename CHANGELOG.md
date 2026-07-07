@@ -5,6 +5,24 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added — 2026-07-07 the consent menu
+- **`omakase status` is now the menu on a real terminal**: every steering file and
+  gate is a row a human can toggle (arrows + Enter/Space). Pipes, `--markdown`,
+  and `--plain` keep the static page byte-for-byte. `--disable`/`--enable <name>`
+  are the scriptable twins; machinery and unknown names refuse. A file toggled
+  off stays off across re-init; a disabled gate is recorded in the git dir's
+  `omakase/disabled-gates` and skipped VISIBLY at hook time until re-enabled.
+  A locally edited file refuses either toggle rather than lose the edits.
+- **`omakase mcp`** — a stdio MCP server (binary-only verb) serving the same
+  consent menu inside Claude Code / Copilot CLI as native form dialogs (MCP
+  elicitation), plus a read-only `status` tool. Ships three disposable
+  list-layout experiments (`variant`: triage / preset / sections) for live A/B
+  testing; the losers will be deleted.
+- First external Go dependencies: bubbletea/lipgloss for the interactive screen
+  (vendored with a one-file patch that stops an import-time terminal query —
+  provenance and upgrade path in `third_party/bubbletea/PATCH.md`) and the
+  official MCP go-sdk.
+
 ### Removed — 2026-07-03 slim-cut
 - **Reverted to a 3-verb, single-harness overlay** (`init` / `remove` / `status`). A
   YAGNI audit found the layered design below (Phases 3-3.5) had no real user demand
@@ -26,8 +44,10 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 - **Fixed:** `init --source` repairing an already-installed harness while offline used to
   brick the repair when the source's cache refresh failed (no network, no fallback). It
   now falls back to reusing the last good cached copy instead of failing the repair.
-- **Deferred, not merely postponed:** persistent gate toggles (`enable`/`disable`) are
-  cut outright — no plan to rebuild them without a concrete need surfacing.
+- **Deferred at the slim-cut, since rebuilt:** persistent gate toggles were cut
+  outright here; the consent-menu stack (see Added below, 2026-07-07) rebuilt
+  them in a new shape — per-item human consent, visible skips — rather than the
+  original enable/disable verbs.
 
 ### Added
 - **Layers + the `personal` verb (v2 design §4/§5/§7/§9).** A repo can now hold a *project*
