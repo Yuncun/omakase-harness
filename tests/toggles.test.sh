@@ -43,6 +43,8 @@ exit 0
 SH
 chmod +x "$FIX/.omakase/gates/smoke.sh"
 printf 'Fixture agent doctrine.\n' > "$FIX/AGENTS.md"
+mkdir -p "$FIX/.claude/rules"
+printf 'Fixture style rule.\n' > "$FIX/.claude/rules/style.md"   # non-machinery placed file for the tracked-path test
 cat > "$FIX/lefthook-local.yml" <<'YML'
 pre-commit:
   jobs:
@@ -99,17 +101,18 @@ OUT="$( cd "$REPO" && "$SHOW" --enable AGENTS.md 2>&1 )"; RC=$?
 [ "$(col5 AGENTS.md)" = "1" ] && pass "case5: placed.tsv column 5 is back to 1" || fail "case5: placed.tsv col5 = '$(col5 AGENTS.md)'"
 
 echo "== toggles: REFUSING guards (tracked path, local edit) =="
-# 6. --disable on a path the repo TRACKS -> rc 1, REFUSING, file survives untouched.
-#    Uses the placed gate script (AGENTS.md is kept untracked for case 7's edit test).
-#    `git ls-files` (what gitTracked checks) counts a STAGED path as tracked, so a
-#    plain `git add -f` is enough — no commit needed (and the smoke gate is still
-#    enabled at this point, so a real commit here would just be blocked again).
-( cd "$REPO" && git add -f .omakase/gates/smoke.sh ) >/dev/null 2>&1
-OUT="$( cd "$REPO" && "$SHOW" --disable .omakase/gates/smoke.sh 2>&1 )"; RC=$?
+# 6. --disable on a NON-MACHINERY path the repo TRACKS -> rc 1, REFUSING, file
+#    survives untouched. Uses .claude/rules/style.md (a placed rule file);
+#    AGENTS.md is kept untracked for case 7's edit test, and .omakase/* is now
+#    machinery (case 9, exit 2), so a plain placed file is what proves the
+#    tracked-path guard. `git ls-files` (what gitTracked checks) counts a STAGED
+#    path as tracked, so a plain `git add -f` is enough — no commit needed.
+( cd "$REPO" && git add -f .claude/rules/style.md ) >/dev/null 2>&1
+OUT="$( cd "$REPO" && "$SHOW" --disable .claude/rules/style.md 2>&1 )"; RC=$?
 { [ "$RC" -eq 1 ] && echo "$OUT" | grep -q REFUSING; } \
   && pass "case6: --disable refuses a tracked path" \
   || fail "case6: tracked-path refusal ($RC: $OUT)"
-[ -f "$REPO/.omakase/gates/smoke.sh" ] && pass "case6: the tracked file survives" || fail "case6: tracked file was deleted"
+[ -f "$REPO/.claude/rules/style.md" ] && pass "case6: the tracked file survives" || fail "case6: tracked file was deleted"
 
 # 7. a LOCAL EDIT to an untracked placed file -> rc 1, REFUSING, file survives.
 OUT="$( cd "$REPO" && echo extra >> AGENTS.md && "$SHOW" --disable AGENTS.md 2>&1 )"; RC=$?
@@ -117,6 +120,33 @@ OUT="$( cd "$REPO" && echo extra >> AGENTS.md && "$SHOW" --disable AGENTS.md 2>&
   && pass "case7: --disable refuses a locally-edited file" \
   || fail "case7: edited-file refusal ($RC: $OUT)"
 [ -f "$REPO/AGENTS.md" ] && pass "case7: the edited file survives" || fail "case7: edited file was deleted"
+
+echo "== toggles: machinery + unknown names are refused (exit 2) =="
+# 9. --disable .omakase (harness machinery) -> exit 2, deletes nothing, no raw
+#    bash-127 commit wedge. The gate primitive must survive.
+OUT="$( cd "$REPO" && "$SHOW" --disable .omakase 2>&1 )"; RC=$?
+{ [ "$RC" -eq 2 ] && echo "$OUT" | grep -q machinery; } \
+  && pass "case9: --disable .omakase refuses machinery (exit 2)" \
+  || fail "case9: machinery refusal ($RC: $OUT)"
+[ -f "$REPO/.omakase/bin/omakase-gate.sh" ] && pass "case9: the gate primitive survives" || fail "case9: gate primitive deleted"
+
+# 10. --disable CLAUDE.mdd (typo: no placed path, no wired gate) -> exit 2, and
+#     the junk name never reaches disabled-gates as a phantom entry.
+OUT="$( cd "$REPO" && "$SHOW" --disable CLAUDE.mdd 2>&1 )"; RC=$?
+{ [ "$RC" -eq 2 ] && echo "$OUT" | grep -q "unknown gate or placed path"; } \
+  && pass "case10: --disable of an unknown name exits 2" \
+  || fail "case10: unknown-name refusal ($RC: $OUT)"
+if grep -q "CLAUDE.mdd" "$OMK/disabled-gates" 2>/dev/null; then
+  fail "case10: junk name leaked into disabled-gates"
+else
+  pass "case10: no phantom disabled-gates entry"
+fi
+
+# 11. --help prints usage and exits 0 (never the page, never the TUI).
+OUT="$( cd "$REPO" && "$SHOW" --help 2>&1 )"; RC=$?
+{ [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "usage: omakase status"; } \
+  && pass "case11: --help prints usage and exits 0" \
+  || fail "case11: --help ($RC: $OUT)"
 
 echo "== toggles: --plain still reaches the normal render =="
 # 8. --plain is a reachable no-op today (Task 8 wires the interactive dispatch); the

@@ -95,6 +95,17 @@ func stageOf(rel, kind string) (Stage, bool) {
 	}
 }
 
+// IsMachinery reports whether rel is harness machinery (the .omakase/ tree,
+// lefthook wiring, .worktreeinclude, and the hook dirs) — the paths BuildItems
+// counts but never offers as a consent item. The scriptable CLI toggle surface
+// reuses this so `omakase status --disable <machinery>` refuses instead of
+// deleting the harness's own plumbing. The machinery verdict depends only on
+// rel, so kind is irrelevant here.
+func IsMachinery(rel string) bool {
+	_, mach := stageOf(rel, "")
+	return mach
+}
+
 // groupKey returns the first two `/`-separated segments of rel — the
 // grouping key for any rel with strings.Count(rel, "/") >= 2 (brief step 3).
 func groupKey(rel string) string {

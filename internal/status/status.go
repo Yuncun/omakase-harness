@@ -28,6 +28,17 @@ var schemeRe = regexp.MustCompile(`^[a-z][a-z]*://`)
 // the current directory and writes the report to stdout. Not inside a git repo:
 // the one stderr line + exit 1 (bin/status.sh:20). Exit 0 otherwise.
 func Run(argv []string, stdout, stderr io.Writer) int {
+	// --help/-h is the only argv that short-circuits to usage; every other
+	// unknown flag still falls through to the page (parity with legacy
+	// status.sh). Scanned first so `status --help` on a real terminal prints
+	// help rather than launching the interactive screen.
+	for _, a := range argv {
+		if a == "--help" || a == "-h" {
+			printStatusUsage(stdout)
+			return 0
+		}
+	}
+
 	md := len(argv) > 0 && (argv[0] == "--markdown" || argv[0] == "-m" || argv[0] == "md")
 
 	// --plain forces the static page; --disable/--enable are the scriptable
@@ -106,6 +117,25 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 	}
 	renderTerminal(stdout, repo, home, hname, srcdisp, basever, nplaced)
 	return 0
+}
+
+// printStatusUsage prints the `omakase status` flag surface. The stack's new
+// state-writing flags (--disable/--enable) and the interactive-on-TTY screen
+// were undocumented, and unknown flags fall through silently; this handler is
+// the discoverable surface for both.
+func printStatusUsage(w io.Writer) {
+	fmt.Fprint(w, `usage: omakase status [--markdown|--plain] [--disable NAME | --enable NAME]
+
+  (no flags)      on a real terminal, open the interactive consent screen;
+                  otherwise print the status page
+  --markdown, -m  print the status page as markdown
+  --plain         force the printed status page (never the interactive screen)
+  --disable NAME  turn a gate off, or remove a placed file/dir; NAME is a wired
+                  gate name or a placed path. Recorded so commits/pushes skip it
+                  until re-enabled.
+  --enable NAME   undo a --disable: restore the file/dir or re-arm the gate
+  --help, -h      show this help
+`)
 }
 
 // renderMarkdown is the md page (bin/status.sh:320-335): the script owns the
