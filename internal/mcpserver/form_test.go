@@ -621,3 +621,102 @@ func TestPresetOpsJunk(t *testing.T) {
 		t.Errorf("ops = %+v, want nil", ops)
 	}
 }
+
+// BuildSectionsForm builds the sections variant's first form: one enum field
+// per dev-loop stage that has at least one toggleable item, titled with the
+// stage's kind (gates vs items), leaf count, and how many of those leaves are
+// on — tracked.md (non-toggleable) contributes to no stage's count. Section
+// order is dev-loop stage order, the same rule as every other Build*
+// function; the two stages with nothing toggleable (during session, pre-push)
+// get no field at all.
+func TestBuildSectionsForm(t *testing.T) {
+	fields, schema, err := BuildSectionsForm(sampleItems())
+	if err != nil {
+		t.Fatalf("BuildSectionsForm: %v", err)
+	}
+	if len(fields) != 3 {
+		t.Fatalf("fields = %d, want 3: %+v", len(fields), fields)
+	}
+	wantKeys := []string{"section:session start", "section:on demand", "section:pre-commit"}
+	for i, w := range wantKeys {
+		if fields[i].Key != w {
+			t.Errorf("fields[%d].Key = %q, want %q", i, fields[i].Key, w)
+		}
+	}
+	s := string(schema)
+	wantTitles := []string{
+		`"[session start] items (1) — 1/1 on"`,
+		`"[on demand] items (2) — 1/2 on"`,
+		`"[pre-commit] gates (1) — 1/1 on"`,
+	}
+	for _, w := range wantTitles {
+		if !strings.Contains(s, w) {
+			t.Errorf("schema missing title %s:\n%s", w, s)
+		}
+	}
+	for _, w := range []string{`"` + sectionKeep + `"`, `"` + sectionAllOn + `"`, `"` + sectionAllOff + `"`, `"` + sectionOpen + `"`} {
+		if !strings.Contains(s, w) {
+			t.Errorf("schema missing enum choice %s:\n%s", w, s)
+		}
+	}
+	if strings.Contains(s, "tracked.md") {
+		t.Errorf("schema contains non-toggleable row: %s", s)
+	}
+}
+
+// BuildSectionForm builds one stage's expanded-shape boolean rows — the same
+// per-child dissolution BuildForm's expand path uses — scoped to just that
+// stage's items: the on-demand group's two children, nothing from any other
+// stage.
+func TestBuildSectionForm(t *testing.T) {
+	fields, schema, err := BuildSectionForm(sampleItems(), tui.StageOnDemand)
+	if err != nil {
+		t.Fatalf("BuildSectionForm: %v", err)
+	}
+	wantKeys := []string{"file:.claude/skills/a.md", "file:.claude/skills/b.md"}
+	if len(fields) != len(wantKeys) {
+		t.Fatalf("fields = %d, want %d: %+v", len(fields), len(wantKeys), fields)
+	}
+	for i, w := range wantKeys {
+		if fields[i].Key != w {
+			t.Errorf("fields[%d].Key = %q, want %q", i, fields[i].Key, w)
+		}
+	}
+	if d, ok := fields[0].Default.(bool); !ok || !d {
+		t.Errorf("a.md default = %v, want true", fields[0].Default)
+	}
+	if d, ok := fields[1].Default.(bool); !ok || d {
+		t.Errorf("b.md default = %v, want false", fields[1].Default)
+	}
+	s := string(schema)
+	if strings.Contains(s, "dir:") || strings.Contains(s, "gate:") || strings.Contains(s, "AGENTS.md") {
+		t.Errorf("section form leaked fields from another stage:\n%s", s)
+	}
+}
+
+// SectionBulkOps targets one stage's toggleable items at a single value: a
+// group becomes one group Op (only when some child differs from target), a
+// gate or standalone file becomes one Op only when it differs — an
+// already-satisfied stage (session start, already all on) gets no ops at
+// all.
+func TestSectionBulkOps(t *testing.T) {
+	items := sampleItems()
+	t.Run("on demand all-on", func(t *testing.T) {
+		ops := SectionBulkOps(items, tui.StageOnDemand, true)
+		if len(ops) != 1 || !ops[0].Group || ops[0].Rel != ".claude/skills" || !ops[0].On || len(ops[0].Children) != 2 {
+			t.Errorf("ops = %+v, want one group .claude/skills -> on with 2 children", ops)
+		}
+	})
+	t.Run("pre-commit all-off", func(t *testing.T) {
+		ops := SectionBulkOps(items, tui.StagePreCommit, false)
+		if len(ops) != 1 || !ops[0].IsGate || ops[0].Rel != "smoke" || ops[0].On {
+			t.Errorf("ops = %+v, want one gate smoke -> off", ops)
+		}
+	})
+	t.Run("session start all-on", func(t *testing.T) {
+		ops := SectionBulkOps(items, tui.StageSessionStart, true)
+		if len(ops) != 0 {
+			t.Errorf("ops = %+v, want none (AGENTS.md already on)", ops)
+		}
+	})
+}

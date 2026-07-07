@@ -808,6 +808,207 @@ func TestMenuPresetCustomizeDecline(t *testing.T) {
 	}
 }
 
+// expand=true wins over variant even when variant names a real chain flow —
+// guards the dispatch order against a future reordering that would route an
+// expand request into a chain flow instead of the plain expanded form. The
+// elicited schema is the full expanded shape (a per-file row for each skill),
+// not a sections-style per-stage enum.
+func TestMenuExpandWinsOverVariant(t *testing.T) {
+	dir, _ := placedFixture(t)
+	var sawSchema string
+	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		b, _ := json.Marshal(req.Params.RequestedSchema)
+		sawSchema = string(b)
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{}}, nil
+	}
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "menu",
+		Arguments: map[string]any{"expand": true, "variant": "sections"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(menu, expand+variant=sections): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("menu IsError: %s", text(t, res))
+	}
+	if !strings.Contains(sawSchema, `"file:.claude/skills/a.md"`) {
+		t.Errorf("expand did not win over variant=sections, schema missing expanded file row: %s", sawSchema)
+	}
+	if strings.Contains(sawSchema, keySection) {
+		t.Errorf("expand did not win over variant=sections, schema still has a section field: %s", sawSchema)
+	}
+}
+
+// The sections variant's bulk-only path: choosing "all off" for the on-demand
+// section in form 1 removes both skill files in one round trip, no chain.
+func TestMenuSectionsBulkOnly(t *testing.T) {
+	dir, repo := placedFixture(t)
+	eh := scriptedElicit(t, func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{
+			keySection + stageShort(tui.StageOnDemand): sectionAllOff,
+		}}
+	})
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "menu",
+		Arguments: map[string]any{"variant": "sections"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(menu, sections): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("menu IsError: %s", text(t, res))
+	}
+	if lexists(filepath.Join(dir, ".claude/skills/a.md")) {
+		t.Errorf("a.md still present after bulk all-off")
+	}
+	if lexists(filepath.Join(dir, ".claude/skills/b.md")) {
+		t.Errorf("b.md still present after bulk all-off")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	for _, rel := range []string{".claude/skills/a.md", ".claude/skills/b.md"} {
+		if i := placedIndex(rows, rel); i < 0 || rows[i].Enabled != "0" {
+			t.Errorf("ledger not enabled=0 for %s after bulk all-off: %+v", rel, rows)
+		}
+	}
+}
+
+// Choosing "open this section…" for on-demand chains into a second form
+// scoped to just that section's two skill rows; accepting it with b.md on
+// restores b.md without touching a.md or the unrelated session-start file.
+func TestMenuSectionsOpenChain(t *testing.T) {
+	dir, repo := placedFixture(t)
+	if err := overlay.FileOff(repo, ".claude/skills/b.md"); err != nil {
+		t.Fatalf("arrange: FileOff(b.md): %v", err)
+	}
+	eh := scriptedElicit(t,
+		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{
+				keySection + stageShort(tui.StageOnDemand): sectionOpen,
+			}}
+		},
+		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+			b, _ := json.Marshal(req.Params.RequestedSchema)
+			var decoded struct {
+				Properties map[string]any `json:"properties"`
+			}
+			if err := json.Unmarshal(b, &decoded); err != nil {
+				t.Fatalf("decode second form schema: %v\n%s", err, b)
+			}
+			if len(decoded.Properties) != 2 {
+				t.Fatalf("second form has %d properties, want 2 (only the two skill rows): %s", len(decoded.Properties), b)
+			}
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": true}}
+		},
+	)
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "menu",
+		Arguments: map[string]any{"variant": "sections"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(menu, sections): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("menu IsError: %s", text(t, res))
+	}
+	if !lexists(filepath.Join(dir, ".claude/skills/a.md")) {
+		t.Errorf("a.md removed, want untouched")
+	}
+	if !lexists(filepath.Join(dir, ".claude/skills/b.md")) {
+		t.Errorf("b.md not restored")
+	}
+	if !lexists(filepath.Join(dir, "AGENTS.md")) {
+		t.Errorf("AGENTS.md removed, want untouched — a different section")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	if i := placedIndex(rows, ".claude/skills/b.md"); i < 0 || rows[i].Enabled != "1" {
+		t.Errorf("b.md ledger not enabled=1: %+v", rows)
+	}
+}
+
+// Declining the sub-form discards EVERYTHING accumulated in the chain,
+// including a DIFFERENT section's already-computed bulk change from form 1 —
+// the sections-specific transaction rule, stricter than triage/preset's
+// two-form chains where only one form's edits were ever pending.
+func TestMenuSectionsDeclineSubFormCancelsBulk(t *testing.T) {
+	dir, repo := placedFixture(t)
+	eh := scriptedElicit(t,
+		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{
+				keySection + stageShort(tui.StagePreCommit): sectionAllOff,
+				keySection + stageShort(tui.StageOnDemand):  sectionOpen,
+			}}
+		},
+		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+			return &mcp.ElicitResult{Action: "decline"}
+		},
+	)
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "menu",
+		Arguments: map[string]any{"variant": "sections"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(menu, sections): %v", err)
+	}
+	if out := text(t, res); out != "Menu closed — no changes made." {
+		t.Errorf("decline output = %q, want exact closed text", out)
+	}
+	if overlay.DisabledGates(repo.OMK)["smoke"] {
+		t.Errorf("gate smoke disabled despite sub-form decline discarding the accumulated bulk change")
+	}
+}
+
+// Opening two sections in form 1 chains into two sub-forms, one per section
+// in declared order; the handler must see exactly three elicit calls total,
+// and both sub-forms' edits apply together in the one final batch.
+func TestMenuSectionsTwoOpens(t *testing.T) {
+	dir, repo := placedFixture(t)
+	if err := overlay.FileOff(repo, ".claude/skills/b.md"); err != nil {
+		t.Fatalf("arrange: FileOff(b.md): %v", err)
+	}
+	calls := 0
+	eh := scriptedElicit(t,
+		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+			calls++
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{
+				keySection + stageShort(tui.StageOnDemand):  sectionOpen,
+				keySection + stageShort(tui.StagePreCommit): sectionOpen,
+			}}
+		},
+		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+			calls++
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": true}}
+		},
+		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
+			calls++
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"gate:smoke": false}}
+		},
+	)
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "menu",
+		Arguments: map[string]any{"variant": "sections"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(menu, sections): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("menu IsError: %s", text(t, res))
+	}
+	if calls != 3 {
+		t.Errorf("elicit called %d times, want 3 (form 1 + one sub-form per opened section)", calls)
+	}
+	if !lexists(filepath.Join(dir, ".claude/skills/b.md")) {
+		t.Errorf("b.md not restored")
+	}
+	if !overlay.DisabledGates(repo.OMK)["smoke"] {
+		t.Errorf("gate smoke not disabled after two-opens chain")
+	}
+}
+
 // A decline on the SECOND form of the open-full chain applies nothing, even
 // though form 1 already computed a b.md-on edit — the transaction rule's
 // "nothing applies until the LAST form is accepted".

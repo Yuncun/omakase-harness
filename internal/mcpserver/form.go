@@ -51,16 +51,33 @@ const (
 	keyPosture       = "posture:"
 )
 
+// Enum values, key prefix, and section-kind labels for the sections
+// variant's per-stage question (Task 4). sectionKeep/sectionAllOn/
+// sectionAllOff intentionally spell the same phrases as keepAsIs/allOn/
+// allOff — same reasoning as postureAllOn/postureAllOff above, since the
+// sections variant never builds the same schema as those. Because
+// sectionKeep's VALUE collides with keepAsIs's, propertyJSON dispatches
+// section fields by their keySection key prefix, not by matching this
+// Default value against the other variants' enums the way it does for them.
+const (
+	sectionKeep   = "keep as-is"
+	sectionAllOn  = "all on"
+	sectionAllOff = "all off"
+	sectionOpen   = "open this section…"
+	keySection    = "section:"
+)
+
 // Field is one form property: the schema key, the item it controls, and the
 // default sent to the client. Diff compares submissions against Default, so
 // only fields the human actually changed become operations.
 type Field struct {
-	Key      string // property name: "gate:<name>", "file:<rel>", "dir:<prefix>"
+	Key      string // property name: "gate:<name>", "file:<rel>", "dir:<prefix>", "section:<stageShort>"
 	Rel      string // gate name, file rel, or group dir prefix
 	IsGate   bool
 	Group    bool
-	Children []string // group fields: member rels in ledger order
-	Default  any      // bool, or keepAsIs for a partially-off group
+	Children []string  // group fields: member rels in ledger order
+	Default  any       // bool, or keepAsIs/bulkNone/postureKeep/sectionKeep for an enum field
+	Stage    tui.Stage // sections variant only: which stage this field's "open…" choice re-opens; zero value (StageSessionStart) is harmless noise on every other Field kind, which never reads it
 }
 
 // Op is one consent change the human requested: flip Rel (a gate, a file, or
@@ -177,6 +194,13 @@ func propertyJSON(f Field, title string) (string, error) {
 	t, err := json.Marshal(title)
 	if err != nil {
 		return "", err
+	}
+	if strings.HasPrefix(f.Key, keySection) {
+		// Dispatch by key prefix, not by matching Default's value: sectionKeep
+		// deliberately spells the same string as keepAsIs, so a value-based
+		// switch would render the wrong (3-choice) enum here.
+		return fmt.Sprintf(`%s:{"type":"string","title":%s,"enum":["%s","%s","%s","%s"],"default":"%s"}`,
+			key, t, sectionKeep, sectionAllOn, sectionAllOff, sectionOpen, sectionKeep), nil
 	}
 	if s, ok := f.Default.(string); ok {
 		switch s {
@@ -652,6 +676,134 @@ func PresetOps(choice string, items []tui.Item) []Op {
 		default:
 			if want != it.Enabled {
 				ops = append(ops, Op{Rel: it.Rel, On: want})
+			}
+		}
+	}
+	return ops
+}
+
+// sectionCounts reports one stage's field-title ingredients: kind (the
+// literal word "gates" when every toggleable top-level item in the stage is
+// a gate, else "items"), n (toggleable LEAVES — a group's children count
+// individually, the group row itself does not), and on (how many of those
+// leaves are currently enabled). BuildSectionsForm's field titles and
+// sectionsFlow's sub-form messages both need the same three numbers.
+func sectionCounts(items []tui.Item, stage tui.Stage) (kind string, n, on int) {
+	kind = "gates"
+	found := false
+	for _, it := range items {
+		if !it.Toggleable || it.Stage != stage {
+			continue
+		}
+		found = true
+		if !it.IsGate {
+			kind = "items"
+		}
+		if it.Group {
+			for _, c := range it.Children {
+				n++
+				if c.Enabled {
+					on++
+				}
+			}
+			continue
+		}
+		n++
+		if it.Enabled {
+			on++
+		}
+	}
+	if !found {
+		kind = "items"
+	}
+	return kind, n, on
+}
+
+// BuildSectionsForm builds the sections variant's first form: one enum field
+// per dev-loop stage that has at least one toggleable item — keep as-is by
+// default, or bulk the whole stage on/off, or open a follow-up form scoped
+// to just that stage. Declaration order is dev-loop stage order, the same
+// rule as every other Build* function; the loop bound matches
+// tui/model.go's visible()/render() section iteration
+// (StageSessionStart..StageOther).
+func BuildSectionsForm(items []tui.Item) ([]Field, json.RawMessage, error) {
+	var fields []Field
+	var props strings.Builder
+	emit := func(f Field, title string) error {
+		prop, err := propertyJSON(f, title)
+		if err != nil {
+			return err
+		}
+		if props.Len() > 0 {
+			props.WriteByte(',')
+		}
+		props.WriteString(prop)
+		fields = append(fields, f)
+		return nil
+	}
+
+	for s := tui.StageSessionStart; s <= tui.StageOther; s++ {
+		has := false
+		for _, it := range items {
+			if it.Toggleable && it.Stage == s {
+				has = true
+				break
+			}
+		}
+		if !has {
+			continue
+		}
+		kind, n, on := sectionCounts(items, s)
+		f := Field{Key: keySection + stageShort(s), Stage: s, Default: sectionKeep}
+		title := fmt.Sprintf("[%s] %s (%d) — %d/%d on", stageShort(s), kind, n, on, n)
+		if err := emit(f, title); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	schema := json.RawMessage(`{"type":"object","properties":{` + props.String() + `}}`)
+	return fields, schema, nil
+}
+
+// BuildSectionForm builds one stage's expanded-shape boolean rows — the same
+// per-child dissolution BuildForm's expand path uses (groups dissolve into
+// one field per member) — scoped to just this stage's items. A sections
+// sub-form always uses this expanded shape, never the mixed-group enum,
+// because a stage that reaches this form was already picked "open this
+// section…" over "all on"/"all off" specifically to edit individual members.
+func BuildSectionForm(items []tui.Item, stage tui.Stage) ([]Field, json.RawMessage, error) {
+	var scoped []tui.Item
+	for _, it := range items {
+		if it.Stage == stage {
+			scoped = append(scoped, it)
+		}
+	}
+	return BuildForm(scoped, true)
+}
+
+// SectionBulkOps targets one stage's toggleable items at a single on/off
+// value: a group becomes one group Op (groupDiff's "does any child differ
+// from target" check — the same rule PresetOps and TriageOps' bulk path
+// use), a gate or standalone file becomes one Op. Only items that actually
+// differ from the target produce an Op.
+func SectionBulkOps(items []tui.Item, stage tui.Stage, on bool) []Op {
+	var ops []Op
+	for _, it := range items {
+		if !it.Toggleable || it.Stage != stage {
+			continue
+		}
+		switch {
+		case it.IsGate:
+			if it.Enabled != on {
+				ops = append(ops, Op{IsGate: true, Rel: it.Rel, On: on})
+			}
+		case it.Group:
+			if diff, children := groupDiff(it, on); diff {
+				ops = append(ops, Op{Group: true, Rel: it.Rel, Children: children, On: on})
+			}
+		default:
+			if it.Enabled != on {
+				ops = append(ops, Op{Rel: it.Rel, On: on})
 			}
 		}
 	}

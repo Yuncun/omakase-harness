@@ -109,15 +109,15 @@ func menuHandler(root string) mcp.ToolHandler {
 		if !args.Expand && args.Variant == "preset" {
 			return textResult(presetFlow(ctx, req.Session, repo, items), false), nil
 		}
+		if !args.Expand && args.Variant == "sections" {
+			return textResult(sectionsFlow(ctx, req.Session, repo, items), false), nil
+		}
 
 		var fields []Field
 		var schema json.RawMessage
 		switch {
 		case args.Expand:
 			fields, schema, err = BuildForm(items, true)
-		case args.Variant == "sections":
-			// Task 4 replaces this case with a call to sectionsFlow.
-			fallthrough
 		default:
 			fields, schema, err = BuildForm(items, false)
 		}
@@ -324,6 +324,100 @@ func presetMessage(repo *state.Repo, items []tui.Item) string {
 	}
 	return fmt.Sprintf("omakase preset — %d items in %s · currently %d on / %d off%s.\nNothing changes until you submit.",
 		total, repo.Root, on, off, note)
+}
+
+// sectionsFlow runs the sections variant's elicitation chain: one form with
+// a per-stage enum (keep as-is / all on / all off / open this section…),
+// then — only for stages the human asked to open — one follow-up form per
+// opened stage, scoped to just that stage's items, in the order the stages
+// were declared on form 1. THE TRANSACTION RULE binds the whole chain, not
+// just two forms: nothing is applied to the repo until the LAST form is
+// accepted, so a decline or elicit error at ANY sub-form discards
+// EVERYTHING accumulated so far — including bulk ops form 1 already computed
+// for OTHER, un-opened sections — not just that one sub-form's own edits.
+// Sub-forms default to the items snapshot's CURRENT state, not a pending,
+// ApplyOps'd state the way triageFlow's open-full chain does: sections are
+// disjoint, so a stage's own bulk choice can never change what another
+// stage's sub-form sees, and a stage can't be both bulked and opened at
+// once. Final ops are computed once, against the same `items` snapshot form
+// 1 was built from — never against whatever the repo drifted to mid-chain.
+func sectionsFlow(ctx context.Context, session *mcp.ServerSession, repo *state.Repo, items []tui.Item) string {
+	fields, schema, err := BuildSectionsForm(items)
+	if err != nil {
+		return "omakase: could not build the sections form: " + err.Error()
+	}
+	if len(fields) == 0 {
+		return "Nothing to toggle — this repo has no omakase consent items. The status tool shows the full picture."
+	}
+	res, err := elicit(ctx, session, &mcp.ElicitParams{
+		Message:         sectionsMessage(repo, items, len(fields)),
+		RequestedSchema: schema,
+	})
+	if err != nil {
+		// First form of the chain: an elicit-capability failure gets the same
+		// instructive fallback as the collapsed menu, per the transaction rule.
+		return "This client could not show the omakase form (" + err.Error() + "). " + fallbackHelp
+	}
+	if res.Action != "accept" {
+		return "Menu closed — no changes made."
+	}
+
+	var ops []Op
+	var opens []Field
+	for _, f := range fields {
+		// sectionKeep, a missing key, and any junk value all mean "no change
+		// for this section" — the same junk/missing-means-keep rule every
+		// other variant's enum handling follows; only allOn/allOff/open below
+		// do anything.
+		switch choice, _ := res.Content[f.Key].(string); choice {
+		case sectionAllOn:
+			ops = append(ops, SectionBulkOps(items, f.Stage, true)...)
+		case sectionAllOff:
+			ops = append(ops, SectionBulkOps(items, f.Stage, false)...)
+		case sectionOpen:
+			opens = append(opens, f)
+		}
+	}
+
+	original := stateByKey(items)
+	for _, f := range opens {
+		sectionFields, sectionSchema, err := BuildSectionForm(items, f.Stage)
+		if err != nil {
+			return "omakase: could not build the " + stageShort(f.Stage) + " section form: " + err.Error()
+		}
+		kind, n, _ := sectionCounts(items, f.Stage)
+		res2, err := elicit(ctx, session, &mcp.ElicitParams{
+			Message:         sectionMessage(f.Stage, kind, n),
+			RequestedSchema: sectionSchema,
+		})
+		if err != nil || res2.Action != "accept" {
+			// Mid-chain: a decline or elicit error at ANY sub-form discards the
+			// whole chain's accumulated ops — including bulk changes already
+			// computed for sections other than this one — per THE TRANSACTION
+			// RULE's sections-specific "any sub-form decline zeroes everything"
+			// clause.
+			return "Menu closed — no changes made."
+		}
+		ops = append(ops, EffectiveOps(sectionFields, res2.Content, original)...)
+	}
+
+	return apply(repo, ops)
+}
+
+// sectionsMessage is the text above the sections form: the section count,
+// the total item count, and what "open this section…" does, plus the same
+// "nothing changes until submit" promise every menu form makes.
+func sectionsMessage(repo *state.Repo, items []tui.Item, k int) string {
+	total := countToggleable(items)
+	return fmt.Sprintf("omakase sections — %d sections · %d items in %s. \"open this section…\" asks a follow-up form for just that section.\nNothing changes until you submit.",
+		k, total, repo.Root)
+}
+
+// sectionMessage is the text above a sections sub-form: which stage it
+// scopes to, its kind and leaf count, and that nothing is final until the
+// chain's last form is submitted — not just this one.
+func sectionMessage(stage tui.Stage, kind string, n int) string {
+	return fmt.Sprintf("[%s] %s — %d items. Nothing changes until the last form is submitted.", stageShort(stage), kind, n)
 }
 
 // toggleGate dispatches to the same GateOff/GateOn backend the interactive
