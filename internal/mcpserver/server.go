@@ -59,8 +59,8 @@ func NewServer(root string) *mcp.Server {
 	srv.AddTool(&mcp.Tool{
 		Name:        "menu",
 		Title:       "omakase menu",
-		Description: "Open the omakase consent menu: a form the HUMAN fills in to enable/disable individual harness files and gates. The host shows the form directly to the user — never answer it on their behalf. Set expand=true when the user asks for the full/expanded menu (every file as its own row instead of one row per directory).",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"expand":{"type":"boolean","description":"Show every file as its own row instead of collapsing directories into one row (default false)."}}}`),
+		Description: "Open the omakase consent menu: a form the HUMAN fills in to enable/disable individual harness files and gates. The host shows the form directly to the user — never answer it on their behalf. Set expand=true when the user asks for the full/expanded menu (every file as its own row instead of one row per directory). Set variant when the user asks for the triage, preset, or sections view by name.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"expand":{"type":"boolean","description":"Show every file as its own row instead of collapsing directories into one row (default false)."},"variant":{"type":"string","description":"View shape: \"triage\" (only items needing attention), \"preset\" (one posture question), \"sections\" (one row per dev-loop section with drill-down). Omit for the standard collapsed menu."}}}`),
 		Meta:        mcp.Meta{"anthropic/requiresUserInteraction": true},
 	}, menuHandler(root))
 	return srv
@@ -83,12 +83,16 @@ func statusHandler() mcp.ToolHandler {
 // changed. Every state read happens per call so the form always reflects the
 // repo as it is now. The optional expand argument swaps the one-row-per-
 // directory view for one row per file; a malformed arguments payload is
-// treated as expand=false rather than an error, because the collapsed menu is
-// always a safe answer.
+// treated as expand=false/variant="" rather than an error, because the
+// collapsed menu is always a safe answer. The variant argument picks one of
+// the alternate view shapes (Tasks 2-4); absent, unknown, or malformed
+// values fall through to the same collapsed flow as no variant at all, and
+// expand always wins over variant when both are set.
 func menuHandler(root string) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var args struct {
-			Expand bool `json:"expand"`
+			Expand  bool   `json:"expand"`
+			Variant string `json:"variant"`
 		}
 		if len(req.Params.Arguments) > 0 {
 			_ = json.Unmarshal(req.Params.Arguments, &args)
@@ -98,7 +102,24 @@ func menuHandler(root string) mcp.ToolHandler {
 			return textResult("omakase: not inside a git repo", true), nil
 		}
 		items, _ := tui.LiveItems(repo)
-		fields, schema, err := BuildForm(items, args.Expand)
+
+		var fields []Field
+		var schema json.RawMessage
+		switch {
+		case args.Expand:
+			fields, schema, err = BuildForm(items, true)
+		case args.Variant == "triage":
+			// Task 2 replaces this case with a call to triageFlow.
+			fallthrough
+		case args.Variant == "preset":
+			// Task 3 replaces this case with a call to presetFlow.
+			fallthrough
+		case args.Variant == "sections":
+			// Task 4 replaces this case with a call to sectionsFlow.
+			fallthrough
+		default:
+			fields, schema, err = BuildForm(items, false)
+		}
 		if err != nil {
 			return textResult("omakase: could not build the menu: "+err.Error(), true), nil
 		}

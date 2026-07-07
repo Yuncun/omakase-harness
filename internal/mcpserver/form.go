@@ -26,8 +26,8 @@ const (
 // default sent to the client. Diff compares submissions against Default, so
 // only fields the human actually changed become operations.
 type Field struct {
-	Key      string   // property name: "gate:<name>", "file:<rel>", "dir:<prefix>"
-	Rel      string   // gate name, file rel, or group dir prefix
+	Key      string // property name: "gate:<name>", "file:<rel>", "dir:<prefix>"
+	Rel      string // gate name, file rel, or group dir prefix
 	IsGate   bool
 	Group    bool
 	Children []string // group fields: member rels in ledger order
@@ -154,6 +154,149 @@ func propertyJSON(f Field, title string) (string, error) {
 			key, t, keepAsIs, allOn, allOff, keepAsIs), nil
 	}
 	return fmt.Sprintf(`%s:{"type":"boolean","title":%s,"default":%v}`, key, t, f.Default.(bool)), nil
+}
+
+// ApplyOps returns a deep copy of items with each op's target state applied.
+// The chain flows (Tasks 2-4) use this to preview the effect of an
+// in-progress selection — one question answered, the next question's field
+// list built from the result — without ever touching the caller's slice: a
+// gate op flips that gate's Enabled; a group op flips every child's Enabled
+// and recomputes the parent's Enabled/PartialOff; a file op flips either a
+// standalone item or, if none matches, the group child with that Rel (then
+// recomputes that group's Enabled/PartialOff). Unknown rels are ignored.
+func ApplyOps(items []tui.Item, ops []Op) []tui.Item {
+	out := make([]tui.Item, len(items))
+	copy(out, items)
+	for i := range out {
+		if out[i].Children != nil {
+			children := make([]tui.ChildRef, len(out[i].Children))
+			copy(children, out[i].Children)
+			out[i].Children = children
+		}
+	}
+	for _, op := range ops {
+		applyOp(out, op)
+	}
+	return out
+}
+
+// applyOp mutates out — already a deep copy — in place for one Op.
+func applyOp(out []tui.Item, op Op) {
+	switch {
+	case op.IsGate:
+		for i := range out {
+			if out[i].IsGate && out[i].Rel == op.Rel {
+				out[i].Enabled = op.On
+				return
+			}
+		}
+	case op.Group:
+		for i := range out {
+			if out[i].Group && out[i].Rel == op.Rel {
+				for c := range out[i].Children {
+					out[i].Children[c].Enabled = op.On
+				}
+				recomputeGroup(&out[i])
+				return
+			}
+		}
+	default:
+		for i := range out {
+			if !out[i].Group && !out[i].IsGate && out[i].Rel == op.Rel {
+				out[i].Enabled = op.On
+				return
+			}
+		}
+		for i := range out {
+			if !out[i].Group {
+				continue
+			}
+			for c := range out[i].Children {
+				if out[i].Children[c].Rel == op.Rel {
+					out[i].Children[c].Enabled = op.On
+					recomputeGroup(&out[i])
+					return
+				}
+			}
+		}
+	}
+}
+
+// recomputeGroup derives a group item's Enabled/PartialOff from its
+// (already-updated) Children — the same rule tui/items.go's buildGroupItem
+// uses: Enabled means every child is on, PartialOff means some but not all.
+func recomputeGroup(it *tui.Item) {
+	on := 0
+	for _, c := range it.Children {
+		if c.Enabled {
+			on++
+		}
+	}
+	it.Enabled = on == len(it.Children)
+	it.PartialOff = on > 0 && on < len(it.Children)
+}
+
+// stateByKey returns the current on/off state of every toggleable leaf,
+// keyed the same way BuildForm keys its fields: "file:<rel>" for standalone
+// files AND group children, "gate:<name>" for gates. Group parents ("dir:"
+// rows are not leaves) and non-toggleable items are absent. A chain flow
+// (Tasks 2-4) calls this once against the pre-chain items to get a baseline
+// EffectiveOps can diff later steps' fields against.
+func stateByKey(items []tui.Item) map[string]bool {
+	byKey := map[string]bool{}
+	for _, it := range items {
+		if !it.Toggleable {
+			continue
+		}
+		switch {
+		case it.IsGate:
+			byKey["gate:"+it.Rel] = it.Enabled
+		case it.Group:
+			for _, c := range it.Children {
+				byKey["file:"+c.Rel] = c.Enabled
+			}
+		default:
+			byKey["file:"+it.Rel] = it.Enabled
+		}
+	}
+	return byKey
+}
+
+// EffectiveOps computes the ops a chain flow (Tasks 2-4) needs to apply at
+// the end of a chain, from an expanded-shape submission — every field here
+// is a plain boolean, never the mixed-group enum, because a chain question
+// only ever asks about leaves. A field's effective value is the submitted
+// bool when present and well-typed, else the field's Default: a chain step
+// the human never touched still carries forward whatever an earlier step in
+// the same chain already set as that field's Default. One Op is emitted per
+// field whose effective value differs from original[field.Key]; fields
+// missing from original (not part of the pre-chain baseline) are skipped.
+func EffectiveOps(fields []Field, content map[string]any, original map[string]bool) []Op {
+	var ops []Op
+	for _, f := range fields {
+		orig, known := original[f.Key]
+		if !known {
+			continue
+		}
+		def, ok := f.Default.(bool)
+		if !ok {
+			// The mixed-group enum default (keepAsIs) is not part of the
+			// all-boolean expanded shape this helper serves; skip rather
+			// than guess at an enum's "effective" boolean.
+			continue
+		}
+		effective := def
+		if got, present := content[f.Key]; present {
+			if b, ok := got.(bool); ok {
+				effective = b
+			}
+		}
+		if effective == orig {
+			continue
+		}
+		ops = append(ops, Op{IsGate: f.IsGate, Group: f.Group, Rel: f.Rel, Children: f.Children, On: effective})
+	}
+	return ops
 }
 
 // Diff compares the submitted form content against each field's default.

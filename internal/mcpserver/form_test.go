@@ -183,3 +183,190 @@ func TestBuildFormExpanded(t *testing.T) {
 		t.Errorf("ops = %+v, want one file on Op for b.md", ops)
 	}
 }
+
+// findItem locates rel's item in an Item slice, or -1 — a small test helper
+// for asserting on ApplyOps output.
+func findItem(items []tui.Item, rel string) int {
+	for i, it := range items {
+		if it.Rel == rel {
+			return i
+		}
+	}
+	return -1
+}
+
+// ApplyOps is the chain flows' (Tasks 2-4) preview step: it applies a batch
+// of in-progress ops to a copy of the screen's items so the next question in
+// a chain can be built against the post-op state, without ever touching the
+// caller's slice.
+func TestApplyOps(t *testing.T) {
+	t.Run("gate flip", func(t *testing.T) {
+		items := sampleItems()
+		out := ApplyOps(items, []Op{{IsGate: true, Rel: "smoke", On: false}})
+		if i := findItem(out, "smoke"); i < 0 || out[i].Enabled {
+			t.Fatalf("gate smoke not flipped off: %+v", out)
+		}
+		if i := findItem(items, "smoke"); i < 0 || !items[i].Enabled {
+			t.Errorf("original items mutated: %+v", items)
+		}
+	})
+
+	t.Run("group off sets both children off and parent Enabled=false PartialOff=false", func(t *testing.T) {
+		items := sampleItems()
+		out := ApplyOps(items, []Op{{
+			Group: true, Rel: ".claude/skills",
+			Children: []string{".claude/skills/a.md", ".claude/skills/b.md"}, On: false,
+		}})
+		i := findItem(out, ".claude/skills")
+		if i < 0 {
+			t.Fatal("group item missing from output")
+		}
+		g := out[i]
+		if g.Children[0].Enabled || g.Children[1].Enabled {
+			t.Errorf("children = %+v, want both off", g.Children)
+		}
+		if g.Enabled || g.PartialOff {
+			t.Errorf("group state = Enabled=%v PartialOff=%v, want false/false", g.Enabled, g.PartialOff)
+		}
+	})
+
+	t.Run("single child on in a fully-off group leaves it partial with correct counts", func(t *testing.T) {
+		items := []tui.Item{{
+			Label: ".claude/skills/", Rel: ".claude/skills", Group: true, Toggleable: true,
+			Children: []tui.ChildRef{{Rel: ".claude/skills/a.md", Enabled: false}, {Rel: ".claude/skills/b.md", Enabled: false}},
+			Enabled:  false, Count: 2,
+		}}
+		out := ApplyOps(items, []Op{{Rel: ".claude/skills/a.md", On: true}})
+		g := out[0]
+		if !g.Children[0].Enabled || g.Children[1].Enabled {
+			t.Errorf("children = %+v, want only a.md on", g.Children)
+		}
+		if g.Enabled || !g.PartialOff {
+			t.Errorf("group state = Enabled=%v PartialOff=%v, want false/true (1 of 2 on)", g.Enabled, g.PartialOff)
+		}
+	})
+
+	t.Run("child off in a fully-on group becomes partial", func(t *testing.T) {
+		items := []tui.Item{{
+			Label: ".claude/skills/", Rel: ".claude/skills", Group: true, Toggleable: true,
+			Children: []tui.ChildRef{{Rel: ".claude/skills/a.md", Enabled: true}, {Rel: ".claude/skills/b.md", Enabled: true}},
+			Enabled:  true, Count: 2,
+		}}
+		out := ApplyOps(items, []Op{{Rel: ".claude/skills/b.md", On: false}})
+		g := out[0]
+		if !g.Children[0].Enabled || g.Children[1].Enabled {
+			t.Errorf("children = %+v, want a.md on, b.md off", g.Children)
+		}
+		if g.Enabled || !g.PartialOff {
+			t.Errorf("group state = Enabled=%v PartialOff=%v, want false/true", g.Enabled, g.PartialOff)
+		}
+	})
+
+	t.Run("original slice and its Children are never mutated", func(t *testing.T) {
+		items := sampleItems()
+		_ = ApplyOps(items, []Op{
+			{IsGate: true, Rel: "smoke", On: false},
+			{Rel: ".claude/skills/b.md", On: true},
+			{Group: true, Rel: ".claude/skills", Children: []string{".claude/skills/a.md", ".claude/skills/b.md"}, On: false},
+		})
+		want := sampleItems()
+		if !items[2].Enabled {
+			t.Errorf("original gate mutated: %+v", items[2])
+		}
+		if items[1].Children[1].Enabled != want[1].Children[1].Enabled || items[1].Children[0].Enabled != want[1].Children[0].Enabled {
+			t.Errorf("original group children mutated: %+v", items[1].Children)
+		}
+		if items[1].Enabled != want[1].Enabled || items[1].PartialOff != want[1].PartialOff {
+			t.Errorf("original group state mutated: Enabled=%v PartialOff=%v", items[1].Enabled, items[1].PartialOff)
+		}
+	})
+
+	t.Run("unknown rel is ignored", func(t *testing.T) {
+		items := sampleItems()
+		out := ApplyOps(items, []Op{{Rel: "nonexistent.md", On: true}})
+		if len(out) != len(items) {
+			t.Fatalf("length changed: %d vs %d", len(out), len(items))
+		}
+		if i := findItem(out, "AGENTS.md"); i < 0 || !out[i].Enabled {
+			t.Errorf("unrelated item disturbed by unknown-rel op: %+v", out)
+		}
+	})
+}
+
+// stateByKey is the flat on/off lookup EffectiveOps diffs submissions
+// against: one entry per toggleable leaf, keyed the same way BuildForm keys
+// its fields, so a chain flow can look up "was this leaf on before the
+// chain started" regardless of which step is currently being asked.
+func TestStateByKey(t *testing.T) {
+	got := stateByKey(sampleItems())
+	want := map[string]bool{
+		"file:AGENTS.md":           true,
+		"file:.claude/skills/a.md": true,
+		"file:.claude/skills/b.md": false,
+		"gate:smoke":               true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("stateByKey = %+v, want %+v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("stateByKey[%q] = %v, want %v", k, got[k], v)
+		}
+	}
+	if _, ok := got["dir:.claude/skills"]; ok {
+		t.Errorf("stateByKey has a dir: entry, want none: %+v", got)
+	}
+	if _, ok := got["file:tracked.md"]; ok {
+		t.Errorf("stateByKey includes non-toggleable tracked.md, want absent: %+v", got)
+	}
+}
+
+// EffectiveOps is how a chain flow (Tasks 2-4) turns a partial, expanded-shape
+// submission into ops at the end of the chain: the field list reflects
+// whatever earlier chain steps already changed (via ApplyOps), so a field's
+// Default can differ from the pre-chain original even when the human never
+// touched that particular question.
+func TestEffectiveOps(t *testing.T) {
+	base := sampleItems()
+	original := stateByKey(base)
+
+	// Simulate a chain flow that already flipped the gate off in an earlier
+	// step: the fields built from that interim state default to false where
+	// the pre-chain original was true.
+	interim := ApplyOps(base, []Op{{IsGate: true, Rel: "smoke", On: false}})
+	fields, _, err := BuildForm(interim, true)
+	if err != nil {
+		t.Fatalf("BuildForm: %v", err)
+	}
+
+	t.Run("untouched content, default differs from original -> op emitted", func(t *testing.T) {
+		ops := EffectiveOps(fields, map[string]any{}, original)
+		if len(ops) != 1 || !ops[0].IsGate || ops[0].Rel != "smoke" || ops[0].On {
+			t.Fatalf("ops = %+v, want one gate smoke -> off", ops)
+		}
+	})
+
+	t.Run("submitted value overrides default back to original -> no op", func(t *testing.T) {
+		ops := EffectiveOps(fields, map[string]any{"gate:smoke": true}, original)
+		if len(ops) != 0 {
+			t.Errorf("ops = %+v, want none (submission restores original)", ops)
+		}
+	})
+
+	t.Run("junk-typed submission falls back to default", func(t *testing.T) {
+		ops := EffectiveOps(fields, map[string]any{"gate:smoke": "banana"}, original)
+		if len(ops) != 1 || !ops[0].IsGate || ops[0].Rel != "smoke" || ops[0].On {
+			t.Fatalf("ops = %+v, want default (off) to win over junk submission", ops)
+		}
+	})
+
+	t.Run("field missing from original is skipped", func(t *testing.T) {
+		extra := append([]Field{{Key: "file:new.md", Rel: "new.md", Default: true}}, fields...)
+		ops := EffectiveOps(extra, map[string]any{}, original)
+		for _, op := range ops {
+			if op.Rel == "new.md" {
+				t.Errorf("op emitted for a field missing from original: %+v", op)
+			}
+		}
+	})
+}

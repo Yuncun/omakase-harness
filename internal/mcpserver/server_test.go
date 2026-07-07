@@ -312,6 +312,31 @@ func TestMenuAcceptWithNilContentDoesNotCrash(t *testing.T) {
 	}
 }
 
+// An unrecognized variant behaves exactly like the no-args collapsed menu —
+// Task 1 wires the dispatch switch before any of triage/preset/sections
+// exist, so every variant value falls through to the same collapsed flow
+// until Tasks 2-4 replace one case each.
+func TestMenuUnknownVariantIsCollapsed(t *testing.T) {
+	dir, _ := placedFixture(t)
+	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": true, "gate:smoke": true}}, nil
+	}
+	cs := connect(t, dir, eh)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "menu",
+		Arguments: map[string]any{"variant": "banana"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(menu, variant=banana): %v", err)
+	}
+	if !lexists(filepath.Join(dir, "AGENTS.md")) {
+		t.Errorf("unknown-variant submit removed AGENTS.md")
+	}
+	if out := text(t, res); !strings.Contains(out, "no changes") && !strings.Contains(out, "No changes") {
+		t.Errorf("unknown-variant summary = %q", out)
+	}
+}
+
 // A client with no elicitation capability gets the instructive fallback, not
 // a protocol error.
 func TestMenuWithoutElicitationCapability(t *testing.T) {
