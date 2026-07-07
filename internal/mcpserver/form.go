@@ -394,9 +394,11 @@ func Diff(fields []Field, content map[string]any) []Op {
 	return ops
 }
 
-// countToggleable is the "ALL <n> items" the triage variant's bulk row and
-// message refer to: top-level toggleable items, the same units BuildForm's
-// collapsed shape emits as fields (a group is one item, not one per child).
+// countToggleable counts top-level toggleable items — the same units
+// BuildForm's collapsed shape emits as fields (a group is one item, not one
+// per child) — for the preset and sections variants' headline messages. The
+// triage variant counts LEAVES instead (via stateByKey), since its rows and
+// its two synthetic rows' totals must agree with the per-leaf flagged count.
 func countToggleable(items []tui.Item) int {
 	n := 0
 	for _, it := range items {
@@ -412,7 +414,11 @@ func countToggleable(items []tui.Item) int {
 // escape hatch to the full expanded list. An already-on file or gate and a
 // fully-on group get no row — they're folded into the message's "on at
 // defaults (hidden)" count instead. flagged counts only the rows built from
-// actual items, not the two synthetic rows appended after them.
+// actual items, not the two synthetic rows appended after them. The two
+// synthetic rows' counts are LEAVES (stateByKey), the same unit flagged
+// counts in — not top-level toggleable items (countToggleable) — so "ALL <n>
+// items" and triageMessage's own total always agree, and the open-full row's
+// count matches what BuildForm(expand=true) actually returns for form 2.
 func BuildTriageForm(items []tui.Item) ([]Field, json.RawMessage, int, error) {
 	var fields []Field
 	var props strings.Builder
@@ -481,7 +487,7 @@ func BuildTriageForm(items []tui.Item) ([]Field, json.RawMessage, int, error) {
 	}
 	flagged := len(fields)
 
-	total := countToggleable(items)
+	total := len(stateByKey(items))
 	bulkTitle := fmt.Sprintf("bulk change to ALL %d items", total)
 	if err := emit(Field{Key: keyBulk, Default: bulkNone}, bulkTitle); err != nil {
 		return nil, nil, 0, err

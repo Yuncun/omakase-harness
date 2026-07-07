@@ -227,10 +227,23 @@ func triageFlow(ctx context.Context, session *mcp.ServerSession, repo *state.Rep
 // triageMessage is the text above the triage form: the flagged count, what
 // stays on unconditionally (tracked, not consent-gated, no row at all), and
 // the same "nothing changes until submit" promise every menu form makes.
+// total and on are counted over LEAVES (stateByKey — one entry per
+// standalone file, per group child, per gate), the same unit
+// BuildTriageForm's flagged ROWS count in for a mixed group. Counting total
+// as top-level toggleable items instead (a group is 1, not its child count)
+// let "on at defaults" go negative for a mostly-off mixed group, since
+// flagged (row count) could then exceed total (item count).
 func triageMessage(repo *state.Repo, items []tui.Item, flagged int) string {
-	total := countToggleable(items)
+	byKey := stateByKey(items)
+	total := len(byKey)
+	on := 0
+	for _, enabled := range byKey {
+		if enabled {
+			on++
+		}
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "omakase triage — %d items in %s · %d on at defaults (hidden).\n", total, repo.Root, total-flagged)
+	fmt.Fprintf(&b, "omakase triage — %d items in %s · %d on at defaults (hidden).\n", total, repo.Root, on)
 	var tracked []string
 	for _, it := range items {
 		if !it.Toggleable {

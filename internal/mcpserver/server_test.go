@@ -690,6 +690,42 @@ func TestMenuTriageOpenFullChain(t *testing.T) {
 	}
 }
 
+// The headline's total and "on at defaults (hidden)" counts are LEAVES, the
+// same unit BuildTriageForm's flagged rows count in — not top-level
+// toggleable items (countToggleable), which undercounts a group as 1. A
+// single mixed group of 3 children, 2 off, is the exact regression scenario
+// a reviewer caught: with the old total-flagged arithmetic (1 group - 2
+// flagged rows) the headline went negative ("-1 on at defaults"); both
+// numbers here must be non-negative and must add up with flagged the same
+// way the message's own row-count line does.
+func TestTriageMessageCountsLeavesNotGroups(t *testing.T) {
+	items := []tui.Item{
+		{Label: "skills/", Rel: "skills", Stage: tui.StageOnDemand, Group: true, Toggleable: true,
+			Children: []tui.ChildRef{
+				{Rel: "skills/a.md", Enabled: true},
+				{Rel: "skills/b.md", Enabled: false},
+				{Rel: "skills/c.md", Enabled: false},
+			},
+			Enabled: false, PartialOff: true, Count: 3},
+	}
+	_, _, flagged, err := BuildTriageForm(items)
+	if err != nil {
+		t.Fatalf("BuildTriageForm: %v", err)
+	}
+	if flagged != 2 {
+		t.Fatalf("flagged = %d, want 2 (b.md, c.md rows)", flagged)
+	}
+	repo := &state.Repo{Root: "/repo"}
+	msg := triageMessage(repo, items, flagged)
+	wantLine := "omakase triage — 3 items in /repo · 1 on at defaults (hidden)."
+	if !strings.Contains(msg, wantLine) {
+		t.Fatalf("triageMessage =\n%s\nwant a line:\n%s", msg, wantLine)
+	}
+	if strings.Contains(msg, "-1") || strings.Contains(msg, "· -") {
+		t.Fatalf("triageMessage went negative:\n%s", msg)
+	}
+}
+
 // The preset variant's guards-only posture strips everything but the gates:
 // the standalone file and both group members leave the working tree, while
 // the already-on gate stays enabled — one form, no chain.
