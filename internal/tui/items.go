@@ -74,11 +74,7 @@ type Item struct {
 // whether it is machinery (counted by BuildItems, never itemized). Verbatim
 // from the Task 6 brief — every case is load-bearing, do not edit.
 func stageOf(rel, kind string) (Stage, bool) {
-	switch {
-	case strings.HasPrefix(rel, ".omakase/"),
-		rel == "lefthook.yml", rel == "lefthook-local.yml", rel == ".worktreeinclude",
-		strings.HasPrefix(rel, ".lefthook/"), strings.HasPrefix(rel, ".husky/"),
-		strings.HasPrefix(rel, ".githooks/"):
+	if harness.IsMachinery(rel) {
 		return StageOther, true
 	}
 	switch kind {

@@ -100,6 +100,7 @@ func runToggle(off bool, name string, stdout, stderr io.Writer) int {
 		case terr == nil:
 			fmt.Fprintf(stdout, "omakase: %s restored\n", rel)
 		case errors.Is(terr, overlay.ErrTracked), errors.Is(terr, overlay.ErrEdited),
+			errors.Is(terr, overlay.ErrEditedKeep),
 			errors.Is(terr, overlay.ErrNotPlaced), errors.Is(terr, overlay.ErrNoSnapshot):
 			fmt.Fprintf(stderr, "omakase: REFUSING: %v\n", terr)
 			code = 1

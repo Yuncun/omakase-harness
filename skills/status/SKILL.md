@@ -1,7 +1,7 @@
 ---
 name: status
 description: Show what omakase harness is installed in the current repo and what runs on which git hook — the inventory (committed / injected / global), the hook wiring, the recent-runs scorecard, and the hidden paths. The default page is read-only; per-item toggles are separate explicit flags. Use when asked "omakase status", "what harness is installed", "show the harness", or "what gates run here".
-allowed-tools: Bash(*/run.sh*) Bash(*/bin/status.sh*)
+allowed-tools: Bash(*/run.sh*)
 ---
 
 # /omakase:status — what's installed

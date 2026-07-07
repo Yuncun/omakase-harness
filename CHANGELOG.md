@@ -45,7 +45,7 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   brick the repair when the source's cache refresh failed (no network, no fallback). It
   now falls back to reusing the last good cached copy instead of failing the repair.
 - **Deferred at the slim-cut, since rebuilt:** persistent gate toggles were cut
-  outright here; the consent-menu stack (see Added below, 2026-07-07) rebuilt
+  outright here; the consent-menu stack (see Added above, 2026-07-07) rebuilt
   them in a new shape — per-item human consent, visible skips — rather than the
   original enable/disable verbs.
 

@@ -267,11 +267,21 @@ func TestStatusFormatSelection(t *testing.T) {
 		{[]string{"--markdown"}, true},
 		{[]string{"-m"}, true},
 		{[]string{"md"}, true},
-		{[]string{"markdown"}, false}, // not one of the three literals
-		{[]string{"--md"}, false},
+		{[]string{"markdown"}, false}, // bare word, not one of the three literals
 		{nil, false},
 		{[]string{"--markdown", "extra"}, true},  // only argv[0] inspected
 		{[]string{"extra", "--markdown"}, false}, // flag not in argv[0] -> term
+	}
+	// An unrecognized dash-flag is an error, never a silent page: a typo like
+	// --enabel must not exit 0 (automation would read that as success).
+	{
+		var stdout, stderr bytes.Buffer
+		if code := Run([]string{"--md"}, &stdout, &stderr); code != 2 {
+			t.Fatalf("argv=[--md] exit=%d, want 2", code)
+		}
+		if !strings.Contains(stderr.String(), "unknown flag --md") {
+			t.Errorf("stderr = %q, want unknown-flag message", stderr.String())
+		}
 	}
 	for _, tc := range cases {
 		var stdout, stderr bytes.Buffer

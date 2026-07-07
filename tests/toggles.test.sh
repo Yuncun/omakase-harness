@@ -142,6 +142,19 @@ else
   pass "case10: no phantom disabled-gates entry"
 fi
 
+# 12. A typo'd FLAG (not target) errors — it must never exit 0 with the page
+#     (an automation reading exit 0 as "toggled, green" is the hazard).
+OUT="$( cd "$REPO" && "$SHOW" --enabel smoke 2>&1 )"; RC=$?
+{ [ "$RC" -eq 2 ] && echo "$OUT" | grep -q "unknown flag --enabel"; } \
+  && pass "case12: unknown flag exits 2, no page" \
+  || fail "case12: unknown flag ($RC: $OUT)"
+
+# 13. Machinery refuses both toggle directions (it keeps the harness running).
+OUT="$( cd "$REPO" && "$SHOW" --disable .omakase 2>&1 )"; RC=$?
+{ [ "$RC" -eq 2 ] && echo "$OUT" | grep -q "machinery"; } \
+  && pass "case13: machinery --disable refused" \
+  || fail "case13: machinery refusal ($RC: $OUT)"
+
 # 11. --help prints usage and exits 0 (never the page, never the TUI).
 OUT="$( cd "$REPO" && "$SHOW" --help 2>&1 )"; RC=$?
 { [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "usage: omakase status"; } \

@@ -305,8 +305,8 @@ func TestFileOnRefusesEdited(t *testing.T) {
 	edited := readFileT(t, full)
 
 	err = FileOn(repo, rel)
-	if !errors.Is(err, ErrEdited) {
-		t.Fatalf("FileOn on edited path: got %v, want ErrEdited", err)
+	if !errors.Is(err, ErrEditedKeep) {
+		t.Fatalf("FileOn on edited path: got %v, want ErrEditedKeep", err)
 	}
 	if got := readFileT(t, full); got != edited {
 		t.Errorf("edited file was overwritten by FileOn:\n got: %q\nwant: %q", got, edited)
@@ -360,8 +360,8 @@ func TestFileOnGroupSkipsEditedSibling(t *testing.T) {
 	f.Close()
 	editedA := readFileT(t, fullA)
 
-	if err := FileOn(repo, a); !errors.Is(err, ErrEdited) {
-		t.Fatalf("FileOn(edited a): got %v, want ErrEdited", err)
+	if err := FileOn(repo, a); !errors.Is(err, ErrEditedKeep) {
+		t.Fatalf("FileOn(edited a): got %v, want ErrEditedKeep", err)
 	}
 	if got := readFileT(t, fullA); got != editedA {
 		t.Errorf("edited sibling clobbered by group turn-on:\n got: %q\nwant: %q", got, editedA)
@@ -379,21 +379,38 @@ func TestFileOnGroupSkipsEditedSibling(t *testing.T) {
 // Re-init must not resurrect a file the developer toggled off (consent merge),
 // and must refresh its snapshot so a later FileOn restores the NEW payload copy.
 func TestReinitPreservesDeclined(t *testing.T) {
-	dir, repo := placeSingleGate(t)
-	rel := ".omakase/gates/example.sh"
-
-	if err := FileOff(repo, rel); err != nil {
-		t.Fatalf("FileOff: %v", err)
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+	const ruleContent = "steer gently\n"
+	p := t.TempDir()
+	writeFile(t, filepath.Join(p, ".omakase", "gates", "example.sh"), gateContent)
+	writeFile(t, filepath.Join(p, ".claude", "rules", "steer.md"), ruleContent)
+	t.Setenv("OMAKASE_PAYLOAD", p)
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("init exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
 
-	var stdout, stderr strings.Builder
+	rel := ".claude/rules/steer.md"
+	mach := ".omakase/gates/example.sh"
+	if err := FileOff(repo, rel); err != nil {
+		t.Fatalf("FileOff(%s): %v", rel, err)
+	}
+	// A machinery row can only end up enabled=0 via a pre-guard binary (the
+	// CLI refuses machinery now); simulate that leftover at the overlay layer.
+	if err := FileOff(repo, mach); err != nil {
+		t.Fatalf("FileOff(%s): %v", mach, err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("re-init exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
 
 	full := filepath.Join(dir, rel)
 	if lexists(full) {
-		t.Errorf("declined file resurrected by re-init: %s", full)
+		t.Errorf("declined steering file resurrected by re-init: %s", full)
 	}
 
 	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
@@ -406,13 +423,25 @@ func TestReinitPreservesDeclined(t *testing.T) {
 	// snapshot is refreshed from the CURRENT payload copy even though the file
 	// itself was never re-placed on disk.
 	snap := filepath.Join(repo.OMK, "payload-snapshot", rel)
-	eq(t, "snapshot content", readFileT(t, snap), gateContent)
+	eq(t, "snapshot content", readFileT(t, snap), ruleContent)
 
 	// A later FileOn restores that refreshed snapshot.
 	if err := FileOn(repo, rel); err != nil {
 		t.Fatalf("FileOn: %v", err)
 	}
-	eq(t, "restored content", readFileT(t, full), gateContent)
+	eq(t, "restored content", readFileT(t, full), ruleContent)
+
+	// The machinery decline is IGNORED: machinery is never a consent item, so
+	// re-init re-places the gate primitive and flips its row back to enabled=1
+	// (recovers repos bricked by a pre-guard binary's --disable .omakase).
+	if !lexists(filepath.Join(dir, mach)) {
+		t.Errorf("machinery not re-placed by re-init: %s", mach)
+	}
+	midx := placedIndex(rows, mach)
+	if midx < 0 {
+		t.Fatalf("machinery ledger row missing after re-init")
+	}
+	eq(t, "machinery Enabled", rows[midx].Enabled, "1")
 }
 
 // TestReinitAllDeclinedStillWritesWorktreeinclude: when the ONLY placed file
@@ -427,8 +456,16 @@ func TestReinitPreservesDeclined(t *testing.T) {
 // file in place from the first init would pass either way, since nothing else
 // touches it once written.
 func TestReinitAllDeclinedStillWritesWorktreeinclude(t *testing.T) {
-	dir, repo := placeSingleGate(t)
-	rel := ".omakase/gates/example.sh"
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+	pay := t.TempDir()
+	rel := ".claude/rules/steer.md"
+	writeFile(t, filepath.Join(pay, rel), "steer gently\n")
+	t.Setenv("OMAKASE_PAYLOAD", pay)
+	var initOut, initErr strings.Builder
+	if code := RunInit(nil, &initOut, &initErr); code != 0 {
+		t.Fatalf("init exit = %d, want 0; stderr=%q", code, initErr.String())
+	}
 	wtinc := filepath.Join(dir, ".worktreeinclude")
 
 	if err := os.Remove(wtinc); err != nil {
@@ -448,7 +485,7 @@ func TestReinitAllDeclinedStillWritesWorktreeinclude(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", wtinc, err)
 	}
-	if !strings.Contains(string(content), ".omakase") {
-		t.Errorf(".worktreeinclude missing .omakase entry: %q", string(content))
+	if !strings.Contains(string(content), ".claude") {
+		t.Errorf(".worktreeinclude missing .claude entry: %q", string(content))
 	}
 }

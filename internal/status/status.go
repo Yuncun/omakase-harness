@@ -28,14 +28,25 @@ var schemeRe = regexp.MustCompile(`^[a-z][a-z]*://`)
 // the current directory and writes the report to stdout. Not inside a git repo:
 // the one stderr line + exit 1 (bin/status.sh:20). Exit 0 otherwise.
 func Run(argv []string, stdout, stderr io.Writer) int {
-	// --help/-h is the only argv that short-circuits to usage; every other
-	// unknown flag still falls through to the page (parity with legacy
-	// status.sh). Scanned first so `status --help` on a real terminal prints
-	// help rather than launching the interactive screen.
+	// --help/-h short-circuits to usage — scanned first so `status --help` on
+	// a real terminal prints help rather than launching the interactive
+	// screen. Any OTHER unrecognized dash-flag is an error: a typo like
+	// `--enabel smoke` must not exit 0 with the page (an automation would read
+	// that as "re-enabled, green") — the legacy fallback (bin/legacy/status.sh)
+	// enforces the same rule in lockstep. Bare words keep falling through
+	// (parity; `md` is a real alias).
+	known := map[string]bool{
+		"--markdown": true, "-m": true, "--plain": true,
+		"--disable": true, "--enable": true,
+	}
 	for _, a := range argv {
 		if a == "--help" || a == "-h" {
 			printStatusUsage(stdout)
 			return 0
+		}
+		if strings.HasPrefix(a, "-") && !known[a] {
+			fmt.Fprintf(stderr, "omakase: unknown flag %s (see omakase status --help)\n", a)
+			return 2
 		}
 	}
 

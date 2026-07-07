@@ -28,7 +28,7 @@ type Toggler interface {
 }
 
 // keyHint is the fixed footer line (spec §Screen).
-const keyHint = "↑↓ move · →← expand · enter toggle · q quit"
+const keyHint = "↑↓ move · →← expand · enter/space toggle · q quit"
 
 // machineryLine is the fixed, non-selectable summary shown when machinery > 0.
 const machineryLine = "· machinery: .omakase/ + lefthook wiring (omakase remove)"
@@ -135,7 +135,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.expandCurrent(), nil
 	case tea.KeyLeft:
 		return m.collapseCurrent(), nil
-	case tea.KeyEnter:
+	case tea.KeyEnter, tea.KeySpace:
 		return m.toggleCurrent(), nil
 	case tea.KeyEsc, tea.KeyCtrlC:
 		return m, tea.Quit

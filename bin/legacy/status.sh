@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FROZEN v1 REFERENCE (moved from bin/status.sh by the v2 port): parity oracle for the Go binary + the shim's fallback body; kept byte-identical except this note and the lib source path, until Phase 7 retires it.
+# FROZEN v1 REFERENCE (moved from bin/status.sh by the v2 port): parity oracle for the Go binary + the shim's fallback body; kept byte-identical except this note, the lib source path, and two lockstep edits mirroring the binary (the consent-count suffix and the arg guard below), until Phase 7 retires it.
 # omakase-harness status — render the installed (gitignored, invisible) harness as ONE
 # readable map: the harness files grouped by origin (committed / injected / personal;
 # omakase's own .omakase/ machinery is disclosed under Hidden, not listed), which git
@@ -15,6 +15,17 @@
 set -euo pipefail
 
 FORMAT=term
+# Arg guard, lockstep with the Go binary: a typo'd or unsupported flag must not
+# exit 0 with the page (automation would read that as success). This fallback
+# body has no toggles or interactive screen — those need the omakase binary.
+for a in "$@"; do
+  case "$a" in
+    --help|-h) echo "usage: status.sh [--markdown|-m|md] [--plain]  (v1 fallback: toggles and the interactive screen need the omakase binary)"; exit 0;;
+    --disable|--enable) echo "omakase: $a needs the omakase binary — this environment is running the bash fallback" >&2; exit 2;;
+    --markdown|-m|--plain) :;;
+    -*) echo "omakase: unknown flag $a (see status.sh --help)" >&2; exit 2;;
+  esac
+done
 case "${1:-}" in --markdown|-m|md) FORMAT=md;; esac
 ICON="${OMAKASE_ICON:-🥡}"
 

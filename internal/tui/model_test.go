@@ -346,7 +346,7 @@ func TestModelViewSectionsMachineryAndHints(t *testing.T) {
 	if !strings.Contains(v, "machinery") {
 		t.Errorf("view should show the machinery line when machinery > 0:\n%s", v)
 	}
-	if !strings.Contains(v, "↑↓ move · →← expand · enter toggle · q quit") {
+	if !strings.Contains(v, "↑↓ move · →← expand · enter/space toggle · q quit") {
 		t.Errorf("view should show the key-hint footer:\n%s", v)
 	}
 }
