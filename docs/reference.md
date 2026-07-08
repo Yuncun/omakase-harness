@@ -61,10 +61,14 @@ payload copy), and a disabled gate stays recorded.
 
 Binary-only verb (no `.sh` shim): a stdio MCP server that serves the same
 consent surface inside agent hosts. Tools: `status` (the read-only page) and
-`menu` (the per-item consent form, rendered natively by hosts that support MCP
-elicitation — Claude Code and Copilot CLI both do; plain text elsewhere).
-Nothing applies until the human submits the form. Register it from the target
-repo, e.g.: `claude mcp add omakase -- /path/to/omakase mcp`.
+`menu` (one nested form: a header row per dev-loop stage — set to keep as-is,
+all on, or all off, which applies to every row under it left unchanged —
+with a row per file and gate beneath; Space toggles a row). `expand=true`
+gives every file its own row instead of one row per directory. Rendered
+natively by hosts that support MCP elicitation — Claude Code and Copilot CLI
+both do; plain text elsewhere. Nothing applies until the human submits the
+form. Register it from the target repo, e.g.:
+`claude mcp add omakase -- /path/to/omakase mcp`.
 
 ### `remove.sh`
 

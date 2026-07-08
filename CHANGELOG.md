@@ -15,9 +15,13 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   A locally edited file refuses either toggle rather than lose the edits.
 - **`omakase mcp`** — a stdio MCP server (binary-only verb) serving the same
   consent menu inside Claude Code / Copilot CLI as native form dialogs (MCP
-  elicitation), plus a read-only `status` tool. Ships three disposable
-  list-layout experiments (`variant`: triage / preset / sections) for live A/B
-  testing; the losers will be deleted.
+  elicitation), plus a read-only `status` tool. The menu is one nested
+  cascade form: a header row per dev-loop stage (keep as-is / all on / all
+  off, cascading over rows left unchanged) with a row per file and gate
+  beneath it; `expand` gives every file its own row instead of one row per
+  directory. Three disposable list-layout experiments (`variant`: triage /
+  preset / sections) ran for live A/B testing and were deleted after the
+  form above won.
 - First external Go dependencies: bubbletea/lipgloss for the interactive screen
   (vendored with a one-file patch that stops an import-time terminal query —
   provenance and upgrade path in `third_party/bubbletea/PATCH.md`) and the
