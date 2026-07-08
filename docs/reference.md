@@ -100,7 +100,9 @@ installed harness, and `remove` always tears it down completely.
 | `OMAKASE_CUTOVER_CONFIRM=1` | required to apply `init.sh --cut-over` |
 | `OMAKASE_PAYLOAD` | path to a payload tree to install, overriding the plugin payload. Lower precedence than `--source` |
 | `OMAKASE_LEFTHOOK_BASE_URL` | mirror for the lefthook binary download |
-| `XDG_CACHE_HOME` | cache root for the fetched lefthook binary (default `~/.cache`) |
+| `OMAKASE_RELEASE_BASE_URL` | mirror for the omakase binary download, overriding the GitHub releases base URL |
+| `OMAKASE_BIN` | path to an omakase binary to use instead of dev rebuild, `dist/omakase`, PATH, or the fetched cache — must be executable, or resolution fails immediately |
+| `XDG_CACHE_HOME` | cache root for the fetched lefthook and omakase binaries (default `~/.cache`) |
 
 A gate that defers its verdict is skipped with its own variable, by convention
 `OMAKASE_SKIP_<CHECK>=1`.

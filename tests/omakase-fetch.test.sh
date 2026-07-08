@@ -18,6 +18,9 @@
 #   O7. mcp.sh has no legacy body: resolution failure is stderr guidance +
 #       exit 1, with stdout left completely clean for the MCP stdio transport
 #   O8. (opt-in, OMAKASE_TEST_LIVE_FETCH=1) one real download from GitHub
+#   O9. tier 2's go build failure aborts the shim (exit nonzero, stale
+#       dist/omakase never runs) instead of falling through under the
+#       if-condition's set -e suppression; a succeeding build still execs
 # HOME and XDG_CACHE_HOME point at fixture dirs so nothing touches the real machine.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -165,8 +168,10 @@ if [ "$ASSET_STEM" != "UNSUPPORTED" ]; then
 fi
 
 # ---------- Simulated plugin clone for O5-O8: bin/+payload/, no go.mod, no dist/ ----------
-# This is exactly what a plugin install without Go on the machine looks like:
-# tiers 2 (dev rebuild) and 3 (dist/omakase) can never fire from inside it.
+# Models a payload-only dist clone / the no-go.mod shape (a real plugin clone
+# does carry a go.mod — tier 2 is skipped there instead at `command -v go`,
+# since a plugin install has no Go on PATH). Either way tiers 1-4 miss, leaving
+# only the cache (tier 5) or a fetch (tier 6) to resolve from inside it.
 echo "== Building a simulated plugin clone (bin/ + payload/, no go.mod, no dist/) =="
 CLONE="$TMP/clone"; mkdir -p "$CLONE"
 cp -R "$HERE/../bin" "$CLONE/bin"
@@ -244,6 +249,50 @@ if [ "${OMAKASE_TEST_LIVE_FETCH:-}" = "1" ]; then
 else
   echo "  SKIP: set OMAKASE_TEST_LIVE_FETCH=1 to exercise a real download"
 fi
+
+# ---------- Scenario O9: tier 2's go build failure aborts the shim, never falls through to a stale dist/omakase ----------
+echo "== Scenario O9: a FAILING go build at tier 2 aborts the shim instead of exec'ing a stale dist/omakase =="
+# resolve_omakase is always called as `if resolve_omakase; then ...` from every
+# shim, and bash suppresses `set -e` throughout an if-condition's call chain —
+# so a plain failing `go build` would not abort under the caller's set -e and
+# could silently fall through to whatever dist/omakase happens to sit on disk.
+# This pins the fix (an explicit `exit 1` on the build subshell, immune to that
+# suppression) against exactly that regression.
+DEVREPO="$TMP/devrepo"; mkdir -p "$DEVREPO/dist"
+cp -R "$HERE/../bin" "$DEVREPO/bin"
+echo "module fake" > "$DEVREPO/go.mod"
+printf '#!/bin/sh\necho STALE-BINARY-RAN "$@"\n' > "$DEVREPO/dist/omakase"; chmod +x "$DEVREPO/dist/omakase"
+REPO9="$TMP/repo-o9"; scratch_repo "$REPO9"
+
+# (a) a failing `go` must abort the shim non-zero, never running the stale binary.
+FAILGO="$TMP/fakebin-o9-fail"; mkdir -p "$FAILGO"
+printf '#!/bin/sh\necho "fake go: build failed" >&2\nexit 1\n' > "$FAILGO/go"; chmod +x "$FAILGO/go"
+O9AHOME="$TMP/home-o9a"; O9ACACHE="$TMP/cache-o9a"; mkdir -p "$O9AHOME" "$O9ACACHE"
+OUTFILE="$TMP/o9a.out"; ERRFILE="$TMP/o9a.err"
+( cd "$REPO9" && env -i HOME="$O9AHOME" XDG_CACHE_HOME="$O9ACACHE" PATH="$FAILGO:$CLEANPATH" \
+  bash "$DEVREPO/bin/status.sh" >"$OUTFILE" 2>"$ERRFILE" )
+rc=$?
+[ "$rc" -ne 0 ] && pass "a failing go build aborts the shim (exit $rc)" || fail "shim exited 0 despite a failing go build"
+grep -q 'STALE-BINARY-RAN' "$OUTFILE" && fail "stale dist/omakase ran despite the failing build ($(cat "$OUTFILE"))" || pass "stale dist/omakase never ran"
+grep -q 'fake go: build failed' "$ERRFILE" && pass "the go build's own failure reached stderr" || fail "go build failure missing from stderr ($(cat "$ERRFILE"))"
+
+# (b) inverse: a SUCCEEDING go (simulated by rewriting dist/omakase in place,
+# standing in for a real rebuild) still lets the shim exec dist/omakase —
+# proving the fix didn't turn tier 2 into an unconditional abort.
+OKGO="$TMP/fakebin-o9-ok"; mkdir -p "$OKGO"
+cat > "$OKGO/go" <<GOEOF
+#!/bin/sh
+printf '#!/bin/sh\necho STALE-BINARY-RAN "\$@"\n' > "$DEVREPO/dist/omakase"
+chmod +x "$DEVREPO/dist/omakase"
+exit 0
+GOEOF
+chmod +x "$OKGO/go"
+O9BHOME="$TMP/home-o9b"; O9BCACHE="$TMP/cache-o9b"; mkdir -p "$O9BHOME" "$O9BCACHE"
+OUTFILE2="$TMP/o9b.out"
+( cd "$REPO9" && env -i HOME="$O9BHOME" XDG_CACHE_HOME="$O9BCACHE" PATH="$OKGO:$CLEANPATH" \
+  bash "$DEVREPO/bin/status.sh" >"$OUTFILE2" 2>&1 )
+rc2=$?
+[ "$rc2" -eq 0 ] && grep -q 'STALE-BINARY-RAN status' "$OUTFILE2" && pass "a succeeding go build still lets the shim exec dist/omakase" || fail "shim did not run dist/omakase after a succeeding build (rc=$rc2, out=$(cat "$OUTFILE2"))"
 
 rm -rf "$TMP"
 echo ""

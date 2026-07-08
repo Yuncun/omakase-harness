@@ -9,7 +9,9 @@
 #   1. $OMAKASE_BIN override (tests, CI) — must be executable, or resolution
 #      fails immediately (no fallthrough to tiers 2-6).
 #   2. Dev rebuild: go.mod + go on PATH -> go build (a FAILING build aborts loudly
-#      under the caller's set -e, because a stale binary would mask Go breakage).
+#      via an explicit exit — set -e alone would be suppressed here, since this
+#      runs inside an if-condition's call chain — because a stale binary would
+#      mask Go breakage).
 #   3. dist/omakase — a prebuilt/vendored copy.
 #   4. `omakase` on PATH (brew or manual install).
 #   5. The omakase-managed cached binary — fetched (tier 6, opt-in via $1=fetch)
@@ -181,7 +183,13 @@ resolve_omakase() {
     return 1
   fi
   if [ -f "$HERE/../go.mod" ] && command -v go >/dev/null 2>&1; then
-    ( cd "$HERE/.." && go build -o dist/omakase ./cmd/omakase )
+    # resolve_omakase is always called as `if resolve_omakase; then ...` from
+    # the shims, and bash suppresses `set -e` throughout an if-condition's call
+    # chain — so a failing `go build` here would NOT abort under the caller's
+    # set -e and could fall through to a stale dist/omakase. The explicit
+    # `exit 1` is immune to that suppression (this file is sourced, so it exits
+    # the shim process) — do not simplify this back to a bare command.
+    ( cd "$HERE/.." && go build -o dist/omakase ./cmd/omakase ) || exit 1
   fi
   if [ -x "$HERE/../dist/omakase" ]; then OMAKASE_BIN_RESOLVED="$HERE/../dist/omakase"; return 0; fi
   if command -v omakase >/dev/null 2>&1; then OMAKASE_BIN_RESOLVED="omakase"; return 0; fi
