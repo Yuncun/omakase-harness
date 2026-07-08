@@ -14,8 +14,8 @@ every tier. Only when none of that resolves does a shim fall back to the frozen 
 at `bin/legacy/{init,remove,status}.sh` — `mcp` is binary-only and has no v1 body, so a
 resolution failure there is a hard error instead.
 
-- `bin/` — the installer (`init`), uninstaller (`remove`), and inspector (`status`), plus
-  shared libraries.
+- `bin/` — the installer (`init`), uninstaller (`remove`), inspector (`status`), and
+  MCP-server entry point (`mcp`), plus shared libraries.
 - `payload/` — the harness content copied into every target. Keep it minimal: anything
   added here ships to all adopters.
 - `tests/` — one `*.test.sh` per area.
