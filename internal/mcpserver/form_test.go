@@ -220,6 +220,69 @@ func TestBuildFormHeaderTitlesCountLeavesAndNameGates(t *testing.T) {
 	}
 }
 
+// Child rows are prefixed "· ", and a collapsed group's title carries the
+// substring a human relies on to tell a uniform group from a partial one at
+// a glance: "(N files)" alone for uniform, "(N files) — n/m on" for partial.
+func TestBuildFormChildAndGroupTitleCopy(t *testing.T) {
+	_, partialSchema, err := BuildForm(sampleItems(), false)
+	if err != nil {
+		t.Fatalf("BuildForm: %v", err)
+	}
+	var partialDecoded struct {
+		Properties map[string]struct {
+			Title string `json:"title"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(partialSchema, &partialDecoded); err != nil {
+		t.Fatalf("decode partial schema: %v\n%s", err, partialSchema)
+	}
+	cases := []struct{ key, wantSubstr string }{
+		{"file:AGENTS.md", "· "},
+		{"gate:smoke", "· "},
+		{"dir:.claude/skills", "(2 files) — 1/2 on"},
+	}
+	for _, c := range cases {
+		p, ok := partialDecoded.Properties[c.key]
+		if !ok {
+			t.Fatalf("schema missing %q:\n%s", c.key, partialSchema)
+		}
+		if !strings.HasPrefix(p.Title, "· ") {
+			t.Errorf("%s title = %q, want prefix %q", c.key, p.Title, "· ")
+		}
+		if !strings.Contains(p.Title, c.wantSubstr) {
+			t.Errorf("%s title = %q, want substring %q", c.key, p.Title, c.wantSubstr)
+		}
+	}
+
+	uniform := []tui.Item{{
+		Label: ".claude/skills/", Rel: ".claude/skills", Stage: tui.StageOnDemand, Group: true, Toggleable: true,
+		Children: []tui.ChildRef{{Rel: ".claude/skills/a.md", Enabled: true}, {Rel: ".claude/skills/b.md", Enabled: true}},
+		Enabled:  true, Count: 2,
+	}}
+	_, uniformSchema, err := BuildForm(uniform, false)
+	if err != nil {
+		t.Fatalf("BuildForm: %v", err)
+	}
+	var uniformDecoded struct {
+		Properties map[string]struct {
+			Title string `json:"title"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(uniformSchema, &uniformDecoded); err != nil {
+		t.Fatalf("decode uniform schema: %v\n%s", err, uniformSchema)
+	}
+	up, ok := uniformDecoded.Properties["dir:.claude/skills"]
+	if !ok {
+		t.Fatalf("schema missing dir:.claude/skills:\n%s", uniformSchema)
+	}
+	if !strings.Contains(up.Title, "(2 files)") {
+		t.Errorf("uniform group title = %q, want substring %q", up.Title, "(2 files)")
+	}
+	if strings.Contains(up.Title, "—") {
+		t.Errorf("uniform group title = %q, wrongly carries the partial-group on/m suffix", up.Title)
+	}
+}
+
 // Diff: unchanged, missing, and keep-as-is values emit nothing; real changes
 // emit one Op each carrying the group children for Task 3's apply loop.
 func TestDiff(t *testing.T) {
