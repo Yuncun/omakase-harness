@@ -1039,3 +1039,113 @@ func TestSectionBulkOps(t *testing.T) {
 		}
 	})
 }
+
+// An untouched nested form (no content submitted at all) yields no ops —
+// same "missing key means no change" rule as Diff, applied to both header
+// and child fields.
+func TestNestedOpsUntouchedFormIsNoOp(t *testing.T) {
+	items := sampleItems()
+	fields, _, err := BuildForm(items, false)
+	if err != nil {
+		t.Fatalf("BuildForm: %v", err)
+	}
+	if ops := NestedOps(fields, map[string]any{}, items); len(ops) != 0 {
+		t.Errorf("ops = %+v, want none", ops)
+	}
+}
+
+// A header submitted "all off" bulk-changes only its own stage's leaves —
+// session start has exactly one leaf (AGENTS.md, currently on) — and never
+// reaches into another stage's items.
+func TestNestedOpsHeaderAllOffTouchesOnlyThatStage(t *testing.T) {
+	items := sampleItems()
+	fields, _, err := BuildForm(items, false)
+	if err != nil {
+		t.Fatalf("BuildForm: %v", err)
+	}
+	ops := NestedOps(fields, map[string]any{"stage:session start": allOff}, items)
+	if len(ops) != 1 || ops[0].IsGate || ops[0].Group || ops[0].Rel != "AGENTS.md" || ops[0].On {
+		t.Fatalf("ops = %+v, want one file AGENTS.md -> off", ops)
+	}
+}
+
+// A header "all off" plus one currently-off child explicitly flipped to true
+// in the same stage: the header's bulk-off op(s) come first, the child's own
+// on-op comes after — and since apply order is last-wins, ApplyOps over the
+// result leaves that one child enabled and its untouched sibling disabled,
+// even though the header alone would have turned everything off.
+func TestNestedOpsChildOverrideBeatsHeaderBulk(t *testing.T) {
+	items := []tui.Item{
+		{Label: "file1", Rel: "file1", Stage: tui.StageOnDemand, Toggleable: true, Enabled: true},
+		{Label: "file2", Rel: "file2", Stage: tui.StageOnDemand, Toggleable: true, Enabled: false},
+	}
+	fields, _, err := BuildForm(items, false)
+	if err != nil {
+		t.Fatalf("BuildForm: %v", err)
+	}
+	content := map[string]any{"stage:on demand": allOff, "file:file2": true}
+	ops := NestedOps(fields, content, items)
+	if len(ops) != 2 {
+		t.Fatalf("ops = %+v, want 2 (header's file1-off, then child's file2-on)", ops)
+	}
+	if ops[0].Rel != "file1" || ops[0].On {
+		t.Errorf("ops[0] = %+v, want header op file1 -> off first", ops[0])
+	}
+	if ops[1].Rel != "file2" || !ops[1].On {
+		t.Errorf("ops[1] = %+v, want child op file2 -> on second", ops[1])
+	}
+	out := ApplyOps(items, ops)
+	if i := findItem(out, "file1"); i < 0 || out[i].Enabled {
+		t.Errorf("file1 = %+v, want disabled (header bulk, unchallenged)", out[i])
+	}
+	if i := findItem(out, "file2"); i < 0 || !out[i].Enabled {
+		t.Errorf("file2 = %+v, want enabled (explicit child override survives header bulk)", out[i])
+	}
+}
+
+// A single child flip with every header left at "keep as-is" (absent from
+// content) produces exactly one op — the header contributes nothing when
+// its own key is missing.
+func TestNestedOpsChildFlipAloneIsOneOp(t *testing.T) {
+	items := sampleItems()
+	fields, _, err := BuildForm(items, false)
+	if err != nil {
+		t.Fatalf("BuildForm: %v", err)
+	}
+	ops := NestedOps(fields, map[string]any{"file:AGENTS.md": false}, items)
+	if len(ops) != 1 || ops[0].Rel != "AGENTS.md" || ops[0].On {
+		t.Fatalf("ops = %+v, want one file AGENTS.md -> off", ops)
+	}
+}
+
+// Junk hardening: a header value that isn't exactly allOn/allOff does
+// nothing (not "anything but keep as-is"), a boolean child submitted a
+// string instead of a bool does nothing (Diff's bool branch requires an
+// actual bool), and missing keys mean no change — combined, zero ops.
+func TestNestedOpsJunkAndMissingIsNoOp(t *testing.T) {
+	items := sampleItems()
+	fields, _, err := BuildForm(items, false)
+	if err != nil {
+		t.Fatalf("BuildForm: %v", err)
+	}
+	content := map[string]any{"stage:pre-commit": "garbage", "file:AGENTS.md": "yes"}
+	if ops := NestedOps(fields, content, items); len(ops) != 0 {
+		t.Errorf("ops = %+v, want none", ops)
+	}
+}
+
+// A partial group's 3-choice enum child submitted "all on" produces one
+// group Op carrying its Children, via Diff's enum branch — NestedOps doesn't
+// need its own group-child handling, it just has to route child fields to
+// Diff.
+func TestNestedOpsPartialGroupAllOnIsOneGroupOp(t *testing.T) {
+	items := sampleItems()
+	fields, _, err := BuildForm(items, false)
+	if err != nil {
+		t.Fatalf("BuildForm: %v", err)
+	}
+	ops := NestedOps(fields, map[string]any{"dir:.claude/skills": allOn}, items)
+	if len(ops) != 1 || !ops[0].Group || ops[0].Rel != ".claude/skills" || !ops[0].On || len(ops[0].Children) != 2 {
+		t.Fatalf("ops = %+v, want one group .claude/skills -> on with 2 children", ops)
+	}
+}

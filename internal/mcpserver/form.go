@@ -966,6 +966,33 @@ func BuildSectionForm(items []tui.Item, stage tui.Stage) ([]Field, json.RawMessa
 	return BuildForm(scoped, true)
 }
 
+// NestedOps turns a nested-cascade form submission (spec §Cascade semantics)
+// into the ops to apply. Header fields (key prefix "stage:") submitted
+// exactly allOn/allOff bulk-change that stage via SectionBulkOps — the same
+// explicit-other-choice hardening as Diff's keepAsIs branch, so a header
+// value that isn't one of the two declared choices does nothing. Every
+// non-header field is then run through Diff as usual (its bool branch
+// handles boolean child rows, its enum branches handle a partial group's
+// enum row). Header ops are appended first, child ops after: apply order is
+// last-wins, so an explicit child change always survives its own stage's
+// header bulk.
+func NestedOps(fields []Field, content map[string]any, items []tui.Item) []Op {
+	var ops []Op
+	var childFields []Field
+	for _, f := range fields {
+		if !strings.HasPrefix(f.Key, "stage:") {
+			childFields = append(childFields, f)
+			continue
+		}
+		choice, ok := content[f.Key].(string)
+		if !ok || (choice != allOn && choice != allOff) {
+			continue
+		}
+		ops = append(ops, SectionBulkOps(items, f.Stage, choice == allOn)...)
+	}
+	return append(ops, Diff(childFields, content)...)
+}
+
 // SectionBulkOps targets one stage's toggleable items at a single on/off
 // value: a group becomes one group Op (groupDiff's "does any child differ
 // from target" check — the same rule PresetOps and TriageOps' bulk path
