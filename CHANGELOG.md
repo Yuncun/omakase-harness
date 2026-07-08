@@ -5,6 +5,17 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added
+- **Plugin/clone installs without Go now self-provision the omakase binary.** `init`,
+  `status`, and the new `mcp` shim fetch the pinned, checksum-verified release binary
+  once per machine — cached at `~/.cache/omakase/bin/<version>/` (`XDG_CACHE_HOME`
+  respected, mirror overridable via `OMAKASE_RELEASE_BASE_URL`) — instead of dropping
+  straight to the v1 bash fallback. `remove` never fetches but reuses an
+  already-cached binary.
+- **`bin/mcp.sh`** — a shim for `omakase mcp` with a stable path, so `claude mcp add
+  omakase -- /path/to/omakase-harness/bin/mcp.sh` works in plugin installs where no
+  binary is on PATH.
+
 ## [0.18.0] — 2026-07-08
 
 ### Added — 2026-07-07 the consent menu

@@ -2,6 +2,18 @@
 
 ## Commands
 
+`init.sh`, `status.sh`, `remove.sh`, and `mcp.sh` are thin shims onto the omakase Go
+binary. Each resolves, in order: an `OMAKASE_BIN` override (must be executable, or
+resolution fails immediately) → a dev rebuild (`go.mod` + `go` on PATH) → a prebuilt
+`dist/omakase` → `omakase` on PATH → the pinned release binary, downloaded once per
+machine, sha256-verified against digests baked into the repo, and cached at
+`~/.cache/omakase/bin/<version>/` (`XDG_CACHE_HOME` respected). `init.sh`, `status.sh`,
+and `mcp.sh` may trigger that download on first run; `remove.sh` never fetches but
+reuses an already-cached binary, keeping uninstall offline. The frozen v1 bash bodies
+under `bin/legacy/` remain only as the fallback when nothing above resolves — a
+platform the fetch doesn't cover, or no Go and no network; `mcp.sh` has no v1 body and
+exits with guidance instead.
+
 ### `init.sh [<owner/repo[#ref]> | --source <git-url|path>] [--cut-over] [--help]`
 
 Overlays `payload/` onto the current repo, records placed paths in `.git/info/exclude`,
@@ -68,7 +80,9 @@ gives every file its own row instead of one row per directory. Rendered
 natively by hosts that support MCP elicitation — Claude Code and Copilot CLI
 both do; plain text elsewhere. Nothing applies until the human submits the
 form. Register it from the target repo, e.g.:
-`claude mcp add omakase -- /path/to/omakase mcp`.
+`claude mcp add omakase -- /path/to/omakase mcp`. In a plugin install where no
+binary is on PATH, register the shim's stable path instead:
+`claude mcp add omakase -- /path/to/omakase-harness/bin/mcp.sh`.
 
 ### `remove.sh`
 
@@ -86,7 +100,9 @@ installed harness, and `remove` always tears it down completely.
 | `OMAKASE_CUTOVER_CONFIRM=1` | required to apply `init.sh --cut-over` |
 | `OMAKASE_PAYLOAD` | path to a payload tree to install, overriding the plugin payload. Lower precedence than `--source` |
 | `OMAKASE_LEFTHOOK_BASE_URL` | mirror for the lefthook binary download |
-| `XDG_CACHE_HOME` | cache root for the fetched lefthook binary (default `~/.cache`) |
+| `OMAKASE_RELEASE_BASE_URL` | mirror for the omakase binary download, overriding the GitHub releases base URL |
+| `OMAKASE_BIN` | path to an omakase binary to use instead of dev rebuild, `dist/omakase`, PATH, or the fetched cache — must be executable, or resolution fails immediately |
+| `XDG_CACHE_HOME` | cache root for the fetched lefthook and omakase binaries (default `~/.cache`) |
 
 A gate that defers its verdict is skipped with its own variable, by convention
 `OMAKASE_SKIP_<CHECK>=1`.

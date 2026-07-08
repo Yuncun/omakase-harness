@@ -42,8 +42,9 @@ check into a git hook).
     remove.sh                 delete the placed files, uninstall hooks, restore the repo
 
 `init` installs lefthook if absent, fetching a pinned, checksum-verified binary into a
-per-machine cache. `omakase mcp` serves the same status + consent menu inside Claude
-Code and Copilot CLI. Flags and environment variables are in the
+per-machine cache — the same mechanism self-provisions the omakase binary itself when a
+clone has no Go. `omakase mcp` serves the same status + consent menu inside Claude Code
+and Copilot CLI. Flags and environment variables are in the
 [reference](docs/reference.md).
 
 ## How it works
