@@ -105,5 +105,5 @@ A harness installs from any git URL:
     init.sh --source https://github.com/you/your-harness
 
 The manifest needs a `name`; `version` is optional. Distributing as a Claude Code plugin
-adds the `omakase` commands over the same scripts; see the plugin and marketplace docs
-linked from the README.
+adds the `omakase` skills over the same scripts; the install commands are in the
+[README's Install section](../README.md#install).

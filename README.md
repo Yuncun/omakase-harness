@@ -17,26 +17,29 @@ it never reaches a pull request. Removing deletes exactly what was placed.
 
 ## Install
 
-Claude Code:
+Claude Code and GitHub Copilot CLI (same commands — Copilot reads the same plugin
+manifest; its skill names are not `omakase:`-prefixed):
 
     /plugin marketplace add yuncun/omakase-harness
     /plugin install omakase@omakase
     /omakase:init
 
-Any other environment, including GitHub Copilot CLI and a plain shell:
+Any other environment, or a plain shell:
 
     cd /path/to/target-repo
     bash /path/to/omakase/bin/init.sh
 
-The Claude Code plugin wraps the same `bin/` scripts behind `/omakase:*` skills
-(`/omakase:init`, `/omakase:status`, `/omakase:remove`).
+The plugin wraps the same `bin/` scripts behind skills: `/omakase:init`,
+`/omakase:status`, `/omakase:remove`, plus `/omakase:add-gate` (authoring: wire a
+check into a git hook).
 
 ## Commands
 
-    init.sh [<owner/repo> | --source <url>]   overlay the harness, exclude it from git, install hooks
-    status.sh                                  the menu: see and toggle every steering file and gate
-                                               (interactive on a terminal; static page when piped)
-    remove.sh                                  delete the placed files, uninstall hooks, restore the repo
+    init.sh [<owner/repo[#ref]> | --source <git-url|path>] [--cut-over]
+                              overlay the harness, exclude it from git, install hooks
+    status.sh                 the menu: see and toggle every steering file and gate
+                              (interactive on a terminal; static page when piped)
+    remove.sh                 delete the placed files, uninstall hooks, restore the repo
 
 `init` installs lefthook if absent, fetching a pinned, checksum-verified binary into a
 per-machine cache. `omakase mcp` serves the same status + consent menu inside Claude
