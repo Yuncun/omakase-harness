@@ -127,26 +127,6 @@ func connect(t *testing.T, root string, eh func(context.Context, *mcp.ElicitRequ
 	return cs
 }
 
-// scriptedElicit runs a different step for each successive Elicit call — the
-// chain flows (triage, preset, sections) answer form 1 differently from form
-// 2, and a step can assert on what a later form's schema actually asked for
-// (e.g. a chain's pending edits carried into the next question's defaults).
-// Any call past the scripted steps fails the test loudly rather than hanging
-// or silently declining, since an unscripted extra call means the flow chose
-// to elicit again when it shouldn't have.
-func scriptedElicit(t *testing.T, steps ...func(*testing.T, *mcp.ElicitRequest) *mcp.ElicitResult) func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-	t.Helper()
-	i := 0
-	return func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		if i >= len(steps) {
-			t.Fatalf("elicit called more times (%d) than scripted (%d)", i+1, len(steps))
-		}
-		step := steps[i]
-		i++
-		return step(t, req), nil
-	}
-}
-
 // text flattens a tool result to its first text content for assertions.
 func text(t *testing.T, res *mcp.CallToolResult) string {
 	t.Helper()
@@ -206,7 +186,7 @@ func TestMenuAppliesFileOff(t *testing.T) {
 	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
 		b, _ := json.Marshal(req.Params.RequestedSchema)
 		sawSchema = string(b)
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": rowDisabled}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": false}}, nil
 	}
 	cs := connect(t, dir, eh)
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"})
@@ -236,7 +216,7 @@ func TestMenuAppliesFileOff(t *testing.T) {
 func TestMenuAppliesGateOff(t *testing.T) {
 	dir, repo := placedFixture(t)
 	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"gate:smoke": rowDisabled}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"gate:smoke": false}}, nil
 	}
 	cs := connect(t, dir, eh)
 	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"}); err != nil {
@@ -274,7 +254,7 @@ func TestMenuDecline(t *testing.T) {
 func TestMenuUntouchedSubmit(t *testing.T) {
 	dir, _ := placedFixture(t)
 	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": rowEnabled, "gate:smoke": rowEnabled}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": true, "gate:smoke": true}}, nil
 	}
 	cs := connect(t, dir, eh)
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"})
@@ -334,28 +314,36 @@ func TestMenuAcceptWithNilContentDoesNotCrash(t *testing.T) {
 	}
 }
 
-// An unrecognized variant behaves exactly like the no-args collapsed menu —
-// Task 1 wires the dispatch switch before any of triage/preset/sections
-// exist, so every variant value falls through to the same collapsed flow
-// until Tasks 2-4 replace one case each.
-func TestMenuUnknownVariantIsCollapsed(t *testing.T) {
+// Malformed or unknown arguments — an unrecognized field, or a wrong-typed
+// expand — fall back to the same expand=false collapsed flow as no
+// arguments at all: menuHandler's json.Unmarshal discards its own error and
+// args keeps its zero value. This server registers the menu tool through the
+// raw (non-generic) AddTool path, which does no schema validation of its own
+// before the handler runs, so junk really does reach menuHandler unfiltered.
+func TestMenuJunkArgsFallsBackToCollapsed(t *testing.T) {
 	dir, _ := placedFixture(t)
+	var sawSchema string
 	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": rowEnabled, "gate:smoke": rowEnabled}}, nil
+		b, _ := json.Marshal(req.Params.RequestedSchema)
+		sawSchema = string(b)
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{}}, nil
 	}
 	cs := connect(t, dir, eh)
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
 		Name:      "menu",
-		Arguments: map[string]any{"variant": "banana"},
+		Arguments: map[string]any{"expand": "not-a-bool", "banana": true},
 	})
 	if err != nil {
-		t.Fatalf("CallTool(menu, variant=banana): %v", err)
+		t.Fatalf("CallTool(menu, junk args): %v", err)
 	}
-	if !lexists(filepath.Join(dir, "AGENTS.md")) {
-		t.Errorf("unknown-variant submit removed AGENTS.md")
+	if res.IsError {
+		t.Fatalf("menu IsError: %s", text(t, res))
 	}
-	if out := text(t, res); !strings.Contains(out, "no changes") && !strings.Contains(out, "No changes") {
-		t.Errorf("unknown-variant summary = %q", out)
+	if strings.Contains(sawSchema, `"file:.claude/skills/a.md"`) {
+		t.Errorf("junk args expanded the form, want collapsed:\n%s", sawSchema)
+	}
+	if !strings.Contains(sawSchema, `"dir:.claude/skills"`) {
+		t.Errorf("junk args schema missing collapsed group field:\n%s", sawSchema)
 	}
 }
 
@@ -379,7 +367,7 @@ func TestMenuWithoutElicitationCapability(t *testing.T) {
 func TestMenuGroupOff(t *testing.T) {
 	dir, repo := placedFixture(t)
 	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"dir:.claude/skills": rowDisabled}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"dir:.claude/skills": false}}, nil
 	}
 	cs := connect(t, dir, eh)
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"})
@@ -421,7 +409,7 @@ func TestMenuGroupPartialRefusal(t *testing.T) {
 		}
 	}
 	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"dir:.claude/skills": rowDisabled}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"dir:.claude/skills": false}}, nil
 	}
 	cs := connect(t, dir, eh)
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"})
@@ -459,7 +447,7 @@ func TestMenuGroupPartialRoundTrip(t *testing.T) {
 	}
 
 	keep := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"dir:.claude/skills": "keep as-is"}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"dir:.claude/skills": keepAsIs}}, nil
 	}
 	cs := connect(t, dir, keep)
 	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"}); err != nil {
@@ -473,7 +461,7 @@ func TestMenuGroupPartialRoundTrip(t *testing.T) {
 	}
 
 	on := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"dir:.claude/skills": "all on"}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"dir:.claude/skills": allOn}}, nil
 	}
 	cs2 := connect(t, dir, on)
 	if _, err := cs2.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"}); err != nil {
@@ -497,14 +485,14 @@ func TestMenuGroupPartialRoundTrip(t *testing.T) {
 func TestMenuFileBackOn(t *testing.T) {
 	dir, _ := placedFixture(t)
 	off := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": rowDisabled}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": false}}, nil
 	}
 	cs := connect(t, dir, off)
 	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"}); err != nil {
 		t.Fatalf("menu off: %v", err)
 	}
 	on := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": rowEnabled}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:AGENTS.md": true}}, nil
 	}
 	cs2 := connect(t, dir, on)
 	if _, err := cs2.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"}); err != nil {
@@ -524,7 +512,7 @@ func TestMenuExpandTogglesSingleGroupMember(t *testing.T) {
 	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
 		b, _ := json.Marshal(req.Params.RequestedSchema)
 		sawSchema = string(b)
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": rowDisabled}}, nil
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": false}}, nil
 	}
 	cs := connect(t, dir, eh)
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
@@ -560,525 +548,66 @@ func TestMenuExpandTogglesSingleGroupMember(t *testing.T) {
 	}
 }
 
-// The triage variant's single-form path: turning on the one flagged row
-// (the mixed group's off child) restores it without touching its on
-// sibling, in one round trip (no open-full chain).
-func TestMenuTriageSingleForm(t *testing.T) {
+// A header submitted "all off" bulk-changes every leaf under its own
+// stage — here, the on-demand group's two files — through the full MCP round
+// trip (NestedOps' own unit tests already cover this at the ops layer; this
+// one exercises the wiring end to end).
+func TestMenuHeaderBulkOffAppliesToStage(t *testing.T) {
 	dir, repo := placedFixture(t)
-	if err := overlay.FileOff(repo, ".claude/skills/b.md"); err != nil {
-		t.Fatalf("arrange: FileOff(b.md): %v", err)
-	}
-	eh := scriptedElicit(t, func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": rowEnabled}}
-	})
-	cs := connect(t, dir, eh)
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
-		Name:      "menu",
-		Arguments: map[string]any{"variant": "triage"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(menu, triage): %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("menu IsError: %s", text(t, res))
-	}
-	if !lexists(filepath.Join(dir, ".claude/skills/a.md")) {
-		t.Errorf("a.md removed, want untouched")
-	}
-	if !lexists(filepath.Join(dir, ".claude/skills/b.md")) {
-		t.Errorf("b.md not restored")
-	}
-	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
-	if i := placedIndex(rows, ".claude/skills/b.md"); i < 0 || rows[i].Enabled != "1" {
-		t.Errorf("b.md ledger not enabled=1: %+v", rows)
-	}
-	if i := placedIndex(rows, ".claude/skills/a.md"); i < 0 || rows[i].Enabled != "1" {
-		t.Errorf("a.md ledger changed: %+v", rows)
-	}
-}
-
-// Declining the triage form applies nothing, per the transaction rule.
-func TestMenuTriageDeclineAppliesNothing(t *testing.T) {
-	dir, repo := placedFixture(t)
-	if err := overlay.FileOff(repo, ".claude/skills/b.md"); err != nil {
-		t.Fatalf("arrange: FileOff(b.md): %v", err)
-	}
-	eh := scriptedElicit(t, func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-		return &mcp.ElicitResult{Action: "decline"}
-	})
-	cs := connect(t, dir, eh)
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
-		Name:      "menu",
-		Arguments: map[string]any{"variant": "triage"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(menu, triage): %v", err)
-	}
-	if out := text(t, res); out != "Menu closed — no changes made." {
-		t.Errorf("decline output = %q, want exact closed text", out)
-	}
-	if lexists(filepath.Join(dir, ".claude/skills/b.md")) {
-		t.Errorf("decline restored b.md")
-	}
-	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
-	if i := placedIndex(rows, ".claude/skills/b.md"); i < 0 || rows[i].Enabled != "0" {
-		t.Errorf("decline altered the ledger: %+v", rows)
-	}
-}
-
-// Asking to open the full list chains into a second, expanded form whose
-// defaults already carry form 1's edits (ApplyOps pre-seeding) — accepting
-// form 2 unchanged still applies form 1's b.md-on edit, proving the pending
-// state, not the stale original, reached the second form.
-func TestMenuTriageOpenFullChain(t *testing.T) {
-	dir, repo := placedFixture(t)
-	if err := overlay.FileOff(repo, ".claude/skills/b.md"); err != nil {
-		t.Fatalf("arrange: FileOff(b.md): %v", err)
-	}
-	wantTitle := fmt.Sprintf("[%s] %s", stageShort(tui.StageOnDemand), ".claude/skills/b.md")
-	eh := scriptedElicit(t,
-		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{
-				keyOpenFull: true, "file:.claude/skills/b.md": rowEnabled,
-			}}
-		},
-		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-			// The SDK re-serializes RequestedSchema through its own typed
-			// jsonschema.Schema (a map internally), so property/key order isn't
-			// preserved across the wire — assert on the decoded value instead
-			// of a literal JSON substring.
-			b, _ := json.Marshal(req.Params.RequestedSchema)
-			var decoded struct {
-				Properties map[string]struct {
-					Title   string `json:"title"`
-					Default any    `json:"default"`
-				} `json:"properties"`
-			}
-			if err := json.Unmarshal(b, &decoded); err != nil {
-				t.Fatalf("decode second form schema: %v\n%s", err, b)
-			}
-			prop, ok := decoded.Properties["file:.claude/skills/b.md"]
-			if !ok {
-				t.Fatalf("second form schema missing file:.claude/skills/b.md:\n%s", b)
-			}
-			if prop.Title != wantTitle {
-				t.Errorf("b.md title = %q, want %q", prop.Title, wantTitle)
-			}
-			if want, ok := prop.Default.(string); !ok || want != rowEnabled {
-				t.Errorf("b.md default = %v, want pending %q (form 1's edit carried forward)", prop.Default, rowEnabled)
-			}
-			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{}}
-		},
-	)
-	cs := connect(t, dir, eh)
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
-		Name:      "menu",
-		Arguments: map[string]any{"variant": "triage"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(menu, triage): %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("menu IsError: %s", text(t, res))
-	}
-	if !lexists(filepath.Join(dir, ".claude/skills/b.md")) {
-		t.Errorf("b.md not enabled after open-full chain")
-	}
-	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
-	if i := placedIndex(rows, ".claude/skills/b.md"); i < 0 || rows[i].Enabled != "1" {
-		t.Errorf("b.md ledger not enabled=1: %+v", rows)
-	}
-}
-
-// The headline's total and "on at defaults (hidden)" counts are LEAVES, the
-// same unit BuildTriageForm's flagged rows count in — not top-level
-// toggleable items (countToggleable), which undercounts a group as 1. A
-// single mixed group of 3 children, 2 off, is the exact regression scenario
-// a reviewer caught: with the old total-flagged arithmetic (1 group - 2
-// flagged rows) the headline went negative ("-1 on at defaults"); both
-// numbers here must be non-negative and must add up with flagged the same
-// way the message's own row-count line does.
-func TestTriageMessageCountsLeavesNotGroups(t *testing.T) {
-	items := []tui.Item{
-		{Label: "skills/", Rel: "skills", Stage: tui.StageOnDemand, Group: true, Toggleable: true,
-			Children: []tui.ChildRef{
-				{Rel: "skills/a.md", Enabled: true},
-				{Rel: "skills/b.md", Enabled: false},
-				{Rel: "skills/c.md", Enabled: false},
-			},
-			Enabled: false, PartialOff: true, Count: 3},
-	}
-	_, _, flagged, err := BuildTriageForm(items)
-	if err != nil {
-		t.Fatalf("BuildTriageForm: %v", err)
-	}
-	if flagged != 2 {
-		t.Fatalf("flagged = %d, want 2 (b.md, c.md rows)", flagged)
-	}
-	repo := &state.Repo{Root: "/repo"}
-	msg := triageMessage(repo, items, flagged)
-	wantLine := "omakase triage — 3 items in /repo · 1 on at defaults (hidden)."
-	if !strings.Contains(msg, wantLine) {
-		t.Fatalf("triageMessage =\n%s\nwant a line:\n%s", msg, wantLine)
-	}
-	if strings.Contains(msg, "-1") || strings.Contains(msg, "· -") {
-		t.Fatalf("triageMessage went negative:\n%s", msg)
-	}
-}
-
-// The preset variant's guards-only posture strips everything but the gates:
-// the standalone file and both group members leave the working tree, while
-// the already-on gate stays enabled — one form, no chain.
-func TestMenuPresetGuardsOnly(t *testing.T) {
-	dir, repo := placedFixture(t)
-	eh := scriptedElicit(t, func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{keyPosture: postureGuards}}
-	})
-	cs := connect(t, dir, eh)
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
-		Name:      "menu",
-		Arguments: map[string]any{"variant": "preset"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(menu, preset): %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("menu IsError: %s", text(t, res))
-	}
-	if lexists(filepath.Join(dir, "AGENTS.md")) {
-		t.Errorf("AGENTS.md still present after guards-only preset")
-	}
-	if lexists(filepath.Join(dir, ".claude/skills/a.md")) {
-		t.Errorf("a.md still present after guards-only preset")
-	}
-	if lexists(filepath.Join(dir, ".claude/skills/b.md")) {
-		t.Errorf("b.md still present after guards-only preset")
-	}
-	if overlay.DisabledGates(repo.OMK)["smoke"] {
-		t.Errorf("gate smoke disabled after guards-only preset, want still on")
-	}
-}
-
-// Choosing customize item-by-item… chains into the full expanded form,
-// defaulted to the CURRENT state (not to a posture the human never picked):
-// accepting form 2 with only b.md flipped on changes exactly b.md, leaving
-// its already-on sibling and the standalone file untouched.
-func TestMenuPresetCustomizeChain(t *testing.T) {
-	dir, repo := placedFixture(t)
-	if err := overlay.FileOff(repo, ".claude/skills/b.md"); err != nil {
-		t.Fatalf("arrange: FileOff(b.md): %v", err)
-	}
-	var sawSchema string
-	eh := scriptedElicit(t,
-		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{keyPosture: postureCustomize}}
-		},
-		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-			b, _ := json.Marshal(req.Params.RequestedSchema)
-			sawSchema = string(b)
-			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": rowEnabled}}
-		},
-	)
-	cs := connect(t, dir, eh)
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
-		Name:      "menu",
-		Arguments: map[string]any{"variant": "preset"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(menu, preset): %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("menu IsError: %s", text(t, res))
-	}
-	if !strings.Contains(sawSchema, `"file:.claude/skills/a.md"`) || !strings.Contains(sawSchema, `"file:AGENTS.md"`) {
-		t.Errorf("second form schema not the full expanded form: %s", sawSchema)
-	}
-	if !lexists(filepath.Join(dir, "AGENTS.md")) {
-		t.Errorf("AGENTS.md removed, want untouched")
-	}
-	if !lexists(filepath.Join(dir, ".claude/skills/a.md")) {
-		t.Errorf("a.md removed, want untouched")
-	}
-	if !lexists(filepath.Join(dir, ".claude/skills/b.md")) {
-		t.Errorf("b.md not restored")
-	}
-	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
-	if i := placedIndex(rows, ".claude/skills/b.md"); i < 0 || rows[i].Enabled != "1" {
-		t.Errorf("b.md ledger not enabled=1: %+v", rows)
-	}
-	if i := placedIndex(rows, "AGENTS.md"); i < 0 || rows[i].Enabled != "1" {
-		t.Errorf("AGENTS.md ledger changed: %+v", rows)
-	}
-}
-
-// Declining the second form of the customize chain applies nothing, per the
-// transaction rule — even though form 1 already picked the customize
-// posture, no ops exist until the LAST form is accepted.
-func TestMenuPresetCustomizeDecline(t *testing.T) {
-	dir, repo := placedFixture(t)
-	eh := scriptedElicit(t,
-		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{keyPosture: postureCustomize}}
-		},
-		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-			return &mcp.ElicitResult{Action: "decline"}
-		},
-	)
-	cs := connect(t, dir, eh)
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
-		Name:      "menu",
-		Arguments: map[string]any{"variant": "preset"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(menu, preset): %v", err)
-	}
-	if out := text(t, res); out != "Menu closed — no changes made." {
-		t.Errorf("chain-decline output = %q, want exact closed text", out)
-	}
-	if !lexists(filepath.Join(dir, "AGENTS.md")) {
-		t.Errorf("decline removed AGENTS.md")
-	}
-	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
-	if i := placedIndex(rows, "AGENTS.md"); i < 0 || rows[i].Enabled != "1" {
-		t.Errorf("decline altered the ledger: %+v", rows)
-	}
-}
-
-// expand=true wins over variant even when variant names a real chain flow —
-// guards the dispatch order against a future reordering that would route an
-// expand request into a chain flow instead of the plain expanded form. The
-// elicited schema is the full expanded shape (a per-file row for each skill),
-// not a sections-style per-stage enum.
-func TestMenuExpandWinsOverVariant(t *testing.T) {
-	dir, _ := placedFixture(t)
-	var sawSchema string
 	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
-		b, _ := json.Marshal(req.Params.RequestedSchema)
-		sawSchema = string(b)
-		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{}}, nil
-	}
-	cs := connect(t, dir, eh)
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
-		Name:      "menu",
-		Arguments: map[string]any{"expand": true, "variant": "sections"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(menu, expand+variant=sections): %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("menu IsError: %s", text(t, res))
-	}
-	if !strings.Contains(sawSchema, `"file:.claude/skills/a.md"`) {
-		t.Errorf("expand did not win over variant=sections, schema missing expanded file row: %s", sawSchema)
-	}
-	if strings.Contains(sawSchema, keySection) {
-		t.Errorf("expand did not win over variant=sections, schema still has a section field: %s", sawSchema)
-	}
-}
-
-// The sections variant's bulk-only path: choosing "all off" for the on-demand
-// section in form 1 removes both skill files in one round trip, no chain.
-func TestMenuSectionsBulkOnly(t *testing.T) {
-	dir, repo := placedFixture(t)
-	eh := scriptedElicit(t, func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
 		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{
-			keySection + stageShort(tui.StageOnDemand): sectionAllOff,
-		}}
-	})
+			"stage:" + stageShort(tui.StageOnDemand): allOff,
+		}}, nil
+	}
 	cs := connect(t, dir, eh)
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
-		Name:      "menu",
-		Arguments: map[string]any{"variant": "sections"},
-	})
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"})
 	if err != nil {
-		t.Fatalf("CallTool(menu, sections): %v", err)
+		t.Fatalf("CallTool(menu): %v", err)
 	}
 	if res.IsError {
 		t.Fatalf("menu IsError: %s", text(t, res))
 	}
-	if lexists(filepath.Join(dir, ".claude/skills/a.md")) {
-		t.Errorf("a.md still present after bulk all-off")
+	if lexists(filepath.Join(dir, ".claude", "skills", "a.md")) {
+		t.Errorf("a.md still present after header all-off")
 	}
-	if lexists(filepath.Join(dir, ".claude/skills/b.md")) {
-		t.Errorf("b.md still present after bulk all-off")
+	if lexists(filepath.Join(dir, ".claude", "skills", "b.md")) {
+		t.Errorf("b.md still present after header all-off")
+	}
+	if !lexists(filepath.Join(dir, "AGENTS.md")) {
+		t.Errorf("AGENTS.md removed, want untouched — a different stage")
 	}
 	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
 	for _, rel := range []string{".claude/skills/a.md", ".claude/skills/b.md"} {
 		if i := placedIndex(rows, rel); i < 0 || rows[i].Enabled != "0" {
-			t.Errorf("ledger not enabled=0 for %s after bulk all-off: %+v", rel, rows)
+			t.Errorf("ledger not enabled=0 for %s after header all-off: %+v", rel, rows)
 		}
 	}
 }
 
-// Choosing "open this section…" for on-demand chains into a second form
-// scoped to just that section's two skill rows; accepting it with b.md on
-// restores b.md without touching a.md or the unrelated session-start file.
-func TestMenuSectionsOpenChain(t *testing.T) {
+// menuMessage's headline counts gates and files separately, over LEAVES,
+// with real pluralization and no literal "(s)" anywhere in the rendered
+// text — the fixture has one gate (smoke) and three files (AGENTS.md plus
+// the skills group's two children).
+func TestMenuMessageCountsAndPluralization(t *testing.T) {
 	dir, repo := placedFixture(t)
-	if err := overlay.FileOff(repo, ".claude/skills/b.md"); err != nil {
-		t.Fatalf("arrange: FileOff(b.md): %v", err)
+	var sawMessage string
+	eh := func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		sawMessage = req.Params.Message
+		return &mcp.ElicitResult{Action: "decline"}, nil
 	}
-	eh := scriptedElicit(t,
-		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{
-				keySection + stageShort(tui.StageOnDemand): sectionOpen,
-			}}
-		},
-		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-			b, _ := json.Marshal(req.Params.RequestedSchema)
-			var decoded struct {
-				Properties map[string]any `json:"properties"`
-			}
-			if err := json.Unmarshal(b, &decoded); err != nil {
-				t.Fatalf("decode second form schema: %v\n%s", err, b)
-			}
-			if len(decoded.Properties) != 2 {
-				t.Fatalf("second form has %d properties, want 2 (only the two skill rows): %s", len(decoded.Properties), b)
-			}
-			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": rowEnabled}}
-		},
-	)
 	cs := connect(t, dir, eh)
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
-		Name:      "menu",
-		Arguments: map[string]any{"variant": "sections"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(menu, sections): %v", err)
+	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "menu"}); err != nil {
+		t.Fatalf("CallTool(menu): %v", err)
 	}
-	if res.IsError {
-		t.Fatalf("menu IsError: %s", text(t, res))
+	wantHeadline := fmt.Sprintf("omakase menu — 1 gate · 3 files in %s.", repo.Root)
+	if !strings.HasPrefix(sawMessage, wantHeadline) {
+		t.Errorf("message headline = %q, want prefix %q", sawMessage, wantHeadline)
 	}
-	if !lexists(filepath.Join(dir, ".claude/skills/a.md")) {
-		t.Errorf("a.md removed, want untouched")
+	if strings.Contains(sawMessage, "(s)") {
+		t.Errorf("message contains literal (s):\n%s", sawMessage)
 	}
-	if !lexists(filepath.Join(dir, ".claude/skills/b.md")) {
-		t.Errorf("b.md not restored")
-	}
-	if !lexists(filepath.Join(dir, "AGENTS.md")) {
-		t.Errorf("AGENTS.md removed, want untouched — a different section")
-	}
-	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
-	if i := placedIndex(rows, ".claude/skills/b.md"); i < 0 || rows[i].Enabled != "1" {
-		t.Errorf("b.md ledger not enabled=1: %+v", rows)
-	}
-}
-
-// Declining the sub-form discards EVERYTHING accumulated in the chain,
-// including a DIFFERENT section's already-computed bulk change from form 1 —
-// the sections-specific transaction rule, stricter than triage/preset's
-// two-form chains where only one form's edits were ever pending.
-func TestMenuSectionsDeclineSubFormCancelsBulk(t *testing.T) {
-	dir, repo := placedFixture(t)
-	eh := scriptedElicit(t,
-		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{
-				keySection + stageShort(tui.StagePreCommit): sectionAllOff,
-				keySection + stageShort(tui.StageOnDemand):  sectionOpen,
-			}}
-		},
-		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-			return &mcp.ElicitResult{Action: "decline"}
-		},
-	)
-	cs := connect(t, dir, eh)
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
-		Name:      "menu",
-		Arguments: map[string]any{"variant": "sections"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(menu, sections): %v", err)
-	}
-	if out := text(t, res); out != "Menu closed — no changes made." {
-		t.Errorf("decline output = %q, want exact closed text", out)
-	}
-	if overlay.DisabledGates(repo.OMK)["smoke"] {
-		t.Errorf("gate smoke disabled despite sub-form decline discarding the accumulated bulk change")
-	}
-}
-
-// Opening two sections in form 1 chains into two sub-forms, one per section
-// in declared order; the handler must see exactly three elicit calls total,
-// and both sub-forms' edits apply together in the one final batch.
-func TestMenuSectionsTwoOpens(t *testing.T) {
-	dir, repo := placedFixture(t)
-	if err := overlay.FileOff(repo, ".claude/skills/b.md"); err != nil {
-		t.Fatalf("arrange: FileOff(b.md): %v", err)
-	}
-	calls := 0
-	eh := scriptedElicit(t,
-		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-			calls++
-			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{
-				keySection + stageShort(tui.StageOnDemand):  sectionOpen,
-				keySection + stageShort(tui.StagePreCommit): sectionOpen,
-			}}
-		},
-		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-			calls++
-			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"file:.claude/skills/b.md": rowEnabled}}
-		},
-		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-			calls++
-			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"gate:smoke": rowDisabled}}
-		},
-	)
-	cs := connect(t, dir, eh)
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
-		Name:      "menu",
-		Arguments: map[string]any{"variant": "sections"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(menu, sections): %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("menu IsError: %s", text(t, res))
-	}
-	if calls != 3 {
-		t.Errorf("elicit called %d times, want 3 (form 1 + one sub-form per opened section)", calls)
-	}
-	if !lexists(filepath.Join(dir, ".claude/skills/b.md")) {
-		t.Errorf("b.md not restored")
-	}
-	if !overlay.DisabledGates(repo.OMK)["smoke"] {
-		t.Errorf("gate smoke not disabled after two-opens chain")
-	}
-}
-
-// A decline on the SECOND form of the open-full chain applies nothing, even
-// though form 1 already computed a b.md-on edit — the transaction rule's
-// "nothing applies until the LAST form is accepted".
-func TestMenuTriageChainDeclineSecondForm(t *testing.T) {
-	dir, repo := placedFixture(t)
-	if err := overlay.FileOff(repo, ".claude/skills/b.md"); err != nil {
-		t.Fatalf("arrange: FileOff(b.md): %v", err)
-	}
-	eh := scriptedElicit(t,
-		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{
-				keyOpenFull: true, "file:.claude/skills/b.md": rowEnabled,
-			}}
-		},
-		func(t *testing.T, req *mcp.ElicitRequest) *mcp.ElicitResult {
-			return &mcp.ElicitResult{Action: "decline"}
-		},
-	)
-	cs := connect(t, dir, eh)
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
-		Name:      "menu",
-		Arguments: map[string]any{"variant": "triage"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(menu, triage): %v", err)
-	}
-	if out := text(t, res); out != "Menu closed — no changes made." {
-		t.Errorf("chain-decline output = %q, want exact closed text", out)
-	}
-	if lexists(filepath.Join(dir, ".claude/skills/b.md")) {
-		t.Errorf("b.md enabled despite second-form decline")
-	}
-	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
-	if i := placedIndex(rows, ".claude/skills/b.md"); i < 0 || rows[i].Enabled != "0" {
-		t.Errorf("b.md ledger changed despite decline: %+v", rows)
+	wantBody := "Space toggles a row. A header set to all on/off applies to every row under it you leave unchanged. Nothing changes until you submit."
+	if !strings.Contains(sawMessage, wantBody) {
+		t.Errorf("message missing cascade sentence:\n%s", sawMessage)
 	}
 }

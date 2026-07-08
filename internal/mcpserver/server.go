@@ -59,8 +59,8 @@ func NewServer(root string) *mcp.Server {
 	srv.AddTool(&mcp.Tool{
 		Name:        "menu",
 		Title:       "omakase menu",
-		Description: "Open the omakase consent menu: a form the HUMAN fills in to enable/disable individual harness files and gates. The host shows the form directly to the user — never answer it on their behalf. Set expand=true when the user asks for the full/expanded menu (every file as its own row instead of one row per directory). Set variant when the user asks for the triage, preset, or sections view by name.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"expand":{"type":"boolean","description":"Show every file as its own row instead of collapsing directories into one row (default false)."},"variant":{"type":"string","description":"View shape: \"triage\" (only items needing attention), \"preset\" (one posture question), \"sections\" (one row per dev-loop section with drill-down). Omit for the standard collapsed menu."}}}`),
+		Description: "Open the omakase consent menu: a form the HUMAN fills in to enable/disable individual harness files and gates. The host shows the form directly to the user — never answer it on their behalf. Set expand=true when the user asks for the full/expanded menu (every file as its own row instead of one row per directory).",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"expand":{"type":"boolean","description":"Show every file as its own row instead of collapsing directories into one row (default false)."}}}`),
 		Meta:        mcp.Meta{"anthropic/requiresUserInteraction": true},
 	}, menuHandler(root))
 	return srv
@@ -79,20 +79,20 @@ func statusHandler() mcp.ToolHandler {
 	}
 }
 
-// menuHandler raises the consent form and applies exactly what the human
-// changed. Every state read happens per call so the form always reflects the
-// repo as it is now. The optional expand argument swaps the one-row-per-
-// directory view for one row per file; a malformed arguments payload is
-// treated as expand=false/variant="" rather than an error, because the
-// collapsed menu is always a safe answer. The variant argument picks one of
-// the alternate view shapes (Tasks 2-4); absent, unknown, or malformed
-// values fall through to the same collapsed flow as no variant at all, and
-// expand always wins over variant when both are set.
+// menuHandler raises the nested cascade consent form (spec §The form) and
+// applies exactly what the human changed: Discover -> LiveItems -> dedupeGates
+// -> BuildForm -> elicit -> NestedOps -> apply. Every state read happens per
+// call so the form always reflects the repo as it is now. The optional
+// expand argument swaps the one-row-per-directory view for one row per file.
+// A malformed or unknown arguments payload — wrong-typed expand, an
+// unrecognized field, or no arguments at all — is treated as expand=false
+// rather than an error: the lenient json.Unmarshal below discards its own
+// error and leaves args at its zero value, and the collapsed menu is always a
+// safe answer.
 func menuHandler(root string) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var args struct {
-			Expand  bool   `json:"expand"`
-			Variant string `json:"variant"`
+			Expand bool `json:"expand"`
 		}
 		if len(req.Params.Arguments) > 0 {
 			_ = json.Unmarshal(req.Params.Arguments, &args)
@@ -102,28 +102,11 @@ func menuHandler(root string) mcp.ToolHandler {
 			return textResult("omakase: not inside a git repo", true), nil
 		}
 		items, _ := tui.LiveItems(repo)
-		// Collapse a gate wired at >1 hook to one item so no variant emits a
-		// duplicate "gate:<name>" field or double-counts its op (finding 8).
+		// Collapse a gate wired at >1 hook to one item so the form doesn't emit
+		// a duplicate "gate:<name>" field or double-count its op (finding 8).
 		items = dedupeGates(items)
 
-		if !args.Expand && args.Variant == "triage" {
-			return textResult(triageFlow(ctx, req.Session, repo, items), false), nil
-		}
-		if !args.Expand && args.Variant == "preset" {
-			return textResult(presetFlow(ctx, req.Session, repo, items), false), nil
-		}
-		if !args.Expand && args.Variant == "sections" {
-			return textResult(sectionsFlow(ctx, req.Session, repo, items), false), nil
-		}
-
-		var fields []Field
-		var schema json.RawMessage
-		switch {
-		case args.Expand:
-			fields, schema, err = BuildForm(items, true)
-		default:
-			fields, schema, err = BuildForm(items, false)
-		}
+		fields, schema, err := BuildForm(items, args.Expand)
 		if err != nil {
 			return textResult("omakase: could not build the menu: "+err.Error(), true), nil
 		}
@@ -131,7 +114,7 @@ func menuHandler(root string) mcp.ToolHandler {
 			return textResult("Nothing to toggle — this repo has no omakase consent items. The status tool shows the full picture.", false), nil
 		}
 		res, err := elicit(ctx, req.Session, &mcp.ElicitParams{
-			Message:         menuMessage(repo, len(fields)),
+			Message:         menuMessage(repo, items),
 			RequestedSchema: schema,
 		})
 		if err != nil {
@@ -144,8 +127,7 @@ func menuHandler(root string) mcp.ToolHandler {
 		if res.Action != "accept" {
 			return textResult("Menu closed — no changes made.", false), nil
 		}
-		ops := Diff(fields, res.Content)
-		return textResult(apply(repo, ops), false), nil
+		return textResult(apply(repo, NestedOps(fields, res.Content, items)), false), nil
 	}
 }
 
@@ -171,269 +153,33 @@ func elicit(ctx context.Context, session *mcp.ServerSession, params *mcp.ElicitP
 	return session.Elicit(ctx, params)
 }
 
-// menuMessage is the text above the form: what checking a box means and the
-// promise that submit is the only thing that changes state.
-func menuMessage(repo *state.Repo, n int) string {
-	return fmt.Sprintf("omakase consent menu — %d item(s) in %s.\nEach row shows enabled or disabled. Adjust anything, then submit; nothing changes until you do, and declining changes nothing.", n, repo.Root)
-}
-
-// triageFlow runs the triage variant's elicitation chain: one form listing
-// only what needs attention (off files/gates, a mixed group's off children)
-// plus a bulk-change row and an "open the full list" escape hatch, then —
-// only when the human asks for it — a second, full expanded form whose
-// defaults already carry the first form's edits. THE TRANSACTION RULE binds
-// both forms: nothing is applied to the repo until the LAST form in the
-// chain is accepted, a decline or elicit error at either form applies
-// nothing, and the final ops are computed once, against the state `items`
-// already captured — never against whatever the repo drifted to mid-chain.
-func triageFlow(ctx context.Context, session *mcp.ServerSession, repo *state.Repo, items []tui.Item) string {
-	fields, schema, flagged, err := BuildTriageForm(items)
-	if err != nil {
-		return "omakase: could not build the triage form: " + err.Error()
-	}
-	res, err := elicit(ctx, session, &mcp.ElicitParams{
-		Message:         triageMessage(repo, items, flagged),
-		RequestedSchema: schema,
-	})
-	if err != nil {
-		// First form of the chain: an elicit-capability failure gets the same
-		// instructive fallback as the collapsed menu, per the transaction rule.
-		return "This client could not show the omakase form (" + err.Error() + "). " + fallbackHelp
-	}
-	if res.Action != "accept" {
-		return "Menu closed — no changes made."
-	}
-
-	ops, openFull := TriageOps(fields, res.Content, items)
-	if !openFull {
-		return apply(repo, ops)
-	}
-
-	pending := ApplyOps(items, ops)
-	fullFields, fullSchema, err := BuildForm(pending, true)
-	if err != nil {
-		return "omakase: could not build the full form: " + err.Error()
-	}
-	res2, err := elicit(ctx, session, &mcp.ElicitParams{
-		Message:         menuMessage(repo, len(fullFields)),
-		RequestedSchema: fullSchema,
-	})
-	if err != nil || res2.Action != "accept" {
-		// Mid-chain: an elicit error behaves like a decline, not the
-		// first-form fallback — the human already saw a working form once.
-		return "Menu closed — no changes made."
-	}
-	finalOps := EffectiveOps(fullFields, res2.Content, stateByKey(items))
-	return apply(repo, finalOps)
-}
-
-// triageMessage is the text above the triage form: the flagged count, what
-// stays on unconditionally (tracked, not consent-gated, no row at all), and
-// the same "nothing changes until submit" promise every menu form makes.
-// total and on are counted over LEAVES (stateByKey — one entry per
-// standalone file, per group child, per gate), the same unit
-// BuildTriageForm's flagged ROWS count in for a mixed group. Counting total
-// as top-level toggleable items instead (a group is 1, not its child count)
-// let "on at defaults" go negative for a mostly-off mixed group, since
-// flagged (row count) could then exceed total (item count).
-func triageMessage(repo *state.Repo, items []tui.Item, flagged int) string {
-	byKey := stateByKey(items)
-	total := len(byKey)
-	on := 0
-	for _, enabled := range byKey {
-		if enabled {
-			on++
+// menuMessage is the text above the form (spec §Units and copy): the leaf
+// counts of gates and files (real pluralization, never "(s)"), then what a
+// header's bulk choice does and the promise that submit is the only thing
+// that changes state. Counts come from stateByKey, the same LEAF unit
+// BuildForm's header titles count in, so this headline and the form's own
+// per-stage "(n/m on)" titles never disagree about what a group is worth.
+func menuMessage(repo *state.Repo, items []tui.Item) string {
+	gates, files := 0, 0
+	for k := range stateByKey(items) {
+		if strings.HasPrefix(k, "gate:") {
+			gates++
+		} else {
+			files++
 		}
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "omakase triage — %d items in %s · %d on at defaults (hidden).\n", total, repo.Root, on)
-	var tracked []string
-	for _, it := range items {
-		if !it.Toggleable {
-			tracked = append(tracked, it.Label)
-		}
-	}
-	if len(tracked) > 0 {
-		fmt.Fprintf(&b, "Always on, tracked in the repo: %s.\n", strings.Join(tracked, ", "))
-	}
-	if flagged == 0 {
-		b.WriteString("Nothing needs attention — everything is on at defaults.\n")
-	} else {
-		fmt.Fprintf(&b, "%d item(s) need your attention:\n", flagged)
-	}
-	b.WriteString("Nothing changes until you submit.")
-	return b.String()
+	return fmt.Sprintf("omakase menu — %s · %s in %s.\n"+
+		"Space toggles a row. A header set to all on/off applies to every row under it you leave unchanged. Nothing changes until you submit.",
+		plural(gates, "gate"), plural(files, "file"), repo.Root)
 }
 
-// presetFlow runs the preset variant's elicitation chain: one question
-// asking for an overall posture, then — only for the customize item-by-item…
-// escape hatch — a second, full expanded form defaulted to items' CURRENT
-// state (not to whatever the posture question's other choices would have
-// done, since picking customize means starting from what's on disk today).
-// A plain Diff against that form is therefore correct, unlike the triage
-// chain's EffectiveOps: nothing upstream of this form has already changed
-// the defaults. THE TRANSACTION RULE binds both forms: nothing is applied to
-// the repo until the LAST form in the chain is accepted, a decline or elicit
-// error at either form applies nothing, and the one-shot postures apply
-// PresetOps computed against the same `items` snapshot the question was
-// built from — never against whatever the repo drifted to mid-chain.
-func presetFlow(ctx context.Context, session *mcp.ServerSession, repo *state.Repo, items []tui.Item) string {
-	// The single posture field is only consulted by key below (never diffed
-	// against a Field list the way the collapsed menu and triage flows are),
-	// so BuildPresetForm's Field slice has no further use here.
-	_, schema, err := BuildPresetForm(items)
-	if err != nil {
-		return "omakase: could not build the preset form: " + err.Error()
+// plural renders "n noun" with real English pluralization (no "(s)"): 1 gate,
+// 2 gates.
+func plural(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
 	}
-	res, err := elicit(ctx, session, &mcp.ElicitParams{
-		Message:         presetMessage(repo, items),
-		RequestedSchema: schema,
-	})
-	if err != nil {
-		// First form of the chain: an elicit-capability failure gets the same
-		// instructive fallback as the collapsed menu, per the transaction rule.
-		return "This client could not show the omakase form (" + err.Error() + "). " + fallbackHelp
-	}
-	if res.Action != "accept" {
-		return "Menu closed — no changes made."
-	}
-
-	choice, _ := res.Content[keyPosture].(string)
-	if choice != postureCustomize {
-		return apply(repo, PresetOps(choice, items))
-	}
-
-	fullFields, fullSchema, err := BuildForm(items, true)
-	if err != nil {
-		return "omakase: could not build the full form: " + err.Error()
-	}
-	res2, err := elicit(ctx, session, &mcp.ElicitParams{
-		Message:         menuMessage(repo, len(fullFields)),
-		RequestedSchema: fullSchema,
-	})
-	if err != nil || res2.Action != "accept" {
-		// Mid-chain: an elicit error behaves like a decline, not the
-		// first-form fallback — the human already saw a working form once.
-		return "Menu closed — no changes made."
-	}
-	return apply(repo, Diff(fullFields, res2.Content))
-}
-
-// presetMessage is the text above the posture question: the current on/off
-// split, so "keep current" has a concrete meaning, plus the same "nothing
-// changes until submit" promise every menu form makes. off counts any
-// toggleable item not fully enabled — including a partially-off group — so a
-// repo that already has SOME customization gets the "(customized)" note
-// rather than reading as a clean, untouched install.
-func presetMessage(repo *state.Repo, items []tui.Item) string {
-	total := countToggleable(items)
-	on := 0
-	for _, it := range items {
-		if it.Toggleable && it.Enabled {
-			on++
-		}
-	}
-	off := total - on
-	note := ""
-	if off > 0 {
-		note = " (customized)"
-	}
-	return fmt.Sprintf("omakase preset — %d items in %s · currently %d on / %d off%s.\nNothing changes until you submit.",
-		total, repo.Root, on, off, note)
-}
-
-// sectionsFlow runs the sections variant's elicitation chain: one form with
-// a per-stage enum (keep as-is / all on / all off / open this section…),
-// then — only for stages the human asked to open — one follow-up form per
-// opened stage, scoped to just that stage's items, in the order the stages
-// were declared on form 1. THE TRANSACTION RULE binds the whole chain, not
-// just two forms: nothing is applied to the repo until the LAST form is
-// accepted, so a decline or elicit error at ANY sub-form discards
-// EVERYTHING accumulated so far — including bulk ops form 1 already computed
-// for OTHER, un-opened sections — not just that one sub-form's own edits.
-// Sub-forms default to the items snapshot's CURRENT state, not a pending,
-// ApplyOps'd state the way triageFlow's open-full chain does: sections are
-// disjoint, so a stage's own bulk choice can never change what another
-// stage's sub-form sees, and a stage can't be both bulked and opened at
-// once. Final ops are computed once, against the same `items` snapshot form
-// 1 was built from — never against whatever the repo drifted to mid-chain.
-func sectionsFlow(ctx context.Context, session *mcp.ServerSession, repo *state.Repo, items []tui.Item) string {
-	fields, schema, err := BuildSectionsForm(items)
-	if err != nil {
-		return "omakase: could not build the sections form: " + err.Error()
-	}
-	if len(fields) == 0 {
-		return "Nothing to toggle — this repo has no omakase consent items. The status tool shows the full picture."
-	}
-	res, err := elicit(ctx, session, &mcp.ElicitParams{
-		Message:         sectionsMessage(repo, items, len(fields)),
-		RequestedSchema: schema,
-	})
-	if err != nil {
-		// First form of the chain: an elicit-capability failure gets the same
-		// instructive fallback as the collapsed menu, per the transaction rule.
-		return "This client could not show the omakase form (" + err.Error() + "). " + fallbackHelp
-	}
-	if res.Action != "accept" {
-		return "Menu closed — no changes made."
-	}
-
-	var ops []Op
-	var opens []Field
-	for _, f := range fields {
-		// sectionKeep, a missing key, and any junk value all mean "no change
-		// for this section" — the same junk/missing-means-keep rule every
-		// other variant's enum handling follows; only allOn/allOff/open below
-		// do anything.
-		switch choice, _ := res.Content[f.Key].(string); choice {
-		case sectionAllOn:
-			ops = append(ops, SectionBulkOps(items, f.Stage, true)...)
-		case sectionAllOff:
-			ops = append(ops, SectionBulkOps(items, f.Stage, false)...)
-		case sectionOpen:
-			opens = append(opens, f)
-		}
-	}
-
-	original := stateByKey(items)
-	for _, f := range opens {
-		sectionFields, sectionSchema, err := BuildSectionForm(items, f.Stage)
-		if err != nil {
-			return "omakase: could not build the " + stageShort(f.Stage) + " section form: " + err.Error()
-		}
-		kind, n, _ := sectionCounts(items, f.Stage)
-		res2, err := elicit(ctx, session, &mcp.ElicitParams{
-			Message:         sectionMessage(f.Stage, kind, n),
-			RequestedSchema: sectionSchema,
-		})
-		if err != nil || res2.Action != "accept" {
-			// Mid-chain: a decline or elicit error at ANY sub-form discards the
-			// whole chain's accumulated ops — including bulk changes already
-			// computed for sections other than this one — per THE TRANSACTION
-			// RULE's sections-specific "any sub-form decline zeroes everything"
-			// clause.
-			return "Menu closed — no changes made."
-		}
-		ops = append(ops, EffectiveOps(sectionFields, res2.Content, original)...)
-	}
-
-	return apply(repo, ops)
-}
-
-// sectionsMessage is the text above the sections form: the section count,
-// the total item count, and what "open this section…" does, plus the same
-// "nothing changes until submit" promise every menu form makes.
-func sectionsMessage(repo *state.Repo, items []tui.Item, k int) string {
-	total := countToggleable(items)
-	return fmt.Sprintf("omakase sections — %d sections · %d items in %s. \"open this section…\" asks a follow-up form for just that section.\nNothing changes until you submit.",
-		k, total, repo.Root)
-}
-
-// sectionMessage is the text above a sections sub-form: which stage it
-// scopes to, its kind and leaf count, and that nothing is final until the
-// chain's last form is submitted — not just this one.
-func sectionMessage(stage tui.Stage, kind string, n int) string {
-	return fmt.Sprintf("[%s] %s — %d items. Nothing changes until the last form is submitted.", stageShort(stage), kind, n)
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // toggleGate dispatches to the same GateOff/GateOn backend the interactive
