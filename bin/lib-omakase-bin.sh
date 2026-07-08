@@ -6,7 +6,8 @@
 # Callers must set $HERE (their bin/ directory) before calling resolve_omakase.
 #
 # resolve_omakase sets $OMAKASE_BIN_RESOLVED to a runnable omakase in this order:
-#   1. $OMAKASE_BIN override (tests, CI) — used as-is.
+#   1. $OMAKASE_BIN override (tests, CI) — must be executable, or resolution
+#      fails immediately (no fallthrough to tiers 2-6).
 #   2. Dev rebuild: go.mod + go on PATH -> go build (a FAILING build aborts loudly
 #      under the caller's set -e, because a stale binary would mask Go breakage).
 #   3. dist/omakase — a prebuilt/vendored copy.
@@ -171,7 +172,14 @@ fetch_omakase() {
 # nothing resolves. Requires $HERE = the caller's bin/ directory.
 resolve_omakase() {
   local allow_fetch="${1:-}"
-  if [ -n "${OMAKASE_BIN:-}" ]; then OMAKASE_BIN_RESOLVED="$OMAKASE_BIN"; return 0; fi
+  # An OMAKASE_BIN override short-circuits resolution entirely, same as the
+  # pre-bootstrap shims: valid (executable) -> use it; invalid -> fail now
+  # rather than falling through to tiers 2-6 (tests rely on this to force the
+  # legacy-fallback path deterministically, e.g. OMAKASE_BIN=/nonexistent/omakase).
+  if [ -n "${OMAKASE_BIN:-}" ]; then
+    if [ -x "${OMAKASE_BIN}" ]; then OMAKASE_BIN_RESOLVED="$OMAKASE_BIN"; return 0; fi
+    return 1
+  fi
   if [ -f "$HERE/../go.mod" ] && command -v go >/dev/null 2>&1; then
     ( cd "$HERE/.." && go build -o dist/omakase ./cmd/omakase )
   fi

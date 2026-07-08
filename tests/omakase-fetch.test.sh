@@ -10,8 +10,14 @@
 #   O3. archive checksum mismatch is REJECTED — nothing cached, no residue
 #   O4. binary checksum mismatch (valid archive, bad extracted-binary hash) is
 #       REJECTED — nothing cached, no residue
-# Later scenarios (O5-O8: shim wiring through init/status/remove/mcp) belong
-# to a later task and are not covered here.
+#   O5. shim wiring through a simulated plugin clone (bin/+payload/, no
+#       go.mod, no dist/): offline -> legacy v1 fallback; cache pre-seeded ->
+#       the cached stub is exec'd with the right verb
+#   O6. remove.sh never fetches (offline -> legacy fallback, nothing cached)
+#       but DOES use an already-cached binary when one is present
+#   O7. mcp.sh has no legacy body: resolution failure is stderr guidance +
+#       exit 1, with stdout left completely clean for the MCP stdio transport
+#   O8. (opt-in, OMAKASE_TEST_LIVE_FETCH=1) one real download from GitHub
 # HOME and XDG_CACHE_HOME point at fixture dirs so nothing touches the real machine.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -156,6 +162,87 @@ if [ "$ASSET_STEM" != "UNSUPPORTED" ]; then
   echo "$OUT" | grep -qi 'binary checksum mismatch' && pass "mismatch is reported" || fail "no mismatch message ($OUT)"
   [ ! -e "$BMCACHE/omakase/bin/$VER/omakase" ] && pass "nothing cached on binary mismatch" || fail "a binary was cached despite the binary mismatch"
   find "$BMCACHE" -name '.omakase.download.*' -o -name '.omakase.extract.*' 2>/dev/null | grep -q . && fail "temp residue left behind on binary mismatch" || pass "no temp residue on binary mismatch"
+fi
+
+# ---------- Simulated plugin clone for O5-O8: bin/+payload/, no go.mod, no dist/ ----------
+# This is exactly what a plugin install without Go on the machine looks like:
+# tiers 2 (dev rebuild) and 3 (dist/omakase) can never fire from inside it.
+echo "== Building a simulated plugin clone (bin/ + payload/, no go.mod, no dist/) =="
+CLONE="$TMP/clone"; mkdir -p "$CLONE"
+cp -R "$HERE/../bin" "$CLONE/bin"
+cp -R "$HERE/../payload" "$CLONE/payload"
+[ ! -e "$CLONE/go.mod" ] && [ ! -e "$CLONE/dist" ] && pass "clone has no go.mod/dist (tiers 2-3 are structurally unreachable)" || fail "clone contaminated with go.mod/dist"
+
+# A scratch git repo to run the shims from (init/status/remove expect a repo).
+scratch_repo(){  # $1 = dir to create
+  mkdir -p "$1"
+  ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init )
+}
+
+# ---------- Scenario O5: shim resolution through the clone ----------
+echo "== Scenario O5: clone status.sh resolves offline (legacy fallback) and via a seeded cache =="
+REPO5="$TMP/repo-o5"; scratch_repo "$REPO5"
+
+# (a) Completely offline: empty cache, empty base URL -> fetch fails -> legacy v1 body.
+O5AHOME="$TMP/home-o5a"; O5ACACHE="$TMP/cache-o5a"; mkdir -p "$O5AHOME" "$O5ACACHE"
+OUT="$( cd "$REPO5" && env -i HOME="$O5AHOME" XDG_CACHE_HOME="$O5ACACHE" PATH="$CLEANPATH" \
+  OMAKASE_RELEASE_BASE_URL="$TMP/empty-base-o5a" \
+  bash "$CLONE/bin/status.sh" 2>&1 )"
+echo "$OUT" | grep -q 'bundled v1 status' && pass "clone status.sh falls back to the legacy v1 body offline" || fail "no legacy fallback message ($OUT)"
+
+# (b) Hash-fn overrides can't cross the exec into a separate script file, so
+# instead of faking a fetch, pre-seed the cache directly (tier 5) and confirm
+# the shim execs the cached binary with the right verb.
+O5BHOME="$TMP/home-o5b"; O5BCACHE="$TMP/cache-o5b"; mkdir -p "$O5BHOME"
+STUB5B="$O5BCACHE/omakase/bin/$VER"; mkdir -p "$STUB5B"
+printf '#!/bin/sh\necho fixture-omakase "$@"\n' > "$STUB5B/omakase"; chmod +x "$STUB5B/omakase"
+OUT="$( cd "$REPO5" && env -i HOME="$O5BHOME" XDG_CACHE_HOME="$O5BCACHE" PATH="$CLEANPATH" \
+  bash "$CLONE/bin/status.sh" 2>&1 )"
+echo "$OUT" | grep -q 'fixture-omakase status' && pass "clone status.sh execs the cached stub (tier 5 cache hit, no network)" || fail "cached stub not used ($OUT)"
+
+# ---------- Scenario O6: remove never fetches but DOES use an already-cached binary ----------
+echo "== Scenario O6: clone remove.sh never fetches (offline -> legacy), but uses a seeded cache =="
+REPO6="$TMP/repo-o6"; scratch_repo "$REPO6"
+
+O6AHOME="$TMP/home-o6a"; O6ACACHE="$TMP/cache-o6a"; mkdir -p "$O6AHOME" "$O6ACACHE"
+OUT="$( cd "$REPO6" && env -i HOME="$O6AHOME" XDG_CACHE_HOME="$O6ACACHE" PATH="$CLEANPATH" \
+  OMAKASE_RELEASE_BASE_URL="$TMP/empty-base-o6" \
+  bash "$CLONE/bin/remove.sh" 2>&1 )"
+echo "$OUT" | grep -q 'bundled v1 remove' && pass "clone remove.sh falls back to the legacy v1 body offline" || fail "no legacy fallback message ($OUT)"
+[ ! -e "$O6ACACHE/omakase" ] && pass "nothing appeared in the cache (remove never attempts a fetch)" || fail "cache dir was populated despite remove.sh never fetching"
+
+O6BHOME="$TMP/home-o6b"; O6BCACHE="$TMP/cache-o6b"; mkdir -p "$O6BHOME"
+STUB6B="$O6BCACHE/omakase/bin/$VER"; mkdir -p "$STUB6B"
+printf '#!/bin/sh\necho fixture-omakase "$@"\n' > "$STUB6B/omakase"; chmod +x "$STUB6B/omakase"
+OUT="$( cd "$REPO6" && env -i HOME="$O6BHOME" XDG_CACHE_HOME="$O6BCACHE" PATH="$CLEANPATH" \
+  bash "$CLONE/bin/remove.sh" 2>&1 )"
+echo "$OUT" | grep -q 'fixture-omakase remove' && pass "clone remove.sh uses the cached binary without network" || fail "cached stub not used for remove ($OUT)"
+
+# ---------- Scenario O7: mcp.sh has no legacy body — guidance on stderr, exit 1, clean stdout ----------
+echo "== Scenario O7: clone mcp.sh reports guidance on stderr only and exits 1 =="
+O7HOME="$TMP/home-o7"; O7CACHE="$TMP/cache-o7"; mkdir -p "$O7HOME"
+OUTFILE="$TMP/o7.out"; ERRFILE="$TMP/o7.err"
+env -i HOME="$O7HOME" XDG_CACHE_HOME="$O7CACHE" PATH="$CLEANPATH" \
+  OMAKASE_RELEASE_BASE_URL="$TMP/empty-base-o7" \
+  bash "$CLONE/bin/mcp.sh" >"$OUTFILE" 2>"$ERRFILE"
+rc=$?
+[ "$rc" -eq 1 ] && pass "clone mcp.sh exits 1 when nothing resolves" || fail "mcp.sh exited $rc, expected 1"
+grep -q 'mcp needs the omakase binary' "$ERRFILE" && pass "mcp.sh prints guidance to stderr" || fail "no guidance on stderr ($(cat "$ERRFILE"))"
+[ ! -s "$OUTFILE" ] && pass "mcp.sh stdout stays empty (the stdio transport is never polluted)" || fail "mcp.sh wrote to stdout: $(cat "$OUTFILE")"
+
+# ---------- Scenario O8: opt-in live fetch of the real pinned release ----------
+echo "== Scenario O8: live fetch from GitHub (opt-in: OMAKASE_TEST_LIVE_FETCH=1) =="
+if [ "${OMAKASE_TEST_LIVE_FETCH:-}" = "1" ]; then
+  O8HOME="$TMP/home-o8"; O8CACHE="$TMP/cache-o8"; mkdir -p "$O8HOME"
+  OUT="$( env -i HOME="$O8HOME" XDG_CACHE_HOME="$O8CACHE" PATH="$CLEANPATH" bash -c '
+      HERE="'"$FAKEBIN"'"
+      . "'"$LIB"'"
+      if resolve_omakase fetch; then echo "RESOLVED:$OMAKASE_BIN_RESOLVED"; else echo FAILED; fi' 2>&1 )"
+  O8CACHED="$O8CACHE/omakase/bin/$VER/omakase"
+  echo "$OUT" | grep -q "RESOLVED:$O8CACHED" && pass "live: real omakase binary fetched + checksum-verified into the cache" || fail "live fetch failed ($OUT)"
+  [ -x "$O8CACHED" ] && "$O8CACHED" --version 2>&1 | grep -q '0.18.0' && pass "live: fetched binary runs and reports version 0.18.0" || fail "live: fetched binary missing or wrong version"
+else
+  echo "  SKIP: set OMAKASE_TEST_LIVE_FETCH=1 to exercise a real download"
 fi
 
 rm -rf "$TMP"
