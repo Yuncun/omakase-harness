@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-07-08
+
 ### Added — 2026-07-07 the consent menu
 - **`omakase status` is now the menu on a real terminal**: every steering file and
   gate is a row a human can toggle (arrows + Enter/Space). Pipes, `--markdown`,
