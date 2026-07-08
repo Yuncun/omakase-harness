@@ -3,17 +3,19 @@
 ## Layout
 
 The tool is shell entry points in `bin/` and a `payload/` tree copied into adopters.
-`status`, `init`, and `remove` are implemented by a Go binary (module at the repo root)
-behind their unchanged `bin/{status,init,remove}.sh` entry points — thin shims that
-rebuild and exec the binary, falling back to the frozen v1 bash body only when it cannot be
-resolved. CI and the shims build it with `CGO_ENABLED=0 go build -o dist/omakase
-./cmd/omakase`; the frozen v1 bodies stay at `bin/legacy/{status,init,remove}.sh` as the
-no-Go fallback until the rewrite completes. The new v2 `personal` verb (harness layers) is
-binary-only — invoked as `dist/omakase personal`, with no `bin/` shim of its own. (`import`
-and `share` are still bash; both retire in Phase 6.)
+Four verbs — `init`, `remove`, `status`, and `mcp` — are implemented by a Go binary (module
+at the repo root) behind unchanged `bin/{init,remove,status,mcp}.sh` entry points: thin
+shims that resolve a runnable `omakase` in order — an `OMAKASE_BIN` override; a dev rebuild
+(`CGO_ENABLED=0 go build -o dist/omakase ./cmd/omakase`, when `go.mod` and `go` are both
+present); `dist/omakase`; `omakase` on `PATH`; then the pinned, checksum-verified release
+binary, fetched once per machine into a local cache (`init`, `status`, and `mcp` allow this
+fetch; `remove` does not, so uninstall stays offline). `bin/lib-omakase-bin.sh` implements
+every tier. Only when none of that resolves does a shim fall back to the frozen v1 bash body
+at `bin/legacy/{init,remove,status}.sh` — `mcp` is binary-only and has no v1 body, so a
+resolution failure there is a hard error instead.
 
-- `bin/` — the installer (`init`), uninstaller (`remove`), inspector (`status`), and
-  capture tool (`import`), plus shared libraries.
+- `bin/` — the installer (`init`), uninstaller (`remove`), and inspector (`status`), plus
+  shared libraries.
 - `payload/` — the harness content copied into every target. Keep it minimal: anything
   added here ships to all adopters.
 - `tests/` — one `*.test.sh` per area.
@@ -29,10 +31,9 @@ through the shims. Two differential suites diff the Go output byte-for-byte agai
 frozen v1 bash: `tests/status-parity.test.sh` for `status`, and
 `tests/init-remove-parity.test.sh` for `init`/`remove` (the latter compares per-file lists
 line-SORTED, since find(1) and Go's directory walk emit the same set of files in different
-orders). Without Go, both suites skip and the shims fall back to the bundled v1 scripts,
-printing a one-line notice. `tests/layers.test.sh` is the black-box oracle for the v2
-layered behavior (personal layer, `personal off`, migration) — the new-behavior counterpart
-to the differential suites; it too skips as a group without lefthook and without Go.
+orders). Without Go, the parity suites still skip, but the shims themselves now resolve a
+real binary — `omakase` on `PATH`, or the pinned, checksum-verified release fetched once per
+machine — before ever reaching the v1 fallback; that fallback remains the last resort only.
 
 A change to the installer or the path model needs a matching test. The path classification
 in `bin/lib-harness-paths.sh` is the single source of truth for what is excluded and how;
