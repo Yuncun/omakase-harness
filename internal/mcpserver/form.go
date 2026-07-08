@@ -165,87 +165,174 @@ func stageShort(s tui.Stage) string {
 	}
 }
 
-// BuildForm turns the interactive screen's Item list into an elicitation
-// form: the Field list Diff later checks submissions against, plus the form's
-// JSON schema as ordered raw bytes — hosts render properties in declaration
-// order, so the form reads in the same dev-loop order as the screen. Only
-// toggleable items become fields; tracked files and machinery stay on the
-// status page. With expand, every group member becomes its own file field —
-// the full per-file view of the status page — instead of one row per
-// directory; the mixed-group enum disappears because each file gets its own
-// enabled/disabled row instead.
+// BuildForm turns the interactive screen's Item list into the nested cascade
+// elicitation form (spec §The form): one header field per dev-loop stage that
+// has at least one toggleable item, immediately followed by that stage's
+// child rows — a stage with nothing toggleable contributes no fields at all.
+// A header is always the keepAsIs/allOn/allOff enum; every leaf row (a gate,
+// a standalone file, an expanded group member, or a uniform collapsed group)
+// is a boolean mirroring its current on/off state, since only a MIXED
+// collapsed group needs the header's 3-choice enum to express "leave the
+// split alone" (a boolean cannot). With expand, every group dissolves into
+// one file field per member instead of one dir: row — the full per-file view
+// of the status page. All titles are built once, then padded together so a
+// host that renders them verbatim in a monospace terminal still lines up the
+// "title: value" column across the whole form, not just within one stage.
 func BuildForm(items []tui.Item, expand bool) ([]Field, json.RawMessage, error) {
-	var fields []Field
+	type row struct {
+		f     Field
+		title string
+	}
+	var rows []row
+
+	for s := tui.StageSessionStart; s <= tui.StageOther; s++ {
+		var stageItems []tui.Item
+		for _, it := range items {
+			if it.Toggleable && it.Stage == s {
+				stageItems = append(stageItems, it)
+			}
+		}
+		if len(stageItems) == 0 {
+			continue
+		}
+
+		// n/on are LEAVES (a group contributes its child count, never 1) —
+		// the unit the header's "(n/m on)" title reports. allGates holds only
+		// for pre-commit/pre-push, the only stages BuildItems ever assigns a
+		// gate item to, so it is equivalent to (and cheaper than) checking the
+		// stage number directly.
+		allGates, n, on := true, 0, 0
+		for _, it := range stageItems {
+			if !it.IsGate {
+				allGates = false
+			}
+			if it.Group {
+				n += it.Count
+				for _, c := range it.Children {
+					if c.Enabled {
+						on++
+					}
+				}
+				continue
+			}
+			n++
+			if it.Enabled {
+				on++
+			}
+		}
+
+		short := stageShort(s)
+		headerTitle := fmt.Sprintf("[%s] (%d/%d on)", short, on, n)
+		if allGates {
+			headerTitle = fmt.Sprintf("[%s] gates (%d/%d on)", short, on, n)
+		}
+		rows = append(rows, row{f: Field{Key: "stage:" + short, Stage: s, Default: keepAsIs}, title: headerTitle})
+
+		for _, it := range stageItems {
+			switch {
+			case it.IsGate:
+				rows = append(rows, row{
+					f:     Field{Key: "gate:" + it.Rel, Rel: it.Rel, IsGate: true, Default: it.Enabled},
+					title: "· " + ellipsizeRel(it.Label, 48),
+				})
+			case it.Group && expand:
+				for _, c := range it.Children {
+					rows = append(rows, row{
+						f:     Field{Key: "file:" + c.Rel, Rel: c.Rel, Default: c.Enabled},
+						title: "· " + ellipsizeRel(c.Rel, 48),
+					})
+				}
+			case it.Group:
+				children := make([]string, len(it.Children))
+				for i, c := range it.Children {
+					children[i] = c.Rel
+				}
+				f := Field{Key: "dir:" + it.Rel, Rel: it.Rel, Group: true, Children: children}
+				title := fmt.Sprintf("· %s (%d files)", ellipsizeRel(it.Label, 48), it.Count)
+				if it.PartialOff {
+					// A boolean cannot express "keep 5/9 on", so a mixed group
+					// keeps the collapsed menu's 3-choice enum instead.
+					f.Default = keepAsIs
+					groupOn := 0
+					for _, c := range it.Children {
+						if c.Enabled {
+							groupOn++
+						}
+					}
+					title = fmt.Sprintf("%s — %d/%d on", title, groupOn, it.Count)
+				} else {
+					f.Default = it.Enabled
+				}
+				rows = append(rows, row{f: f, title: title})
+			default:
+				rows = append(rows, row{
+					f:     Field{Key: "file:" + it.Rel, Rel: it.Rel, Default: it.Enabled},
+					title: "· " + ellipsizeRel(it.Rel, 48),
+				})
+			}
+		}
+	}
+
+	titles := make([]string, len(rows))
+	for i, r := range rows {
+		titles[i] = r.title
+	}
+	titles = padTitles(titles)
+
 	var props strings.Builder
-	emit := func(f Field, title string) error {
-		prop, err := propertyJSON(f, title)
+	fields := make([]Field, len(rows))
+	for i, r := range rows {
+		prop, err := propertyJSON(r.f, titles[i])
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		if props.Len() > 0 {
 			props.WriteByte(',')
 		}
 		props.WriteString(prop)
-		fields = append(fields, f)
-		return nil
-	}
-	for _, it := range items {
-		if !it.Toggleable {
-			continue
-		}
-		f := Field{Rel: it.Rel, IsGate: it.IsGate, Group: it.Group}
-		title := fmt.Sprintf("[%s] %s", stageShort(it.Stage), it.Label)
-		switch {
-		case it.IsGate:
-			f.Key = "gate:" + it.Rel
-			f.Default = rowState(it.Enabled)
-			title = fmt.Sprintf("[%s] gate: %s", stageShort(it.Stage), it.Label)
-		case it.Group && expand:
-			for _, c := range it.Children {
-				cf := Field{Key: "file:" + c.Rel, Rel: c.Rel, Default: rowState(c.Enabled)}
-				if err := emit(cf, fmt.Sprintf("[%s] %s", stageShort(it.Stage), c.Rel)); err != nil {
-					return nil, nil, err
-				}
-			}
-			continue
-		case it.Group:
-			f.Key = "dir:" + it.Rel
-			for _, c := range it.Children {
-				f.Children = append(f.Children, c.Rel)
-			}
-			on := 0
-			for _, c := range it.Children {
-				if c.Enabled {
-					on++
-				}
-			}
-			title = fmt.Sprintf("[%s] %s (%d files)", stageShort(it.Stage), it.Label, it.Count)
-			if it.PartialOff {
-				f.Default = keepAsIs
-				title = fmt.Sprintf("%s — %d/%d on", title, on, it.Count)
-			} else {
-				f.Default = rowState(it.Enabled)
-			}
-		default:
-			f.Key = "file:" + it.Rel
-			f.Default = rowState(it.Enabled)
-		}
-
-		if err := emit(f, title); err != nil {
-			return nil, nil, err
-		}
+		fields[i] = r.f
 	}
 	schema := json.RawMessage(`{"type":"object","properties":{` + props.String() + `}}`)
 	return fields, schema, nil
 }
 
-// rowState renders a leaf's current on/off state as the enabled/disabled
-// string every item row's enum uses in place of a bare boolean.
-func rowState(on bool) string {
-	if on {
-		return rowEnabled
+// ellipsizeRel middle-truncates rel to exactly max runes (the "…" itself
+// counting as one) so a long path still fits one form row before padTitles
+// aligns the whole form's title column; rel shorter than max passes through
+// unchanged. Truncating in the middle, not at either end, keeps both the
+// distinguishing leading path and the trailing filename visible.
+func ellipsizeRel(rel string, max int) string {
+	runes := []rune(rel)
+	if len(runes) <= max {
+		return rel
 	}
-	return rowDisabled
+	if max <= 1 {
+		return "…"
+	}
+	keep := max - 1 // runes left for rel's own text once the ellipsis is counted
+	head := (keep + 1) / 2
+	tail := keep - head
+	return string(runes[:head]) + "…" + string(runes[len(runes)-tail:])
+}
+
+// padTitles right-pads every title with spaces to the widest one's rune
+// count, so a host that renders titles verbatim in a monospace terminal still
+// lines up the collapsed "title: value" column across every row in the form.
+func padTitles(titles []string) []string {
+	width := 0
+	runeCounts := make([]int, len(titles))
+	for i, t := range titles {
+		n := len([]rune(t))
+		runeCounts[i] = n
+		if n > width {
+			width = n
+		}
+	}
+	out := make([]string, len(titles))
+	for i, t := range titles {
+		out[i] = t + strings.Repeat(" ", width-runeCounts[i])
+	}
+	return out
 }
 
 // propertyJSON renders one schema property, marshaling every dynamic string

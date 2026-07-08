@@ -60,22 +60,26 @@ func TestDedupeGatesOneFieldPerName(t *testing.T) {
 	if n := strings.Count(string(schema), `"gate:smoke"`); n != 1 {
 		t.Errorf("schema has %d 'gate:smoke' keys, want 1:\n%s", n, schema)
 	}
-	if ops := Diff(fields, map[string]any{"gate:smoke": rowDisabled}); len(ops) != 1 {
+	if ops := Diff(fields, map[string]any{"gate:smoke": false}); len(ops) != 1 {
 		t.Fatalf("Diff produced %d ops, want 1: %+v", len(ops), ops)
 	}
 }
 
-// Only toggleable items become fields, with the exact key formats from the
-// spec; the tracked row is absent.
+// Only toggleable items become fields, one header per stage plus its
+// children; the tracked row is absent.
 func TestBuildFormFieldsAndKeys(t *testing.T) {
 	fields, schema, err := BuildForm(sampleItems(), false)
 	if err != nil {
 		t.Fatalf("BuildForm: %v", err)
 	}
-	if len(fields) != 3 {
-		t.Fatalf("fields = %d, want 3 (tracked row excluded): %+v", len(fields), fields)
+	wantKeys := []string{
+		"stage:session start", "file:AGENTS.md",
+		"stage:on demand", "dir:.claude/skills",
+		"stage:pre-commit", "gate:smoke",
 	}
-	wantKeys := []string{"file:AGENTS.md", "dir:.claude/skills", "gate:smoke"}
+	if len(fields) != len(wantKeys) {
+		t.Fatalf("fields = %d, want %d (tracked row excluded): %+v", len(fields), len(wantKeys), fields)
+	}
 	for i, w := range wantKeys {
 		if fields[i].Key != w {
 			t.Errorf("fields[%d].Key = %q, want %q", i, fields[i].Key, w)
@@ -86,19 +90,48 @@ func TestBuildFormFieldsAndKeys(t *testing.T) {
 	}
 }
 
-// The raw schema keeps section order: file before group before gate, because
-// hosts render properties in declaration order.
+// A stage with no toggleable items (during session, pre-push, other, for
+// sampleItems) contributes no header and no child fields at all.
+func TestBuildFormSkipsEmptyStages(t *testing.T) {
+	fields, schema, err := BuildForm(sampleItems(), false)
+	if err != nil {
+		t.Fatalf("BuildForm: %v", err)
+	}
+	for _, absent := range []string{"stage:during session", "stage:pre-push", "stage:other"} {
+		for _, f := range fields {
+			if f.Key == absent {
+				t.Errorf("field %q present, want no fields for an empty stage", absent)
+			}
+		}
+		if strings.Contains(string(schema), `"`+absent+`"`) {
+			t.Errorf("schema contains %q, want absent", absent)
+		}
+	}
+}
+
+// The raw schema keeps declaration order: each stage's header immediately
+// followed by its children, stages in dev-loop order, because hosts render
+// properties in declaration order.
 func TestBuildFormPreservesOrder(t *testing.T) {
 	_, schema, err := BuildForm(sampleItems(), false)
 	if err != nil {
 		t.Fatalf("BuildForm: %v", err)
 	}
 	s := string(schema)
-	iFile := strings.Index(s, `"file:AGENTS.md"`)
-	iDir := strings.Index(s, `"dir:.claude/skills"`)
-	iGate := strings.Index(s, `"gate:smoke"`)
-	if iFile < 0 || iDir < 0 || iGate < 0 || !(iFile < iDir && iDir < iGate) {
-		t.Errorf("schema property order wrong (file=%d dir=%d gate=%d):\n%s", iFile, iDir, iGate, s)
+	positions := map[string]int{}
+	for _, key := range []string{"stage:session start", "file:AGENTS.md", "stage:on demand", "dir:.claude/skills", "stage:pre-commit", "gate:smoke"} {
+		i := strings.Index(s, `"`+key+`"`)
+		if i < 0 {
+			t.Fatalf("schema missing %q:\n%s", key, s)
+		}
+		positions[key] = i
+	}
+	last := -1
+	for _, key := range []string{"stage:session start", "file:AGENTS.md", "stage:on demand", "dir:.claude/skills", "stage:pre-commit", "gate:smoke"} {
+		if positions[key] < last {
+			t.Errorf("key %q out of declared order:\n%s", key, s)
+		}
+		last = positions[key]
 	}
 	var v map[string]any
 	if err := json.Unmarshal(schema, &v); err != nil {
@@ -106,28 +139,84 @@ func TestBuildFormPreservesOrder(t *testing.T) {
 	}
 }
 
-// Item rows default to the current state spelled out as "enabled"/"disabled"
-// (hosts render a string enum as visible text, unlike a checkbox); a
-// partially-off group is a 3-value enum defaulting to "keep as-is".
+// A header field is always the keepAsIs/allOn/allOff enum defaulting to
+// keepAsIs, titled with the leaf-counted "(n/m on)"; leaf rows (a standalone
+// file, a gate) default to their current on/off state as a real boolean
+// (hosts render a checkbox for these, not visible text, but the host draws
+// the form so that's the host's concern); a partially-off collapsed group is
+// still the 3-choice enum, since a boolean can't express "keep 5/9 on".
 func TestBuildFormDefaults(t *testing.T) {
 	fields, schema, err := BuildForm(sampleItems(), false)
 	if err != nil {
 		t.Fatalf("BuildForm: %v", err)
 	}
-	if d, ok := fields[0].Default.(string); !ok || d != rowEnabled {
-		t.Errorf("file default = %v, want %q", fields[0].Default, rowEnabled)
+	if d, ok := fields[0].Default.(string); !ok || d != keepAsIs {
+		t.Errorf("session-start header default = %v, want %q", fields[0].Default, keepAsIs)
 	}
-	if d, ok := fields[1].Default.(string); !ok || d != "keep as-is" {
-		t.Errorf("partial group default = %v, want %q", fields[1].Default, "keep as-is")
+	if d, ok := fields[1].Default.(bool); !ok || !d {
+		t.Errorf("file default = %v, want true", fields[1].Default)
 	}
-	if d, ok := fields[2].Default.(string); !ok || d != rowEnabled {
-		t.Errorf("gate default = %v, want %q", fields[2].Default, rowEnabled)
+	if d, ok := fields[3].Default.(string); !ok || d != keepAsIs {
+		t.Errorf("partial group default = %v, want %q", fields[3].Default, keepAsIs)
+	}
+	if d, ok := fields[5].Default.(bool); !ok || !d {
+		t.Errorf("gate default = %v, want true", fields[5].Default)
 	}
 	s := string(schema)
-	for _, want := range []string{`"keep as-is"`, `"all on"`, `"all off"`, `"enum":["enabled","disabled"]`, `"default":"enabled"`} {
+	for _, want := range []string{`"keep as-is"`, `"all on"`, `"all off"`, `"type":"boolean"`, `"default":true`} {
 		if !strings.Contains(s, want) {
 			t.Errorf("schema missing %s:\n%s", want, s)
 		}
+	}
+}
+
+// Header titles carry LEAF counts (a group's children, never 1) and name
+// "gates" only for a stage whose toggleable items are all gates — pre-commit
+// and pre-push, the only stages BuildItems ever assigns a gate to; every
+// other stage's header omits the word entirely.
+func TestBuildFormHeaderTitlesCountLeavesAndNameGates(t *testing.T) {
+	_, schema, err := BuildForm(sampleItems(), false)
+	if err != nil {
+		t.Fatalf("BuildForm: %v", err)
+	}
+	var decoded struct {
+		Properties map[string]struct {
+			Title   string   `json:"title"`
+			Enum    []string `json:"enum"`
+			Default any      `json:"default"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(schema, &decoded); err != nil {
+		t.Fatalf("decode schema: %v\n%s", err, schema)
+	}
+	cases := []struct{ key, wantSubstr string }{
+		{"stage:session start", "(1/1 on)"}, // AGENTS.md, on
+		{"stage:on demand", "(1/2 on)"},      // .claude/skills: a on, b off
+		{"stage:pre-commit", "gates (1/1 on)"},
+	}
+	for _, c := range cases {
+		p, ok := decoded.Properties[c.key]
+		if !ok {
+			t.Fatalf("schema missing %q:\n%s", c.key, schema)
+		}
+		if !strings.Contains(p.Title, c.wantSubstr) {
+			t.Errorf("%s title = %q, want substring %q", c.key, p.Title, c.wantSubstr)
+		}
+		if p.Default != keepAsIs {
+			t.Errorf("%s default = %v, want %q", c.key, p.Default, keepAsIs)
+		}
+		wantEnum := []string{keepAsIs, allOn, allOff}
+		if len(p.Enum) != len(wantEnum) {
+			t.Fatalf("%s enum = %v, want %v", c.key, p.Enum, wantEnum)
+		}
+		for i, w := range wantEnum {
+			if p.Enum[i] != w {
+				t.Errorf("%s enum[%d] = %q, want %q", c.key, i, p.Enum[i], w)
+			}
+		}
+	}
+	if strings.Contains(decoded.Properties["stage:on demand"].Title, "gates") {
+		t.Errorf("on-demand header wrongly says gates: %q", decoded.Properties["stage:on demand"].Title)
 	}
 }
 
@@ -142,12 +231,12 @@ func TestDiff(t *testing.T) {
 	if ops := Diff(fields, map[string]any{}); len(ops) != 0 {
 		t.Errorf("empty content: ops = %+v, want none", ops)
 	}
-	same := map[string]any{"file:AGENTS.md": rowEnabled, "dir:.claude/skills": "keep as-is", "gate:smoke": rowEnabled}
+	same := map[string]any{"file:AGENTS.md": true, "dir:.claude/skills": "keep as-is", "gate:smoke": true}
 	if ops := Diff(fields, same); len(ops) != 0 {
 		t.Errorf("all-defaults content: ops = %+v, want none", ops)
 	}
 
-	changed := map[string]any{"file:AGENTS.md": rowDisabled, "dir:.claude/skills": "all off", "gate:smoke": rowEnabled}
+	changed := map[string]any{"file:AGENTS.md": false, "dir:.claude/skills": "all off", "gate:smoke": true}
 	ops := Diff(fields, changed)
 	if len(ops) != 2 {
 		t.Fatalf("ops = %+v, want 2", ops)
@@ -161,10 +250,9 @@ func TestDiff(t *testing.T) {
 	}
 }
 
-// A junk string on an item row's enabled/disabled enum (something other than
-// the two declared choices) emits no op — the same hardening Diff applies to
-// the mixed-group enum's keepAsIs branch, now guarding the row-level enum
-// too.
+// A wrong-typed (string, not bool) value on an item row's boolean field emits
+// no op — Diff's bool branch requires an actual bool, so a stray string can
+// never be misread as a toggle.
 func TestDiffItemRowJunkChoiceIsNoOp(t *testing.T) {
 	fields, _, err := BuildForm(sampleItems(), false)
 	if err != nil {
@@ -192,9 +280,10 @@ func TestDiffPartialGroupJunkChoiceIsNoOp(t *testing.T) {
 	}
 }
 
-// A fully-on group is a plain enabled/disabled enum field (not the 3-choice
-// mixed enum), and turning it off diffs to one group Op.
-func TestBuildFormWholeGroupEnum(t *testing.T) {
+// A fully-on (uniform) collapsed group is a plain boolean field, not the
+// 3-choice mixed enum — that enum only exists to express a PARTIAL split —
+// and turning it off diffs to one group Op.
+func TestBuildFormUniformGroupBoolean(t *testing.T) {
 	items := []tui.Item{{
 		Label: ".claude/skills/", Rel: ".claude/skills", Stage: tui.StageOnDemand, Group: true, Toggleable: true,
 		Children: []tui.ChildRef{{Rel: ".claude/skills/a.md", Enabled: true}, {Rel: ".claude/skills/b.md", Enabled: true}},
@@ -204,25 +293,33 @@ func TestBuildFormWholeGroupEnum(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildForm: %v", err)
 	}
-	if d, ok := fields[0].Default.(string); !ok || d != rowEnabled {
-		t.Fatalf("whole group default = %v, want %q", fields[0].Default, rowEnabled)
+	// fields[0] is the on-demand stage header; fields[1] is the group's own row.
+	if len(fields) != 2 || fields[1].Key != "dir:.claude/skills" {
+		t.Fatalf("fields = %+v, want [header, dir:.claude/skills]", fields)
 	}
-	ops := Diff(fields, map[string]any{"dir:.claude/skills": rowDisabled})
+	if d, ok := fields[1].Default.(bool); !ok || !d {
+		t.Fatalf("uniform group default = %v, want true", fields[1].Default)
+	}
+	ops := Diff(fields, map[string]any{"dir:.claude/skills": false})
 	if len(ops) != 1 || !ops[0].Group || ops[0].On {
 		t.Errorf("ops = %+v, want one group off Op", ops)
 	}
 }
 
-// With expand, groups dissolve into one file field per member — the full
-// per-file view — keeping section order, per-child defaults, and no 3-choice
-// mixed-group enum (each file gets its own enabled/disabled row, even in a
-// mixed group).
+// With expand, groups dissolve into one boolean file field per member — the
+// full per-file view — keeping declaration order (stage headers still lead
+// each stage) and per-child defaults; no dir: rows survive, even for a mixed
+// group, since each file gets its own boolean row instead.
 func TestBuildFormExpanded(t *testing.T) {
 	fields, schema, err := BuildForm(sampleItems(), true)
 	if err != nil {
 		t.Fatalf("BuildForm: %v", err)
 	}
-	wantKeys := []string{"file:AGENTS.md", "file:.claude/skills/a.md", "file:.claude/skills/b.md", "gate:smoke"}
+	wantKeys := []string{
+		"stage:session start", "file:AGENTS.md",
+		"stage:on demand", "file:.claude/skills/a.md", "file:.claude/skills/b.md",
+		"stage:pre-commit", "gate:smoke",
+	}
 	if len(fields) != len(wantKeys) {
 		t.Fatalf("fields = %d, want %d: %+v", len(fields), len(wantKeys), fields)
 	}
@@ -231,12 +328,12 @@ func TestBuildFormExpanded(t *testing.T) {
 			t.Errorf("fields[%d].Key = %q, want %q", i, fields[i].Key, w)
 		}
 	}
-	if d, ok := fields[2].Default.(string); !ok || d != rowDisabled {
-		t.Errorf("disabled child default = %v, want %q", fields[2].Default, rowDisabled)
+	if d, ok := fields[4].Default.(bool); !ok || d {
+		t.Errorf("disabled child default = %v, want false", fields[4].Default)
 	}
 	s := string(schema)
-	if strings.Contains(s, "dir:") || strings.Contains(s, keepAsIs) {
-		t.Errorf("expanded schema still has group fields or the mixed-group enum:\n%s", s)
+	if strings.Contains(s, "dir:") {
+		t.Errorf("expanded schema still has a group field:\n%s", s)
 	}
 	iA := strings.Index(s, `"file:.claude/skills/a.md"`)
 	iGate := strings.Index(s, `"gate:smoke"`)
@@ -244,9 +341,88 @@ func TestBuildFormExpanded(t *testing.T) {
 		t.Errorf("expanded schema order wrong (a.md=%d gate=%d):\n%s", iA, iGate, s)
 	}
 
-	ops := Diff(fields, map[string]any{"file:.claude/skills/b.md": rowEnabled})
+	ops := Diff(fields, map[string]any{"file:.claude/skills/b.md": true})
 	if len(ops) != 1 || ops[0].Group || ops[0].IsGate || ops[0].Rel != ".claude/skills/b.md" || !ops[0].On {
 		t.Errorf("ops = %+v, want one file on Op for b.md", ops)
+	}
+}
+
+// ellipsizeRel leaves a short rel untouched and middle-truncates a long one
+// to exactly max runes, ellipsis included — the truncation this task's
+// title-padding relies on to bound a long path before padding runs.
+func TestEllipsizeRel(t *testing.T) {
+	if got := ellipsizeRel("short.md", 48); got != "short.md" {
+		t.Errorf("short rel changed: %q", got)
+	}
+	long := strings.Repeat("x", 60)
+	got := ellipsizeRel(long, 48)
+	if n := len([]rune(got)); n != 48 {
+		t.Fatalf("ellipsized length = %d, want 48: %q", n, got)
+	}
+	if !strings.Contains(got, "…") {
+		t.Errorf("ellipsized rel missing …: %q", got)
+	}
+}
+
+// padTitles right-pads every title with spaces to the widest one's rune
+// count, so a host rendering titles verbatim in a monospace terminal still
+// lines up the "title: value" column across every row.
+func TestPadTitles(t *testing.T) {
+	got := padTitles([]string{"a", "bb", "ccc"})
+	want := []string{"a  ", "bb ", "ccc"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("padTitles()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// BuildForm's own titles: a rel long enough to need truncation (60 runes) is
+// middle-ellipsized to 48 before padding, and every title in the resulting
+// form — headers included — pads out to one common rune width.
+func TestBuildFormTitlesPaddedAndEllipsized(t *testing.T) {
+	longRel := strings.Repeat("a", 60)
+	items := []tui.Item{
+		{Label: "x.md", Rel: "x.md", Stage: tui.StageSessionStart, Toggleable: true, Enabled: true},
+		{Label: longRel, Rel: longRel, Stage: tui.StageSessionStart, Toggleable: true, Enabled: true},
+	}
+	_, schema, err := BuildForm(items, false)
+	if err != nil {
+		t.Fatalf("BuildForm: %v", err)
+	}
+	if !json.Valid(schema) {
+		t.Fatalf("schema is not valid JSON:\n%s", schema)
+	}
+	var decoded struct {
+		Properties map[string]struct {
+			Title string `json:"title"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(schema, &decoded); err != nil {
+		t.Fatalf("decode schema: %v\n%s", err, schema)
+	}
+	p, ok := decoded.Properties["file:"+longRel]
+	if !ok {
+		t.Fatalf("schema missing file:%s:\n%s", longRel, schema)
+	}
+	longTitle := p.Title
+	if strings.Contains(longTitle, strings.Repeat("a", 49)) {
+		t.Errorf("60-rune rel not ellipsized: %q", longTitle)
+	}
+	if !strings.Contains(longTitle, "…") {
+		t.Errorf("long title missing an ellipsis: %q", longTitle)
+	}
+
+	width := -1
+	for key, p := range decoded.Properties {
+		w := len([]rune(p.Title))
+		if width == -1 {
+			width = w
+			continue
+		}
+		if w != width {
+			t.Errorf("title width mismatch: %q (key %s) has %d runes, want %d", p.Title, key, w, width)
+		}
 	}
 }
 
@@ -392,17 +568,24 @@ func TestStateByKey(t *testing.T) {
 // whatever earlier chain steps already changed (via ApplyOps), so a field's
 // Default can differ from the pre-chain original even when the human never
 // touched that particular question.
+//
+// EffectiveOps' own contract (string rowEnabled/rowDisabled defaults) predates
+// this task and is untouched by it — BuildForm's leaves are booleans now, so
+// this fixture is built by hand instead of via BuildForm(interim, true), which
+// no longer produces the shape EffectiveOps expects. See Task 1's report for
+// why that's out of this task's scope.
 func TestEffectiveOps(t *testing.T) {
 	base := sampleItems()
 	original := stateByKey(base)
 
-	// Simulate a chain flow that already flipped the gate off in an earlier
-	// step: the fields built from that interim state default to false where
-	// the pre-chain original was true.
-	interim := ApplyOps(base, []Op{{IsGate: true, Rel: "smoke", On: false}})
-	fields, _, err := BuildForm(interim, true)
-	if err != nil {
-		t.Fatalf("BuildForm: %v", err)
+	// Simulates a chain flow that already flipped the gate off in an earlier
+	// step: its Default (rowDisabled) differs from the pre-chain original
+	// (true) — exactly the case EffectiveOps must carry forward.
+	fields := []Field{
+		{Key: "file:AGENTS.md", Rel: "AGENTS.md", Default: rowEnabled},
+		{Key: "file:.claude/skills/a.md", Rel: ".claude/skills/a.md", Default: rowEnabled},
+		{Key: "file:.claude/skills/b.md", Rel: ".claude/skills/b.md", Default: rowDisabled},
+		{Key: "gate:smoke", Rel: "smoke", IsGate: true, Default: rowDisabled},
 	}
 
 	t.Run("untouched content, default differs from original -> op emitted", func(t *testing.T) {
