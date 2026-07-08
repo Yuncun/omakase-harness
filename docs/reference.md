@@ -2,6 +2,18 @@
 
 ## Commands
 
+`init.sh`, `status.sh`, `remove.sh`, and `mcp.sh` are thin shims onto the omakase Go
+binary. Each resolves, in order: an `OMAKASE_BIN` override (must be executable, or
+resolution fails immediately) → a dev rebuild (`go.mod` + `go` on PATH) → a prebuilt
+`dist/omakase` → `omakase` on PATH → the pinned release binary, downloaded once per
+machine, sha256-verified against digests baked into the repo, and cached at
+`~/.cache/omakase/bin/<version>/` (`XDG_CACHE_HOME` respected). `init.sh`, `status.sh`,
+and `mcp.sh` may trigger that download on first run; `remove.sh` never fetches but
+reuses an already-cached binary, keeping uninstall offline. The frozen v1 bash bodies
+under `bin/legacy/` remain only as the fallback when nothing above resolves — a
+platform the fetch doesn't cover, or no Go and no network; `mcp.sh` has no v1 body and
+exits with guidance instead.
+
 ### `init.sh [<owner/repo[#ref]> | --source <git-url|path>] [--cut-over] [--help]`
 
 Overlays `payload/` onto the current repo, records placed paths in `.git/info/exclude`,
@@ -68,7 +80,9 @@ gives every file its own row instead of one row per directory. Rendered
 natively by hosts that support MCP elicitation — Claude Code and Copilot CLI
 both do; plain text elsewhere. Nothing applies until the human submits the
 form. Register it from the target repo, e.g.:
-`claude mcp add omakase -- /path/to/omakase mcp`.
+`claude mcp add omakase -- /path/to/omakase mcp`. In a plugin install where no
+binary is on PATH, register the shim's stable path instead:
+`claude mcp add omakase -- /path/to/omakase-harness/bin/mcp.sh`.
 
 ### `remove.sh`
 
