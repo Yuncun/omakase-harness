@@ -11,6 +11,8 @@
 # file-by-file (full placed path per entry); entries appear deduped in placed.tsv row
 # order; two wiring entries follow that are excluded but never in placed.tsv —
 # lefthook.yml and .worktreeinclude, each only when the repo does not track it.
+# Every entry carries a leading '/' (root-anchored — an unanchored gitignore
+# pattern matches at any depth and would hide same-named nested paths).
 # Golden bytes are DERIVED in-run from the seeded inputs + placed.tsv (no committed
 # golden files) and compared with cmp/diff.
 #
@@ -52,8 +54,10 @@ derive_block(){ # $1=repo root, $2=placed.tsv, $3=out file
   git -C "$root" ls-files --error-unmatch -- .worktreeinclude >/dev/null 2>&1 || printf '%s\n' ".worktreeinclude" >> "$ent"
   {
     printf '%s\n' "$BEGIN_MARK"
+    # Every entry root-anchored with a leading "/" (unanchored gitignore
+    # patterns match at any depth and would hide same-named nested paths).
     while IFS= read -r p; do
-      if [ -d "$root/$p" ]; then printf '%s/\n' "$p"; else printf '%s\n' "$p"; fi
+      if [ -d "$root/$p" ]; then printf '/%s/\n' "$p"; else printf '/%s\n' "$p"; fi
     done < "$ent"
     printf '%s\n' "$END_MARK"
   } > "$out"
@@ -104,6 +108,7 @@ check_exclude_golden(){
     [ -n "$rel" ] || continue
     cov=0
     while IFS= read -r entl; do
+      entl="${entl#/}"   # entries are root-anchored; compare against bare rels
       case "$entl" in
         */) case "$rel" in "${entl%/}"/*) cov=1;; esac;;
         *)  [ "$rel" = "$entl" ] && cov=1;;
@@ -122,6 +127,7 @@ check_exclude_golden(){
   while IFS= read -r entl; do
     [ -n "$entl" ] || { orphans="$orphans(empty line)
 "; continue; }
+    entl="${entl#/}"   # entries are root-anchored; compare against bare rels
     case "$entl" in lefthook.yml|.worktreeinclude) continue;; esac
     base="${entl%/}"
     if [ "$base" != "$entl" ]; then

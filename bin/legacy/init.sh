@@ -557,9 +557,13 @@ mkdir -p "$(dirname "$EXCLUDE")"; touch "$EXCLUDE"
 awk -v b="$BEGIN" -v e="$END" '$0==b{s=1} !s{print} $0==e{s=0}' "$EXCLUDE" > "$EXCLUDE.tmp" && mv "$EXCLUDE.tmp" "$EXCLUDE"
 {
   echo "$BEGIN"
+  # Root-anchor every entry with a leading "/": an unanchored gitignore pattern
+  # matches at ANY depth, so ".omakase/" would also hide a project's own
+  # "payload/.omakase". Exclude block only — the .worktreeinclude block below
+  # keeps the raw prefixes (Claude Code's matcher, input unchanged).
   for p in "${prefixes[@]:-}"; do
     [ -z "$p" ] && continue
-    if [ -d "$ROOT/$p" ]; then echo "$p/"; else echo "$p"; fi
+    if [ -d "$ROOT/$p" ]; then echo "/$p/"; else echo "/$p"; fi
   done
   echo "$END"
 } >> "$EXCLUDE"
