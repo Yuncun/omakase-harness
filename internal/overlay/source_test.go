@@ -41,12 +41,16 @@ import (
 // srcTestEnv isolates a --source run from the real machine: XDG_CACHE_HOME + HOME
 // point at fresh temp dirs (so no cache ever lands in ~/.cache), and
 // OMAKASE_PAYLOAD is neutralized (the source arm must not read it; a stray
-// ambient value would skip a remembered-source read).
+// ambient value would skip a remembered-source read). OMAKASE_BASE_PAYLOAD is
+// neutralized too: a test that clears the seam without setting it would
+// otherwise absorb an ambient value from the dev/CI shell. Tests that need a
+// base value re-Setenv it AFTER this helper, so their value still wins.
 func srcTestEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("OMAKASE_PAYLOAD", "")
+	t.Setenv("OMAKASE_BASE_PAYLOAD", "")
 }
 
 // useBasePayloadDir creates the base-harness payload fixture and points the base

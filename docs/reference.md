@@ -98,6 +98,7 @@ installed harness, and `remove` always tears it down completely.
 | `LEFTHOOK=0` | skip gates for one git command. The overlay integrity check still runs; bypass it with git's own `--no-verify` |
 | `OMAKASE_CUTOVER_CONFIRM=1` | required to apply `init.sh --cut-over` |
 | `OMAKASE_PAYLOAD` | path to a payload tree to install, overriding the plugin payload. Lower precedence than `--source` |
+| `OMAKASE_BASE_PAYLOAD` | path to the base (plugin) payload tree, exported automatically by the bin/ shims. Needed when the binary resolves from the per-machine cache or PATH, away from a `payload/` sibling. A location hint only — unlike `OMAKASE_PAYLOAD` it never suppresses a remembered source |
 | `OMAKASE_LEFTHOOK_BASE_URL` | mirror for the lefthook binary download |
 | `OMAKASE_RELEASE_BASE_URL` | mirror for the omakase binary download, overriding the GitHub releases base URL |
 | `OMAKASE_BIN` | path to an omakase binary to use instead of dev rebuild, `dist/omakase`, PATH, or the fetched cache — must be executable, or resolution fails immediately |

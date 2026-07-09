@@ -173,10 +173,12 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 		// missing/unreadable PAYLOAD enumerates nothing here, matching find's
 		// silent (to the loop) failure on a bad start path; bash's find still
 		// writes its own diagnostic to the process's real stderr through the
-		// process substitution — an accepted, unreachable-in-production
-		// divergence (PAYLOAD defaults to the harness's own bundled payload/,
-		// which always exists; only a deliberately broken OMAKASE_PAYLOAD
-		// override reaches this).
+		// process substitution — an accepted divergence. Since v0.18.0 the
+		// empty-enumeration case is reachable in production, not just via a
+		// broken override: a fetched/PATH binary run WITHOUT the shim-exported
+		// OMAKASE_BASE_PAYLOAD has no bundled payload/ sibling to default to,
+		// and a broken OMAKASE_PAYLOAD or OMAKASE_BASE_PAYLOAD points PAYLOAD
+		// at a nonexistent tree.
 		rels, _ := walkPayload(payload)
 		for _, rel := range rels {
 			if delErr := DeletePlaced(root, rel, isTracked); delErr != nil {
