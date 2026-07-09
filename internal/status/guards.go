@@ -8,7 +8,6 @@
 package status
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -44,6 +43,12 @@ var (
 	reRun        = regexp.MustCompile(`^[[:space:]]*run:[[:space:]]*`)               // bin/status.sh:219
 	reGate       = regexp.MustCompile(`omakase-gate\.sh [A-Za-z0-9._-]+`)            // bin/status.sh:225
 	reGlob       = regexp.MustCompile(`--glob '[^']*'`)                              // bin/status.sh:235 (single-quoted --glob 'PATS')
+	// A YAML block-scalar indicator after `run:` — "|" or ">" with optional
+	// chomp/indent suffix. `lefthook dump` re-emits a block-scalar run: this
+	// way, with the command on the following deeper-indented line(s). No awk
+	// twin: the oracle rendered the bare indicator as the command and lost
+	// the ledger join (sanctioned forward divergence, see renderGuardsChart).
+	reBlockScalar = regexp.MustCompile(`^[|>][0-9+-]*[[:space:]]*$`)
 )
 
 // RenderGuards resolves lefthook, runs `<lefthook> dump` with cwd=root (stderr
@@ -153,10 +158,11 @@ func renderGuardsChart(w io.Writer, dump string, verds map[string]state.Verdict,
 	var curhook, jobname string
 	haverun := false
 
-	sc := bufio.NewScanner(strings.NewReader(dump))
-	sc.Buffer(make([]byte, 0, 64*1024), maxLineBuf)
-	for sc.Scan() {
-		line := sc.Text()
+	// Indexed loop (not a Scanner): the block-scalar rule below needs to
+	// consume the lines following a `run: |` as that run's continuation.
+	lines := strings.Split(dump, "\n")
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 
 		// Rule: hook header (col 0) -> curhook = text before the first ':'
 		// (bin/status.sh:215, `sub(/:.*/,"",curhook)`).
@@ -187,6 +193,31 @@ func renderGuardsChart(w io.Writer, dump string, verds map[string]state.Verdict,
 		}
 		haverun = true
 		runcmd := line[loc[1]:]
+
+		// Rule (Go only, no awk twin): a block-scalar run. The command lives
+		// on the following line(s), each indented deeper than the `run:` line;
+		// join them with single spaces into one logical command so the gate
+		// name, --cacheable/--glob description, and ledger join all work
+		// exactly as they do for a single-line run. Consuming the
+		// continuation lines here also keeps them from misparsing as rules.
+		if reBlockScalar.MatchString(runcmd) {
+			runIndent := len(line) - len(strings.TrimLeft(line, " "))
+			var parts []string
+			for i+1 < len(lines) {
+				next := strings.TrimRight(lines[i+1], " \t")
+				if next == "" { // blank inside/after the block: skip, keep looking
+					i++
+					continue
+				}
+				trimmed := strings.TrimLeft(next, " ")
+				if len(next)-len(trimmed) <= runIndent {
+					break
+				}
+				parts = append(parts, trimmed)
+				i++
+			}
+			runcmd = strings.Join(parts, " ")
+		}
 
 		// omakase-banner: cosmetic header box, not a guard (bin/status.sh:223).
 		if jobname == "omakase-banner" {
