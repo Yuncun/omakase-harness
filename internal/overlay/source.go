@@ -16,10 +16,16 @@
 // traversal walks with filepath.WalkDir (lexical) rather than find's readdir
 // order — Global Constraint 6, consistent with the place loop; (b) the merge
 // staging dir's random suffix differs from v1's mktemp XXXXXX (Global Constraint
-// 6, sanctioned) and never surfaces in output. The merge BASE payload resolves
-// exactly as v1's $SCRIPT_DIR/../payload does (binary-relative, NOT honoring
-// OMAKASE_PAYLOAD — see defaultPayload); the basePayloadOverride package var is
-// a production-inert TEST SEAM, not a behavioral change.
+// 6, sanctioned) and never surfaces in output. Since v0.18.0 the binary may run
+// APART from the plugin (a fetched release cache / a PATH install), so the merge
+// BASE payload's location is handed over by the shims in OMAKASE_BASE_PAYLOAD;
+// it resolves binary-relative ($SCRIPT_DIR/../payload) ONLY as a last resort
+// (see defaultPayload). It still never honors OMAKASE_PAYLOAD (that is the
+// plain-install override, not the merge base — bin/init.sh:181); the
+// basePayloadOverride package var is a production-inert TEST SEAM, not a
+// behavioral change. runSource also fails BEFORE any clone/fetch when the base
+// is absent — a sanctioned reorder of v1's post-clone cp failure (documented at
+// the site).
 package overlay
 
 import (
@@ -44,21 +50,29 @@ var reOwnerRepo = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-
 
 // basePayloadOverride is a TEST SEAM for the binary-relative base payload
 // (bin/init.sh:181/199's $SCRIPT_DIR/../payload). It is "" in production, so
-// defaultPayload falls back to the os.Executable-relative resolution; tests set
-// it because os.Executable points at the test binary, not a deployed omakase.
-// Guarded like the rest of the engine by the tests' non-parallel discipline
-// (they share cwd + env via t.Setenv already).
+// defaultPayload falls through to the OMAKASE_BASE_PAYLOAD env tier (the shim
+// handoff) or the os.Executable-relative resolution; tests set it because
+// os.Executable points at the test binary, not a deployed omakase. Guarded like
+// the rest of the engine by the tests' non-parallel discipline (they share cwd +
+// env via t.Setenv already).
 var basePayloadOverride string
 
-// defaultPayload resolves the base harness payload the way bin/init.sh:181,199
-// resolve $SCRIPT_DIR/../payload: from the running binary's own location
-// (dist/omakase => repo root => payload/, matching the shim's bin/../payload).
-// This is NOT the OMAKASE_PAYLOAD override — that is layered on by the plain
-// install path (bin/init.sh:199) and deliberately NOT by the merge base
-// (bin/init.sh:181); see this file's package comment, divergence (b).
+// defaultPayload resolves the base harness payload. Precedence:
+// basePayloadOverride (TEST SEAM, "" in production) > OMAKASE_BASE_PAYLOAD >
+// the binary-relative $SCRIPT_DIR/../payload (bin/init.sh:181,199: dist/omakase
+// => repo root => payload/). Since v0.18.0 the binary may run apart from the
+// plugin (fetched cache / PATH), where the binary-relative path no longer finds
+// payload/, so the shims export the plugin's own bin/../payload in
+// OMAKASE_BASE_PAYLOAD and it takes precedence; the binary-relative resolution
+// stays as a last resort. This is NOT the OMAKASE_PAYLOAD override — that is
+// layered on by the plain install path (bin/init.sh:199) and deliberately NOT by
+// the merge base (bin/init.sh:181).
 func defaultPayload() string {
 	if basePayloadOverride != "" {
 		return basePayloadOverride
+	}
+	if v := os.Getenv("OMAKASE_BASE_PAYLOAD"); v != "" {
+		return v
 	}
 	if exe, err := os.Executable(); err == nil {
 		return filepath.Join(filepath.Dir(filepath.Dir(exe)), "payload")
@@ -128,6 +142,18 @@ type sourceResult struct {
 // caller MUST `defer os.RemoveAll(result.merged)` — v1's EXIT trap
 // (bin/init.sh:63-68) removes the staging dir on EVERY subsequent exit path.
 func runSource(source, sourceRef, basePayload string, stdout, stderr io.Writer) (sourceResult, int) {
+	// Fail BEFORE any clone/fetch when the merge base is absent — a sanctioned
+	// reorder of v1, which only discovered this at the post-clone cp
+	// (bin/init.sh:184). Since v0.18.0 the binary can run apart from the plugin
+	// (fetched cache / PATH), so the shims hand the base location over in
+	// OMAKASE_BASE_PAYLOAD (see defaultPayload); a missing base means that
+	// handoff never happened, and failing before touching the network is the
+	// friendlier order. The message names the path so a bad handoff is diagnosable.
+	if info, err := os.Stat(basePayload); err != nil || !info.IsDir() {
+		fmt.Fprintf(stderr, "omakase: base payload not found at %s — set OMAKASE_BASE_PAYLOAD or run omakase via the plugin's bin/ shims\n", basePayload)
+		return sourceResult{}, 1
+	}
+
 	payloadDir, recommends, code := fetchSource(source, sourceRef, stdout, stderr)
 	if code != 0 {
 		return sourceResult{}, code // nothing staged yet — matches v1's empty MERGED
@@ -149,9 +175,11 @@ func runSource(source, sourceRef, basePayload string, stdout, stderr io.Writer) 
 	}
 
 	// Copy the BASE payload tree first (cp -RP "$base/." "$MERGED/", bin/init.sh:184).
+	// The base's existence was already checked up top; naming it here still covers a
+	// genuine copy error (permissions, a base that disappeared mid-run).
 	if err := copyTree(basePayload, merged); err != nil {
 		os.RemoveAll(merged)
-		fmt.Fprintln(stderr, "omakase: failed to copy the base payload into the merge staging dir")
+		fmt.Fprintf(stderr, "omakase: failed to copy the base payload (%s) into the merge staging dir\n", basePayload)
 		return sourceResult{}, 1
 	}
 

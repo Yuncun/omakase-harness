@@ -37,8 +37,9 @@ import (
 func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	// ---- payload default/normalize (remove.sh:8-9) ----
 	// The identical rule to init's plain-install default (Task 4):
-	// OMAKASE_PAYLOAD overrides; otherwise the binary-relative ../payload
-	// default. Unlike init, remove does NOT validate up front that the
+	// OMAKASE_PAYLOAD overrides; otherwise defaultPayload — OMAKASE_BASE_PAYLOAD
+	// (the shim handoff), else the binary-relative ../payload. Unlike init,
+	// remove does NOT validate up front that the
 	// payload dir exists — it is read only in the pre-0.10 enumeration
 	// fallback below, and a missing dir there simply enumerates nothing (see
 	// that step's comment).

@@ -990,6 +990,34 @@ func TestOmakasePayloadOverridesRememberedSource(t *testing.T) {
 	}
 }
 
+// TestPlainInstallPayloadEnvPrecedence: on a plain (no --source) install,
+// OMAKASE_PAYLOAD wins over OMAKASE_BASE_PAYLOAD — the base-payload env is the
+// MERGE base only (Global Constraint 1), never the plain payload, so it must not
+// leak into the plain path even when set. Two distinct fixtures prove which one
+// is placed.
+func TestPlainInstallPayloadEnvPrecedence(t *testing.T) {
+	dir, _ := initRepo(t)
+	stubLefthook(t)
+	clearBasePayloadOverride(t)
+
+	payloadDir := t.TempDir()
+	writeFile(t, filepath.Join(payloadDir, ".omakase", "gates", "chosen.sh"), "chosen\n")
+	t.Setenv("OMAKASE_PAYLOAD", payloadDir)
+
+	baseDir := t.TempDir()
+	writeFile(t, filepath.Join(baseDir, ".omakase", "gates", "ignored.sh"), "ignored\n")
+	t.Setenv("OMAKASE_BASE_PAYLOAD", baseDir)
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "OMAKASE_PAYLOAD file placed", readFileT(t, filepath.Join(dir, ".omakase", "gates", "chosen.sh")), "chosen\n")
+	if _, err := os.Stat(filepath.Join(dir, ".omakase", "gates", "ignored.sh")); err == nil {
+		t.Error("OMAKASE_BASE_PAYLOAD file placed on a plain install — the base-payload env leaked into the plain path")
+	}
+}
+
 // TestUntrackedHuskyExemptWhenPayloadShips: an UNTRACKED .husky matching a
 // payload that ships one is omakase's own — exempt, so init proceeds
 // (bin/init.sh:313 elif requires the payload NOT ship .husky to flag it).
