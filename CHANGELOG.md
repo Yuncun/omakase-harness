@@ -25,6 +25,11 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   bare `|` and lost the verdict join).
 
 ### Fixed
+- **A fetched / PATH-installed release binary can locate the base payload again.** v0.18.0's
+  fetched/PATH-installed release binary could not locate the plugin's base payload — `init
+  --source` (and bare init) failed with `failed to copy the base payload into the merge staging
+  dir` (#70). The bin/ shims now export `OMAKASE_BASE_PAYLOAD` and the binary honors it before its
+  binary-relative default; a missing base payload now fails fast, naming the path it tried.
 - **`.git/info/exclude` entries are root-anchored** (`/.omakase/`, not `.omakase/`).
   Unanchored gitignore patterns match at any depth, so the overlay was also hiding a
   project's own same-named nested paths (e.g. `payload/.omakase` in a harness repo).

@@ -21,6 +21,11 @@
 #   O9. tier 2's go build failure aborts the shim (exit nonzero, stale
 #       dist/omakase never runs) instead of falling through under the
 #       if-condition's set -e suppression; a succeeding build still execs
+#   O10. issue #70 regression: the binary sits ALONE in the cache (a fetch /
+#        PATH install, no payload/ sibling); shim -> cached binary -> init
+#        --source finds the base merge payload only via the shim-exported
+#        OMAKASE_BASE_PAYLOAD. Its negative control runs the cached binary
+#        DIRECTLY with no such export and proves it fails fast, naming the path.
 # HOME and XDG_CACHE_HOME point at fixture dirs so nothing touches the real machine.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -293,6 +298,87 @@ OUTFILE2="$TMP/o9b.out"
   bash "$DEVREPO/bin/status.sh" >"$OUTFILE2" 2>&1 )
 rc2=$?
 [ "$rc2" -eq 0 ] && grep -q 'STALE-BINARY-RAN status' "$OUTFILE2" && pass "a succeeding go build still lets the shim exec dist/omakase" || fail "shim did not run dist/omakase after a succeeding build (rc=$rc2, out=$(cat "$OUTFILE2"))"
+
+# ---------- Scenario O10: fetched-binary init works end-to-end (issue #70 regression) ----------
+echo "== Scenario O10: a cache-resident release binary drives init end-to-end (issue #70) =="
+# The issue's exact shape: the omakase binary sits ALONE in the per-machine cache
+# (the fetch / PATH-install case, no payload/ sibling), so the --source merge base
+# is NOT discoverable binary-relative. resolve_omakase exports the plugin's own
+# bin/../payload in OMAKASE_BASE_PAYLOAD (fix #70) and the binary honors it. No
+# network anywhere: a real binary drives a LOCAL source clone.
+if ! command -v go >/dev/null 2>&1; then
+  echo "  SKIP: go not on PATH — O10 needs a real binary built from source"
+else
+  O10="$TMP/o10"; mkdir -p "$O10"
+  # Build the real binary ONCE for the whole scenario — every leg shares it.
+  if ! ( cd "$HERE/.." && go build -o "$O10/omakase-built" ./cmd/omakase ) 2>"$O10/build.err"; then
+    fail "O10 could not build the omakase binary ($(cat "$O10/build.err"))"
+  else
+    # Stub lefthook via LEFTHOOK_BIN (a no-op `install`): init's only lefthook call
+    # is `lefthook install`, O10 fires no commit, and the host's real lefthook may
+    # be an npm/node wrapper needing `node` (absent from CLEANPATH). Stubbing the
+    # external hook installer keeps O10 offline + node-free while still exercising
+    # the real omakase binary's WHOLE init flow — the base-payload handoff under
+    # test. Same idiom as O5/O6 stubbing the omakase binary.
+    O10LEFT="$O10/lefthook-stub"; printf '#!/bin/sh\nexit 0\n' > "$O10LEFT"; chmod +x "$O10LEFT"
+    # Simulated plugin clone: bin/ (+lib +legacy) and payload/, NO go.mod / dist/,
+    # so resolution tiers 2-3 are unreachable and it falls to the cached binary
+    # (tier 5) — the same trick as O5.
+    mkdir -p "$O10/plugin"
+    cp -R "$HERE/../bin" "$O10/plugin/bin"
+    cp -R "$HERE/../payload" "$O10/plugin/payload"
+    # Fake cache holding ONLY the binary at the tier-5 path — the fetched/PATH
+    # install shape (no payload/ sibling), fetched without any download.
+    XDG="$O10/xdg"
+    O10CACHE="$XDG/omakase/bin/$VER"; mkdir -p "$O10CACHE"
+    cp "$O10/omakase-built" "$O10CACHE/omakase"; chmod +x "$O10CACHE/omakase"
+    O10BIN="$O10CACHE/omakase"
+    O10HOME="$O10/home"; mkdir -p "$O10HOME"
+
+    # Local fixture source repo: omakase.manifest + one marker payload file, committed.
+    O10SRC="$O10/src"; mkdir -p "$O10SRC/payload/.omakase"
+    ( cd "$O10SRC" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
+    printf 'o10-source-marker\n' > "$O10SRC/payload/.omakase/O10-SOURCE-MARKER"
+    printf 'name: o10-fixture\nversion: 0.1.0\n' > "$O10SRC/omakase.manifest"
+    ( cd "$O10SRC" && git add -A && git commit -q -m fixture )
+    O10SRC="$(cd "$O10SRC" && pwd)"   # absolutize (macOS TMPDIR trails a slash), as init does
+
+    # ---- leg 7: THE PROBE — shim -> cached binary -> init --source, offline ----
+    # git must be reachable through CLEANPATH (as every scenario manages it); HOME
+    # gives git a config dir; LEFTHOOK_BIN keeps the hook install offline.
+    O10TGT="$O10/target"; scratch_repo "$O10TGT"
+    O10OUT="$O10/probe.out"; O10ERR="$O10/probe.err"
+    ( cd "$O10TGT" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" LEFTHOOK_BIN="$O10LEFT" \
+      bash "$O10/plugin/bin/init.sh" --source "$O10SRC" >"$O10OUT" 2>"$O10ERR" )
+    rc=$?
+    [ "$rc" -eq 0 ] && pass "shim -> cached binary -> init --source exits 0 (fetched-binary init works)" || fail "probe exited $rc ($(cat "$O10ERR"))"
+    grep -q 'cached at' "$O10OUT" && pass "the source was cached + injected (the full --source flow ran)" || fail "no 'cached at' in probe stdout ($(cat "$O10OUT"))"
+    [ -x "$O10TGT/.omakase/bin/omakase-gate.sh" ] && pass "base payload file placed (OMAKASE_BASE_PAYLOAD located the merge base)" || fail "base gate primitive missing — base payload not located"
+    [ -f "$O10TGT/.omakase/O10-SOURCE-MARKER" ] && pass "source marker placed (source delta layered over the base)" || fail "source marker missing"
+
+    # ---- leg 8: negative control — the cached binary DIRECTLY, no OMAKASE_BASE_PAYLOAD ----
+    # Proves the leg-7 assertions bite: with no shim to export OMAKASE_BASE_PAYLOAD,
+    # defaultPayload falls to the binary-relative ../payload — a non-existent
+    # <cache>/bin/payload — and the merge base is not found. This is the pre-#70
+    # failure mode, now a clear fail-fast BEFORE any clone. Same env as leg 7 minus
+    # the shim, so the ONLY difference is the absent OMAKASE_BASE_PAYLOAD export.
+    O10NCERR="$O10/negctl.err"
+    ( cd "$O10TGT" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" LEFTHOOK_BIN="$O10LEFT" \
+      "$O10BIN" init --source "$O10SRC" >/dev/null 2>"$O10NCERR" )
+    rc=$?
+    [ "$rc" -eq 1 ] && pass "cached binary run WITHOUT OMAKASE_BASE_PAYLOAD exits 1 (the assertion bites)" || fail "negative control exited $rc, expected 1 ($(cat "$O10NCERR"))"
+    grep -q 'base payload not found at' "$O10NCERR" && pass "negative control fails fast, naming the base payload path it tried" || fail "no 'base payload not found at' on stderr ($(cat "$O10NCERR"))"
+
+    # ---- leg 9: bare init — no --source — the shim-exported var feeds the plain default too ----
+    O10TGT2="$O10/target2"; scratch_repo "$O10TGT2"
+    O10OUT2="$O10/bare.out"; O10ERR2="$O10/bare.err"
+    ( cd "$O10TGT2" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" LEFTHOOK_BIN="$O10LEFT" \
+      bash "$O10/plugin/bin/init.sh" >"$O10OUT2" 2>"$O10ERR2" )
+    rc=$?
+    [ "$rc" -eq 0 ] && pass "bare init (no --source, no remembered source) exits 0 via the cached binary" || fail "bare init exited $rc ($(cat "$O10ERR2"))"
+    [ -x "$O10TGT2/.omakase/bin/omakase-gate.sh" ] && pass "bare install placed the base payload (OMAKASE_BASE_PAYLOAD feeds the plain default too)" || fail "bare install missing base machinery"
+  fi
+fi
 
 rm -rf "$TMP"
 echo ""
