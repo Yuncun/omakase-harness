@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"runtime/debug"
 	"testing"
 )
 
@@ -110,10 +111,12 @@ func TestPersonalVerbDeregistered(t *testing.T) {
 }
 
 // TestRunVersion pins the top-level version flag: `omakase --version` prints
-// the build-metadata line to stdout and exits 0. On a plain `go build` (no
-// -ldflags) the injected vars keep their defaults, so the line is exactly the
-// dev string; release builds overwrite version/commit/date via
-// .goreleaser.yaml's ldflags. `--version` is deliberately the ONLY spelling:
+// the build-metadata line to stdout and exits 0. Test binaries carry neither
+// ldflags nor VCS/module stamping, so resolveVersion passes the defaults
+// through and the line is exactly the dev string; release builds overwrite
+// version/commit/date via .goreleaser.yaml's ldflags, and plain builds
+// backfill from build info (TestResolveVersion covers both). `--version` is
+// deliberately the ONLY spelling:
 // "-v" and a bare "version" must keep taking the unknown-command path, so "-v"
 // stays free for a future verbose flag and "version" never shadows a future
 // verb — pinned below alongside the flag itself.
@@ -143,6 +146,45 @@ func TestRunVersion(t *testing.T) {
 			}
 			if got, want := stderr.String(), "omakase: unknown command \""+arg+"\"\n"; got != want {
 				t.Errorf("stderr = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestResolveVersion pins the --version fallback for builds without ldflags:
+// ldflags-injected values pass through untouched; a "dev" build backfills the
+// go-install module version (leading "v" stripped, "(devel)" ignored) and the
+// VCS revision (truncated to 12, "+dirty" on a modified tree) / time.
+func TestResolveVersion(t *testing.T) {
+	vcsBI := &debug.BuildInfo{
+		Main: debug.Module{Version: "(devel)"},
+		Settings: []debug.BuildSetting{
+			{Key: "vcs.revision", Value: "0123456789abcdef0123"},
+			{Key: "vcs.time", Value: "2026-07-08T00:00:00Z"},
+			{Key: "vcs.modified", Value: "true"},
+		},
+	}
+	cases := []struct {
+		name       string
+		v, c, d    string
+		bi         *debug.BuildInfo
+		wv, wc, wd string
+	}{
+		{"ldflags win untouched", "0.18.0", "abc1234", "2026-07-08", vcsBI,
+			"0.18.0", "abc1234", "2026-07-08"},
+		{"nil build info keeps defaults", "dev", "none", "unknown", nil,
+			"dev", "none", "unknown"},
+		{"go-install stamps module version", "dev", "none", "unknown",
+			&debug.BuildInfo{Main: debug.Module{Version: "v0.18.0"}},
+			"0.18.0", "none", "unknown"},
+		{"checkout build backfills vcs revision+time, dirty marked", "dev", "none", "unknown", vcsBI,
+			"dev", "0123456789ab+dirty", "2026-07-08T00:00:00Z"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gv, gc, gd := resolveVersion(tc.v, tc.c, tc.d, tc.bi)
+			if gv != tc.wv || gc != tc.wc || gd != tc.wd {
+				t.Errorf("resolveVersion = (%q, %q, %q), want (%q, %q, %q)", gv, gc, gd, tc.wv, tc.wc, tc.wd)
 			}
 		})
 	}
