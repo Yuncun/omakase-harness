@@ -15,6 +15,28 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 - **`bin/mcp.sh`** — a shim for `omakase mcp` with a stable path, so `claude mcp add
   omakase -- /path/to/omakase-harness/bin/mcp.sh` works in plugin installs where no
   binary is on PATH.
+- **`omakase --version` identifies plain `go build`s** — without release ldflags it
+  now backfills the module version Go stamps on `go install …@vX.Y.Z` and the VCS
+  revision/time (with `+dirty`) a checkout build carries, instead of reporting
+  `dev (commit none, built unknown)`.
+- **`omakase status` reads YAML block-scalar wiring** — a gate wired with
+  `run: |` / `run: >` now resolves its gate name, cached/scope description, and
+  ledger verdict exactly like a single-line `run:` (previously the chart showed a
+  bare `|` and lost the verdict join).
+
+### Fixed
+- **`.git/info/exclude` entries are root-anchored** (`/.omakase/`, not `.omakase/`).
+  Unanchored gitignore patterns match at any depth, so the overlay was also hiding a
+  project's own same-named nested paths (e.g. `payload/.omakase` in a harness repo).
+  A bare re-`init` rewrites the block with anchored entries.
+- **Offline first runs fail fast.** Both binary fetch helpers (omakase, lefthook)
+  bound the connection phase — `curl --connect-timeout 5` / `wget -T 15` — so a
+  machine that can't reach GitHub falls back in seconds instead of hanging on the
+  OS connect timeout.
+
+### Removed
+- **`tools/build.sh`** (and its test): the dist-bundle build it performed has had no
+  consumer since custom harnesses moved to source installs (`omakase init owner/repo`).
 
 ## [0.18.0] — 2026-07-08
 

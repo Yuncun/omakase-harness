@@ -65,6 +65,43 @@ const bannerOnlyDump = `pre-commit:
       run: bash .omakase/bin/omakase-banner.sh pre-commit
 `
 
+// A dump with block-scalar run lines, shaped exactly as `lefthook dump`
+// re-emits a folded (`run: >`) or literal (`run: |`) wiring line: the
+// indicator on the run: line, the command on deeper-indented line(s). The
+// gate name, --cacheable/--glob description, and ledger join must all work
+// as if the run were single-line; a multi-line literal joins with spaces.
+const blockScalarDump = `pre-push:
+  jobs:
+    - name: visual-verify
+      run: |
+        bash .omakase/bin/omakase-gate.sh visual-verify --cacheable --glob 'apps/web/*' --step 'echo BLOCKED; exit 1'
+    - name: multiline
+      run: |
+        echo one
+        echo two
+    - name: after
+      run: bash .omakase/bin/omakase-gate.sh after --step 'true'
+`
+
+// TestGuardsChartBlockScalar: the visual-verify gate resolves its name, its
+// cached+scope description, and its ledger verdict through the block scalar;
+// the multi-line non-gate job renders its joined command in ENFORCES; the
+// following single-line job still parses (continuation consumption does not
+// swallow it).
+func TestGuardsChartBlockScalar(t *testing.T) {
+	verds := verdictsFrom(t, "1999999700\tvisual-verify\tpass\tabc123\n")
+	var buf bytes.Buffer
+	renderGuardsChart(&buf, blockScalarDump, verds, 2000000000, true)
+	want := "| Run when | Guard | Enforces | Last verdict |\n" +
+		"| --- | --- | --- | --- |\n" +
+		"| `pre-push` | visual-verify | cached; scope: apps/web/* | ✓ pass - 5m ago |\n" +
+		"| `pre-push` | multiline | echo one echo two | — |\n" +
+		"| `pre-push` | after | runs every commit | - not yet run |\n"
+	if got := buf.String(); got != want {
+		t.Errorf("guards chart (block scalar) mismatch\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
 // verdictsFrom writes ledger bytes to a temp ledger.tsv and reads them back the way
 // production does (state.LatestVerdicts), so the chart tests join verdicts through the
 // exact same frozen-format reader the binary uses.

@@ -243,7 +243,7 @@ echo "$OUT" | grep -qiE 'No such file|not found|: 127' && { fail "commit hit a m
 ( cd "$REPO6" && bash "$REMOVE" ) >/dev/null 2>&1
 
 # ---------- Scenario S7: wiring guard — a source referencing an unshipped script is refused ----------
-# Defense mirroring tools/build.sh's wiring guard: after the base+source merge, every
+# The wiring guard: after the base+source merge, every
 # .omakase/*.sh the merged wiring references must exist, else the harness would die at
 # commit with exit 127. Refuse at init, fail-closed, place nothing.
 echo "== Scenario S7: a source wiring a script neither it nor the base harness ships is refused =="

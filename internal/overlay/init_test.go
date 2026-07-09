@@ -140,9 +140,12 @@ func TestFreshInit(t *testing.T) {
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "")
 
-	// exclude = seeded lines + the derived block (single owned top dir + wiring).
+	// exclude = seeded lines + the derived block (single owned top dir + wiring),
+	// every entry root-anchored with a leading "/" — an unanchored ".omakase/"
+	// is a gitignore pattern that matches at ANY depth and would hide a
+	// project's own "payload/.omakase" too.
 	wantExclude := "scratch/\n*.tmp\n" +
-		"# >>> omakase-harness >>>\n.omakase/\nlefthook.yml\n.worktreeinclude\n# <<< omakase-harness <<<\n"
+		"# >>> omakase-harness >>>\n/.omakase/\n/lefthook.yml\n/.worktreeinclude\n# <<< omakase-harness <<<\n"
 	eq(t, "exclude", readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude")), wantExclude)
 
 	// .worktreeinclude = same block MINUS .worktreeinclude itself, fresh file.
@@ -831,14 +834,15 @@ func TestMultiFilePlacedTsv(t *testing.T) {
 	eq(t, "multi placed.tsv", readFileT(t, filepath.Join(repo.OMK, "placed.tsv")), wantPlaced)
 
 	// exclude block: .claude owned (wholesale), .github shared (file-by-file),
-	// .omakase owned, AGENTS.md file, then wiring entries — all in walk order.
+	// .omakase owned, AGENTS.md file, then wiring entries — all in walk order,
+	// every entry root-anchored with a leading "/".
 	wantBlock := "# >>> omakase-harness >>>\n" +
-		".claude/\n" +
-		".github/skills/foo/SKILL.md\n" +
-		".omakase/\n" +
-		"AGENTS.md\n" +
-		"lefthook.yml\n" +
-		".worktreeinclude\n" +
+		"/.claude/\n" +
+		"/.github/skills/foo/SKILL.md\n" +
+		"/.omakase/\n" +
+		"/AGENTS.md\n" +
+		"/lefthook.yml\n" +
+		"/.worktreeinclude\n" +
 		"# <<< omakase-harness <<<\n"
 	excl := readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude"))
 	if !strings.Contains(excl, wantBlock) {
@@ -1149,10 +1153,11 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 	eq(t, "stdout", stdout.String(), wantOut)
 
 	// exclude block: DOES list .worktreeinclude (v1 has no skip there).
+	// Entries are root-anchored (leading "/") in the exclude block only.
 	wantExcludeBlock := "# >>> omakase-harness >>>\n" +
-		".omakase/\n" +
-		".worktreeinclude\n" +
-		"lefthook.yml\n" +
+		"/.omakase/\n" +
+		"/.worktreeinclude\n" +
+		"/lefthook.yml\n" +
 		"# <<< omakase-harness <<<\n"
 	excl := readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude"))
 	if !strings.Contains(excl, wantExcludeBlock) {

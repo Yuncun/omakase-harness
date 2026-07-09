@@ -87,10 +87,14 @@ omakase_download() {  # $1 = url-or-path, $2 = dest
     file://*) src="${url#file://}"; [ -f "$src" ] && { cp "$src" "$dest"; return $?; }; return 1;;
     /*)       [ -f "$url" ] && { cp "$url" "$dest"; return $?; }; return 1;;
   esac
+  # --connect-timeout bounds only the CONNECTION phase: an offline or
+  # black-holed first run fails in ~5s instead of hanging on the OS connect
+  # timeout, while a slow-but-connected download still runs to completion.
+  # wget -T is the portable near-equivalent (per-phase timeout, busybox-safe).
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" -o "$dest"
+    curl -fsSL --connect-timeout 5 "$url" -o "$dest"
   elif command -v wget >/dev/null 2>&1; then
-    wget -q -O "$dest" "$url"
+    wget -q -T 15 -O "$dest" "$url"
   else
     return 1
   fi

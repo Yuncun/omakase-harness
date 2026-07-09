@@ -8,9 +8,8 @@ install one from a URL or path with `--source`, it also needs an `omakase.manife
 A `--source` install layers the omakase **base harness's payload** under your `payload/` (your
 delta wins on overlap), so you ship only your delta and **rely on base machinery without keeping
 your own copy**: the banner and the `omakase-gate.sh` primitive are provided by the base harness. Wire the
-primitive into `payload/lefthook-local.yml` and ship only your own gates. (This is
-the same base+delta merge `tools/build.sh` bakes into a plugin bundle, performed at install
-time instead.) If your wiring references a `.omakase/*.sh` neither you nor the base harness ships,
+primitive into `payload/lefthook-local.yml` and ship only your own gates. If your
+wiring references a `.omakase/*.sh` neither you nor the base harness ships,
 `init` refuses and places nothing — so a typo surfaces at install, not as an exit-127 on commit.
 
 Start from the base harness repo or an existing custom harness, edit `payload/`, and publish. The

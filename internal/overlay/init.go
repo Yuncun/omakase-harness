@@ -554,8 +554,18 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// picks — writing the already-appended content through the same
 	// tmp+rename machinery lands on the identical mode bash's two-step
 	// dance does.
+	// Exclude entries are root-anchored with a leading "/": a gitignore pattern
+	// without one matches at ANY depth, so an unanchored ".omakase/" would also
+	// hide a project's own "payload/.omakase" (it did — in this very repo). The
+	// anchoring is applied only here, at the exclude write; the shared
+	// `prefixes` slice stays unanchored because the .worktreeinclude block
+	// below feeds Claude Code's own matcher, whose input we keep unchanged.
+	anchored := make([]string, len(prefixes))
+	for i, p := range prefixes {
+		anchored[i] = "/" + p
+	}
 	excludeContent, _ := os.ReadFile(exclude)
-	excludeOut := textblock.AppendBlock(textblock.Strip(excludeContent, begin, end), begin, prefixes, end)
+	excludeOut := textblock.AppendBlock(textblock.Strip(excludeContent, begin, end), begin, anchored, end)
 	if err := rewriteFile(exclude, excludeOut); err != nil {
 		return 1
 	}

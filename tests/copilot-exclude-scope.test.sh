@@ -46,10 +46,17 @@ if ( cd "$REPO" && git check-ignore -q .github/scratch.txt ); then
   fail "unrelated .github/scratch.txt was hidden (whole .github/ excluded)"
 else pass "unrelated .github/ file stays visible to git"; fi
 
-# 3. the exclude block names the exact file, not the bare dir
-if ( cd "$REPO" && grep -qx '\.github/skills/demo/SKILL\.md' .git/info/exclude ); then
+# 3. a NESTED same-named path is NOT hidden — root-anchoring fixes this: an
+# unanchored ".omakase/" matched a project's own payload/.omakase at any depth
+( cd "$REPO" && mkdir -p payload/.omakase && printf 'y\n' > payload/.omakase/keep.txt )
+if ( cd "$REPO" && git check-ignore -q payload/.omakase/keep.txt ); then
+  fail "nested payload/.omakase was hidden (exclude entries not root-anchored)"
+else pass "nested same-named payload/.omakase stays visible to git"; fi
+
+# 4. the exclude block names the exact file (root-anchored), not the bare dir
+if ( cd "$REPO" && grep -qx '/\.github/skills/demo/SKILL\.md' .git/info/exclude ); then
   pass "exclude lists the exact file"; else fail "exclude does not list the exact file"; fi
-if ( cd "$REPO" && grep -qx '\.github/' .git/info/exclude ); then
+if ( cd "$REPO" && grep -qx -e '\.github/' -e '/\.github/' .git/info/exclude ); then
   fail "exclude over-broadly lists bare .github/"; else pass "exclude has no bare .github/"; fi
 
 [ "$FAILED" -eq 0 ] && echo "copilot-exclude-scope.test.sh: ALL PASS" || echo "copilot-exclude-scope.test.sh: FAILURES"

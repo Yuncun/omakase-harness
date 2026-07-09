@@ -29,8 +29,7 @@ the payload no longer ships, unless it was edited locally.
   `omakase.manifest`) at a time. No harness installed yet: the omakase base harness's
   payload is layered UNDER the custom harness's payload (base machinery underneath, the
   custom harness's delta winning on overlap), so a custom harness ships only its delta
-  and relies on base machinery without keeping its own copy — the same base+delta merge
-  `tools/build.sh` bakes into a bundle, done at install time. This source names the
+  and relies on base machinery without keeping its own copy. This source names the
   SAME harness already installed: repairs it — re-fetches the source's ref and
   re-records whatever commit currently resolves; if the fetch fails (offline) it falls
   back to the last good cached copy instead of failing the repair. This source names a
