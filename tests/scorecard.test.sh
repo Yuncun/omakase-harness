@@ -30,6 +30,17 @@ ledger_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)/o
 has_run(){ awk -F'\t' -v g="$2" -v v="$3" '$2==g && $3==v{f=1} END{exit f?0:1}' "$1"; }
 export PATH="$(dirname "$LEFTHOOK"):$PATH"
 
+# Freeze the Go module + build caches to their real locations: scenarios pin $HOME
+# to fixture dirs to control the personal inventory, which also relocates the
+# default $HOME/go caches — without this the shim's `go build` re-downloads the
+# whole module tree under each fixture HOME (cold cache, "go: downloading …" noise,
+# and read-only module-cache residue rm -rf can't clear). Idiom inherited from the
+# retired status-parity suite.
+if command -v go >/dev/null 2>&1; then
+  export GOMODCACHE="$(go env GOMODCACHE)"
+  export GOCACHE="$(go env GOCACHE)"
+fi
+
 # ---------- Scenario C: the canary ----------
 echo "== Scenario C: omakase-statusline canary =="
 REPO="$TMP/repoC"; newrepo "$REPO"
@@ -229,6 +240,67 @@ HOMEE="$TMP/homeEmpty"; mkdir -p "$HOMEE"
 OUT="$( cd "$REPO" && HOME="$HOMEE" bash "$SHOW" 2>&1 )"
 echo "$OUT" | grep -i -A1 'not installed by omakase' | grep -q '(none)' && pass "empty Global group shows (none)" || fail "empty Global group not (none) ($OUT)"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
+
+# ---------- Scenario I2: placed.tsv present but EVERY row is skipped (.omakase/* machinery) ----------
+# Ported from the retired status-parity suite (its P11). The provenance ledger exists and
+# is non-empty, yet the INJECTED inventory must render (none): the render loop drops
+# omakase's own .omakase/* machinery rows. A bare substring check for "(none)" would be
+# satisfied by the Committed or Global section (both also empty in this fixture), so the
+# check anchors to the line right AFTER the Injected header, per mode ("    (none)" term /
+# "- _(none)_" md). Hashes are a valid 64-hex shape but never read — machinery rows are
+# skipped before any drift check. The hand-built install carries no lefthook.yml, so no
+# real gate run is needed.
+echo "== Scenario I2: all-machinery placed.tsv renders Injected (none) =="
+inj_empty(){ # $1 = captured output, $2 = mode (term|md), $3 = label
+  local hdr empty
+  if [ "$2" = md ]; then hdr='^### Injected '; empty='- _(none)_'
+  else                    hdr='^INJECTED ';     empty='    (none)'; fi
+  if echo "$1" | awk -v hdr="$hdr" -v empty="$empty" \
+      '$0 ~ hdr { g = NR } g && NR == g + 1 && $0 == empty { ok = 1 } END { exit ok ? 0 : 1 }'
+  then pass "$3: Injected group renders empty (line after the header is '$empty')"
+  else fail "$3: Injected group is NOT empty right after its header"; fi
+}
+REPOI2="$TMP/repoI2"; newrepo "$REPOI2"
+HOMEI2="$TMP/homeI2"; rm -rf "$HOMEI2"; mkdir -p "$HOMEI2"
+COMMONI2="$(cd "$REPOI2" && cd "$(git rev-parse --git-common-dir)" && pwd)"; mkdir -p "$COMMONI2/omakase"
+{ printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/bin/omakase-gate.sh' guard payload 0000000000000000000000000000000000000000000000000000000000000000 1
+  printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/gates/example.sh'     guard payload 1111111111111111111111111111111111111111111111111111111111111111 1
+} > "$COMMONI2/omakase/placed.tsv"
+OUT="$( cd "$REPOI2" && HOME="$HOMEI2" bash "$SHOW" 2>&1 )"; RC=$?
+[ "$RC" -eq 0 ] && pass "I2: status exits 0 on the all-machinery install" || fail "I2: status exited $RC"
+inj_empty "$OUT" term "I2 [term]"
+OUT="$( cd "$REPOI2" && HOME="$HOMEI2" bash "$SHOW" --markdown 2>&1 )"; RC=$?
+[ "$RC" -eq 0 ] && pass "I2: --markdown exits 0 on the all-machinery install" || fail "I2: --markdown exited $RC"
+inj_empty "$OUT" md "I2 [md]"
+
+# ---------- Scenario I3: an INJECTED symlink row that is ALSO drifted ----------
+# Ported from the retired status-parity suite (its P12). Drift for a symlink is a change
+# to the LINK TARGET STRING, not the target's content: the ledger records the sha256 of
+# the ORIGINAL readlink string; repointing the symlink at a DIFFERENT path must render
+# the row as an arrow row ("->" term / "→" md) carrying the DRIFTED marker. The symlink
+# is left untracked (drift returns false for a tracked path) and dangles on purpose
+# (drift never dereferences it).
+echo "== Scenario I3: drifted symlink row renders arrow + DRIFTED =="
+if command -v shasum >/dev/null 2>&1; then i3sha(){ printf '%s' "$1" | shasum -a 256 | awk '{print $1}'; }
+elif command -v sha256sum >/dev/null 2>&1; then i3sha(){ printf '%s' "$1" | sha256sum | awk '{print $1}'; }
+else i3sha(){ echo nodigest; }; fi
+if [ "$(i3sha x)" = nodigest ]; then
+  echo "  SKIP: no shasum/sha256sum on PATH — symlink drift cannot be computed"
+else
+  REPOI3="$TMP/repoI3"; newrepo "$REPOI3"
+  COMMONI3="$(cd "$REPOI3" && cd "$(git rev-parse --git-common-dir)" && pwd)"; mkdir -p "$COMMONI3/omakase"
+  printf '%s\t%s\t%s\t%s\t%s\n' '.claude/rules/link.md' rule payload "$(i3sha 'orig-target.md')" 1 > "$COMMONI3/omakase/placed.tsv"
+  mkdir -p "$REPOI3/.claude/rules"
+  ( cd "$REPOI3/.claude/rules" && ln -s changed-target.md link.md )   # readlink 'changed-target.md' != ledger's 'orig-target.md' => DRIFTED
+  OUT="$( cd "$REPOI3" && HOME="$HOMEI2" bash "$SHOW" 2>&1 )"
+  echo "$OUT" | grep 'link\.md' | grep -F -- '-> changed-target.md' | grep -q 'DRIFTED' \
+    && pass "I3 [term]: drifted symlink renders as an arrow row with the DRIFTED marker" \
+    || fail "I3 [term]: no 'link.md -> changed-target.md' row carrying DRIFTED ($OUT)"
+  OUT="$( cd "$REPOI3" && HOME="$HOMEI2" bash "$SHOW" --markdown 2>&1 )"
+  echo "$OUT" | grep 'link\.md' | grep -F -- '→' | grep -q 'DRIFTED' \
+    && pass "I3 [md]: drifted symlink renders as an arrow row with the DRIFTED marker" \
+    || fail "I3 [md]: no 'link.md → …' row carrying DRIFTED ($OUT)"
+fi
 
 # ---------- Scenario W: branding (banner + version, no drift) ----------
 echo "== Scenario W: branding =="
