@@ -250,7 +250,7 @@ if [ "${OMAKASE_TEST_LIVE_FETCH:-}" = "1" ]; then
       if resolve_omakase fetch; then echo "RESOLVED:$OMAKASE_BIN_RESOLVED"; else echo FAILED; fi' 2>&1 )"
   O8CACHED="$O8CACHE/omakase/bin/$VER/omakase"
   echo "$OUT" | grep -q "RESOLVED:$O8CACHED" && pass "live: real omakase binary fetched + checksum-verified into the cache" || fail "live fetch failed ($OUT)"
-  [ -x "$O8CACHED" ] && "$O8CACHED" --version 2>&1 | grep -q '0.18.0' && pass "live: fetched binary runs and reports version 0.18.0" || fail "live: fetched binary missing or wrong version"
+  [ -x "$O8CACHED" ] && "$O8CACHED" --version 2>&1 | grep -q '0.18.1' && pass "live: fetched binary runs and reports version 0.18.1" || fail "live: fetched binary missing or wrong version"
 else
   echo "  SKIP: set OMAKASE_TEST_LIVE_FETCH=1 to exercise a real download"
 fi
