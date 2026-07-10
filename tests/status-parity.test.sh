@@ -71,13 +71,15 @@ P_LH="$LEFTHOOK"
 # run_impl <impl> <cwd> <home> <outfile> <errfile> <flag-or-empty>
 # Pins HOME + OMAKASE_NOW, unsets OMAKASE_ICON + NO_COLOR + OMAKASE_BIN (a stray exported
 # OMAKASE_BIN would make bin/status.sh exec a foreign binary instead of dist/omakase, silently
-# defeating the whole comparison), pins PATH + LEFTHOOK_BIN. Only $1 is inspected by status.sh,
-# so a single optional flag ("" or --markdown) covers both modes.
+# defeating the whole comparison), pins PATH + LEFTHOOK_BIN, and unsets XDG_CACHE_HOME so the
+# lefthook cache tier (#72) derives from the pinned fixture HOME — a machine's real
+# ~/.cache/omakase/lefthook must never satisfy (P13) or break (P6) a scenario. Only $1 is
+# inspected by status.sh, so a single optional flag ("" or --markdown) covers both modes.
 run_impl(){
   if [ -n "$6" ]; then
-    ( cd "$2" && env -u OMAKASE_ICON -u NO_COLOR -u OMAKASE_BIN PATH="$P_PATH" LEFTHOOK_BIN="$P_LH" HOME="$3" OMAKASE_NOW="$NOW" bash "$1" "$6" ) >"$4" 2>"$5"
+    ( cd "$2" && env -u OMAKASE_ICON -u NO_COLOR -u OMAKASE_BIN -u XDG_CACHE_HOME PATH="$P_PATH" LEFTHOOK_BIN="$P_LH" HOME="$3" OMAKASE_NOW="$NOW" bash "$1" "$6" ) >"$4" 2>"$5"
   else
-    ( cd "$2" && env -u OMAKASE_ICON -u NO_COLOR -u OMAKASE_BIN PATH="$P_PATH" LEFTHOOK_BIN="$P_LH" HOME="$3" OMAKASE_NOW="$NOW" bash "$1" ) >"$4" 2>"$5"
+    ( cd "$2" && env -u OMAKASE_ICON -u NO_COLOR -u OMAKASE_BIN -u XDG_CACHE_HOME PATH="$P_PATH" LEFTHOOK_BIN="$P_LH" HOME="$3" OMAKASE_NOW="$NOW" bash "$1" ) >"$4" 2>"$5"
   fi
 }
 
@@ -411,6 +413,47 @@ else
   parity "P12 drifted symlink [term]" "$R12" "$H1" ""           "DRIFTED" "->"
   parity "P12 drifted symlink [md]"   "$R12" "$H1" "--markdown" "DRIFTED" "→"
 fi
+
+# ---------- P13: lefthook resolvable ONLY via the omakase cache (#72) ----------
+# The zero-setup adopter status exists to serve: no LEFTHOOK_BIN, no PATH lefthook,
+# no node_modules — init self-provisioned lefthook into the per-machine cache. Both
+# impls must resolve it (tier 4 of the shared walk) and render the real guards chart,
+# never the false "gates are not running" note. The planted lefthook is a
+# PATH-independent /bin/sh stub emitting a fixed dump (a symlink to a real npm-wrapper
+# lefthook dies under lhfree_path, which also strips the dir carrying node — and a
+# stub keeps this scenario runnable with no real lefthook at all, so no HAVE_LH gate).
+# Real config->dump fidelity is P2's job; P13 pins tier-4 RESOLUTION agreement.
+# Marker: the ensure-present row's ENFORCES text — identical in both modes, present
+# only when the chart renders (never in the not-resolved note).
+echo "== P13: lefthook via omakase cache only =="
+LH_VER="$(. "$ROOT/bin/lib-lefthook.sh"; printf '%s' "$LEFTHOOK_VERSION")"
+H13="$TMP/home-cache"; rm -rf "$H13"
+mkdir -p "$H13/.cache/omakase/lefthook/$LH_VER"
+cat > "$H13/.cache/omakase/lefthook/$LH_VER/lefthook" <<'P13STUB'
+#!/bin/sh
+case "$1" in
+  dump)
+    printf '%s\n' \
+      'post-checkout:' \
+      '  jobs:' \
+      '    - name: omakase-ensure-present' \
+      '      run: bash "$(git rev-parse --git-common-dir)/omakase/ensure-present.sh"'
+    ;;
+esac
+P13STUB
+chmod +x "$H13/.cache/omakase/lefthook/$LH_VER/lefthook"
+# A minimal INSTALLED repo (P12's idiom: hand-written placed.tsv) — status only
+# renders the guards chart when a harness is present; a bare repo short-circuits
+# to "No omakase harness" and P13 would pass vacuously on the note.
+R13="$TMP/p13"; newrepo "$R13"
+COMMON13="$(cd "$R13" && cd "$(git rev-parse --git-common-dir)" && pwd)"; mkdir -p "$COMMON13/omakase"
+mkdir -p "$R13/.omakase/gates"
+printf 'gate body\n' > "$R13/.omakase/gates/example.sh"
+H13SHA="$(p12sha < "$R13/.omakase/gates/example.sh" | awk '{print $1}')"
+printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/gates/example.sh' gate payload "$H13SHA" 1 > "$COMMON13/omakase/placed.tsv"
+P_PATH="$(lhfree_path)"; P_LH=""
+parity2 "P13 cache-tier lefthook" "$R13" "$H13" "self-heal: restore any missing injected files"
+P_PATH="$PATH"; P_LH="$LEFTHOOK"   # restore defaults
 
 rm -rf "$TMP"
 echo ""

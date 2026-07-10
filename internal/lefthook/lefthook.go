@@ -176,11 +176,9 @@ func cacheRoot() string {
 }
 
 // isExecutable is the Go twin of a bash `[ -x path ]` test: the path exists,
-// is not a directory, and has at least one executable bit set. This is the
-// SAME check internal/status's resolveLefthook helper uses for its
-// node_modules/.bin/lefthook probe (internal/status/guards.go) -- kept
-// consistent deliberately, not refactored into a shared helper (Phase 1
-// code is out of scope for this task).
+// is not a directory, and has at least one executable bit set. Since #72
+// internal/status resolves through ResolveForStatus (below), so this is the
+// ONE copy of the probe -- the pre-#72 3-tier twin in internal/status is gone.
 func isExecutable(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
@@ -355,3 +353,22 @@ func ResolveForRemove(root string) ([]string, bool) {
 	}
 	return []string{v}, true
 }
+
+// ResolveForStatus resolves a runnable lefthook for the status verb: the
+// shared no-fetch tier walk (LEFTHOOK_BIN -> `lefthook` on PATH ->
+// node_modules/.bin -> the omakase-managed cache), silent on failure --
+// status is read-only reporting, so it must never download anything and
+// renders its "not resolved" note off a false return instead. The value is
+// ONE token, never word-split: status runs `<lh> dump` the way
+// bin/legacy/status.sh's render_guards does ("$LEFTHOOK" dump, quoted).
+// Until #72 internal/status carried a local 3-tier copy that missed the
+// cache tier, so a machine whose lefthook was self-provisioned by init
+// falsely reported "gates are not running".
+func ResolveForStatus(root string) (string, bool) {
+	return resolve(root, false, io.Discard)
+}
+
+// PinnedVersion exposes the pinned lefthook release (lib-lefthook.sh:21's
+// LEFTHOOK_VERSION twin) so callers and tests can derive the cache path
+// without duplicating the constant.
+func PinnedVersion() string { return lefthookVersion }

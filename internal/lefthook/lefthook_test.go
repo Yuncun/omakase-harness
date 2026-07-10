@@ -535,3 +535,35 @@ func TestResolveForInitFetchFailureReachesTier5(t *testing.T) {
 		t.Errorf("ResolveForInit stderr = %q, want it to contain the download-failure line", buf.String())
 	}
 }
+
+func TestResolveForStatusTierWalk(t *testing.T) {
+	isolateEnv(t)
+	root := t.TempDir()
+
+	// Nothing anywhere -> silent ("",false); status renders its
+	// not-resolved note off exactly this.
+	if lh, ok := ResolveForStatus(root); ok || lh != "" {
+		t.Fatalf("ResolveForStatus (nothing) = (%q,%v), want (\"\",false)", lh, ok)
+	}
+
+	// Tier 4: the pinned-version cache resolves with NO fetch — this is the
+	// tier the pre-#72 status resolver missed, producing the false
+	// "gates are not running" note on self-provisioned machines.
+	cacheBin := filepath.Join(os.Getenv("HOME"), ".cache", "omakase", "lefthook", lefthookVersion, "lefthook")
+	if err := os.MkdirAll(filepath.Dir(cacheBin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cacheBin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if lh, ok := ResolveForStatus(root); !ok || lh != cacheBin {
+		t.Errorf("ResolveForStatus (cache) = (%q,%v), want (%q,true)", lh, ok, cacheBin)
+	}
+
+	// Tier 1 beats tier 4, returned verbatim as ONE token (status runs
+	// `<lh> dump` quoted — whitespace never splits).
+	t.Setenv("LEFTHOOK_BIN", "/some where/lefthook")
+	if lh, ok := ResolveForStatus(root); !ok || lh != "/some where/lefthook" {
+		t.Errorf("ResolveForStatus (override) = (%q,%v), want the override verbatim", lh, ok)
+	}
+}
