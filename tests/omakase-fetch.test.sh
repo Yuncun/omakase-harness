@@ -11,12 +11,13 @@
 #   O4. binary checksum mismatch (valid archive, bad extracted-binary hash) is
 #       REJECTED — nothing cached, no residue
 #   O5. shim wiring through a simulated plugin clone (bin/+payload/, no
-#       go.mod, no dist/): offline -> legacy v1 fallback; cache pre-seeded ->
-#       the cached stub is exec'd with the right verb
-#   O6. remove.sh never fetches (offline -> legacy fallback, nothing cached)
+#       go.mod, no dist/): offline -> status.sh and init.sh fail closed
+#       (guidance on stderr, exit 1 — no bash fallback exists); cache
+#       pre-seeded -> the cached stub is exec'd with the right verb
+#   O6. remove.sh never fetches (offline -> fail closed, nothing cached)
 #       but DOES use an already-cached binary when one is present
-#   O7. mcp.sh has no legacy body: resolution failure is stderr guidance +
-#       exit 1, with stdout left completely clean for the MCP stdio transport
+#   O7. mcp.sh: resolution failure is stderr guidance + exit 1, with stdout
+#       left completely clean for the MCP stdio transport
 #   O8. (opt-in, OMAKASE_TEST_LIVE_FETCH=1) one real download from GitHub
 #   O9. tier 2's go build failure aborts the shim (exit nonzero, stale
 #       dist/omakase never runs) instead of falling through under the
@@ -190,15 +191,31 @@ scratch_repo(){  # $1 = dir to create
 }
 
 # ---------- Scenario O5: shim resolution through the clone ----------
-echo "== Scenario O5: clone status.sh resolves offline (legacy fallback) and via a seeded cache =="
+echo "== Scenario O5: clone status.sh/init.sh fail closed offline and resolve via a seeded cache =="
 REPO5="$TMP/repo-o5"; scratch_repo "$REPO5"
 
-# (a) Completely offline: empty cache, empty base URL -> fetch fails -> legacy v1 body.
+# (a) Completely offline: empty cache, empty base URL -> fetch fails -> the shim
+# fails CLOSED, mirroring O7: guidance on stderr, exit 1, stdout untouched. There
+# is no bash fallback body — a silent one would mask binary-distribution failures.
 O5AHOME="$TMP/home-o5a"; O5ACACHE="$TMP/cache-o5a"; mkdir -p "$O5AHOME" "$O5ACACHE"
-OUT="$( cd "$REPO5" && env -i HOME="$O5AHOME" XDG_CACHE_HOME="$O5ACACHE" PATH="$CLEANPATH" \
+O5AOUT="$TMP/o5a.out"; O5AERR="$TMP/o5a.err"
+( cd "$REPO5" && env -i HOME="$O5AHOME" XDG_CACHE_HOME="$O5ACACHE" PATH="$CLEANPATH" \
   OMAKASE_RELEASE_BASE_URL="$TMP/empty-base-o5a" \
-  bash "$CLONE/bin/status.sh" 2>&1 )"
-echo "$OUT" | grep -q 'bundled v1 status' && pass "clone status.sh falls back to the legacy v1 body offline" || fail "no legacy fallback message ($OUT)"
+  bash "$CLONE/bin/status.sh" >"$O5AOUT" 2>"$O5AERR" )
+rc=$?
+[ "$rc" -eq 1 ] && pass "clone status.sh exits 1 when nothing resolves offline" || fail "status.sh exited $rc, expected 1"
+grep -q 'status needs the omakase binary' "$O5AERR" && pass "status.sh prints recovery guidance to stderr" || fail "no guidance on stderr ($(cat "$O5AERR"))"
+[ ! -s "$O5AOUT" ] && pass "status.sh stdout stays empty on the fail-closed path" || fail "status.sh wrote to stdout: $(cat "$O5AOUT")"
+
+# init.sh takes the same fail-closed path (it was the other verb with a v1
+# fallback body; the third, remove.sh, is O6's subject).
+( cd "$REPO5" && env -i HOME="$O5AHOME" XDG_CACHE_HOME="$O5ACACHE" PATH="$CLEANPATH" \
+  OMAKASE_RELEASE_BASE_URL="$TMP/empty-base-o5a" \
+  bash "$CLONE/bin/init.sh" >"$O5AOUT" 2>"$O5AERR" )
+rc=$?
+[ "$rc" -eq 1 ] && pass "clone init.sh exits 1 when nothing resolves offline" || fail "init.sh exited $rc, expected 1"
+grep -q 'init needs the omakase binary' "$O5AERR" && pass "init.sh prints recovery guidance to stderr" || fail "no guidance on stderr ($(cat "$O5AERR"))"
+[ ! -s "$O5AOUT" ] && pass "init.sh stdout stays empty on the fail-closed path" || fail "init.sh wrote to stdout: $(cat "$O5AOUT")"
 
 # (b) Hash-fn overrides can't cross the exec into a separate script file, so
 # instead of faking a fetch, pre-seed the cache directly (tier 5) and confirm
@@ -211,14 +228,18 @@ OUT="$( cd "$REPO5" && env -i HOME="$O5BHOME" XDG_CACHE_HOME="$O5BCACHE" PATH="$
 echo "$OUT" | grep -q 'fixture-omakase status' && pass "clone status.sh execs the cached stub (tier 5 cache hit, no network)" || fail "cached stub not used ($OUT)"
 
 # ---------- Scenario O6: remove never fetches but DOES use an already-cached binary ----------
-echo "== Scenario O6: clone remove.sh never fetches (offline -> legacy), but uses a seeded cache =="
+echo "== Scenario O6: clone remove.sh never fetches (offline -> fail closed), but uses a seeded cache =="
 REPO6="$TMP/repo-o6"; scratch_repo "$REPO6"
 
 O6AHOME="$TMP/home-o6a"; O6ACACHE="$TMP/cache-o6a"; mkdir -p "$O6AHOME" "$O6ACACHE"
-OUT="$( cd "$REPO6" && env -i HOME="$O6AHOME" XDG_CACHE_HOME="$O6ACACHE" PATH="$CLEANPATH" \
+O6AOUT="$TMP/o6a.out"; O6AERR="$TMP/o6a.err"
+( cd "$REPO6" && env -i HOME="$O6AHOME" XDG_CACHE_HOME="$O6ACACHE" PATH="$CLEANPATH" \
   OMAKASE_RELEASE_BASE_URL="$TMP/empty-base-o6" \
-  bash "$CLONE/bin/remove.sh" 2>&1 )"
-echo "$OUT" | grep -q 'bundled v1 remove' && pass "clone remove.sh falls back to the legacy v1 body offline" || fail "no legacy fallback message ($OUT)"
+  bash "$CLONE/bin/remove.sh" >"$O6AOUT" 2>"$O6AERR" )
+rc=$?
+[ "$rc" -eq 1 ] && pass "clone remove.sh exits 1 when nothing resolves (and it never fetches)" || fail "remove.sh exited $rc, expected 1"
+grep -q 'remove needs the omakase binary' "$O6AERR" && pass "remove.sh prints recovery guidance to stderr" || fail "no guidance on stderr ($(cat "$O6AERR"))"
+grep -q 'OMAKASE_BIN' "$O6AERR" && pass "remove.sh guidance names the OMAKASE_BIN escape hatch" || fail "guidance missing OMAKASE_BIN ($(cat "$O6AERR"))"
 [ ! -e "$O6ACACHE/omakase" ] && pass "nothing appeared in the cache (remove never attempts a fetch)" || fail "cache dir was populated despite remove.sh never fetching"
 
 O6BHOME="$TMP/home-o6b"; O6BCACHE="$TMP/cache-o6b"; mkdir -p "$O6BHOME"
@@ -228,7 +249,7 @@ OUT="$( cd "$REPO6" && env -i HOME="$O6BHOME" XDG_CACHE_HOME="$O6BCACHE" PATH="$
   bash "$CLONE/bin/remove.sh" 2>&1 )"
 echo "$OUT" | grep -q 'fixture-omakase remove' && pass "clone remove.sh uses the cached binary without network" || fail "cached stub not used for remove ($OUT)"
 
-# ---------- Scenario O7: mcp.sh has no legacy body — guidance on stderr, exit 1, clean stdout ----------
+# ---------- Scenario O7: mcp.sh — guidance on stderr, exit 1, clean stdout ----------
 echo "== Scenario O7: clone mcp.sh reports guidance on stderr only and exits 1 =="
 O7HOME="$TMP/home-o7"; O7CACHE="$TMP/cache-o7"; mkdir -p "$O7HOME"
 OUTFILE="$TMP/o7.out"; ERRFILE="$TMP/o7.err"
@@ -321,7 +342,7 @@ else
     # the real omakase binary's WHOLE init flow — the base-payload handoff under
     # test. Same idiom as O5/O6 stubbing the omakase binary.
     O10LEFT="$O10/lefthook-stub"; printf '#!/bin/sh\nexit 0\n' > "$O10LEFT"; chmod +x "$O10LEFT"
-    # Simulated plugin clone: bin/ (+lib +legacy) and payload/, NO go.mod / dist/,
+    # Simulated plugin clone: bin/ (+libs) and payload/, NO go.mod / dist/,
     # so resolution tiers 2-3 are unreachable and it falls to the cached binary
     # (tier 5) — the same trick as O5.
     mkdir -p "$O10/plugin"

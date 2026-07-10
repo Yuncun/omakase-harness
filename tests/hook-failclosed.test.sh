@@ -34,7 +34,7 @@ FAILED=0
 pass(){ echo "  PASS: $1"; }
 fail(){ echo "  FAIL: $1"; FAILED=1; }
 
-# A lefthook-free PATH (idiom of tests/status-parity.test.sh:lhfree_path): built from
+# A lefthook-free PATH (lhfree_path, an idiom of the retired status-parity suite): built from
 # the real PATH + system dirs, skipping any dir that carries a lefthook — a distro
 # package at /usr/bin/lefthook must not satisfy the stub's PATH branch and turn the
 # block scenarios vacuous, while git/sh stay reachable.

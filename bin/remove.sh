@@ -5,13 +5,13 @@
 # loudly on purpose — falling back to a stale binary would mask Go breakage) ->
 # dist/omakase -> `omakase` on PATH -> the omakase-managed cache (already-fetched
 # binary only — remove never triggers a network fetch, so uninstall stays
-# offline). Only when NOTHING resolves does it fall back to the preserved v1
-# bash body.
+# offline). When NOTHING resolves the shim fails closed: error + exit 1 (a
+# silent fallback would mask a broken install).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/lib-omakase-bin.sh"
 if resolve_omakase; then
   exec "$OMAKASE_BIN_RESOLVED" remove "$@"
 fi
-echo "omakase: Go binary not present — running the bundled v1 remove script" >&2
-exec bash "$HERE/legacy/remove.sh" "$@"
+echo "omakase: remove needs the omakase binary and none could be resolved. remove never downloads (uninstall stays offline), so a local or already-cached binary is required — install one (brew, or a release tarball from github.com/Yuncun/omakase-harness/releases), or set OMAKASE_BIN=/path/to/omakase, then re-run." >&2
+exit 1

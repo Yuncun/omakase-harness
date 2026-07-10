@@ -4,13 +4,13 @@
 # lib-omakase-bin.sh: OMAKASE_BIN override -> dev rebuild (a FAILING build aborts
 # loudly on purpose — falling back to a stale binary would mask Go breakage) ->
 # dist/omakase -> `omakase` on PATH -> the pinned, checksum-verified release
-# binary fetched once per machine into the cache. Only when NOTHING resolves
-# does it fall back to the preserved v1 bash body.
+# binary fetched once per machine into the cache. When NOTHING resolves the shim
+# fails closed: error + exit 1 (a silent fallback would mask a broken install).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/lib-omakase-bin.sh"
 if resolve_omakase fetch; then
   exec "$OMAKASE_BIN_RESOLVED" init "$@"
 fi
-echo "omakase: Go binary not present — running the bundled v1 init script" >&2
-exec bash "$HERE/legacy/init.sh" "$@"
+echo "omakase: init needs the omakase binary and none could be resolved or fetched. Install one (brew, or a release tarball from github.com/Yuncun/omakase-harness/releases), or set OMAKASE_BIN=/path/to/omakase, then re-run." >&2
+exit 1

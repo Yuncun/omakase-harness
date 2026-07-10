@@ -194,8 +194,8 @@ resolve_omakase() {
   fi
   # An OMAKASE_BIN override short-circuits resolution entirely, same as the
   # pre-bootstrap shims: valid (executable) -> use it; invalid -> fail now
-  # rather than falling through to tiers 2-6 (tests rely on this to force the
-  # legacy-fallback path deterministically, e.g. OMAKASE_BIN=/nonexistent/omakase).
+  # rather than falling through to tiers 2-6 (tests rely on this to force a
+  # resolution failure deterministically, e.g. OMAKASE_BIN=/nonexistent/omakase).
   if [ -n "${OMAKASE_BIN:-}" ]; then
     if [ -x "${OMAKASE_BIN}" ]; then OMAKASE_BIN_RESOLVED="$OMAKASE_BIN"; return 0; fi
     return 1
