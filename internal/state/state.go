@@ -339,4 +339,3 @@ func WritePlaced(path string, rows []PlacedRow) error {
 	}
 	return nil
 }
-

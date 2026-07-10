@@ -1,7 +1,5 @@
-// Command omakase is the v2 install-time binary: one static executable that
-// replaces the bin/*.sh install-time machinery. Verbs are registered
-// incrementally as their Go ports land; "status", "init", and "remove" are
-// registered so far.
+// Command omakase is the install-time binary: one static executable that
+// dispatches the verbs (status, init, remove, mcp).
 package main
 
 import (
@@ -16,23 +14,20 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/status"
 )
 
-// Build metadata, injected at release time via -ldflags (GoReleaser sets
-// main.version/commit/date; see .goreleaser.yaml). A plain `go build` leaves
-// these defaults; resolveVersion then backfills what Go itself stamps into
-// the binary (module version for `go install …@vX.Y.Z`, VCS revision for a
-// build from a checkout), so a dev build still identifies itself.
+// Build metadata, injected at release time via -ldflags (see
+// .goreleaser.yaml). A plain `go build` leaves these defaults;
+// resolveVersion backfills them from the build info Go stamps into the
+// binary.
 var (
 	version = "dev"
 	commit  = "none"
 	date    = "unknown"
 )
 
-// resolveVersion returns the version/commit/date to print. ldflags-injected
-// values win untouched; only the "dev" default consults bi. From bi: the main
-// module's version when Go stamped a real one (`go install module@version` —
-// "(devel)" is the unstamped placeholder), and the vcs.revision (short,
-// "+dirty" when vcs.modified) / vcs.time settings a checkout build carries.
-// Pure so tests can feed fake build info; bi may be nil (stripped binary).
+// resolveVersion returns the version/commit/date to print. Injected values
+// pass through; only the "dev" default consults bi, taking the main module
+// version (ignoring the "(devel)" placeholder), the vcs.revision setting
+// (12 chars, "+dirty" when vcs.modified), and vcs.time. bi may be nil.
 func resolveVersion(v, c, d string, bi *debug.BuildInfo) (string, string, string) {
 	if v != "dev" || bi == nil {
 		return v, c, d
@@ -66,9 +61,9 @@ func resolveVersion(v, c, d string, bi *debug.BuildInfo) (string, string, string
 	return v, c, d
 }
 
-// verbs maps a command name to its handler. The handler receives the FULL argv
-// (argv[0]="omakase", argv[1]=the verb); each entry forwards the args AFTER the
-// verb (argv[2:]) to its implementation.
+// verbs maps a command name to its handler. Handlers receive the full argv
+// (argv[0]="omakase", argv[1]=the verb) and forward argv[2:] to their
+// implementation.
 var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 	"status": func(argv []string, stdout, stderr io.Writer) int {
 		return status.Run(argv[2:], stdout, stderr)
@@ -84,16 +79,16 @@ var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 	},
 }
 
-// run is the pure dispatch function: no I/O beyond the given writers, no
-// process exit. main() wraps it with os.Exit so it stays testable.
+// run dispatches argv to a verb and returns the exit code, writing only to
+// the given writers.
 func run(argv []string, stdout, stderr io.Writer) int {
 	if len(argv) < 2 {
 		fmt.Fprintln(stderr, "usage: omakase <command>")
 		return 2
 	}
 
-	// Exactly one spelling on purpose: "-v" stays free for a future verbose
-	// flag, and a bare "version" word would shadow any future verb of that name.
+	// The only spelling: "-v" is reserved for a future verbose flag, and a
+	// bare "version" would shadow a future verb of that name.
 	if argv[1] == "--version" {
 		bi, _ := debug.ReadBuildInfo()
 		v, c, d := resolveVersion(version, commit, date, bi)

@@ -19,8 +19,8 @@ import (
 )
 
 var (
-	ErrTracked    = errors.New("tracked by git — omakase never deletes committed files")
-	ErrEdited     = errors.New("differs from what init placed (local edits?) — refusing to delete")
+	ErrTracked = errors.New("tracked by git — omakase never deletes committed files")
+	ErrEdited  = errors.New("differs from what init placed (local edits?) — refusing to delete")
 	// ErrEditedKeep is FileOn's twin of ErrEdited: same local-edit detection,
 	// but the refused operation is an overwrite (snapshot restore), not a
 	// delete — the message must not claim the opposite operation.

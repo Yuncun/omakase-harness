@@ -406,4 +406,3 @@ func TestWritePlacedOverwritesExistingFileWholesale(t *testing.T) {
 		t.Errorf("WritePlaced bytes = %q, want %q (must regenerate wholesale, not append)", got, want)
 	}
 }
-

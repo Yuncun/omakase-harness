@@ -7,10 +7,8 @@ import (
 	"testing"
 )
 
-// TestKindOf copies the exact classification vectors of
-// tests/harness-paths.test.sh:17-46 (all 24 eq lines) — the bash suite's
-// proof that kind_of() recognizes the Claude Code layout, the GitHub
-// Copilot layout, and the host-agnostic + catch-all cases.
+// TestKindOf pins the classification vectors: the Claude Code layout, the
+// GitHub Copilot layout, and the host-agnostic + catch-all cases.
 func TestKindOf(t *testing.T) {
 	cases := []struct {
 		path string
@@ -59,22 +57,18 @@ func TestKindOf(t *testing.T) {
 	}
 }
 
-// locDirs mirrors bin/lib-harness-paths.sh HARNESS_LOC_DIRS. It is NOT part
-// of the Go API (no consumer needs the list itself yet, only the invariant
-// below) but the anti-drift lock needs the same probe set the bash test
-// walks.
+// locDirs is the set of capture dirs omakase imports, used only as the
+// probe set for the anti-drift lock below.
 var locDirs = []string{
 	".claude/rules", ".claude/skills", ".claude/commands", ".claude/agents", ".claude/hooks",
 	".github/skills", ".github/instructions", ".github/prompts", ".github/chatmodes", ".github/hooks",
 	".omakase", ".husky", ".githooks",
 }
 
-// TestKindOfAntiDrift ports the anti-drift lock in
-// tests/harness-paths.test.sh:67-72: every capture dir omakase imports
-// (HARNESS_LOC_DIRS) must classify to a real kind, not "other" — the exact
-// bug (a new capture dir added without a matching kind_of case) the bash
-// test catches. .omakase is skipped: it is omakase's own mixed plumbing
-// dir, where bin/ and VERSION legitimately fall to "other".
+// TestKindOfAntiDrift: every capture dir omakase imports must classify to a
+// real kind, not "other" — catches a new capture dir added without a
+// matching KindOf case. .omakase is skipped: it is omakase's own mixed
+// plumbing dir, where bin/ and VERSION legitimately fall to "other".
 func TestKindOfAntiDrift(t *testing.T) {
 	for _, d := range locDirs {
 		if d == ".omakase" {
@@ -89,14 +83,9 @@ func TestKindOfAntiDrift(t *testing.T) {
 }
 
 // TestSharedTopdirs pins SharedTopdirs to bin/lib-harness-paths.sh's
-// HARNESS_SHARED_TOPDIRS array by PARSING the bash source -- the lockstep
-// pattern of internal/lefthook's TestVersionAndChecksumsMatchBash, which
-// parses bin/lib-lefthook.sh's LEFTHOOK_VERSION/checksum lines instead of
-// hardcoding them a second time -- rather than hardcoding ".github" here,
-// which could silently drift from the bash array if it ever changed. The
-// exclude-block derivation (overlay.DerivePrefixes) hands this list in, so a
-// drift here would change whether .github is excluded wholesale or
-// file-by-file.
+// HARNESS_SHARED_TOPDIRS array, parsed from the bash source so the two
+// cannot drift. A drift would change whether .github is excluded wholesale
+// or file-by-file (overlay.DerivePrefixes consumes this list).
 func TestSharedTopdirs(t *testing.T) {
 	data, err := os.ReadFile("../../bin/lib-harness-paths.sh")
 	if err != nil {
@@ -124,8 +113,7 @@ func TestSharedTopdirs(t *testing.T) {
 	}
 }
 
-// TestCommittedGlobs pins the verbatim order of the 16-entry
-// HARNESS_COMMITTED_GLOBS array (bin/lib-harness-paths.sh:61).
+// TestCommittedGlobs pins the CommittedGlobs entries and their order.
 func TestCommittedGlobs(t *testing.T) {
 	want := []string{
 		"AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", ".claude",
