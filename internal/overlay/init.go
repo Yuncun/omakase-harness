@@ -180,8 +180,12 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 
 	// ---- source precedence (bin/init.sh:152-154) ----
 	// Payload precedence: --source flag > OMAKASE_PAYLOAD env > remembered
-	// source ($OMK/source) > the ../payload default. A remembered source only
-	// wins when neither a flag nor OMAKASE_PAYLOAD is set.
+	// source ($OMK/source) > the default payload (defaultPayload: OMAKASE_BASE_PAYLOAD,
+	// else the binary-relative ../payload). A remembered source only wins when
+	// neither a flag nor OMAKASE_PAYLOAD is set — the suppression keys on
+	// OMAKASE_PAYLOAD ONLY: OMAKASE_BASE_PAYLOAD is the merge base the shims hand
+	// over, NOT a suppression key, so a bare re-run never silently downgrades a
+	// remembered source to a plain install (Global Constraint 1).
 	if source == "" && os.Getenv("OMAKASE_PAYLOAD") == "" {
 		if first := state.FirstLine(filepath.Join(omk, "source")); first != "" {
 			source = first
@@ -221,8 +225,9 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		rememberedSource = res.remembered
 		recommends = res.recommends
 	} else {
-		// OMAKASE_PAYLOAD overrides; otherwise the binary-relative ../payload
-		// default (dist/omakase => repo root => payload/, same as bin/../payload).
+		// OMAKASE_PAYLOAD overrides; otherwise defaultPayload — OMAKASE_BASE_PAYLOAD
+		// (the shim handoff), else the binary-relative ../payload (dist/omakase =>
+		// repo root => payload/, same as bin/../payload).
 		payload = os.Getenv("OMAKASE_PAYLOAD")
 		if payload == "" {
 			payload = defaultPayload()

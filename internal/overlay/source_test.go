@@ -41,12 +41,16 @@ import (
 // srcTestEnv isolates a --source run from the real machine: XDG_CACHE_HOME + HOME
 // point at fresh temp dirs (so no cache ever lands in ~/.cache), and
 // OMAKASE_PAYLOAD is neutralized (the source arm must not read it; a stray
-// ambient value would skip a remembered-source read).
+// ambient value would skip a remembered-source read). OMAKASE_BASE_PAYLOAD is
+// neutralized too: a test that clears the seam without setting it would
+// otherwise absorb an ambient value from the dev/CI shell. Tests that need a
+// base value re-Setenv it AFTER this helper, so their value still wins.
 func srcTestEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("OMAKASE_PAYLOAD", "")
+	t.Setenv("OMAKASE_BASE_PAYLOAD", "")
 }
 
 // useBasePayloadDir creates the base-harness payload fixture and points the base
@@ -59,6 +63,17 @@ func useBasePayloadDir(t *testing.T) string {
 	basePayloadOverride = dir
 	t.Cleanup(func() { basePayloadOverride = prev })
 	return dir
+}
+
+// clearBasePayloadOverride empties the binary-relative TEST SEAM for the duration
+// of a test (save/restore, exactly like useBasePayloadDir), so defaultPayload
+// falls through to the OMAKASE_BASE_PAYLOAD env tier the shims export — the seam
+// would otherwise short-circuit that tier (Global Constraint 2's precedence).
+func clearBasePayloadOverride(t *testing.T) {
+	t.Helper()
+	prev := basePayloadOverride
+	basePayloadOverride = ""
+	t.Cleanup(func() { basePayloadOverride = prev })
 }
 
 // newSourceRepo makes an empty committed-config git repo to build a SOURCE in,
@@ -812,5 +827,125 @@ func TestManifestField(t *testing.T) {
 	}
 	if got := manifestField([]byte("name:\n"), "name"); got != "" {
 		t.Errorf("empty value: got %q, want \"\"", got)
+	}
+}
+
+// ------------------------------------------- base payload env handoff (issue #70)
+
+// Since v0.18.0 the binary may run APART from the plugin (a fetched release cache
+// / a PATH install), so the shims hand the merge base's location over in
+// OMAKASE_BASE_PAYLOAD; the binary-relative $SCRIPT_DIR/../payload is a last
+// resort only. These tests run with the TEST SEAM cleared so defaultPayload
+// actually consults the env tier.
+
+// TestDefaultPayloadHonorsBasePayloadEnv (red-first): with the seam cleared,
+// OMAKASE_BASE_PAYLOAD is the resolved base (Global Constraint 2's middle tier).
+func TestDefaultPayloadHonorsBasePayloadEnv(t *testing.T) {
+	clearBasePayloadOverride(t)
+	dir := t.TempDir()
+	t.Setenv("OMAKASE_BASE_PAYLOAD", dir)
+	if got := defaultPayload(); got != dir {
+		t.Errorf("defaultPayload() = %q, want %q (OMAKASE_BASE_PAYLOAD)", got, dir)
+	}
+}
+
+// TestSourceMergeBaseFromEnv (red-first): a full --source install with the seam
+// cleared, OMAKASE_PAYLOAD empty, and OMAKASE_BASE_PAYLOAD pointing at a base
+// fixture merges that env-pointed base UNDER the source delta — both a base-only
+// file and the source delta file land on disk.
+func TestSourceMergeBaseFromEnv(t *testing.T) {
+	dir, _ := initRepo(t)
+	srcTestEnv(t) // OMAKASE_PAYLOAD="" among others
+	stubLefthook(t)
+	clearBasePayloadOverride(t)
+
+	base := t.TempDir()
+	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
+	t.Setenv("OMAKASE_BASE_PAYLOAD", base)
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: envbase\n")
+	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "src.sh"), "src\n")
+	commitAll(t, src, "src")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	// One of each: the env-pointed base merged in under the source delta.
+	eq(t, "base-only file", readFileT(t, filepath.Join(dir, ".omakase", "bin", "base.sh")), "base\n")
+	eq(t, "source delta file", readFileT(t, filepath.Join(dir, ".omakase", "gates", "src.sh")), "src\n")
+}
+
+// TestSourceMergeBaseMissing (broken-variant): with the seam cleared and
+// OMAKASE_BASE_PAYLOAD set to a nonexistent path, the missing merge base is
+// caught BEFORE any clone/fetch — exit 1 with the byte-exact guidance and no
+// "cached at" line (proving the check runs first).
+func TestSourceMergeBaseMissing(t *testing.T) {
+	initRepo(t)
+	srcTestEnv(t)
+	clearBasePayloadOverride(t)
+
+	missing := filepath.Join(t.TempDir(), "missing")
+	t.Setenv("OMAKASE_BASE_PAYLOAD", missing)
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: wouldwork\n")
+	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "src.sh"), "src\n")
+	commitAll(t, src, "src")
+
+	var stdout, stderr strings.Builder
+	code := RunInit([]string{"--source", src}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	eq(t, "base-missing stderr", stderr.String(),
+		"omakase: base payload not found at "+missing+" — set OMAKASE_BASE_PAYLOAD or run omakase via the plugin's bin/ shims\n")
+	if strings.Contains(stdout.String(), "cached at") || strings.Contains(stderr.String(), "cached at") {
+		t.Errorf("the base check must run before any clone/fetch (no 'cached at'):\n stdout=%q\n stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+// TestBareRunRememberedSourceSurvivesBasePayloadEnv (red-first, Global
+// Constraint 1's third bullet): after a --source install remembered in
+// $OMK/source, a BARE re-run with OMAKASE_BASE_PAYLOAD exported (OMAKASE_PAYLOAD
+// empty) must STILL take the remembered-source merge path, not a plain install —
+// the remembered-source suppression keys on OMAKASE_PAYLOAD ONLY, so the
+// shim-exported base var must never suppress it (that would reintroduce the bug:
+// bare re-runs silently downgrading to plain installs). The source delta being
+// re-placed proves the merge path ran; a plain install (base only) would instead
+// sweep it as an orphan.
+func TestBareRunRememberedSourceSurvivesBasePayloadEnv(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	clearBasePayloadOverride(t)
+
+	base := t.TempDir()
+	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
+	t.Setenv("OMAKASE_BASE_PAYLOAD", base)
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: remembered\n")
+	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "src.sh"), "src delta\n")
+	commitAll(t, src, "src")
+
+	var o1, e1 strings.Builder
+	if code := RunInit([]string{"--source", src}, &o1, &e1); code != 0 {
+		t.Fatalf("init 1 exit = %d; stderr=%q", code, e1.String())
+	}
+	eq(t, "remembered source", readFileT(t, filepath.Join(repo.OMK, "source")), src+"\n")
+
+	// Bare re-run: no argv, OMAKASE_PAYLOAD still empty, OMAKASE_BASE_PAYLOAD set.
+	var o2, e2 strings.Builder
+	if code := RunInit(nil, &o2, &e2); code != 0 {
+		t.Fatalf("bare re-run exit = %d; stderr=%q", code, e2.String())
+	}
+	eq(t, "source delta re-placed via the remembered merge path",
+		readFileT(t, filepath.Join(dir, ".omakase", "gates", "src.sh")), "src delta\n")
+	// the bare run re-emitted the "cached at" line — it re-fetched the remembered
+	// source rather than doing a plain install off OMAKASE_BASE_PAYLOAD.
+	if !strings.Contains(o2.String(), "omakase: source '"+src+"' (name: remembered) cached at ") {
+		t.Errorf("bare re-run did not take the remembered-source merge path:\n%s", o2.String())
 	}
 }

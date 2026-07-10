@@ -37,8 +37,9 @@ import (
 func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	// ---- payload default/normalize (remove.sh:8-9) ----
 	// The identical rule to init's plain-install default (Task 4):
-	// OMAKASE_PAYLOAD overrides; otherwise the binary-relative ../payload
-	// default. Unlike init, remove does NOT validate up front that the
+	// OMAKASE_PAYLOAD overrides; otherwise defaultPayload — OMAKASE_BASE_PAYLOAD
+	// (the shim handoff), else the binary-relative ../payload. Unlike init,
+	// remove does NOT validate up front that the
 	// payload dir exists — it is read only in the pre-0.10 enumeration
 	// fallback below, and a missing dir there simply enumerates nothing (see
 	// that step's comment).
@@ -172,10 +173,12 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 		// missing/unreadable PAYLOAD enumerates nothing here, matching find's
 		// silent (to the loop) failure on a bad start path; bash's find still
 		// writes its own diagnostic to the process's real stderr through the
-		// process substitution — an accepted, unreachable-in-production
-		// divergence (PAYLOAD defaults to the harness's own bundled payload/,
-		// which always exists; only a deliberately broken OMAKASE_PAYLOAD
-		// override reaches this).
+		// process substitution — an accepted divergence. Since v0.18.0 the
+		// empty-enumeration case is reachable in production, not just via a
+		// broken override: a fetched/PATH binary run WITHOUT the shim-exported
+		// OMAKASE_BASE_PAYLOAD has no bundled payload/ sibling to default to,
+		// and a broken OMAKASE_PAYLOAD or OMAKASE_BASE_PAYLOAD points PAYLOAD
+		// at a nonexistent tree.
 		rels, _ := walkPayload(payload)
 		for _, rel := range rels {
 			if delErr := DeletePlaced(root, rel, isTracked); delErr != nil {
