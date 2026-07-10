@@ -5,6 +5,23 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Changed
+- **`init`/`status`/`remove` shims fail closed when no omakase binary can be
+  resolved** — recovery guidance on stderr (naming the `OMAKASE_BIN` escape
+  hatch; `remove` never downloads, so it asks for a local or already-cached
+  binary) and exit 1, matching `mcp.sh`. A silent bash fallback would mask
+  binary-distribution failures.
+
+### Removed
+- **The v1 bash fallback bodies (`bin/legacy/`)** — the Go binary has been the
+  engine for every verb since the shim cutover, and 0.18.1's self-provisioning
+  shims fetch the pinned, checksum-verified release binary when nothing
+  resolves locally (Phase 7 of the v2 design).
+- **The bash-vs-Go parity suites** (`tests/status-parity.test.sh`,
+  `tests/init-remove-parity.test.sh`) — their oracle is gone; the two behaviors
+  they alone covered now live in `tests/scorecard.test.sh` (I2/I3) as golden
+  expectations against the Go binary's output.
+
 ## [0.18.1] — 2026-07-10
 
 ### Added
