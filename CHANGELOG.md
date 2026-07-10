@@ -25,6 +25,20 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   bare `|` and lost the verdict join).
 
 ### Fixed
+- **`status` sees a self-provisioned lefthook.** The guards chart resolved lefthook
+  through a 3-tier walk that predated binary self-provisioning, so on machines whose
+  lefthook lives only in the omakase cache — exactly the zero-setup adopter — it
+  rendered the false `lefthook not resolved - gates are not running` note while the
+  gates ran fine (#72). status (Go and the legacy bash oracle, in lockstep) now
+  resolves through the same shared tier walk init and remove use, cache tier included.
+- **Hooks fail closed when lefthook goes missing.** lefthook's generated hook stub
+  fails OPEN when no binary is findable ("Can't find lefthook", exit 0) — the wired
+  gates silently skipped. The fail-closed block omakase splices above the stub now
+  resolves lefthook by omakase's own tiers first: a cache-only lefthook is healed by
+  prepending its dir to PATH (the gates then actually run); nothing found anywhere
+  BLOCKS the commit/push with restore guidance instead of skipping. `LEFTHOOK=0`
+  still skips — that's an explicit choice, not a silent one (#72). Re-arm existing
+  repos with a bare `omakase init`.
 - **A fetched / PATH-installed release binary can locate the base payload again.** v0.18.0's
   fetched/PATH-installed release binary could not locate the plugin's base payload — `init
   --source` (and bare init) failed with `failed to copy the base payload into the merge staging

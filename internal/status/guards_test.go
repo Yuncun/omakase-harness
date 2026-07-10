@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/Yuncun/omakase-harness/internal/lefthook"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
@@ -173,7 +175,18 @@ func TestGuardsChartNoGuardsWired(t *testing.T) {
 // nothing otherwise), returning its path — the LEFTHOOK_BIN resolution seam.
 func writeFakeLefthook(t *testing.T, dumpText string) string {
 	t.Helper()
-	dir := t.TempDir()
+	return writeFakeLefthookAt(t, t.TempDir(), dumpText)
+}
+
+// writeFakeLefthookAt plants the same stub inside dir (created if needed) — for
+// tests that place it at a specific resolver tier (the omakase cache path). The
+// stub needs only /bin/sh and `cat`, both reachable under the reduced PATH the
+// resolution tests pin (stripLefthookEnv).
+func writeFakeLefthookAt(t *testing.T, dir, dumpText string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	dumpFile := filepath.Join(dir, "dump.txt")
 	if err := os.WriteFile(dumpFile, []byte(dumpText), 0o644); err != nil {
 		t.Fatal(err)
@@ -184,6 +197,43 @@ func writeFakeLefthook(t *testing.T, dumpText string) string {
 		t.Fatal(err)
 	}
 	return lh
+}
+
+// stripLefthookEnv isolates lefthook resolution from the host machine:
+// LEFTHOOK_BIN cleared, PATH rebuilt lefthook-free (the shell suites'
+// lhfree_path idiom — a distro package at /usr/bin/lefthook must not satisfy
+// tier 2, while /bin/sh + cat stay reachable for the stubs), HOME and the
+// cache root pinned to fresh temp dirs so a developer's real
+// ~/.cache/omakase/lefthook can never satisfy — or pollute — a resolution
+// test. Returns the cache root.
+func stripLefthookEnv(t *testing.T) string {
+	t.Helper()
+	t.Setenv("LEFTHOOK_BIN", "")
+	t.Setenv("PATH", lefthookFreePath())
+	t.Setenv("HOME", t.TempDir())
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	return cache
+}
+
+// lefthookFreePath is the Go twin of tests/status-parity.test.sh:lhfree_path —
+// the real PATH plus the system dirs, minus every dir carrying an executable
+// lefthook.
+func lefthookFreePath() string {
+	seen := map[string]bool{}
+	var out []string
+	dirs := append(filepath.SplitList(os.Getenv("PATH")), "/usr/bin", "/bin", "/usr/sbin", "/sbin")
+	for _, d := range dirs {
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		if info, err := os.Stat(filepath.Join(d, "lefthook")); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			continue
+		}
+		out = append(out, d)
+	}
+	return strings.Join(out, string(os.PathListSeparator))
 }
 
 func shellQuote(s string) string { return "'" + s + "'" }
@@ -222,5 +272,67 @@ func TestRenderGuardsResolvedChart(t *testing.T) {
 	RenderGuards(&buf, root, omk, false)
 	if got := buf.String(); got != wantGuardsTerm {
 		t.Errorf("RenderGuards chart mismatch\n--- got ---\n%s\n--- want ---\n%s", got, wantGuardsTerm)
+	}
+}
+
+// TestRenderGuardsResolvesFromOmakaseCache is the #72 regression: on a machine
+// with no LEFTHOOK_BIN, no PATH lefthook, and no node_modules — exactly the
+// zero-setup adopter init self-provisions for — status must resolve the
+// cached binary and render the real chart, not the false
+// "gates are not running" note.
+func TestRenderGuardsResolvesFromOmakaseCache(t *testing.T) {
+	cache := stripLefthookEnv(t)
+	writeFakeLefthookAt(t, filepath.Join(cache, "omakase", "lefthook", lefthook.PinnedVersion()), fixtureDump)
+	t.Setenv("OMAKASE_NOW", "2000000000")
+	root := t.TempDir()
+	omk := t.TempDir()
+	if err := os.WriteFile(filepath.Join(omk, "ledger.tsv"), []byte(fixtureLedger), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	RenderGuards(&buf, root, omk, false)
+	if got := buf.String(); got != wantGuardsTerm {
+		t.Errorf("RenderGuards (cache tier) mismatch\n--- got ---\n%s\n--- want ---\n%s", got, wantGuardsTerm)
+	}
+}
+
+// TestRenderGuardsNotResolvedAnywhere drives a GENUINE resolution failure
+// (every tier empty, including the cache), unlike TestRenderGuardsNotResolved
+// above, which covers the resolved-but-empty-dump path via LEFTHOOK_BIN.
+func TestRenderGuardsNotResolvedAnywhere(t *testing.T) {
+	stripLefthookEnv(t)
+	root := t.TempDir()
+	omk := t.TempDir()
+	for _, md := range []bool{true, false} {
+		var buf bytes.Buffer
+		RenderGuards(&buf, root, omk, md)
+		want := "  (lefthook not resolved - gates are not running)\n"
+		if md {
+			want = "_lefthook not resolved - gates are not running._\n"
+		}
+		if got := buf.String(); got != want {
+			t.Errorf("genuinely-unresolved note (md=%v) = %q, want %q", md, got, want)
+		}
+	}
+}
+
+// TestRenderGuardsLefthookBinBeatsCache pins the tier order: an explicit
+// LEFTHOOK_BIN wins over a cached binary. The cache stub emits an EMPTY dump
+// (which would render the note), the override emits the fixture — a rendered
+// chart proves tier 1 was used.
+func TestRenderGuardsLefthookBinBeatsCache(t *testing.T) {
+	cache := stripLefthookEnv(t)
+	writeFakeLefthookAt(t, filepath.Join(cache, "omakase", "lefthook", lefthook.PinnedVersion()), "")
+	t.Setenv("LEFTHOOK_BIN", writeFakeLefthook(t, fixtureDump))
+	t.Setenv("OMAKASE_NOW", "2000000000")
+	root := t.TempDir()
+	omk := t.TempDir()
+	if err := os.WriteFile(filepath.Join(omk, "ledger.tsv"), []byte(fixtureLedger), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	RenderGuards(&buf, root, omk, false)
+	if got := buf.String(); got != wantGuardsTerm {
+		t.Errorf("LEFTHOOK_BIN-beats-cache chart mismatch\n--- got ---\n%s\n--- want ---\n%s", got, wantGuardsTerm)
 	}
 }

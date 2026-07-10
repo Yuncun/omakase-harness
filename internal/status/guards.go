@@ -19,6 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Yuncun/omakase-harness/internal/lefthook"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
@@ -77,18 +78,20 @@ func RenderGuards(w io.Writer, root, omk string, md bool) {
 	renderGuardsChart(w, dump, verds, nowFromEnv(), md)
 }
 
-// resolveLefthook mirrors bin/status.sh:190-192: LEFTHOOK_BIN, else `lefthook`
-// on PATH, else $root/node_modules/.bin/lefthook if executable. "" if none.
+// resolveLefthook resolves lefthook for the guards chart through the SHARED
+// tier walk (internal/lefthook.ResolveForStatus): LEFTHOOK_BIN, `lefthook` on
+// PATH, $root/node_modules/.bin/lefthook, then the omakase-managed cache — the
+// same order init and remove use, never fetching (status is read-only). Until
+// #72 this was a local 3-tier copy (mirroring the pre-cache
+// bin/status.sh:190-192) that missed the cache tier, so exactly the machines
+// self-provisioning exists for — no global lefthook, no node_modules —
+// rendered the FALSE "gates are not running" note while the gates ran fine.
+// "" if nothing resolves. (Cosmetic divergence from the old copy: tier 2 now
+// yields the bare token `lefthook` rather than LookPath's absolute path — the
+// value is only ever exec'd, never printed.)
 func resolveLefthook(root string) string {
-	if b := os.Getenv("LEFTHOOK_BIN"); b != "" {
-		return b
-	}
-	if p, err := exec.LookPath("lefthook"); err == nil {
-		return p
-	}
-	cand := filepath.Join(root, "node_modules", ".bin", "lefthook")
-	if info, err := os.Stat(cand); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
-		return cand
+	if lh, ok := lefthook.ResolveForStatus(root); ok {
+		return lh
 	}
 	return ""
 }

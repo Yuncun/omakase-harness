@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FROZEN v1 REFERENCE (moved from bin/status.sh by the v2 port): parity oracle for the Go binary + the shim's fallback body; kept byte-identical except this note, the lib source path, and two lockstep edits mirroring the binary (the consent-count suffix and the arg guard below), until Phase 7 retires it.
+# FROZEN v1 REFERENCE (moved from bin/status.sh by the v2 port): parity oracle for the Go binary + the shim's fallback body; kept byte-identical except this note, the lib source path, and three lockstep edits mirroring the binary (the consent-count suffix, the arg guard below, and #72's render_guards resolving lefthook via lib-lefthook.sh's shared tier walk — the omakase-cache tier post-dates v1, so v1 fidelity is moot for it), until Phase 7 retires it.
 # omakase-harness status — render the installed (gitignored, invisible) harness as ONE
 # readable map: the harness files grouped by origin (committed / injected / personal;
 # omakase's own .omakase/ machinery is disclosed under Hidden, not listed), which git
@@ -37,6 +37,7 @@ PLACED="$OMK/placed.tsv"    # provenance ledger (init.sh): path,kind,source,sha2
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../lib-harness-paths.sh"   # kind_of() + committed-scan globs (shared with init/import)
+. "$SCRIPT_DIR/../lib-lefthook.sh"        # resolve_lefthook() — the shared tier walk (#72 lockstep edit)
 
 # Drift detection (read-only) — does a placed file still match the hash recorded at init?
 # Mirrors init.sh hash_of() + ensure-present.sh EXACTLY (symlink -> readlink target string;
@@ -199,9 +200,12 @@ render_inventory() {
 # lefthook can't be resolved no gates run, so the chart degrades to a one-line note.
 render_guards() {
   local LH="" DUMP="" now RUNS_FILE
-  if [ -n "${LEFTHOOK_BIN:-}" ]; then LH="$LEFTHOOK_BIN"
-  elif command -v lefthook >/dev/null 2>&1; then LH="lefthook"
-  elif [ -x "$ROOT/node_modules/.bin/lefthook" ]; then LH="$ROOT/node_modules/.bin/lefthook"; fi
+  # #72 lockstep edit: resolve through the shared tier walk (lib-lefthook.sh),
+  # which adds the omakase-cache tier init/remove already had. The inline
+  # 3-tier chain this replaces missed the cache, so exactly the machines
+  # self-provisioning serves rendered the FALSE "gates are not running" note
+  # while the gates ran fine. No fetch: status is read-only reporting.
+  if resolve_lefthook; then LH="$LEFTHOOK"; fi
   [ -n "$LH" ] && DUMP="$( cd "$ROOT" && "$LH" dump 2>/dev/null || true )"
 
   if [ -z "$DUMP" ]; then

@@ -27,6 +27,39 @@ omakase_verify="$(git rev-parse --git-common-dir)/omakase/verify-overlay.sh"
 if [ -f "$omakase_verify" ]; then
   sh "$omakase_verify" || exit 1
 fi
+# Gate-runner leg (#72): lefthook's stub below fails OPEN when no branch of
+# its call_lefthook chain finds a binary ("Can't find lefthook", exit 0) —
+# the wired gates would silently skip. Resolve by omakase's own tiers first;
+# a cache-only lefthook is healed by exporting it as LEFTHOOK_BIN, driving
+# the stub's FIRST branch ("$LEFTHOOK_BIN" "$@", quoted — immune to spaces
+# and colons in the cache path, and a broken value fails CLOSED and loudly,
+# since the stub execs it directly). The cache probe is a version-agnostic
+# glob on purpose: this block is static text baked into installed hooks, and
+# a later lefthook re-pin must not strand them; -f rejects a stray DIRECTORY
+# named lefthook ([ -x ] alone passes one, which would resurrect the silent
+# skip). Unlike the overlay verify above, LEFTHOOK=0 IS honored here — with
+# it set the stub skips gates by explicit choice, so nothing is SILENTLY
+# skipped. Residuals, accepted: a broken-but-present PATH lefthook passes
+# `command -v` and the stub still falls open (probing with `lefthook -h`
+# would spawn the binary on every commit for everyone); a lefthook reachable
+# only through the stub's exotic branches (go tool, bundle exec, the npm
+# wrapper variants) is blocked — hooks exist only where init resolved
+# lefthook through these same tiers, and LEFTHOOK_BIN is the escape.
+if [ "${LEFTHOOK:-}" != "0" ] && [ -z "${LEFTHOOK_BIN:-}" ] \
+   && ! command -v lefthook >/dev/null 2>&1 \
+   && ! [ -x "$(git rev-parse --show-toplevel 2>/dev/null)/node_modules/.bin/lefthook" ]; then
+  omakase_lh_found=""
+  for omakase_lh in "${XDG_CACHE_HOME:-$HOME/.cache}"/omakase/lefthook/*/lefthook; do
+    if [ -f "$omakase_lh" ] && [ -x "$omakase_lh" ]; then omakase_lh_found="$omakase_lh"; break; fi
+  done
+  if [ -n "$omakase_lh_found" ]; then
+    LEFTHOOK_BIN="$omakase_lh_found"; export LEFTHOOK_BIN
+  else
+    echo "omakase: BLOCKING — no lefthook found (LEFTHOOK_BIN, PATH, node_modules/.bin, or the omakase cache): the wired gates cannot run." >&2
+    echo "omakase: restore it with a bare  omakase init  (self-fetches lefthook), or install lefthook / set LEFTHOOK_BIN. Skip once with LEFTHOOK=0; git --no-verify bypasses hooks entirely." >&2
+    exit 1
+  fi
+fi
 GUARD
     printf '%s\n' "$GEND"
     tail -n +2 "$hf.tmp"

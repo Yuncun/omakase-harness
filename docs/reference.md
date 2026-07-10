@@ -95,7 +95,7 @@ installed harness, and `remove` always tears it down completely.
 | Variable | Effect |
 |---|---|
 | `LEFTHOOK_BIN` | path to a lefthook binary to use instead of PATH, `node_modules`, or the fetched cache |
-| `LEFTHOOK=0` | skip gates for one git command. The overlay integrity check still runs; bypass it with git's own `--no-verify` |
+| `LEFTHOOK=0` | skip gates for one git command — an explicit choice, so the missing-lefthook block honors it. The overlay integrity check still runs; bypass it with git's own `--no-verify` |
 | `OMAKASE_CUTOVER_CONFIRM=1` | required to apply `init.sh --cut-over` |
 | `OMAKASE_PAYLOAD` | path to a payload tree to install, overriding the plugin payload. Lower precedence than `--source` |
 | `OMAKASE_BASE_PAYLOAD` | path to the base (plugin) payload tree, exported automatically by the bin/ shims. Needed when the binary resolves from the per-machine cache or PATH, away from a `payload/` sibling. A location hint only — unlike `OMAKASE_PAYLOAD` it never suppresses a remembered source |
