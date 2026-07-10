@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.18.1] — 2026-07-10
+
 ### Added
 - **Plugin/clone installs without Go now self-provision the omakase binary.** `init`,
   `status`, and the new `mcp` shim fetch the pinned, checksum-verified release binary
@@ -35,7 +37,7 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   fails OPEN when no binary is findable ("Can't find lefthook", exit 0) — the wired
   gates silently skipped. The fail-closed block omakase splices above the stub now
   resolves lefthook by omakase's own tiers first: a cache-only lefthook is healed by
-  prepending its dir to PATH (the gates then actually run); nothing found anywhere
+  exporting it as `LEFTHOOK_BIN` (the gates then actually run); nothing found anywhere
   BLOCKS the commit/push with restore guidance instead of skipping. `LEFTHOOK=0`
   still skips — that's an explicit choice, not a silent one (#72). Re-arm existing
   repos with a bare `omakase init`.
