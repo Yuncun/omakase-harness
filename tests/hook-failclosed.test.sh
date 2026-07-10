@@ -3,10 +3,13 @@
 # above lefthook's hook stub (#72). lefthook's own stub fails OPEN when no branch
 # of its call_lefthook chain finds a binary ("Can't find lefthook", exit 0) — the
 # wired gates silently skip. The spliced block must instead:
-#   H1. HEAL: lefthook only in the omakase cache -> prepend its dir to PATH so
-#       the stub's own PATH branch runs the gates (commit succeeds AND the gate
+#   H1. HEAL: lefthook only in the omakase cache -> exported as LEFTHOOK_BIN so
+#       the stub's first branch runs the gates (commit succeeds AND the gate
 #       runner demonstrably ran). The cache probe is a version-agnostic glob —
 #       proven with a version dir that matches no pin.
+#   H6. A DIRECTORY named lefthook in the cache must BLOCK, not heal: [ -x ]
+#       alone passes a directory, the stub then finds nothing and falls open —
+#       the exact silent skip this block exists to close.
 #   H2. BLOCK: no lefthook anywhere -> the commit is REFUSED (exit non-zero,
 #       "omakase: BLOCKING" on stderr, no commit created) instead of the silent
 #       fail-open skip.
@@ -31,7 +34,25 @@ FAILED=0
 pass(){ echo "  PASS: $1"; }
 fail(){ echo "  FAIL: $1"; FAILED=1; }
 
-CLEANPATH="/usr/bin:/bin:/usr/sbin:/sbin"
+# A lefthook-free PATH (idiom of tests/status-parity.test.sh:lhfree_path): built from
+# the real PATH + system dirs, skipping any dir that carries a lefthook — a distro
+# package at /usr/bin/lefthook must not satisfy the stub's PATH branch and turn the
+# block scenarios vacuous, while git/sh stay reachable.
+lhfree_path(){
+  local out="" d oldifs="$IFS"
+  IFS=':'
+  for d in $PATH /usr/bin /bin /usr/sbin /sbin; do
+    IFS="$oldifs"
+    [ -n "$d" ] || { IFS=':'; continue; }
+    [ -x "$d/lefthook" ] && { IFS=':'; continue; }
+    case ":$out:" in *":$d:"*) IFS=':'; continue;; esac
+    out="${out:+$out:}$d"
+    IFS=':'
+  done
+  IFS="$oldifs"
+  printf '%s' "$out"
+}
+CLEANPATH="$(lhfree_path)"
 mkdir -p "$TMP"
 
 # A repo whose .git/hooks/pre-commit is a facsimile of lefthook's generated stub.
@@ -95,7 +116,7 @@ else
   fail "bin/ and embedded install-guards.sh copies have drifted apart"
 fi
 
-echo "== H1: cache-only lefthook heals via PATH prepend (gates RUN) =="
+echo "== H1: cache-only lefthook heals via LEFTHOOK_BIN injection (gates RUN) =="
 R1="$TMP/h1"; newrepo "$R1"; arm "$R1"
 H1HOME="$TMP/h1-home"; rm -rf "$H1HOME" "$TMP/lefthook-invocations.log"
 # A version dir that matches NO pin: the probe must be a version-agnostic glob.
@@ -167,6 +188,21 @@ grep -q "OLD_BLOCK_CONTENT_SENTINEL" "$HOOKS5/pre-commit" \
 grep -q "verify-overlay.sh" "$HOOKS5/pre-commit" \
   && pass "current block content present after re-arm" \
   || fail "current block content missing after re-arm"
+
+echo "== H6: a directory named lefthook in the cache blocks (never silent-skips) =="
+R6="$TMP/h6"; newrepo "$R6"; arm "$R6"
+H6HOME="$TMP/h6-home"; rm -rf "$H6HOME"
+mkdir -p "$H6HOME/.cache/omakase/lefthook/2.1.9/lefthook"   # a DIR at the binary's path
+BEFORE6="$(commits_in "$R6")"
+if try_commit "$R6" "$H6HOME"; then
+  fail "commit SUCCEEDED with a directory at the cached-lefthook path — silent fail-open"
+else
+  pass "commit refused when the cache entry is a directory (rc!=0)"
+fi
+grep -q "omakase: BLOCKING" "$TMP/err" && pass "directory case reaches the BLOCKING message" \
+  || fail "directory case failed without the BLOCKING message: $(cat "$TMP/err")"
+[ "$(commits_in "$R6")" = "$BEFORE6" ] && pass "no commit was created (H6)" \
+  || fail "a commit landed despite the directory-case block"
 
 rm -rf "$TMP"
 echo ""

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Yuncun/omakase-harness/internal/lefthook"
@@ -199,18 +200,40 @@ func writeFakeLefthookAt(t *testing.T, dir, dumpText string) string {
 }
 
 // stripLefthookEnv isolates lefthook resolution from the host machine:
-// LEFTHOOK_BIN cleared, PATH reduced to the system dirs (no brew/npm lefthook
-// there, but /bin/sh + cat still work for the stubs), HOME and the cache root
-// pinned to fresh temp dirs so a developer's real ~/.cache/omakase/lefthook
-// can never satisfy — or pollute — a resolution test. Returns the cache root.
+// LEFTHOOK_BIN cleared, PATH rebuilt lefthook-free (the shell suites'
+// lhfree_path idiom — a distro package at /usr/bin/lefthook must not satisfy
+// tier 2, while /bin/sh + cat stay reachable for the stubs), HOME and the
+// cache root pinned to fresh temp dirs so a developer's real
+// ~/.cache/omakase/lefthook can never satisfy — or pollute — a resolution
+// test. Returns the cache root.
 func stripLefthookEnv(t *testing.T) string {
 	t.Helper()
 	t.Setenv("LEFTHOOK_BIN", "")
-	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv("PATH", lefthookFreePath())
 	t.Setenv("HOME", t.TempDir())
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
 	return cache
+}
+
+// lefthookFreePath is the Go twin of tests/status-parity.test.sh:lhfree_path —
+// the real PATH plus the system dirs, minus every dir carrying an executable
+// lefthook.
+func lefthookFreePath() string {
+	seen := map[string]bool{}
+	var out []string
+	dirs := append(filepath.SplitList(os.Getenv("PATH")), "/usr/bin", "/bin", "/usr/sbin", "/sbin")
+	for _, d := range dirs {
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		if info, err := os.Stat(filepath.Join(d, "lefthook")); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			continue
+		}
+		out = append(out, d)
+	}
+	return strings.Join(out, string(os.PathListSeparator))
 }
 
 func shellQuote(s string) string { return "'" + s + "'" }

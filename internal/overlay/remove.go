@@ -76,8 +76,9 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	// ---- lefthook uninstall, never fetching (remove.sh:16-22) ----
 	// ResolveForRemove walks the same tiers init uses, minus self-fetch, and
 	// is silent on failure (no Guidance call here — remove.sh has none on
-	// this path either): the $OMK teardown below already neutralizes the
-	// fail-closed guard, and the hook stubs are reversed regardless.
+	// this path either): the hook-stub strip below removes BOTH spliced
+	// fail-closed legs (overlay verify and #72's gate-runner check) whether
+	// or not lefthook resolved, so remove works from a blocked machine.
 	if prefix, ok := lefthook.ResolveForRemove(root); ok {
 		args := append(append([]string{}, prefix...), "uninstall")
 		cmd := exec.Command(args[0], args[1:]...)
