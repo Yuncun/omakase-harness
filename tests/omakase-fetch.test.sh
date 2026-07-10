@@ -215,6 +215,7 @@ grep -q 'status needs the omakase binary' "$O5AERR" && pass "status.sh prints re
 rc=$?
 [ "$rc" -eq 1 ] && pass "clone init.sh exits 1 when nothing resolves offline" || fail "init.sh exited $rc, expected 1"
 grep -q 'init needs the omakase binary' "$O5AERR" && pass "init.sh prints recovery guidance to stderr" || fail "no guidance on stderr ($(cat "$O5AERR"))"
+[ ! -s "$O5AOUT" ] && pass "init.sh stdout stays empty on the fail-closed path" || fail "init.sh wrote to stdout: $(cat "$O5AOUT")"
 
 # (b) Hash-fn overrides can't cross the exec into a separate script file, so
 # instead of faking a fetch, pre-seed the cache directly (tier 5) and confirm
