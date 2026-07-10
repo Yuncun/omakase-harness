@@ -9,10 +9,9 @@ resolution fails immediately) → a dev rebuild (`go.mod` + `go` on PATH) → a 
 machine, sha256-verified against digests baked into the repo, and cached at
 `~/.cache/omakase/bin/<version>/` (`XDG_CACHE_HOME` respected). `init.sh`, `status.sh`,
 and `mcp.sh` may trigger that download on first run; `remove.sh` never fetches but
-reuses an already-cached binary, keeping uninstall offline. The frozen v1 bash bodies
-under `bin/legacy/` remain only as the fallback when nothing above resolves — a
-platform the fetch doesn't cover, or no Go and no network; `mcp.sh` has no v1 body and
-exits with guidance instead.
+reuses an already-cached binary, keeping uninstall offline. When nothing resolves, every
+shim fails closed: recovery guidance on stderr (install a binary, or point
+`OMAKASE_BIN=/path/to/omakase` at one) and exit 1 — there is no bash fallback.
 
 ### `init.sh [<owner/repo[#ref]> | --source <git-url|path>] [--cut-over] [--help]`
 

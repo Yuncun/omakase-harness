@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# omakase mcp — thin shim onto the omakase Go binary. The mcp verb is
-# binary-only (no v1 bash body exists), so resolution failure is an error, not
-# a fallback. Stdout belongs to the MCP stdio transport: everything this shim
-# prints goes to stderr. Register with:
+# omakase mcp — thin shim onto the omakase Go binary. Resolution failure is an
+# error (exit 1), like every shim. Stdout belongs to the MCP stdio transport:
+# everything this shim prints goes to stderr. Register with:
 #   claude mcp add omakase -- /path/to/omakase-harness/bin/mcp.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -46,7 +46,7 @@ pass(){ echo "  PASS: $1"; }
 fail(){ echo "  FAIL: $1"; FAILED=1; }
 
 # Freeze the Go module + build caches to their real locations (idiom of
-# tests/status-parity.test.sh). This suite never overrides HOME, so it's a no-op in
+# tests/scorecard.test.sh). This suite never overrides HOME, so it's a no-op in
 # practice, but it matches the house's hermetic-build pattern.
 if command -v go >/dev/null 2>&1; then
   export GOMODCACHE="$(go env GOMODCACHE)"

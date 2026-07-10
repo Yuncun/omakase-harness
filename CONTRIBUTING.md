@@ -10,9 +10,9 @@ shims that resolve a runnable `omakase` in order — an `OMAKASE_BIN` override; 
 present); `dist/omakase`; `omakase` on `PATH`; then the pinned, checksum-verified release
 binary, fetched once per machine into a local cache (`init`, `status`, and `mcp` allow this
 fetch; `remove` does not, so uninstall stays offline). `bin/lib-omakase-bin.sh` implements
-every tier. Only when none of that resolves does a shim fall back to the frozen v1 bash body
-at `bin/legacy/{init,remove,status}.sh` — `mcp` is binary-only and has no v1 body, so a
-resolution failure there is a hard error instead.
+every tier. When none of that resolves, every shim fails closed — recovery guidance on
+stderr (naming the `OMAKASE_BIN` override) and exit 1. There is no bash fallback body: a
+silent one would mask binary-distribution failures.
 
 - `bin/` — the installer (`init`), uninstaller (`remove`), inspector (`status`), and
   MCP-server entry point (`mcp`), plus shared libraries.
@@ -27,13 +27,9 @@ Run the suite:
     for t in tests/*.test.sh; do bash "$t" || break; done
 
 With Go present, the suite exercises the `status`, `init`, and `remove` binary paths
-through the shims. Two differential suites diff the Go output byte-for-byte against the
-frozen v1 bash: `tests/status-parity.test.sh` for `status`, and
-`tests/init-remove-parity.test.sh` for `init`/`remove` (the latter compares per-file lists
-line-SORTED, since find(1) and Go's directory walk emit the same set of files in different
-orders). Without Go, the parity suites still skip, but the shims themselves now resolve a
-real binary — `omakase` on `PATH`, or the pinned, checksum-verified release fetched once per
-machine — before ever reaching the v1 fallback; that fallback remains the last resort only.
+through the shims. Without Go, the shims resolve a real binary — `omakase` on `PATH`, or
+the pinned, checksum-verified release fetched once per machine — and fail closed (error +
+exit 1) when nothing resolves.
 
 A change to the installer or the path model needs a matching test. The path classification
 in `bin/lib-harness-paths.sh` is the single source of truth for what is excluded and how;
