@@ -77,7 +77,8 @@ func buildHomeFixture(t *testing.T) string {
 // buildInstalledFixture builds the "installed" repo fixture used by the
 // goldens: two committed harness files (+ one non-harness tracked file to
 // prove exclusion), and a placed.tsv covering every render branch (normal,
-// disabled, missing, drifted, symlink, .omakase/, 6-tab row).
+// disabled, missing, drifted, symlink, the three .omakase/ machinery health
+// states, 6-tab row).
 func buildInstalledFixture(t *testing.T) (*state.Repo, string) {
 	t.Helper()
 	dir := newGitRepo(t)
@@ -116,13 +117,25 @@ func buildInstalledFixture(t *testing.T) (*state.Repo, string) {
 
 	writeFile(t, dir, "sixtab.txt", "sixtab-body\n")
 
+	// .omakase/ machinery rows, one per health state: healthy stays hidden,
+	// enabled-but-missing and drifted must surface (issue #84 gap 3).
+	// .omakase/internal.sh is the missing one — never created on disk.
+	healthyContent := "healthy-gate\n"
+	writeFile(t, dir, ".omakase/healthy.sh", healthyContent)
+	healthyHash := sha256Hex(healthyContent)
+
+	writeFile(t, dir, ".omakase/stale-gate.sh", "new-gate-body\n")
+	staleLedgerHash := sha256Hex("old-gate-body\n")
+
 	placedTSV := "" +
 		"normal.txt\tdoc\tsome/src\t" + normalHash + "\t1\n" +
 		"disabled.txt\tdoc\tsome/src\tdeadbeef\t0\n" +
 		"missing.txt\tdoc\tsome/src\tdeadbeef\t1\n" +
 		"drifted.txt\tdoc\tsome/src\t" + driftedLedgerHash + "\t1\n" +
 		"linked.txt\tdoc\tsome/src\t" + linkedHash + "\t1\n" +
-		".omakase/internal.sh\tgate\tsome/src\tdeadbeef\t1\n" + // must not render
+		".omakase/internal.sh\tgate\tsome/src\tdeadbeef\t1\n" + // enabled but missing -> renders
+		".omakase/healthy.sh\tgate\tsome/src\t" + healthyHash + "\t1\n" + // healthy machinery -> hidden
+		".omakase/stale-gate.sh\tgate\tsome/src\t" + staleLedgerHash + "\t1\n" + // drifted -> renders
 		"sixtab.txt\tdoc\tsome/src\tanyhash\t1\textra\n" // 6th tab absorbed into Enabled
 
 	if err := os.WriteFile(filepath.Join(repo.OMK, "placed.tsv"), []byte(placedTSV), 0o644); err != nil {
@@ -166,6 +179,8 @@ INJECTED (omakase) — placed by omakase init, gitignored
     ! missing.txt   (doc, from some/src; MISSING — run omakase init to restore)
     ~ drifted.txt   (doc, from some/src; DRIFTED — differs from canonical, run omakase init to re-sync)
     + linked.txt -> nonexistent-target.txt   (doc, from some/src)
+    ! .omakase/internal.sh   (gate, from some/src; MISSING — run omakase init to restore)
+    ~ .omakase/stale-gate.sh   (gate, from some/src; DRIFTED — differs from canonical, run omakase init to re-sync)
     + sixtab.txt   (doc, from some/src)
 GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)
     + ~/.claude/CLAUDE.md   (doc)
@@ -189,6 +204,8 @@ const wantInventoryMDInstalled = "### Committed (this repo) — tracked harness 
 	"- `missing.txt` — doc, from some/src — **MISSING** (run `omakase init` to restore)\n" +
 	"- `drifted.txt` — doc, from some/src — **DRIFTED** (differs from canonical; `omakase init` to re-sync, or it may be an intentional local edit)\n" +
 	"- `linked.txt` → `nonexistent-target.txt` — doc, from some/src\n" +
+	"- `.omakase/internal.sh` — gate, from some/src — **MISSING** (run `omakase init` to restore)\n" +
+	"- `.omakase/stale-gate.sh` — gate, from some/src — **DRIFTED** (differs from canonical; `omakase init` to re-sync, or it may be an intentional local edit)\n" +
 	"- `sixtab.txt` — doc, from some/src\n" +
 	"\n" +
 	"### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)\n" +

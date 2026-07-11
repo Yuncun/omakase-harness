@@ -10,6 +10,8 @@
 #                                                             (it tracks the harness, not the run)
 #   <name> is not active                                      overlay present but gates not armed
 #   <name> — files missing · omakase init to update          overlay incomplete in this worktree
+#   <name> — files differ from canonical · omakase status    a placed file drifted (stale worktree
+#                                                             copy or a local edit)
 #
 # "Last run" = the most recent hook run (pre-commit OR pre-push), summarised from the
 # shared ledger via latest-verdict-per-gate (so a check that failed then passed on the
@@ -52,18 +54,37 @@ for h in pre-commit pre-push; do
 done
 
 # install nudge — any ENABLED placed file missing from this worktree means the overlay is
-# incomplete here (e.g. a fresh `git worktree add` that hasn't self-healed). One fix for
-# all of it: omakase init. (An EDITED file is not flagged — that may be intentional and
-# init would clobber it; that case stays in omakase status.)
+# incomplete here (e.g. a fresh `git worktree add` that hasn't self-healed); the fix is
+# omakase init. A file that is PRESENT but hashes differently from its ledger row nudges
+# too — that is either a stale worktree copy (a main-checkout re-init updated the shared
+# snapshot, this checkout kept the old gate) or a local edit; the two are
+# indistinguishable, so the nudge points at omakase status to review, never at init
+# (which would clobber a deliberate edit). Missing wins over drift; no digest tool on
+# PATH degrades the drift check to silence (matching ensure-present).
 nudge=""
 placed="$common/omakase/placed.tsv"
 if [ -f "$placed" ]; then
+  if command -v shasum >/dev/null 2>&1; then _omk_sha() { shasum -a 256; }
+  elif command -v sha256sum >/dev/null 2>&1; then _omk_sha() { sha256sum; }
+  else _omk_sha() { return 1; }; fi
+  drifted=0
   # `|| [ -n "$rel" ]` processes a final line with no trailing newline. Only ENABLED
   # rows count (enabled=1, matching status.sh); a malformed/blank row is skipped, not nudged.
   while IFS=$'\t' read -r rel kind src hash enabled || [ -n "$rel" ]; do
     [ "$enabled" = "1" ] && [ -n "$rel" ] || continue
     [ -e "$root/$rel" ] || [ -L "$root/$rel" ] || { nudge="files missing · omakase init to update"; break; }
+    # drift: a symlink hashes its readlink TARGET STRING, a file its bytes (mirrors
+    # ensure-present); a tracked path is skipped (upstream owns it) — checked only
+    # after a hash mismatch, so the common all-clean turn spawns no git per row.
+    [ -n "$hash" ] || continue
+    if [ -L "$root/$rel" ]; then actual="$(printf '%s' "$(readlink "$root/$rel" 2>/dev/null)" | _omk_sha 2>/dev/null | awk '{print $1}')"
+    elif [ -r "$root/$rel" ]; then actual="$(_omk_sha < "$root/$rel" 2>/dev/null | awk '{print $1}')"
+    else actual=""; fi
+    [ -n "$actual" ] && [ "$actual" != "$hash" ] || continue
+    git -C "$root" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1 && continue
+    drifted=1
   done < "$placed"
+  [ -z "$nudge" ] && [ "$drifted" -eq 1 ] && nudge="files differ from canonical · omakase status to review"
 fi
 
 # last run - summarise the most recent run from the 4-col ledger (epoch name verdict sha).

@@ -14,11 +14,15 @@ import (
 
 // buildStatusFixture builds an installed repo for the full-output goldens: two
 // committed harness files (+ a non-harness tracked file), one present,
-// non-drifted injected file (normal.txt) plus the .omakase machinery row
-// (skipped in inventory), a remembered source (acme/harness), a base VERSION,
-// and a ledger. It returns the repo, the fixture HOME (shared with the
-// inventory goldens), and a fake lefthook that emits fixtureDump. The $OMK
-// layout is hand-built.
+// non-drifted injected file (normal.txt) plus a HEALTHY .omakase machinery
+// row (on disk, hash matching — healthy machinery stays out of inventory), a
+// remembered source (acme/harness), a base VERSION, and a ledger. It returns
+// the repo, the fixture HOME (shared with the inventory goldens), and a fake
+// lefthook that emits fixtureDump. The $OMK layout is hand-built.
+// fixtureGateContent is the healthy machinery file's bytes; the fixture rows
+// carry its real hash so the row is neither drifted nor missing.
+const fixtureGateContent = "#!/usr/bin/env bash\nfixture gate\n"
+
 func buildStatusFixture(t *testing.T) (*state.Repo, string, string) {
 	t.Helper()
 	dir := newGitRepo(t)
@@ -41,8 +45,9 @@ func buildStatusFixture(t *testing.T) (*state.Repo, string, string) {
 	writeFile(t, dir, "normal.txt", normalContent)
 	normalHash := sha256Hex(normalContent)
 
+	writeFile(t, dir, ".omakase/bin/omakase-gate.sh", fixtureGateContent)
 	placedTSV := "normal.txt\tdoc\tacme/harness\t" + normalHash + "\t1\n" +
-		".omakase/bin/omakase-gate.sh\tgate\tacme/harness\tdeadbeef\t1\n"
+		".omakase/bin/omakase-gate.sh\tgate\tacme/harness\t" + sha256Hex(fixtureGateContent) + "\t1\n"
 	writeOMK(t, repo.OMK, "placed.tsv", placedTSV)
 	writeOMK(t, repo.OMK, "source", "acme/harness\n")
 	writeOMK(t, repo.OMK, "ledger.tsv", fixtureLedger)
@@ -208,7 +213,7 @@ func TestStatusFootprintCountsConsentState(t *testing.T) {
 	// Mark normal.txt disabled (as FileOff would), leaving the machinery gate
 	// row enabled -> 1 injected, 1 toggled off.
 	placedTSV := "normal.txt\tdoc\tacme/harness\t" + sha256Hex("normal-body\n") + "\t0\n" +
-		".omakase/bin/omakase-gate.sh\tgate\tacme/harness\tdeadbeef\t1\n"
+		".omakase/bin/omakase-gate.sh\tgate\tacme/harness\t" + sha256Hex(fixtureGateContent) + "\t1\n"
 	writeOMK(t, repo.OMK, "placed.tsv", placedTSV)
 	pinStatusEnv(t, repo, home, lh)
 
