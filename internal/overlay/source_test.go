@@ -9,32 +9,10 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
-// These are the --source integration + unit tests (Task 4). Discipline per
-// scenario is noted in the test doc-comment: "bash-format" = the byte structure
-// was pinned against a live `bash bin/init.sh --source ...` run in a twin
-// fixture (see below) and the path-bearing lines are CONSTRUCTED from known
-// inputs (XDG_CACHE_HOME + the computed slug), the same way init_test.go builds
-// path expectations; "broken-variant" = a deliberately malformed source drives
-// the fail-closed arm; "red-first" = the behavior is asserted directly.
-//
-// The bash-format reference run (stdout structure, recommends placement,
-// placed.tsv column 3 = the source string on EVERY row, $OMK/source, and the
-// slug = <sanitized-basename>-<first8 sha256>) was captured with:
-//
-//	SRC=<a local source repo with name/version/recommends + a payload delta>
-//	HOME=$fake XDG_CACHE_HOME=$cache LEFTHOOK_BIN=$stub \
-//	  bash bin/init.sh --source "$SRC"
-//
-// which produced:
-//	omakase: source '<SRC>' (name: demo, version: 1.2.3) cached at <CACHE>/omakase/sources/demo-src-1903dc30
-//	... placement summary ...
-//	omakase: see the whole harness any time with  omakase status
-//	omakase: this harness recommends — install the widget plugin
-//	omakase: to customize, fork the harness source ...
-// with placed.tsv column 3 = <SRC> on every row and $OMK/source = "<SRC>\n".
-// (The base tree in that run was the real payload/, so its file COUNT/order is
-// find-order; the Go tests use a controlled base via basePayloadOverride and
-// assert lexical WalkDir order — the GC6-sanctioned divergence.)
+// The --source integration and unit tests. Path-bearing expectations are
+// constructed from known inputs (XDG_CACHE_HOME + the computed cache slug)
+// rather than hardcoded temp paths. Placement asserts filepath.WalkDir's lexical
+// order via a controlled base payload (basePayloadOverride).
 
 // ---------------------------------------------------------------- helpers
 
@@ -42,9 +20,9 @@ import (
 // point at fresh temp dirs (so no cache ever lands in ~/.cache), and
 // OMAKASE_PAYLOAD is neutralized (the source arm must not read it; a stray
 // ambient value would skip a remembered-source read). OMAKASE_BASE_PAYLOAD is
-// neutralized too: a test that clears the seam without setting it would
-// otherwise absorb an ambient value from the dev/CI shell. Tests that need a
-// base value re-Setenv it AFTER this helper, so their value still wins.
+// neutralized too, so a test that clears basePayloadOverride without setting it
+// does not absorb an ambient value from the shell. Tests that need a base value
+// re-Setenv it after this helper, so their value still wins.
 func srcTestEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
@@ -54,8 +32,7 @@ func srcTestEnv(t *testing.T) {
 }
 
 // useBasePayloadDir creates the base-harness payload fixture and points the base
-// resolver (bin/init.sh:181's $SCRIPT_DIR/../payload) at it for this test,
-// restoring the seam on cleanup.
+// resolver at it for this test, restoring basePayloadOverride on cleanup.
 func useBasePayloadDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -65,10 +42,10 @@ func useBasePayloadDir(t *testing.T) string {
 	return dir
 }
 
-// clearBasePayloadOverride empties the binary-relative TEST SEAM for the duration
-// of a test (save/restore, exactly like useBasePayloadDir), so defaultPayload
-// falls through to the OMAKASE_BASE_PAYLOAD env tier the shims export — the seam
-// would otherwise short-circuit that tier (Global Constraint 2's precedence).
+// clearBasePayloadOverride empties basePayloadOverride for the duration of a test
+// (save/restore, like useBasePayloadDir), so defaultPayload falls through to the
+// OMAKASE_BASE_PAYLOAD env tier the shims export — the override would otherwise
+// short-circuit that tier.
 func clearBasePayloadOverride(t *testing.T) {
 	t.Helper()
 	prev := basePayloadOverride
@@ -76,8 +53,8 @@ func clearBasePayloadOverride(t *testing.T) {
 	t.Cleanup(func() { basePayloadOverride = prev })
 }
 
-// newSourceRepo makes an empty committed-config git repo to build a SOURCE in,
-// returning its absolute path (as expandSource would absolutize it).
+// newSourceRepo makes an empty committed-config git repo to build a source in,
+// returning its absolute path (expandSource absolutizes the same way).
 func newSourceRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -96,11 +73,11 @@ func commitAll(t *testing.T, dir, msg string) {
 
 // ---------------------------------------------------------------- basic merge
 
-// TestSourceFlagBasicMerge (bash-format): a --source flag clones a local source,
-// merges the base payload UNDER the source delta, places the merged set, records
-// the source string in placed.tsv column 3 and $OMK/source, and surfaces the
-// manifest's recommends line — all byte-exact. Base ships one file; the source
-// delta ships two; the merged placement is lexical (GC6).
+// TestSourceFlagBasicMerge: a --source flag clones a local source, merges the
+// base payload under the source delta, places the merged set, records the source
+// string in placed.tsv column 3 and $OMK/source, and surfaces the manifest's
+// recommends line. Base ships one file; the source delta ships two; the merged
+// placement is lexical.
 func TestSourceFlagBasicMerge(t *testing.T) {
 	dir, repo := initRepo(t)
 	srcTestEnv(t)
@@ -139,7 +116,7 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 	eq(t, "delta gate", readFileT(t, filepath.Join(dir, ".omakase", "gates", "src.sh")), "src gate\n")
 	eq(t, "delta rule", readFileT(t, filepath.Join(dir, ".claude", "rules", "r.md")), "rule\n")
 
-	// placed.tsv column 3 = the source string on EVERY row (base + delta).
+	// placed.tsv column 3 = the source string on every row (base + delta).
 	for _, row := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
 		if row.Src != src {
 			t.Errorf("placed.tsv col3 = %q for %q, want %q", row.Src, row.Rel, src)
@@ -156,8 +133,8 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 	}
 }
 
-// TestSourceNoRecommendsNoLine (red-first): a manifest without recommends emits
-// NO "this harness recommends" line (the summary stays the plain tail).
+// TestSourceNoRecommendsNoLine: a manifest without recommends emits no "this
+// harness recommends" line (the summary stays the plain tail).
 func TestSourceNoRecommendsNoLine(t *testing.T) {
 	_, repo := initRepo(t)
 	srcTestEnv(t)
@@ -186,7 +163,7 @@ func TestSourceNoRecommendsNoLine(t *testing.T) {
 // ---------------------------------------------------------------- manifest arms
 
 // assertSourceRefusal runs a --source install expected to fail closed: exit 1,
-// exact stderr, and NOTHING placed (no .omakase, clean git status, no exclude
+// exact stderr, and nothing placed (no .omakase, clean git status, no exclude
 // block).
 func assertSourceRefusal(t *testing.T, argvSource, wantErr string) {
 	t.Helper()
@@ -213,8 +190,8 @@ func assertSourceRefusal(t *testing.T, argvSource, wantErr string) {
 	}
 }
 
-// TestSourceMissingManifest (broken-variant): a payload-only source (no
-// omakase.manifest) is refused, byte-exact.
+// TestSourceMissingManifest: a payload-only source (no omakase.manifest) is
+// refused.
 func TestSourceMissingManifest(t *testing.T) {
 	src := newSourceRepo(t)
 	writeFile(t, filepath.Join(src, "payload", "rule.md"), "a rule\n")
@@ -223,7 +200,7 @@ func TestSourceMissingManifest(t *testing.T) {
 		"omakase: source '"+src+"' has no omakase.manifest at its root — not an omakase source\n")
 }
 
-// TestSourceMissingName (broken-variant): a manifest with no name: line is refused.
+// TestSourceMissingName: a manifest with no name: line is refused.
 func TestSourceMissingName(t *testing.T) {
 	src := newSourceRepo(t)
 	writeFile(t, filepath.Join(src, "omakase.manifest"), "version: 1.0\nrecommends: x\n")
@@ -233,9 +210,8 @@ func TestSourceMissingName(t *testing.T) {
 		"omakase: source '"+src+"' manifest is missing the required 'name:' line\n")
 }
 
-// TestSourceEmptyPayload (broken-variant): a manifest but no non-empty payload/
-// tree is refused. (git cannot track an empty dir, so the payload/ is absent in
-// the clone — the same `[ -d payload ] && [ -n "$(ls -A payload)" ]` failure.)
+// TestSourceEmptyPayload: a manifest but no non-empty payload/ tree is refused.
+// git cannot track an empty dir, so payload/ is absent in the clone.
 func TestSourceEmptyPayload(t *testing.T) {
 	src := newSourceRepo(t)
 	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: empty\n")
@@ -244,9 +220,9 @@ func TestSourceEmptyPayload(t *testing.T) {
 		"omakase: source '"+src+"' has no non-empty payload/ tree — nothing to inject\n")
 }
 
-// TestSourceCRLFManifest (broken-variant): a CRLF manifest with trailing spaces
-// yields name/version stripped of the ^M and surrounding whitespace — the
-// "cached at" line carries the clean values, no ^M leaks downstream.
+// TestSourceCRLFManifest: a CRLF manifest with trailing spaces yields
+// name/version stripped of the ^M and surrounding whitespace — the "cached at"
+// line carries the clean values, no ^M leaks downstream.
 func TestSourceCRLFManifest(t *testing.T) {
 	_, repo := initRepo(t)
 	srcTestEnv(t)
@@ -275,8 +251,8 @@ func TestSourceCRLFManifest(t *testing.T) {
 
 // ---------------------------------------------------------------- ref pin
 
-// TestSourceRefPinBranch (red-first): --source repo#branch checks the cache out
-// to that branch; the branch-specific delta is installed, and the pinned label
+// TestSourceRefPinBranch: --source repo#branch checks the cache out to that
+// branch; the branch-specific delta is installed, and the pinned label
 // round-trips into placed.tsv col3 + $OMK/source.
 func TestSourceRefPinBranch(t *testing.T) {
 	dir, repo := initRepo(t)
@@ -307,8 +283,8 @@ func TestSourceRefPinBranch(t *testing.T) {
 	}
 }
 
-// TestSourceRefPinTag (red-first): a tag ref resolves via fetch --tags; the
-// tagged (older) content installs, not HEAD.
+// TestSourceRefPinTag: a tag ref resolves via fetch --tags; the tagged (older)
+// content installs, not HEAD.
 func TestSourceRefPinTag(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
@@ -330,8 +306,7 @@ func TestSourceRefPinTag(t *testing.T) {
 	eq(t, "tag-pinned content", readFileT(t, filepath.Join(dir, ".omakase", "gates", "g.sh")), "TAGGED\n")
 }
 
-// TestSourceRefNotFound (broken-variant): an unknown ref is refused, byte-exact,
-// with nothing placed.
+// TestSourceRefNotFound: an unknown ref is refused, with nothing placed.
 func TestSourceRefNotFound(t *testing.T) {
 	dir, repo := initRepo(t)
 	srcTestEnv(t)
@@ -359,13 +334,13 @@ func TestSourceRefNotFound(t *testing.T) {
 
 // ---------------------------------------------------------------- round-trip
 
-// TestRememberedSourceRoundTrip (red-first): the INIT-twice contract. Init 1
-// pins a TAG and writes $OMK/source; a BARE init 2 (no flag, OMAKASE_PAYLOAD
-// unset) reads it back, re-splits the pinned ref, refreshes the cache, and
-// re-installs the SAME pinned content. A tag is used because its ref is
-// immutable: the refresh's hard-reset lands on a DETACHED HEAD, which the tag
-// re-checkout overrides, so the pinned content survives (verified against
-// bin/init.sh; a BRANCH pin does NOT survive — see TestBranchPinNotPreserved).
+// TestRememberedSourceRoundTrip: the init-twice contract. Init 1 pins a tag and
+// writes $OMK/source; a bare init 2 (no flag, OMAKASE_PAYLOAD unset) reads it
+// back, re-splits the pinned ref, refreshes the cache, and re-installs the same
+// pinned content. A tag is used because its ref is immutable: the refresh's
+// hard-reset lands on a detached HEAD, which the tag re-checkout overrides, so
+// the pinned content survives. A branch pin does not survive — see
+// TestBranchPinNotPreserved.
 func TestRememberedSourceRoundTrip(t *testing.T) {
 	dir, repo := initRepo(t)
 	srcTestEnv(t)
@@ -400,11 +375,9 @@ func TestRememberedSourceRoundTrip(t *testing.T) {
 	}
 }
 
-// TestBranchPinNotPreserved (parity): a BRANCH pin does NOT survive a bare
-// re-run — the refresh hard-resets the checked-out local branch to the remote
-// default, and re-checking-out that same branch yields the DEFAULT content. This
-// is a fetch_source quirk (bin/init.sh:117-138) the Go port reproduces exactly
-// (verified against bin/init.sh: init1 => FEATURE, bare re-run => MAIN).
+// TestBranchPinNotPreserved: a branch pin does not survive a bare re-run — the
+// refresh hard-resets the checked-out local branch to the remote default, and
+// re-checking-out that same branch yields the default branch's content.
 func TestBranchPinNotPreserved(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
@@ -436,9 +409,9 @@ func TestBranchPinNotPreserved(t *testing.T) {
 
 // ---------------------------------------------------------------- cache refresh
 
-// TestSourceCacheRefreshPicksUpNewCommit (red-first): a second --source install
-// against a source whose default branch advanced refreshes the cache (fetch +
-// hard reset) and places the new tip.
+// TestSourceCacheRefreshPicksUpNewCommit: a second --source install against a
+// source whose default branch advanced refreshes the cache (fetch + hard reset)
+// and places the new tip.
 func TestSourceCacheRefreshPicksUpNewCommit(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
@@ -472,9 +445,9 @@ func TestSourceCacheRefreshPicksUpNewCommit(t *testing.T) {
 	}
 }
 
-// TestSourceCorruptCacheReclone (broken-variant): a corrupt cache (garbage
-// .git/HEAD, mirroring sources.test.sh S3d) is discarded with the byte-exact
-// stale notice and re-cloned; the fresh clone delivers the latest payload.
+// TestSourceCorruptCacheReclone: a corrupt cache (garbage .git/HEAD) is discarded
+// with the stale notice and re-cloned; the fresh clone delivers the latest
+// payload.
 func TestSourceCorruptCacheReclone(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
@@ -512,16 +485,15 @@ func TestSourceCorruptCacheReclone(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------- offline repair (Task 2)
+// ---------------------------------------------------------------- offline repair
 
-// TestFetchSourceReusesCacheWhenRefreshFails (red-first, GC9: no network used):
-// pins the cache-brick fix. A prior fetch leaves a healthy, valid cache (.git +
-// omakase.manifest + payload/). The cache's remote then goes dark (repointed at
-// a nonexistent local path — no network involved) and the source itself
-// disappears too, so BOTH refreshCache's `git fetch` and any reclone attempt
-// (which would clone from `src` verbatim) are impossible — the genuinely
-// offline case a bare-init repair must survive. fetchSource must reuse the
-// retained cache and succeed, instead of deleting the only usable copy and
+// TestFetchSourceReusesCacheWhenRefreshFails: a prior fetch leaves a healthy,
+// valid cache (.git + omakase.manifest + payload/). The cache's remote then goes
+// dark (repointed at a nonexistent local path, no network involved) and the
+// source itself disappears too, so both refreshCache's `git fetch` and any
+// reclone attempt (which would clone from `src` verbatim) are impossible — the
+// genuinely offline case a bare-init repair must survive. fetchSource must reuse
+// the retained cache and succeed, instead of deleting the only usable copy and
 // then failing to reclone with nothing to fall back to.
 func TestFetchSourceReusesCacheWhenRefreshFails(t *testing.T) {
 	srcTestEnv(t)
@@ -575,8 +547,8 @@ func TestFetchSourceReusesCacheWhenRefreshFails(t *testing.T) {
 
 // ---------------------------------------------------------------- merge semantics
 
-// TestMergeSourceWinsOverlap (red-first): base and source both ship a file at
-// the same path; the SOURCE wins (replace semantics, rm-before-copy).
+// TestMergeSourceWinsOverlap: base and source both ship a file at the same path;
+// the source wins (replace semantics, rm-before-copy).
 func TestMergeSourceWinsOverlap(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
@@ -596,8 +568,8 @@ func TestMergeSourceWinsOverlap(t *testing.T) {
 	eq(t, "source wins on overlap", readFileT(t, filepath.Join(dir, ".omakase", "gates", "example.sh")), "SOURCE\n")
 }
 
-// TestMergeSymlinkOverFile (red-first): base ships a regular file where the
-// source ships a symlink — the merged path is the SOURCE symlink (cp -P carried).
+// TestMergeSymlinkOverFile: base ships a regular file where the source ships a
+// symlink — the merged path is the source symlink.
 func TestMergeSymlinkOverFile(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
@@ -623,9 +595,9 @@ func TestMergeSymlinkOverFile(t *testing.T) {
 	}
 }
 
-// TestMergeFileOverSymlink (red-first): base ships a symlink where the source
-// ships a regular file — the merged path is the SOURCE regular file, and the
-// base symlink's TARGET is NOT written through (proving the rm-before-copy).
+// TestMergeFileOverSymlink: base ships a symlink where the source ships a regular
+// file — the merged path is the source regular file, and the base symlink's
+// target is not written through (proving the rm-before-copy).
 func TestMergeFileOverSymlink(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
@@ -645,17 +617,17 @@ func TestMergeFileOverSymlink(t *testing.T) {
 	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d; stderr=%q", code, stderr.String())
 	}
-	// link.md is a regular file with the source content (NOT a symlink).
+	// link.md is a regular file with the source content (not a symlink).
 	if isSymlink(filepath.Join(dir, "link.md")) {
 		t.Error("link.md stayed a symlink — the source regular file did not win")
 	}
 	eq(t, "link.md content", readFileT(t, filepath.Join(dir, "link.md")), "source regular content\n")
-	// The base symlink's target was NOT clobbered through the link.
+	// The base symlink's target was not clobbered through the link.
 	eq(t, "base target untouched", readFileT(t, filepath.Join(dir, "target.md")), "base target untouched\n")
 }
 
-// TestMergeStagingCleaned (red-first): the merge staging dir under TMPDIR is
-// removed on a successful run (v1's EXIT-trap cleanup, honoring TMPDIR).
+// TestMergeStagingCleaned: the merge staging dir under TMPDIR is removed on a
+// successful run.
 func TestMergeStagingCleaned(t *testing.T) {
 	initRepo(t)
 	srcTestEnv(t)
@@ -684,10 +656,9 @@ func TestMergeStagingCleaned(t *testing.T) {
 	}
 }
 
-// TestSourceWiringGuardPostMerge (broken-variant): the fail-closed wiring guard
-// runs on the MERGED payload — a source wiring a .omakase/*.sh that neither it
-// nor the base ships is refused after the merge, with nothing placed (the
-// merge->guard seam; mirrors sources.test.sh S7).
+// TestSourceWiringGuardPostMerge: the fail-closed wiring guard runs on the merged
+// payload — a source wiring a .omakase/*.sh that neither it nor the base ships is
+// refused after the merge, with nothing placed.
 func TestSourceWiringGuardPostMerge(t *testing.T) {
 	dir, repo := initRepo(t)
 	srcTestEnv(t)
@@ -710,7 +681,7 @@ func TestSourceWiringGuardPostMerge(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".omakase")); err == nil {
 		t.Error("placed files despite the wiring refusal")
 	}
-	// The cached-at line DID print (fetch/validate precede the guard), but nothing
+	// The cached-at line did print (fetch/validate precede the guard), but nothing
 	// was placed and no source was remembered.
 	if _, err := os.Stat(filepath.Join(repo.OMK, "source")); err == nil {
 		t.Error("remembered a source despite the wiring refusal")
@@ -719,9 +690,9 @@ func TestSourceWiringGuardPostMerge(t *testing.T) {
 
 // ---------------------------------------------------------------- clone failure
 
-// TestSourceCloneFailure (broken-variant): a local path that exists but is not a
-// git repo fails the clone; the byte-exact message names the source + cache, and
-// nothing is placed. No network.
+// TestSourceCloneFailure: a local path that exists but is not a git repo fails
+// the clone; the message names the source + cache, and nothing is placed. No
+// network.
 func TestSourceCloneFailure(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
@@ -744,8 +715,8 @@ func TestSourceCloneFailure(t *testing.T) {
 
 // ---------------------------------------------------------------- unit: slug / expand / manifest
 
-// TestSourceSlugCollisionResistance (property): two sources sharing a basename
-// but at different URLs get DIFFERENT cache slugs; one source always maps to one.
+// TestSourceSlugCollisionResistance: two sources sharing a basename but at
+// different URLs get different cache slugs; one source always maps to one.
 func TestSourceSlugCollisionResistance(t *testing.T) {
 	a := sourceSlug("/x/harness")
 	b := sourceSlug("/y/harness")
@@ -764,7 +735,7 @@ func TestSourceSlugCollisionResistance(t *testing.T) {
 	}
 }
 
-// TestSanitizeBase (unit): the sed + tr basename sanitizer.
+// TestSanitizeBase: the basename sanitizer.
 func TestSanitizeBase(t *testing.T) {
 	cases := map[string]string{
 		"https://github.com/you/harness.git": "harness",
@@ -784,8 +755,8 @@ func TestSanitizeBase(t *testing.T) {
 	}
 }
 
-// TestExpandSource (unit): shorthand -> GitHub URL, #ref split, URL/scp
-// passthrough, and local-dir absolutize.
+// TestExpandSource: shorthand -> GitHub URL, #ref split, URL/scp passthrough,
+// and local-dir absolutize.
 func TestExpandSource(t *testing.T) {
 	type sr struct{ src, ref string }
 	cases := map[string]sr{
@@ -809,8 +780,8 @@ func TestExpandSource(t *testing.T) {
 	}
 }
 
-// TestManifestField (unit): first-match value, CRLF + whitespace stripping,
-// no-value and missing-key -> "".
+// TestManifestField: first-match value, CRLF + whitespace stripping, no-value and
+// missing-key -> "".
 func TestManifestField(t *testing.T) {
 	m := []byte("name:  demo-harness  \r\nversion:1.0\r\nrecommends: a b c\n")
 	eqField := func(key, want string) {
@@ -830,16 +801,16 @@ func TestManifestField(t *testing.T) {
 	}
 }
 
-// ------------------------------------------- base payload env handoff (issue #70)
+// ------------------------------------------- base payload env handoff
 
-// Since v0.18.0 the binary may run APART from the plugin (a fetched release cache
-// / a PATH install), so the shims hand the merge base's location over in
+// Since v0.18.0 the binary may run apart from the plugin (a fetched release cache
+// or a PATH install), so the shims hand the merge base's location over in
 // OMAKASE_BASE_PAYLOAD; the binary-relative $SCRIPT_DIR/../payload is a last
-// resort only. These tests run with the TEST SEAM cleared so defaultPayload
+// resort only. These tests run with basePayloadOverride cleared so defaultPayload
 // actually consults the env tier.
 
-// TestDefaultPayloadHonorsBasePayloadEnv (red-first): with the seam cleared,
-// OMAKASE_BASE_PAYLOAD is the resolved base (Global Constraint 2's middle tier).
+// TestDefaultPayloadHonorsBasePayloadEnv: with basePayloadOverride cleared,
+// OMAKASE_BASE_PAYLOAD is the resolved base.
 func TestDefaultPayloadHonorsBasePayloadEnv(t *testing.T) {
 	clearBasePayloadOverride(t)
 	dir := t.TempDir()
@@ -849,9 +820,9 @@ func TestDefaultPayloadHonorsBasePayloadEnv(t *testing.T) {
 	}
 }
 
-// TestSourceMergeBaseFromEnv (red-first): a full --source install with the seam
+// TestSourceMergeBaseFromEnv: a full --source install with basePayloadOverride
 // cleared, OMAKASE_PAYLOAD empty, and OMAKASE_BASE_PAYLOAD pointing at a base
-// fixture merges that env-pointed base UNDER the source delta — both a base-only
+// fixture merges that env-pointed base under the source delta — both a base-only
 // file and the source delta file land on disk.
 func TestSourceMergeBaseFromEnv(t *testing.T) {
 	dir, _ := initRepo(t)
@@ -877,10 +848,10 @@ func TestSourceMergeBaseFromEnv(t *testing.T) {
 	eq(t, "source delta file", readFileT(t, filepath.Join(dir, ".omakase", "gates", "src.sh")), "src\n")
 }
 
-// TestSourceMergeBaseMissing (broken-variant): with the seam cleared and
+// TestSourceMergeBaseMissing: with basePayloadOverride cleared and
 // OMAKASE_BASE_PAYLOAD set to a nonexistent path, the missing merge base is
-// caught BEFORE any clone/fetch — exit 1 with the byte-exact guidance and no
-// "cached at" line (proving the check runs first).
+// caught before any clone/fetch — exit 1 with the guidance and no "cached at"
+// line (proving the check runs first).
 func TestSourceMergeBaseMissing(t *testing.T) {
 	initRepo(t)
 	srcTestEnv(t)
@@ -906,15 +877,14 @@ func TestSourceMergeBaseMissing(t *testing.T) {
 	}
 }
 
-// TestBareRunRememberedSourceSurvivesBasePayloadEnv (red-first, Global
-// Constraint 1's third bullet): after a --source install remembered in
-// $OMK/source, a BARE re-run with OMAKASE_BASE_PAYLOAD exported (OMAKASE_PAYLOAD
-// empty) must STILL take the remembered-source merge path, not a plain install —
-// the remembered-source suppression keys on OMAKASE_PAYLOAD ONLY, so the
-// shim-exported base var must never suppress it (that would reintroduce the bug:
-// bare re-runs silently downgrading to plain installs). The source delta being
-// re-placed proves the merge path ran; a plain install (base only) would instead
-// sweep it as an orphan.
+// TestBareRunRememberedSourceSurvivesBasePayloadEnv: after a --source install
+// remembered in $OMK/source, a bare re-run with OMAKASE_BASE_PAYLOAD exported
+// (OMAKASE_PAYLOAD empty) must still take the remembered-source merge path, not a
+// plain install — the remembered-source suppression keys on OMAKASE_PAYLOAD only,
+// so the shim-exported base var must never suppress it (that would reintroduce
+// the bug: bare re-runs silently downgrading to plain installs). The source delta
+// being re-placed proves the merge path ran; a plain install (base only) would
+// instead sweep it as an orphan.
 func TestBareRunRememberedSourceSurvivesBasePayloadEnv(t *testing.T) {
 	dir, repo := initRepo(t)
 	srcTestEnv(t)

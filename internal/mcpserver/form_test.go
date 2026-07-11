@@ -191,7 +191,7 @@ func TestBuildFormHeaderTitlesCountLeavesAndNameGates(t *testing.T) {
 	}
 	cases := []struct{ key, wantSubstr string }{
 		{"stage:session start", "(1/1 on)"}, // AGENTS.md, on
-		{"stage:on demand", "(1/2 on)"},      // .claude/skills: a on, b off
+		{"stage:on demand", "(1/2 on)"},     // .claude/skills: a on, b off
 		{"stage:pre-commit", "gates (1/1 on)"},
 	}
 	for _, c := range cases {

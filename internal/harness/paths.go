@@ -1,24 +1,19 @@
 // Package harness classifies harness-artifact repo paths into their "kind"
-// and lists the git pathspecs status.sh scans for a project's own committed
-// harness surface. Go twin of bin/lib-harness-paths.sh (kind_of() +
-// HARNESS_COMMITTED_GLOBS) — DUPLICATED bash<->Go until Phase 2 retires the
-// bash callers; keep in lockstep.
+// and lists the git pathspecs the status verb scans for a project's own
+// committed harness surface.
 package harness
 
 import "strings"
 
-// SharedTopdirs mirrors bin/lib-harness-paths.sh's HARNESS_SHARED_TOPDIRS
-// verbatim (currently just ".github"): the top-level dirs omakase SHARES with
-// the project rather than owning outright. An injected path under one of these
-// is excluded from git file-by-file in .git/info/exclude — never the whole dir
-// — so omakase never hides the project's OWN untracked files there. Dirs NOT
-// listed here (.omakase, .claude) are omakase-owned and excluded wholesale.
-// Go twin of the bash array — DUPLICATED bash<->Go until Phase 2 retires the
-// bash callers; keep in lockstep with bin/lib-harness-paths.sh:72.
+// SharedTopdirs lists the top-level dirs omakase shares with the project
+// rather than owning outright. Injected paths under these are excluded
+// file-by-file in .git/info/exclude, never as a whole dir, so omakase does
+// not hide the project's own untracked files; unlisted dirs (.omakase,
+// .claude) are omakase-owned and excluded wholesale.
 var SharedTopdirs = []string{".github"}
 
-// CommittedGlobs mirrors bin/lib-harness-paths.sh's HARNESS_COMMITTED_GLOBS
-// verbatim (order matters: it is handed to `git ls-files -- globs...`).
+// CommittedGlobs lists the pathspecs for a project's own committed harness
+// surface (order matters: it is handed to `git ls-files -- globs...`).
 var CommittedGlobs = []string{
 	"AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", ".claude",
 	"lefthook.yml", "lefthook-local.yml", ".lefthook", ".omakase",
@@ -27,13 +22,10 @@ var CommittedGlobs = []string{
 	".github/chatmodes", ".github/hooks",
 }
 
-// KindOf classifies a harness path by its location — the path IS the
-// classification. Verbatim port of the kind_of() case table in
-// bin/lib-harness-paths.sh, including case ORDER: specific patterns first
-// (mutually disjoint, so their order relative to each other is free), then
-// the catch-alls */* (nested path), *.md (remaining root-level .md), *
-// (everything else). Valid kinds: rule skill command agent prompt config
-// doc gate other.
+// KindOf classifies a harness path by its location into one of: rule skill
+// command agent prompt config doc gate other. Specific patterns are tested
+// first, then the catch-alls: */* (nested path), *.md (root-level doc),
+// * (other).
 func KindOf(path string) string {
 	switch {
 	// --- Claude Code ---
@@ -76,12 +68,10 @@ func KindOf(path string) string {
 	}
 }
 
-// bashGlobMatch reproduces bash `case` glob semantics for one pattern
-// against a full string (anchored match). The only wildcard used in the
-// kind_of table is `*`, and unlike path.Match / filepath.Match, bash's `*`
-// matches any sequence of characters INCLUDING `/` — ".claude/skills/*"
-// matches "a/b/c", not just a single path segment. There are no `?` or
-// `[...]` classes in this table, so those are not implemented.
+// bashGlobMatch matches s against pattern with bash `case` glob semantics,
+// anchored: unlike path.Match, `*` matches any sequence including `/`, so
+// ".claude/skills/*" matches "a/b/c". `?` and `[...]` are not implemented;
+// the KindOf table uses only `*`.
 func bashGlobMatch(pattern, s string) bool {
 	if !strings.Contains(pattern, "*") {
 		return pattern == s
@@ -105,11 +95,11 @@ func bashGlobMatch(pattern, s string) bool {
 	return strings.HasSuffix(s, parts[len(parts)-1])
 }
 
-// IsMachinery reports whether rel is harness machinery — the paths that keep
+// IsMachinery reports whether rel is harness machinery: the paths that keep
 // the harness itself running (.omakase/ tree, lefthook wiring, hook dirs,
-// .worktreeinclude). Machinery is never a consent item: the TUI and MCP menu
-// filter it out, the scriptable toggles refuse it, and init ignores a stale
-// enabled=0 ledger row for it (a pre-guard binary could record one).
+// .worktreeinclude). Machinery is never a consent item — the TUI and MCP
+// menu filter it out, the scriptable toggles refuse it, and init ignores a
+// stale enabled=0 ledger row for it.
 func IsMachinery(rel string) bool {
 	switch {
 	case strings.HasPrefix(rel, ".omakase/"),

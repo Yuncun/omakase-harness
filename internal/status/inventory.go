@@ -1,9 +1,7 @@
-// Package status ports bin/status.sh (the `omakase status` verb) to Go. This
-// file (inventory.go) covers the inventory renderer (bin/status.sh:90-178),
-// the not-installed message (bin/status.sh:292-301), and the pre-0.10
-// message (bin/status.sh:277-289) — the parts of status.sh that never
-// require an installed harness. Guards-chart + identity rendering and full
-// verb assembly are a later task.
+// Package status renders the `omakase status` report.
+//
+// This file covers the inventory renderer, the not-installed message, and the
+// pre-0.10 message — the parts that never require an installed harness.
 package status
 
 import (
@@ -20,23 +18,17 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
-// maxLineBuf raises the bufio.Scanner token limit past its 64KiB default,
-// mirroring internal/state's constant of the same name — none of the files
-// this package reads are expected to exceed it, but a pathologically long
-// line should fail closed rather than crash the scan.
+// maxLineBuf raises the bufio.Scanner token limit past its 64KiB default.
+// None of the files this package reads are expected to exceed it, but a
+// pathologically long line should fail closed rather than crash the scan.
 const maxLineBuf = 1 << 20
 
-// CommittedList lists the repo's own git-tracked harness surface: the Go
-// twin of committed_list() (bin/status.sh:60-65). It runs
+// CommittedList lists the repo's own git-tracked harness surface. It runs
 // `git -C root -c core.quotePath=false ls-files -- <harness.CommittedGlobs>`
 // (core.quotePath=false so a non-ASCII path isn't quote-escaped, which would
 // defeat harness.KindOf's pattern matching) and returns the output lines in
-// git's own order. Any error — root isn't a git repo, git isn't on PATH,
-// etc. — yields an empty result, matching bash's `2>/dev/null || true` for
-// every case that arises here in practice (git exits 0 with output, or
-// fails outright with none). It does not reproduce the unreached case where
-// git writes partial stdout before failing: bash's `$(...)` capture keeps
-// that partial output, this function discards it.
+// git's own order. Any error — root isn't a git repo, git isn't on PATH —
+// yields an empty result.
 func CommittedList(root string) []string {
 	args := append([]string{"-C", root, "-c", "core.quotePath=false", "ls-files", "--"}, harness.CommittedGlobs...)
 	out, err := exec.Command("git", args...).Output()
@@ -50,21 +42,19 @@ func CommittedList(root string) []string {
 	return strings.Split(trimmed, "\n")
 }
 
-// PersonalList is the Go twin of personal_list() (bin/status.sh:72-88): a
-// presence-only listing of the user's GLOBAL harness config under home,
-// applying to every repo. Rows are {display path, kind}, root-qualified
-// (~/.claude/…, ~/.copilot/…) in this exact order: CLAUDE.md, then
+// PersonalList is a presence-only listing of the user's global harness config
+// under home, applying to every repo. Rows are {display path, kind},
+// root-qualified (~/.claude/…, ~/.copilot/…) in this order: CLAUDE.md, then
 // settings.json, then rules/*.md, commands/*.md, agents/*.md (each
-// individually existence-gated), then skills/*/ directories as ONE row
-// each, then ~/.copilot/skills/*/ directories (classified like a .github
-// skill — deliberate, matching bash's kind_of ".github/skills/$b/"). A
+// individually existence-gated), then skills/*/ directories as one row each,
+// then ~/.copilot/skills/*/ directories (classified like a .github skill). A
 // missing ~/.claude or ~/.copilot yields no rows for that host.
 //
-// The roots are built like bash's `ch="${HOME:-}/.claude"` — plain string
-// concatenation, NOT filepath.Join: with home empty (HOME unset or empty),
-// bash yields the ABSOLUTE "/.claude" (which almost never exists), while
-// Join drops the empty element and yields the RELATIVE ".claude", resolving
-// against the cwd and mislabeling a repo's own .claude/ as GLOBAL.
+// The roots are built by string concatenation, not filepath.Join: with home
+// empty, concatenation yields the absolute "/.claude" (which almost never
+// exists), while Join would drop the empty element and yield the relative
+// ".claude", resolving against the cwd and mislabeling a repo's own .claude/
+// as global.
 func PersonalList(home string) [][2]string {
 	var rows [][2]string
 
@@ -90,7 +80,7 @@ func PersonalList(home string) [][2]string {
 		}
 	}
 
-	co := home + "/.copilot" // concat, not Join — see the PersonalList doc comment
+	co := home + "/.copilot" // concat, not Join — see PersonalList
 	if isDir(co) {
 		for _, b := range globDirs(filepath.Join(co, "skills")) {
 			rows = append(rows, [2]string{"~/.copilot/skills/" + b + "/", harness.KindOf(".github/skills/" + b + "/")})
@@ -101,13 +91,9 @@ func PersonalList(home string) [][2]string {
 }
 
 // globMDFiles lists the base names of dir's *.md dirents (files or
-// directories — bash's `*.md` glob doesn't care), bytewise sorted, gated by
-// existence (bash's `[ -e ]`, which follows symlinks: a dangling *.md
-// symlink is excluded). A missing dir yields nil, matching bash's
-// no-match-leaves-pattern-literal-then-fails-`-e` behavior. A leading-dot
-// name is excluded: none of the status.sh globs run under `shopt -s
-// dotglob`, so bash's bare `*` never matches a dotfile (confirmed against a
-// live bash).
+// directories), bytewise sorted, gated by existence (following symlinks, so a
+// dangling *.md symlink is excluded). A missing dir yields nil. Leading-dot
+// names are excluded.
 func globMDFiles(dir string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -130,12 +116,11 @@ func globMDFiles(dir string) []string {
 	return names
 }
 
-// globDirs lists the base names of dir's dirents that are directories OR
-// symlinks-to-directories (bash's `*/` glob), bytewise sorted. It uses
-// os.Stat (follows symlinks) rather than DirEntry.IsDir() (which does not)
-// so a symlink-to-a-directory is included, matching bash's `[ -d ]`. A
-// missing dir yields nil. A leading-dot name is excluded, matching bash's
-// bare `*` without `dotglob` (see globMDFiles).
+// globDirs lists the base names of dir's dirents that are directories or
+// symlinks-to-directories, bytewise sorted. It uses os.Stat (follows
+// symlinks) rather than DirEntry.IsDir() (which does not) so a
+// symlink-to-a-directory is included. A missing dir yields nil. Leading-dot
+// names are excluded.
 func globDirs(dir string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -166,12 +151,11 @@ func exists(path string) bool {
 	return err == nil
 }
 
-// RenderInventory is the Go twin of render_inventory() (bin/status.sh:90-
-// 178), byte-for-byte: the harness files grouped by origin — Committed
+// RenderInventory renders the harness files grouped by origin: Committed
 // (this repo's own git-tracked surface), Injected (from repo.OMK's
-// placed.tsv), Global (home's personal config, not installed by omakase).
-// md selects Markdown output (### headers, `- ` bullets) vs. terminal
-// output (ALL-CAPS headers, indented +/-/~/! rows).
+// placed.tsv), and Global (home's personal config, not installed by omakase).
+// md selects markdown output (### headers, `- ` bullets) vs terminal output
+// (all-caps headers, indented +/-/~/! rows).
 func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 	comm := CommittedList(repo.Root)
 	pers := PersonalList(home)
@@ -241,11 +225,11 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 	}
 }
 
-// renderInjected writes the Injected group's rows (bin/status.sh:105-125 md,
-// 147-166 term) and reports whether anything was shown. The group is
-// "empty" — caller prints the (none) placeholder — when placed.tsv is
-// missing, zero-size, or every row was skipped ($rel empty or under
-// .omakase/, which discloses under Hidden instead).
+// renderInjected writes the Injected group's rows and reports whether
+// anything was shown. The group is "empty" — the caller prints the (none)
+// placeholder — when placed.tsv is missing, zero-size, or every row was
+// skipped ($rel empty or under .omakase/, which discloses under Hidden
+// instead).
 func renderInjected(w io.Writer, repo *state.Repo, placedPath string, md bool) bool {
 	info, err := os.Stat(placedPath)
 	if err != nil || info.Size() == 0 {
@@ -263,12 +247,12 @@ func renderInjected(w io.Writer, repo *state.Repo, placedPath string, md bool) b
 	return shown
 }
 
-// writeInjectedRow renders one placed.tsv row, branch order exactly as
-// bin/status.sh:111-120 (md) / 153-162 (term): Enabled=="0" -> disabled row;
-// else a symlink (Lstat) -> arrow row (readlink target, even if dangling);
-// else the path exists (Stat) -> plain row; else -> MISSING row. The drift
-// suffix (state.IsDrifted) only ever applies to the arrow/plain branches —
-// disabled rows are never "managed" and MISSING rows have nothing to diff.
+// writeInjectedRow renders one placed.tsv row in branch order: Enabled=="0"
+// -> disabled row; else a symlink (Lstat) -> arrow row (readlink target, even
+// if dangling); else the path exists (Stat) -> plain row; else -> missing
+// row. The drift suffix (state.IsDrifted) applies only to the arrow and plain
+// branches — disabled rows are never managed and missing rows have nothing to
+// diff.
 func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, md bool) {
 	full := filepath.Join(repo.Root, row.Rel)
 	drifted := state.IsDrifted(repo.Root, row.Rel, row.Hash, row.Enabled)
@@ -315,27 +299,24 @@ func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, md boo
 	}
 }
 
-// RenderNotInstalled is the Go twin of the not-installed branch
-// (bin/status.sh:292-301): the "no harness installed" message, a blank
-// line, then the full inventory (the audit view — what does this repo feed
-// your agent? — still works on an uninstalled repo). The caller exits 0.
+// RenderNotInstalled prints the "no harness installed" message, a blank line,
+// then the full inventory (the audit view still works on an uninstalled
+// repo). The caller exits 0.
 func RenderNotInstalled(w io.Writer, repo *state.Repo, home string, md bool) {
 	if md {
 		fmt.Fprintln(w, "**No omakase harness is installed in this repo.** Run `omakase init` to inject one.")
 	} else {
 		fmt.Fprintln(w, "No omakase harness is installed in this repo.")
-		fmt.Fprintln(w, "Run  omakase init  to inject one.") // two spaces around the verb, verbatim
+		fmt.Fprintln(w, "Run  omakase init  to inject one.") // two spaces around the verb
 	}
 	fmt.Fprintln(w)
 	RenderInventory(w, repo, home, md)
 }
 
-// RenderPre010 is the Go twin of the pre-0.10 branch (bin/status.sh:277-
-// 289), triggered when placed.tsv is absent but omk/placed.list (the
-// pre-0.10 provenance record) exists: a notice that the harness IS
-// installed (never a false negative about an enforcement system) followed
-// by each placed.list line, md-wrapped as a backtick-quoted bullet (sed
-// 's/^/- `/; s/$/`/') or term-indented by two spaces. The caller exits 0.
+// RenderPre010 handles a repo where placed.tsv is absent but omk/placed.list
+// (the pre-0.10 provenance record) exists: a notice that the harness is
+// installed, followed by each placed.list line, md-wrapped as a
+// backtick-quoted bullet or term-indented by two spaces. The caller exits 0.
 func RenderPre010(w io.Writer, omk string, md bool) {
 	lines := readLines(filepath.Join(omk, "placed.list"))
 
@@ -348,14 +329,14 @@ func RenderPre010(w io.Writer, omk string, md bool) {
 	}
 
 	fmt.Fprintln(w, "Pre-0.10 omakase install detected (record: placed.list).")
-	fmt.Fprintln(w, "Run  omakase init  to migrate to the provenance ledger. Placed files:") // two spaces around the verb, verbatim
+	fmt.Fprintln(w, "Run  omakase init  to migrate to the provenance ledger. Placed files:") // two spaces around the verb
 	for _, line := range lines {
 		fmt.Fprintf(w, "  %s\n", line)
 	}
 }
 
-// readLines reads path line-by-line (sed/cat semantics: no entry for a
-// trailing newline). A missing or unreadable file yields nil.
+// readLines reads path line by line, with no entry for a trailing newline. A
+// missing or unreadable file yields nil.
 func readLines(path string) []string {
 	f, err := os.Open(path)
 	if err != nil {

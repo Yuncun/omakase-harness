@@ -19,20 +19,11 @@ func writeFile(t *testing.T, path, content string) {
 
 // ---------------------------------------------------------------- CopyEntry
 //
-// Reference behavior probed against the live macOS `cp -P` (see task-1
-// report for the exact commands/outputs): copying a regular file to a
-// destination that does not yet exist carries the SOURCE's permission bits
-// (masked by umask on creation, same as any open(..., O_CREAT, mode) —
-// confirmed: src mode 777 + umask 022 -> dest mode 755); copying a symlink
-// recreates the same link (readlink target string, not the dereferenced
-// content) at the destination, dangling or not. All current bash callers
-// (place_file, the source-merge overlay loop, the clobbered/ backup) already
-// `rm -f`/`rm -rf` the destination before calling `cp -P`, so CopyEntry
-// unlinks any pre-existing destination itself rather than reproducing cp's
-// quirky "write through an existing destination symlink" behavior for a
-// regular-file source — that quirk is exactly why every bash caller
-// pre-unlinks in the first place (bin/init.sh:433-441's comment); no current
-// or planned caller relies on it. Documented divergence, not a bug.
+// Copying a regular file to a destination that does not yet exist carries the
+// source's permission bits, masked by umask on creation (src mode 777 + umask
+// 022 -> dest mode 755). Copying a symlink recreates the same link (the readlink
+// target string, not the dereferenced content), dangling or not. CopyEntry
+// unlinks any pre-existing destination before copying.
 
 func TestCopyEntryRegularFilePreservesMode(t *testing.T) {
 	dir := t.TempDir()
@@ -42,10 +33,8 @@ func TestCopyEntryRegularFilePreservesMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// CopyEntry mirrors bare `cp -P`, which does NOT create the destination
-	// directory — bash's caller (place_file, bin/init.sh:424) does that
-	// itself with a separate `mkdir -p` before calling cp -P. So does this
-	// test.
+	// CopyEntry does not create the destination directory; the caller mkdir -p's
+	// it first, and so does this test.
 	dst := filepath.Join(dir, "sub", "dst.sh")
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		t.Fatal(err)
@@ -205,12 +194,10 @@ func TestSameFile(t *testing.T) {
 
 // ---------------------------------------------------------------- DerivePrefixes
 //
-// Scenario shape lifted from tests/golden-state.test.sh:43-62 (derive_block):
-// dedup owned top dirs to their bare first segment, .github (the one
-// HARNESS_SHARED_TOPDIRS entry frozen as of v1) kept as full placed paths,
-// then lefthook.yml / .worktreeinclude wiring entries appended unless
-// tracked, then every entry gets a trailing "/" iff it names a directory on
-// the live repo.
+// DerivePrefixes dedups owned top dirs to their bare first segment, keeps .github
+// (the one HARNESS_SHARED_TOPDIRS entry) as full placed paths, appends the
+// lefthook.yml / .worktreeinclude wiring entries unless tracked, then gives every
+// entry a trailing "/" iff it names a directory on the live repo.
 
 func TestDerivePrefixes(t *testing.T) {
 	sharedTopdirs := []string{".github"}
@@ -237,7 +224,7 @@ func TestDerivePrefixes(t *testing.T) {
 			name: "owned topdirs deduped to bare segment; .github kept as full path; both wiring entries appended with trailing slash logic",
 			placed: []string{
 				".claude/rules/a.md",
-				".claude/skills/b/SKILL.md", // second .claude/* entry: deduped to the SAME bare "claude" prefix, not re-added
+				".claude/skills/b/SKILL.md", // second .claude/* entry: deduped to the same bare "claude" prefix, not re-added
 				".github/workflows/ci.yml",
 				"AGENTS.md",
 			},
@@ -402,10 +389,9 @@ func TestDeletePlacedMissingFileIsNotAnError(t *testing.T) {
 	}
 }
 
-// realGitRepo builds a temp git repo and returns an isTracked closure backed
-// by real `git ls-files`, exercising DeletePlaced against a live git
-// tracked/untracked distinction rather than a stub — mirrors the newGitRepo
-// pattern in internal/status/inventory_test.go.
+// realGitRepo builds a temp git repo and returns an isTracked closure backed by
+// real `git ls-files`, exercising DeletePlaced against a live git
+// tracked/untracked distinction rather than a stub.
 func realGitRepo(t *testing.T) (dir string, isTracked func(string) bool) {
 	t.Helper()
 	dir = t.TempDir()
@@ -459,7 +445,7 @@ func TestDeletePlacedWithRealGitUntracked(t *testing.T) {
 //
 // safeMkdirAll is the security primitive both init place guards (placeFile and
 // the payload-snapshot copy loop) call instead of a bare os.MkdirAll: it refuses
-// to create a directory whose parent chain passes THROUGH a symlink, so a payload
+// to create a directory whose parent chain passes through a symlink, so a payload
 // that ships a directory symlink at a parent path cannot make a later child write
 // land outside the repo. This is the single-payload unit coverage of that guard;
 // it must never silently degrade to a bare os.MkdirAll.

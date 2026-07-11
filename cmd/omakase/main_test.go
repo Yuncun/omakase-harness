@@ -9,8 +9,7 @@ import (
 // run(argv, stdout, stderr) is the pure dispatch function main() wraps with
 // os.Exit. These tests pin the two behaviors dispatch must produce: the
 // bare-invocation usage message and the unknown-command error — both with
-// exit code 2. ("status" is now registered — Task 4 — so it no longer takes
-// the unknown-command path; an unregistered verb name is used here instead.)
+// exit code 2.
 
 func TestRunNoArgs(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -51,7 +50,7 @@ func TestRunInitDispatch(t *testing.T) {
 // overlay.RunRemove: run from OUTSIDE any git repo (a fresh t.TempDir), it
 // must reach RunRemove's own repo-discovery failure ("not inside a git
 // repo", exit 1) rather than the dispatcher's unknown-command path.
-// remove.sh has no --help/usage text to probe (unlike init), so this is the
+// remove has no --help/usage text to probe (unlike init), so this is the
 // simplest argv-independent proof that dispatch reaches the verb.
 func TestRunRemoveDispatch(t *testing.T) {
 	t.Chdir(t.TempDir())
@@ -92,8 +91,8 @@ func TestRunMcpDispatch(t *testing.T) {
 	}
 }
 
-// TestPersonalVerbDeregistered proves Phase 3.5 removed the `personal` verb: it
-// is no longer in the registry, so `omakase personal` falls through to the
+// TestPersonalVerbDeregistered pins that `personal` is deliberately not a verb:
+// it is not in the registry, so `omakase personal` falls through to the
 // dispatcher's unknown-command path (exit 2), never a handler.
 func TestPersonalVerbDeregistered(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -110,16 +109,10 @@ func TestPersonalVerbDeregistered(t *testing.T) {
 	}
 }
 
-// TestRunVersion pins the top-level version flag: `omakase --version` prints
-// the build-metadata line to stdout and exits 0. Test binaries carry neither
-// ldflags nor VCS/module stamping, so resolveVersion passes the defaults
-// through and the line is exactly the dev string; release builds overwrite
-// version/commit/date via .goreleaser.yaml's ldflags, and plain builds
-// backfill from build info (TestResolveVersion covers both). `--version` is
-// deliberately the ONLY spelling:
-// "-v" and a bare "version" must keep taking the unknown-command path, so "-v"
-// stays free for a future verbose flag and "version" never shadows a future
-// verb — pinned below alongside the flag itself.
+// TestRunVersion pins `omakase --version`: the build-metadata line on
+// stdout, exit 0. Test binaries carry neither ldflags nor VCS/module
+// stamping, so the line is exactly the dev-default string. "-v" and a bare
+// "version" are not aliases and take the unknown-command path.
 func TestRunVersion(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 

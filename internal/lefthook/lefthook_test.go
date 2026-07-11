@@ -17,11 +17,9 @@ import (
 
 // ---------------------------------------------------------------- lockstep
 //
-// bin/lib-lefthook.sh STAYS bash unchanged (tests/lefthook-fetch.test.sh
-// sources it directly and drives its functions by name). This package's
-// pinned version and four checksums are DUPLICATES of that file's, kept
-// honest by parsing the bash file itself here and asserting equality
-// against the Go constants -- re-pinning means bumping both together.
+// The pinned version and four checksums are duplicated in
+// bin/lib-lefthook.sh; this test parses the bash file and asserts equality
+// against the Go constants, so a re-pin must bump both together.
 
 func TestVersionAndChecksumsMatchBash(t *testing.T) {
 	data, err := os.ReadFile("../../bin/lib-lefthook.sh")
@@ -138,10 +136,8 @@ func sha256Hex(t *testing.T, path string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// hostAsset returns this test host's platform tokens and asset name, or
-// skips the test outright -- the fetch happy-path/mismatch/cache tests need
-// a real (mapped) host asset name to build a fixture and base URL around;
-// every darwin/linux x arm64/amd64 runner this suite targets maps.
+// hostAsset returns this test host's platform tokens and asset name,
+// skipping the test on unmapped platforms.
 func hostAsset(t *testing.T) (osTok, archTok, asset string) {
 	t.Helper()
 	osTok, archTok, ok := platformTokenFor(runtime.GOOS, runtime.GOARCH)
@@ -157,10 +153,6 @@ func TestFetchUnsupportedPlatformMessage(t *testing.T) {
 	if ok || path != "" {
 		t.Fatalf("fetch(unsupported) = (%q,%v), want (\"\",false)", path, ok)
 	}
-	// Divergence, documented: bash interpolates `uname -s`/`uname -m`
-	// (e.g. "Linux/riscv64"); Go has no uname call here and prints the raw
-	// goos/goarch instead (e.g. "linux/riscv64") -- cosmetic only, and
-	// unreachable on every platform this suite or its CI runners exercise.
 	want := "omakase: lefthook self-fetch unsupported on this platform (linux/riscv64).\n"
 	if buf.String() != want {
 		t.Errorf("fetch(unsupported) stderr = %q, want %q", buf.String(), want)
@@ -491,11 +483,9 @@ func TestResolveForRemoveNeverFetchesNothingResolvesSilent(t *testing.T) {
 	isolateEnv(t)
 	root := t.TempDir()
 
-	// Capture the REAL process stderr too, guarding against a future
-	// regression writing directly to os.Stderr instead of staying silent:
-	// ResolveForRemove's signature takes no io.Writer at all -- remove.sh's
-	// resolve_lefthook call site has no lefthook_install_guidance on
-	// failure, unlike init.sh's.
+	// Capture the real process stderr, guarding against a regression that
+	// writes directly to os.Stderr: ResolveForRemove must stay silent and
+	// takes no io.Writer.
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -540,15 +530,12 @@ func TestResolveForStatusTierWalk(t *testing.T) {
 	isolateEnv(t)
 	root := t.TempDir()
 
-	// Nothing anywhere -> silent ("",false); status renders its
-	// not-resolved note off exactly this.
+	// Nothing anywhere -> silent ("", false).
 	if lh, ok := ResolveForStatus(root); ok || lh != "" {
 		t.Fatalf("ResolveForStatus (nothing) = (%q,%v), want (\"\",false)", lh, ok)
 	}
 
-	// Tier 4: the pinned-version cache resolves with NO fetch — this is the
-	// tier the pre-#72 status resolver missed, producing the false
-	// "gates are not running" note on self-provisioned machines.
+	// Tier 4: the pinned-version cache resolves with no fetch.
 	cacheBin := filepath.Join(os.Getenv("HOME"), ".cache", "omakase", "lefthook", lefthookVersion, "lefthook")
 	if err := os.MkdirAll(filepath.Dir(cacheBin), 0o755); err != nil {
 		t.Fatal(err)
@@ -560,8 +547,7 @@ func TestResolveForStatusTierWalk(t *testing.T) {
 		t.Errorf("ResolveForStatus (cache) = (%q,%v), want (%q,true)", lh, ok, cacheBin)
 	}
 
-	// Tier 1 beats tier 4, returned verbatim as ONE token (status runs
-	// `<lh> dump` quoted — whitespace never splits).
+	// Tier 1 beats tier 4; the override is returned verbatim as one token.
 	t.Setenv("LEFTHOOK_BIN", "/some where/lefthook")
 	if lh, ok := ResolveForStatus(root); !ok || lh != "/some where/lefthook" {
 		t.Errorf("ResolveForStatus (override) = (%q,%v), want the override verbatim", lh, ok)

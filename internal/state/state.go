@@ -1,9 +1,5 @@
-// Package state ports the repo-discovery, hashing, drift-detection, and
-// frozen-format (placed.tsv / ledger.tsv) reading that bin/status.sh
-// performs before it renders anything (bin/status.sh:20-47, 108, 150, 212,
-// 309, 314), plus the placed.tsv WRITE side ported from bin/init.sh:603-609
-// (WritePlaced). Go twin of that logic — DUPLICATED bash<->Go until Phase 2
-// retires the bash callers; keep in lockstep.
+// Package state provides repo discovery, hashing, drift detection, and the
+// reading and writing of the placed.tsv and ledger.tsv state files.
 package state
 
 import (
@@ -33,14 +29,11 @@ type Repo struct {
 	OMK       string // CommonDir + "/omakase"
 }
 
-// Discover finds the git repository containing dir (bin/status.sh:20-22).
-// Root is `git rev-parse --show-toplevel`; on error the caller is
-// responsible for printing the "not inside a git repo" line and exiting 1
-// (bin/status.sh:20) — this function only reports the error. CommonDir is
-// `git rev-parse --git-common-dir`, made absolute against Root when
-// relative, then filepath.Clean — mirroring
-// `cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd`
-// (bin/status.sh:21). OMK is CommonDir + "/omakase".
+// Discover finds the git repository containing dir. Root is
+// `git rev-parse --show-toplevel`; on error the caller prints the "not
+// inside a git repo" line and exits 1, so this function only reports the
+// error. CommonDir is `git rev-parse --git-common-dir`, made absolute
+// against Root when relative, then cleaned. OMK is CommonDir + "/omakase".
 func Discover(dir string) (*Repo, error) {
 	root, err := runGit(dir, "rev-parse", "--show-toplevel")
 	if err != nil {
@@ -73,8 +66,8 @@ func runGit(dir string, args ...string) (string, error) {
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
-// PlacedRow is one row of $OMK/placed.tsv (written by bin/init.sh:608):
-// path, kind, source, sha256, enabled.
+// PlacedRow is one row of $OMK/placed.tsv: path, kind, source, sha256,
+// enabled.
 type PlacedRow struct {
 	Rel     string
 	Kind    string
@@ -84,33 +77,11 @@ type PlacedRow struct {
 }
 
 // ReadPlaced reads $OMK/placed.tsv one line at a time, splitting each into
-// at most 5 tab-separated fields via strings.SplitN(line, "\t", 5): a 6th
-// tab is absorbed into Enabled rather than split off, and missing trailing
-// fields come back as empty strings. Rows with an empty Rel are dropped —
-// both status.sh render loops skip them (bin/status.sh:108,150).
-//
-// This SplitN matches bash's `read -r rel kind src hash enabled` for every
-// WELL-FORMED row: one with 5 non-empty tab-separated fields, terminated by
-// a newline. Every omakase writer emits only well-formed rows
-// (bin/init.sh:608 always prints exactly 5 non-empty fields followed by
-// "\n"), so the following two divergences from bash are accepted as
-// unreachable in practice:
-//
-//   - Empty field: tab is one of bash's "IFS whitespace" characters, so
-//     `read` collapses runs of tabs into a single delimiter and strips a
-//     leading tab before splitting. A row with an EMPTY field therefore
-//     parses SHIFTED in bash (later fields slide left to fill the gap) but
-//     POSITIONALLY here (SplitN keeps the empty field where it is).
-//   - Missing trailing newline: bash's `while read` line loop silently
-//     drops a final row with no trailing newline (`read` consumes it but
-//     returns non-zero, so the loop body never runs for it); bufio.Scanner
-//     has no such rule and processes that row like any other.
-//
-// Consequence: parity and golden fixtures for this reader must be built
-// from real writer output only — never a hand-built row with an empty
-// field or a missing final newline, since that input exercises one of the
-// divergences above instead of testing the reader itself. Missing file ->
-// nil. Order-preserving.
+// at most 5 tab-separated fields: a 6th tab is absorbed into Enabled rather
+// than split off, and missing trailing fields come back as empty strings.
+// An empty field is kept in place, not shifted, and a final row with no
+// trailing newline is still read. Rows with an empty Rel are dropped. A
+// missing file returns nil; order is preserved.
 func ReadPlaced(path string) []PlacedRow {
 	f, err := os.Open(path)
 	if err != nil {
@@ -148,9 +119,8 @@ func ReadPlaced(path string) []PlacedRow {
 	return rows
 }
 
-// CountNonEmptyLines counts non-empty lines in path, mirroring
-// `grep -c .` (bin/status.sh:314, nplaced) — a final line without a
-// trailing newline still counts. Missing/unreadable file -> 0.
+// CountNonEmptyLines counts non-empty lines in path; a final line without a
+// trailing newline still counts. A missing or unreadable file returns 0.
 func CountNonEmptyLines(path string) int {
 	f, err := os.Open(path)
 	if err != nil {
@@ -176,12 +146,10 @@ type Verdict struct {
 }
 
 // LatestVerdicts reads $OMK/ledger.tsv and returns, per gate name, the
-// latest verdict — the Go twin of the awk pass-1 accumulator in
-// bin/status.sh:212 (`if (NF>=4 && $1 ~ /^[0-9]+$/) { ts=$1+0;
-// if (ts>=seen[$2]) { seen[$2]=ts; verd[$2]=$3 } }`). A row is kept only if
-// it has >=4 tab-separated fields and field 1 is all-digit (Global
-// Constraint 5); per gate, a later-OR-EQUAL epoch wins, so the last row at
-// a tied epoch overwrites the verdict. Missing file -> empty map.
+// latest verdict. A row is kept only if it has >= 4 tab-separated fields and
+// field 1 is all-digit; per gate a later-or-equal epoch wins, so the last
+// row at a tied epoch overwrites the verdict. A missing file returns an
+// empty map.
 func LatestVerdicts(path string) map[string]Verdict {
 	result := make(map[string]Verdict)
 
@@ -222,9 +190,9 @@ func isAllDigits(s string) bool {
 	return true
 }
 
-// HashOf mirrors omakase_hash_of (bin/status.sh:36-40): a symlink's digest
-// is the sha256 of its readlink TARGET STRING; a regular readable file's
-// digest is the sha256 of its bytes; an unreadable or absent path -> "".
+// HashOf returns a hex sha256 digest: for a symlink, the digest of its
+// readlink target string; for a regular readable file, the digest of its
+// bytes; for an unreadable or absent path, "".
 func HashOf(path string) string {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -253,8 +221,9 @@ func HashOf(path string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// IsDrifted ports is_drifted (bin/status.sh:41-47) in exact order:
-//  1. enabled != "1"          -> false (disabled: not managed, never "drifted")
+// IsDrifted reports whether root/rel has drifted from ledgerHash, checked in
+// order:
+//  1. enabled != "1"          -> false (disabled: not managed, never drifted)
 //  2. neither Stat nor Lstat  -> false (missing is its own state, not drift)
 //  3. git-tracked at rel      -> false (upstream owns it)
 //  4. otherwise: drifted iff ledgerHash != "" && HashOf(root/rel) != "" &&
@@ -280,8 +249,8 @@ func IsDrifted(root, rel, ledgerHash, enabled string) bool {
 	return ledgerHash != "" && a != "" && a != ledgerHash
 }
 
-// FirstLine returns the first line of path (head -n1 semantics), or "" if
-// the file doesn't exist or is empty ([ -s ] semantics, bin/status.sh:309).
+// FirstLine returns the first line of path, or "" if the file doesn't exist
+// or is empty.
 func FirstLine(path string) string {
 	info, err := os.Stat(path)
 	if err != nil || info.Size() == 0 {
@@ -302,23 +271,15 @@ func FirstLine(path string) string {
 	return ""
 }
 
-// WritePlaced regenerates $OMK/placed.tsv wholesale — the writer-side twin
-// of bin/init.sh:603-609's `: > "$OMK/placed.tsv"` truncate followed by one
-// `printf '%s\t%s\t%s\t%s\t%s\n'` line per placed path (rel, kind, source
-// label, sha256, and the literal enabled flag "1"). Frozen format (Global
-// Constraint 4 / design §5): exactly 5 tab-separated, NON-EMPTY fields per
-// row, one "\n" terminator per row, no trailing blank line — the whole file
-// is built in memory and written in one pass, replacing whatever was there
-// (never appended to across calls).
+// WritePlaced regenerates $OMK/placed.tsv wholesale: exactly 5 tab-separated,
+// non-empty fields per row, one "\n" per row, no trailing blank line. The
+// file is built in memory and written in one pass, replacing whatever was
+// there.
 //
-// Refuses — returns an error and writes nothing at all, not even a partial
-// prefix of valid rows — if any row has an empty field or a field
-// containing a tab or newline. A malformed row would silently corrupt every
-// downstream reader (ReadPlaced's strings.SplitN above, and every hook-time
-// sh reader's `IFS=$'\t' read -r rel kind src hash enabled`), so this
-// validates every row BEFORE writing any of them rather than trusting the
-// caller. This validation is the writer-side format test the design
-// requires (§5).
+// It refuses — returns an error and writes nothing, not even a partial
+// prefix — if any row has an empty field or a field containing a tab or
+// newline, since a malformed row would corrupt every downstream reader.
+// Every row is validated before any is written.
 func WritePlaced(path string, rows []PlacedRow) error {
 	var buf bytes.Buffer
 	for i, row := range rows {
@@ -339,4 +300,3 @@ func WritePlaced(path string, rows []PlacedRow) error {
 	}
 	return nil
 }
-

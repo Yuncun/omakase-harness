@@ -1,12 +1,6 @@
-// Package overlay ports the filesystem-copy, sameness-check, exclude-prefix
-// derivation, and placed-path deletion primitives bin/init.sh and
-// bin/remove.sh use to place, compare, and tear down the harness overlay.
-// Go twin of place_file/same_file/hash_of's symlink handling
-// (bin/init.sh:410-443), the exclude-prefix derivation
-// (bin/init.sh:527-552,559-563), and delete_placed
-// (bin/remove.sh:45-52, the identical loop in bin/init.sh:517-519) —
-// DUPLICATED bash<->Go until Phase 2 retires the bash callers; keep in
-// lockstep.
+// Package overlay implements the init, remove, and toggle verbs and the
+// filesystem primitives they share to place, compare, and tear down the
+// harness overlay.
 package overlay
 
 import (
@@ -17,29 +11,12 @@ import (
 	"strings"
 )
 
-// CopyEntry ports `cp -P src dst` as used by every bash overlay call site
-// (place_file, the --source merge overlay loop, the clobbered/ backup):
-// a symlink source is recreated as a symlink with the identical target
-// string (never dereferenced); a regular-file source is byte-copied with
-// the source's permission bits carried onto the destination (masked by the
-// process umask on creation, matching plain `open(..., O_CREAT, mode)` —
-// verified against the live macOS `cp -P`, see overlay_test.go).
-//
-// Divergence from raw `cp -P`, by design: CopyEntry unconditionally removes
-// an existing destination first, for BOTH source kinds. Real `cp -P`
-// instead WRITES THROUGH an existing destination symlink when the source is
-// a regular file (it follows the link and clobbers the link's target
-// in-place) — the exact hazard bin/init.sh:433-441 documents as its reason
-// for calling `rm -f` before every `cp -P`. Since every current and planned
-// Go caller (the ported place_file, the merge loop, the clobbered/ backup)
-// already removes the destination before calling CopyEntry — mirroring
-// their bash originals — this divergence is unreachable through any real
-// call path; CopyEntry doing its own unlink just makes that safe by
-// construction instead of relying on every caller to remember it.
-//
-// Like real `cp -P`, CopyEntry does NOT create dst's parent directory —
-// that is a separate `mkdir -p` step on the bash side (bin/init.sh:424,
-// place_file) and remains the caller's job here too.
+// CopyEntry copies one payload entry to dst. A symlink source is recreated
+// as a symlink with the identical target string, never dereferenced; a
+// regular-file source is byte-copied with the source's permission bits
+// (masked by the process umask on creation). An existing destination is
+// removed first, so a regular-file copy can never write through a
+// destination symlink. dst's parent directory must already exist.
 func CopyEntry(src, dst string) error {
 	info, err := os.Lstat(src)
 	if err != nil {
@@ -84,25 +61,17 @@ func CopyEntry(src, dst string) error {
 	return out.Close()
 }
 
-// safeMkdirAll creates dir (like os.MkdirAll, 0o755) but refuses to follow a
-// symlink planted as any path component BELOW root. It lstat-walks every
-// component from root down to dir and returns a non-nil error the moment an
-// EXISTING component is a symlink — never following it (os.MkdirAll would).
+// safeMkdirAll creates dir (like os.MkdirAll, 0o755) but refuses to follow
+// a symlink planted as any path component below root: it lstat-walks every
+// component from root down and errors on the first existing one that is a
+// symlink. A merged payload can supply a directory symlink from one layer
+// and a child file from another; following the symlink would let the copy
+// write outside root.
 //
-// This closes the Phase 3.5 stacked-parent traversal: a merge of two harnesses
-// can put a directory-symlink `data` (from one layer) and a file `data/loot`
-// (from another) into one view; a bare os.MkdirAll(dir) for the child would
-// resolve `data` through the symlink and let CopyEntry write the child to the
-// symlink's outside target. safeMkdirAll refuses instead.
-//
-// root is the boundary the copy must stay within (the repo root for the
-// working-tree place loop; the staging/store root for the merge/store copies).
-// root itself is assumed to exist and is NOT re-checked — only components
-// strictly under it, which are exactly the ones a payload can introduce. This
-// matters on macOS/darwin where root's own path may legitimately contain
-// symlinks (e.g. /var -> /private/var under $TMPDIR); those never surface here
-// because we only ever lstat components below root. dir must be root or a
-// descendant of root; anything else is refused.
+// root is the boundary the copy must stay within and is assumed to exist;
+// only components strictly under it are checked, so a root path that itself
+// contains symlinks (e.g. /var -> /private/var) is fine. dir must be root
+// or a descendant of root.
 func safeMkdirAll(root, dir string) error {
 	root = filepath.Clean(root)
 	dir = filepath.Clean(dir)
@@ -138,16 +107,11 @@ func safeMkdirAll(root, dir string) error {
 	return nil
 }
 
-// SameFile ports same_file (bin/init.sh:416-422): true iff a and b count as
-// identical for the "leave it, it already matches the payload" check.
-//   - If EITHER path is a symlink, compare their readlink TARGET STRINGS —
-//     never the dereferenced content. A path that does not exist, or is not
-//     itself a symlink, contributes "" (matching `readlink 2>/dev/null`).
-//   - Otherwise, byte-compare the two files' content.
-//   - A directory operand (non-symlink) is always "not same" — bash's `cmp`
-//     refuses on a directory (bin/init.sh's comment above same_file notes
-//     `cmp` emits "Is a directory" to stderr even with -s); here that
-//     becomes a plain `false`, no error surfaced.
+// SameFile reports whether a and b count as identical for the "leave it, it
+// already matches the payload" check. If either path is a symlink, their
+// readlink target strings are compared, never the dereferenced content; a
+// path that is missing or not a symlink contributes "". Otherwise the two
+// files' bytes are compared, and a directory operand is never same.
 func SameFile(a, b string) bool {
 	aInfo, aErr := os.Lstat(a)
 	bInfo, bErr := os.Lstat(b)
@@ -186,28 +150,19 @@ func filesEqual(a, b string) bool {
 	return string(ac) == string(bc)
 }
 
-// DerivePrefixes computes the deduped exclude-block prefix list — the
-// frozen derivation from bin/init.sh:527-552 (accumulation via add_prefix)
-// plus the trailing-slash suffixing applied when the block is written
-// (bin/init.sh:559-563). Go twin — DUPLICATED bash<->Go until Phase 2
-// retires the bash callers; keep in lockstep.
-//
-// Order, first-seen deduped across the whole run:
+// DerivePrefixes computes the deduped exclude-block prefix list, first-seen
+// order:
 //  1. For each entry in placed (empty strings skipped): if its top-level
-//     segment (up to, not including, the first "/"; the whole string if it
-//     has no "/") is listed in sharedTopdirs, the FULL placed path is added
-//     (a shared dir like ".github" is excluded file-by-file, never
-//     wholesale, so omakase never hides the project's own untracked files
-//     under it); otherwise the bare top-level segment is added (an
-//     omakase-owned dir is excluded wholesale).
+//     segment is listed in sharedTopdirs, the full placed path is added (a
+//     shared dir like ".github" is excluded file-by-file, never wholesale);
+//     otherwise the bare top-level segment is added (an omakase-owned dir
+//     is excluded wholesale).
 //  2. "lefthook.yml", unless lefthookTracked.
 //  3. ".worktreeinclude", unless wtincTracked.
 //
-// Every resulting entry is then suffixed with a trailing "/" iff isDir
-// reports true for it — isDir receives the bare entry string (e.g.
-// ".claude" or ".github/workflows/ci.yml") and is expected to resolve it
-// against the live repo root itself (bash checks `[ -d "$ROOT/$p" ]`);
-// DerivePrefixes has no notion of a repo root.
+// Each entry is then suffixed with a trailing "/" iff isDir reports true
+// for it. isDir receives the bare entry string and resolves it against the
+// repo root itself; DerivePrefixes has no notion of a repo root.
 func DerivePrefixes(placed []string, sharedTopdirs []string, isDir func(string) bool, lefthookTracked, wtincTracked bool) []string {
 	var entries []string
 	seen := make(map[string]bool)
@@ -260,27 +215,13 @@ func DerivePrefixes(placed []string, sharedTopdirs []string, isDir func(string) 
 	return out
 }
 
-// rewriteFile ports the bash idiom every marked-block rewrite in
-// bin/init.sh and bin/remove.sh uses: `awk ... > "$f.tmp" && mv "$f.tmp" "$f"`.
-// That shell redirection creates $f.tmp FRESH via open(..., O_CREAT|O_TRUNC,
-// 0666), masked by the process umask AT CREATION TIME — never by $f's
-// pre-existing mode — and `mv` (a rename) then replaces $f's inode wholesale
-// with that fresh one. So after a bash rewrite, the file's mode is ALWAYS
-// `0666 &^ umask`, regardless of what mode it had going in (e.g. a 0640 hook
-// becomes 0644 under umask 022 — confirmed against a live `awk '{print}' f >
-// f.tmp && mv f.tmp f` run).
-//
-// os.WriteFile over an EXISTING path does NOT reproduce this: its mode
-// argument only applies when the file is created, so writing over an
-// existing file silently preserves whatever mode that file already had.
-// Every in-place marked-block rewrite site in init.go/remove.go must go
-// through rewriteFile instead of os.WriteFile to match bash's inode
-// replacement exactly.
-//
-// Like bash's own `&&` short-circuit, a write failure leaves the ".tmp"
-// file behind and the original path untouched (no cleanup) — the caller
-// aborts the run either way (matching bash's `set -e` behavior when this
-// idiom's last command, the `mv`, never runs).
+// rewriteFile replaces path wholesale: content is written to a fresh
+// path+".tmp" (created 0o666, masked by the process umask) and renamed over
+// path, so the old inode is gone and the result's mode is 0666 &^ umask
+// regardless of the old mode. os.WriteFile over an existing path would
+// instead preserve its mode; marked-block rewrites go through rewriteFile
+// so the two stay consistent. On failure the ".tmp" file is left behind
+// and the original path untouched; the caller aborts the run.
 func rewriteFile(path string, content []byte) error {
 	tmp := path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o666)
@@ -300,29 +241,11 @@ func rewriteFile(path string, content []byte) error {
 	return nil
 }
 
-// DeletePlaced ports delete_placed (bin/remove.sh:45-52; the identical
-// pruning loop appears in the orphan sweep at bin/init.sh:517-519): a
-// tracked path is skipped silently — git, not omakase, owns it — otherwise
-// the file at root/rel is removed (rm -f semantics: a missing file is not
-// an error) and each now-empty parent directory is pruned upward, stopping
-// at "." (the rel has no more path segments — the repo root is never
-// removed) or the first directory that is missing or still non-empty.
-//
-// Broken-environment divergence class (documented once, here, for every
-// DeletePlaced call site — remove.go's teardown loop and init.go's orphan
-// sweep — plus the collision-guard backup (init.go's tryClobberBackup and the
-// snapshot-preserve step ahead of it) and fetchSource's best-effort cache-dir
-// MkdirAll (source.go): when the underlying OS operation fails on an
-// already-broken environment (a permissions error, a full disk, a vanished
-// intermediate directory), bash's failing tool — rm, cp, mkdir — prints its
-// OWN diagnostic to the real stderr before `set -e` aborts the script; the Go
-// port's error return exits 1 with no equivalent line (fetchSource's MkdirAll
-// member is the one variation: Go proceeds to the clone attempt and prints
-// the clone-failure line instead — exit 1 either way). Exit codes and on-disk
-// state match exactly either way; only the failing OS tool's own stderr text
-// is missing. A narrow, deliberately accepted gap — none of these
-// paths fail in ordinary use, only in an environment already broken some
-// other way.
+// DeletePlaced removes the file at root/rel (a missing file is not an
+// error) and prunes now-empty parent directories upward, stopping at "."
+// (the repo root is never removed) or the first directory that is missing
+// or still non-empty. A tracked path is skipped silently: git, not omakase,
+// owns it.
 func DeletePlaced(root, rel string, isTracked func(string) bool) error {
 	if isTracked(rel) {
 		return nil

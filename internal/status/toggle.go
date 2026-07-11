@@ -1,6 +1,6 @@
 // This file (toggle.go) is the scriptable side of per-item consent:
 // `omakase status --disable <name>` / `--enable <name>`. <name> resolves in
-// order: placed path -> placed-path group directory -> WIRED gate name (or a
+// order: placed path -> placed-path group directory -> wired gate name (or a
 // gate already listed in disabled-gates, so a stale disable is always
 // reversible). Harness machinery (.omakase/, lefthook wiring, .worktreeinclude)
 // is refused, and a name matching none of the above is refused too — both with

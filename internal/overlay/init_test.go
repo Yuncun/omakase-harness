@@ -11,24 +11,18 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
-// These are the RunInit integration tests. Every expected byte string here was
-// validated against a live `bash bin/init.sh` run in the same fixture before
-// being frozen (the "bash-byte-capture" discipline the task brief names): a
-// parity harness ran each scenario through BOTH bin/init.sh and the Go verb and
-// diffed stdout/stderr/exit/on-disk state until byte-identical. Path-bearing
-// expectations are BUILT from repo.OMK / repo.Root at test time rather than
-// hardcoded, so the assertions stay byte-exact without embedding temp paths.
+// RunInit integration tests. Path-bearing expectations are built from repo.OMK /
+// repo.Root at test time rather than hardcoded, so assertions do not embed temp
+// paths.
 //
-// The one accepted divergence (Global Constraint 6) is walk order: v1 uses
-// find's readdir order, this uses filepath.WalkDir's lexical order. Single-file
-// (and single-top-dir) fixtures are order-invariant, so their bytes match bash
-// exactly; the multi-file fixture (TestMultiFilePlacedTsv) asserts the Go
-// verb's own deterministic LEXICAL order instead of bash's.
+// Placement walk order is filepath.WalkDir's lexical order. Single-file (and
+// single-top-dir) fixtures are order-invariant; the multi-file fixture
+// (TestMultiFilePlacedTsv) asserts lexical order.
 //
-// Shared helpers writeFile / runGitT live in overlay_test.go (same package).
+// Shared helpers writeFile / runGitT live in overlay_test.go.
 
 // summaryTail is the fixed stdout block every successful init prints after its
-// +/^/~/- lines (bin/init.sh:657-668).
+// +/^/~/- lines.
 const summaryTail = "omakase: ignores -> .git/info/exclude; hooks installed; new worktrees auto-install the harness. Nothing to commit.\n" +
 	"omakase: see the whole harness any time with  omakase status\n" +
 	"omakase: to customize, fork the harness source (clone -> edit -> publish) and\n" +
@@ -126,7 +120,7 @@ func TestFreshInit(t *testing.T) {
 	stubLefthook(t)
 	singleGatePayload(t)
 	// Seed a known exclude so the whole-file assertion does not depend on git's
-	// version-specific default template (golden-state.test.sh does the same).
+	// version-specific default template.
 	writeFile(t, filepath.Join(repo.CommonDir, "info", "exclude"), "scratch/\n*.tmp\n")
 
 	var stdout, stderr strings.Builder
@@ -142,21 +136,21 @@ func TestFreshInit(t *testing.T) {
 
 	// exclude = seeded lines + the derived block (single owned top dir + wiring),
 	// every entry root-anchored with a leading "/" — an unanchored ".omakase/"
-	// is a gitignore pattern that matches at ANY depth and would hide a
+	// is a gitignore pattern that matches at any depth and would hide a
 	// project's own "payload/.omakase" too.
 	wantExclude := "scratch/\n*.tmp\n" +
 		"# >>> omakase-harness >>>\n/.omakase/\n/lefthook.yml\n/.worktreeinclude\n# <<< omakase-harness <<<\n"
 	eq(t, "exclude", readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude")), wantExclude)
 
-	// .worktreeinclude = same block MINUS .worktreeinclude itself, fresh file.
+	// .worktreeinclude = same block minus .worktreeinclude itself, fresh file.
 	wantWtinc := "# >>> omakase-harness >>>\n.omakase/\nlefthook.yml\n# <<< omakase-harness <<<\n"
 	eq(t, "wtinc", readFileT(t, filepath.Join(dir, ".worktreeinclude")), wantWtinc)
 
-	// placed.tsv: one frozen-format row (rel, kind, source label, sha256, 1).
+	// placed.tsv: one row (rel, kind, source label, sha256, 1).
 	wantPlaced := ".omakase/gates/example.sh\tgate\tpayload\t" + sha256hex([]byte(gateContent)) + "\t1\n"
 	eq(t, "placed.tsv", readFileT(t, filepath.Join(repo.OMK, "placed.tsv")), wantPlaced)
 
-	// snapshot mirrors the placed file, byte-equal and executable.
+	// snapshot is a byte-equal, executable copy of the placed file.
 	snap := filepath.Join(repo.OMK, "payload-snapshot", ".omakase", "gates", "example.sh")
 	eq(t, "snapshot content", readFileT(t, snap), gateContent)
 	if info, err := os.Stat(filepath.Join(dir, ".omakase", "gates", "example.sh")); err != nil || info.Mode().Perm()&0o100 == 0 {
@@ -205,7 +199,7 @@ func TestIdempotentRerun(t *testing.T) {
 	if code := RunInit(nil, &o2, &e2); code != 0 {
 		t.Fatalf("second init exit = %d", code)
 	}
-	// Second run: byte-identical stdout, no stderr, and state unchanged (one block).
+	// Second run: identical stdout, no stderr, and state unchanged (one block).
 	eq(t, "rerun stdout", o2.String(), o1.String())
 	eq(t, "rerun stderr", e2.String(), "")
 	eq(t, "exclude unchanged", readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude")), excludeAfter1)
@@ -236,7 +230,7 @@ func TestTrackedSkip(t *testing.T) {
 		summaryTail
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "omakase: SKIP (already tracked) AGENTS.md\n")
-	// committed file left byte-untouched.
+	// committed file left untouched.
 	eq(t, "committed AGENTS.md", readFileT(t, filepath.Join(dir, "AGENTS.md")), "COMMITTED agents\n")
 }
 
@@ -273,8 +267,8 @@ func TestOverwriteClobbered(t *testing.T) {
 	eq(t, "clobbered backup", readFileT(t, clob), "MY EDIT\n")
 }
 
-// TestFirstInstallBacksUpUserFile: no prior ledger exists, so the place-loop
-// backup is the ONLY safety net for a user's own untracked file at a payload path.
+// TestFirstInstallBacksUpUserFile: with no prior ledger, the place-loop backup
+// is the only thing preserving a user's own untracked file at a payload path.
 func TestFirstInstallBacksUpUserFile(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
@@ -338,7 +332,7 @@ func TestSweepWarnsEditedOrphan(t *testing.T) {
 	if err := os.Remove(extra); err != nil {
 		t.Fatal(err)
 	}
-	// User edited the orphan: init must NOT destroy it — warn and keep.
+	// User edited the orphan: init must not destroy it — warn and keep.
 	writeFile(t, filepath.Join(dir, ".omakase", "gates", "extra.sh"), "LOCAL EDIT\n")
 
 	var stdout, stderr strings.Builder
@@ -347,7 +341,7 @@ func TestSweepWarnsEditedOrphan(t *testing.T) {
 	}
 	wantWarn := "omakase: WARNING — '.omakase/gates/extra.sh' was placed by a prior init, is no longer in the payload, and differs from what init placed (a local edit?). Leaving it; delete it yourself if unwanted.\n"
 	eq(t, "sweep warn stderr", stderr.String(), wantWarn)
-	// The edited orphan survives untouched, and is NOT reported as swept.
+	// The edited orphan survives untouched, and is not reported as swept.
 	eq(t, "orphan kept", readFileT(t, filepath.Join(dir, ".omakase", "gates", "extra.sh")), "LOCAL EDIT\n")
 	if strings.Contains(stdout.String(), "extra.sh") {
 		t.Errorf("edited orphan wrongly listed in summary:\n%s", stdout.String())
@@ -473,8 +467,8 @@ func TestCollisionWarning(t *testing.T) {
 
 // ---------------------------------------------------------- incumbent guards
 
-// refuseHelper runs init and asserts exit 1 with a stderr containing the
-// incumbent header + a substring, and that nothing was placed.
+// assertIncumbentRefusal runs init and asserts exit 1 with a stderr containing
+// the incumbent header + a substring, and that nothing was placed.
 func assertIncumbentRefusal(t *testing.T, dir string, stderr string, code int, mustContain string) {
 	t.Helper()
 	if code != 1 {
@@ -506,8 +500,8 @@ func TestIncumbentHuskyDir(t *testing.T) {
 func TestIncumbentTrackedHusky(t *testing.T) {
 	dir, _ := initRepo(t)
 	stubLefthook(t)
-	// payload also ships .husky: a git-TRACKED .husky still refuses (exemption is
-	// for UNTRACKED payload-matching content only).
+	// payload also ships .husky: a git-tracked .husky still refuses (the exemption
+	// is for untracked payload-matching content only).
 	p := singleGatePayload(t)
 	writeFile(t, filepath.Join(p, ".husky", "pre-commit"), "#!/bin/sh\ntrue\n")
 	writeFile(t, filepath.Join(dir, ".husky", "pre-commit"), "#!/bin/sh\nnpx jest\n")
@@ -576,7 +570,7 @@ func TestIncumbentForeignHooksPath(t *testing.T) {
 		"  - core.hooksPath = '.husky/_' (a foreign hook manager owns the hooks dir; husky v9 sets .husky/_)\n")
 }
 
-// TestRedundantHooksPathCleared: core.hooksPath pointing at the repo's OWN hooks
+// TestRedundantHooksPathCleared: core.hooksPath pointing at the repo's own hooks
 // dir is redundant, not foreign — init clears it (with a stdout notice) and
 // succeeds.
 func TestRedundantHooksPathCleared(t *testing.T) {
@@ -620,7 +614,7 @@ func TestStockLFSAccepted(t *testing.T) {
 }
 
 // TestForeignHookAlongsideLFS: a genuine foreign hook next to LFS hooks refuses
-// and names ONLY it, never an exempt LFS event.
+// and names only it, never an exempt LFS event.
 func TestForeignHookAlongsideLFS(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
@@ -703,11 +697,10 @@ func TestLedgerRotation(t *testing.T) {
 	}
 }
 
-// A 4-column (post-v2) ledger must NOT rotate. (Previously misnamed
-// TestLedgerNoRotationFor5Columns despite exercising a 4-field row — the
-// awk test is `NF>=6`, so the boundary needs pinning on both the common
-// post-v2 case (4 columns, this test) and the one-short-of-trigger case
-// (5 columns, TestLedgerNoRotationFor5Columns below).)
+// A 4-column (post-v2) ledger must not rotate. Rotation triggers only at 6+
+// columns, so the boundary is pinned on both the common post-v2 case (4 columns,
+// this test) and the one-short-of-trigger case (5 columns,
+// TestLedgerNoRotationFor5Columns).
 func TestLedgerNoRotationFor4Columns(t *testing.T) {
 	_, repo := initRepo(t)
 	stubLefthook(t)
@@ -729,10 +722,8 @@ func TestLedgerNoRotationFor4Columns(t *testing.T) {
 	}
 }
 
-// A genuine 5-column ledger row (one field short of the NF>=6 rotation
-// trigger) must also NOT rotate — pins the awk `NF>=6` boundary from the
-// other side (see TestLedgerNoRotationFor4Columns above and
-// TestLedgerRotation's 6-column row).
+// A genuine 5-column ledger row (one column short of the 6-column rotation
+// trigger) must also not rotate — pins the boundary from the other side.
 func TestLedgerNoRotationFor5Columns(t *testing.T) {
 	_, repo := initRepo(t)
 	stubLefthook(t)
@@ -755,15 +746,10 @@ func TestLedgerNoRotationFor5Columns(t *testing.T) {
 }
 
 // TestLedgerRotationFailureContinues: when the rotate-aside rename fails (here,
-// constructed portably by pre-creating ledger.tsv.pre-v2.bak AS A DIRECTORY, so
-// os.Rename onto it fails on both macOS and Linux), bin/init.sh's
-// `mv -f ... && echo "..."` is a single && list inside a bare `if ... ; then
-// ... ; fi`: mv is not the LAST command of that list, so its failure is exempt
-// from `set -e`; the failure just short-circuits past the echo (no notice
-// prints), and the script falls through and CONTINUES the rest of the run. Go
-// must match: no notice, no abort, the run still succeeds and completes
-// placement — and the pre-v2 ledger is left exactly where it was (the rename
-// never happened).
+// constructed portably by pre-creating ledger.tsv.pre-v2.bak as a directory, so
+// os.Rename onto it fails on both macOS and Linux), the failure prints no notice
+// and does not abort the run: placement completes, and the pre-v2 ledger is left
+// exactly where it was because the rename never happened.
 func TestLedgerRotationFailureContinues(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
@@ -803,10 +789,9 @@ func TestLedgerRotationFailureContinues(t *testing.T) {
 
 // ---------------------------------------------------- multi-file walk order
 
-// TestMultiFilePlacedTsv asserts the Go verb's own deterministic LEXICAL walk
-// order (the accepted GC6 divergence) across a multi-top-dir payload — placed.tsv
-// rows, per-path kind, and the .github file-by-file vs owned-wholesale exclude
-// derivation.
+// TestMultiFilePlacedTsv asserts lexical walk order across a multi-top-dir
+// payload — placed.tsv rows, per-path kind, and the .github file-by-file vs
+// owned-wholesale exclude derivation.
 func TestMultiFilePlacedTsv(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
@@ -853,7 +838,7 @@ func TestMultiFilePlacedTsv(t *testing.T) {
 	}
 }
 
-// TestSymlinkPayloadCarried: a payload symlink (CLAUDE.md -> AGENTS.md) lands AS
+// TestSymlinkPayloadCarried: a payload symlink (CLAUDE.md -> AGENTS.md) lands as
 // a symlink, snapshots as a symlink, and its ledger digest is the readlink
 // target string's sha256 (not the dereferenced content).
 func TestSymlinkPayloadCarried(t *testing.T) {
@@ -965,13 +950,13 @@ func TestPayloadNotFound(t *testing.T) {
 }
 
 // ---------------------------------------------------- source precedence
-// (The full --source flow — cache, manifest, ref pin, base+delta merge, source
-// memory — is exercised in source_test.go. These two pin the precedence edges
-// the engine owns.)
+// The full --source flow (cache, manifest, ref pin, base+delta merge, source
+// memory) is covered in source_test.go. These two pin the precedence edges the
+// engine owns.
 
 // OMAKASE_PAYLOAD set alongside a remembered $OMK/source: the env override wins,
-// so the source is NOT taken and a plain payload install proceeds (precedence:
-// env > remembered — bin/init.sh:152).
+// so the source is not taken and a plain payload install proceeds (precedence:
+// env > remembered).
 func TestOmakasePayloadOverridesRememberedSource(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
@@ -992,9 +977,8 @@ func TestOmakasePayloadOverridesRememberedSource(t *testing.T) {
 
 // TestPlainInstallPayloadEnvPrecedence: on a plain (no --source) install,
 // OMAKASE_PAYLOAD wins over OMAKASE_BASE_PAYLOAD — the base-payload env is the
-// MERGE base only (Global Constraint 1), never the plain payload, so it must not
-// leak into the plain path even when set. Two distinct fixtures prove which one
-// is placed.
+// merge base only, never the plain payload, so it must not leak into the plain
+// path even when set. Two distinct fixtures prove which one is placed.
 func TestPlainInstallPayloadEnvPrecedence(t *testing.T) {
 	dir, _ := initRepo(t)
 	stubLefthook(t)
@@ -1018,9 +1002,9 @@ func TestPlainInstallPayloadEnvPrecedence(t *testing.T) {
 	}
 }
 
-// TestUntrackedHuskyExemptWhenPayloadShips: an UNTRACKED .husky matching a
-// payload that ships one is omakase's own — exempt, so init proceeds
-// (bin/init.sh:313 elif requires the payload NOT ship .husky to flag it).
+// TestUntrackedHuskyExemptWhenPayloadShips: an untracked .husky matching a
+// payload that ships one is omakase's own — exempt, so init proceeds. A .husky is
+// only flagged when the payload does not ship one.
 func TestUntrackedHuskyExemptWhenPayloadShips(t *testing.T) {
 	dir, _ := initRepo(t)
 	stubLefthook(t)
@@ -1034,8 +1018,8 @@ func TestUntrackedHuskyExemptWhenPayloadShips(t *testing.T) {
 	}
 }
 
-// TestCustomizedGitLfsHookRefuses: a hook that forwards to git-lfs AND does extra
-// work is NOT the pristine stub — it still refuses (bin/init.sh's anchored strip).
+// TestCustomizedGitLfsHookRefuses: a hook that forwards to git-lfs and does extra
+// work is not the pristine stub — it still refuses.
 func TestCustomizedGitLfsHookRefuses(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
@@ -1051,9 +1035,9 @@ func TestCustomizedGitLfsHookRefuses(t *testing.T) {
 	eq(t, "customized hook untouched", readFileT(t, hf), "#!/bin/sh\nnpm run lint || exit 1\ncommand -v git-lfs >/dev/null 2>&1 || exit 2\ngit lfs pre-push \"$@\"\n")
 }
 
-// TestPlaceFileRefusesRealDir: an untracked REAL directory where the payload
-// ships a regular file makes place_file refuse (bin/init.sh:429-432) — exit 1,
-// leaving the directory untouched.
+// TestPlaceFileRefusesRealDir: an untracked real directory where the payload
+// ships a regular file makes placement refuse — exit 1, leaving the directory
+// untouched.
 func TestPlaceFileRefusesRealDir(t *testing.T) {
 	dir, _ := initRepo(t)
 	stubLefthook(t)
@@ -1076,20 +1060,17 @@ func TestPlaceFileRefusesRealDir(t *testing.T) {
 
 // ---------------------------------------------------------------- symlink escape (security)
 //
-// safeMkdirAll (internal/overlay/overlay.go) is the guard both init.go call sites lean on
-// instead of a bare os.MkdirAll: it refuses to create a directory whose parent chain passes
-// through an existing SYMLINK, so a payload write can never land outside the repo through a
-// symlinked parent. TestSafeMkdirAllRefusesSymlinkedParent (overlay_test.go) only calls the
-// primitive directly — swapping every init.go call site to os.MkdirAll would leave that test
-// (and the rest of the suite) green. This test drives the guard END TO END through RunInit's
-// real placeFile call site (init.go:726) so a future refactor that quietly drops safeMkdirAll
-// there is caught by the wiring, not just the primitive.
+// safeMkdirAll refuses to create a directory whose parent chain passes through
+// an existing symlink, so a payload write can never land outside the repo
+// through a symlinked parent. TestSafeMkdirAllRefusesSymlinkedParent
+// (overlay_test.go) exercises the primitive directly; this test drives the guard
+// end to end through RunInit's placeFile call site, so a refactor that drops
+// safeMkdirAll there is caught by the wiring, not just the primitive.
 //
-// Setup: the TARGET repo has an untracked directory symlink "evil" pointing OUTSIDE the repo
-// (left behind by some earlier step, or attacker-controlled). The payload being installed now
-// ships a plain file "evil/pwned" underneath that same name. Following the symlink would write
-// pwned outside the repo entirely, at $OUTSIDE_DIR/pwned. safeMkdirAll must refuse before that
-// write happens.
+// Setup: the target repo has an untracked directory symlink "evil" pointing
+// outside the repo. The payload ships a plain file "evil/pwned" under that same
+// name. Following the symlink would write pwned outside the repo; safeMkdirAll
+// must refuse before that write happens.
 func TestPlaceFileRefusesSymlinkedParentInRepo(t *testing.T) {
 	dir, _ := initRepo(t)
 	stubLefthook(t)
@@ -1119,7 +1100,7 @@ func TestPlaceFileRefusesSymlinkedParentInRepo(t *testing.T) {
 
 // TestTrackedWorktreeincludeNotice: a git-tracked .worktreeinclude is left
 // untouched (appending would be a committed footprint) — init prints the notice
-// to stderr and writes no wtinc block (bin/init.sh:547-549).
+// to stderr and writes no wtinc block.
 func TestTrackedWorktreeincludeNotice(t *testing.T) {
 	dir, _ := initRepo(t)
 	stubLefthook(t)
@@ -1134,35 +1115,15 @@ func TestTrackedWorktreeincludeNotice(t *testing.T) {
 	}
 	eq(t, "tracked wtinc notice", stderr.String(),
 		"omakase: .worktreeinclude is tracked — leaving it untouched (re-run omakase init inside a new manual worktree to install it there).\n")
-	// the tracked file is left byte-untouched (no block appended).
+	// the tracked file is left untouched (no block appended).
 	eq(t, "tracked .worktreeinclude untouched", readFileT(t, filepath.Join(dir, ".worktreeinclude")), "manual\n")
 }
 
 // TestWtincBlockOmitsPlacedWorktreeinclude: a payload shipping a top-level
-// .worktreeinclude FILE (not just the wiring entry) still must not appear in
-// the generated .worktreeinclude BLOCK — v1 skips every prefix literally equal
-// to ".worktreeinclude" while writing that block, regardless of whether the
-// prefix came from the wiring append or from a placed path (bin/init.sh:577).
-// The exclude block, by contrast, DOES list it (v1 has no such skip there).
-//
-// Expected bytes captured from a live `bash bin/init.sh` run in a twin
-// fixture (payload: .omakase/gates/example.sh + a top-level .worktreeinclude
-// file containing "custom-pattern\n"), generated with:
-//
-//	cd /tmp && rm -rf omk-wtinc-fixture && mkdir -p omk-wtinc-fixture/repo omk-wtinc-fixture/payload/.omakase/gates
-//	cd omk-wtinc-fixture/repo && git init -q && git config user.email t@t && git config user.name t \
-//	  && git config commit.gpgsign false && git commit -q --allow-empty -m init
-//	printf '#!/usr/bin/env bash\necho hi\n' > ../payload/.omakase/gates/example.sh
-//	printf 'custom-pattern\n' > ../payload/.worktreeinclude
-//	mkdir -p ../stub && printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$LEFTHOOK_STUB_LOG"\nexit 0\n' > ../stub/lefthook && chmod +x ../stub/lefthook
-//	LEFTHOOK_BIN=/tmp/omk-wtinc-fixture/stub/lefthook LEFTHOOK_STUB_LOG=/tmp/omk-wtinc-fixture/stub/argv.log \
-//	  OMAKASE_PAYLOAD=/tmp/omk-wtinc-fixture/payload bash bin/init.sh
-//	cat .git/info/exclude; cat .worktreeinclude   # inspect the two blocks
-//
-// which produced an exclude block of ".omakase/", ".worktreeinclude",
-// "lefthook.yml" and a .worktreeinclude block of "custom-pattern\n" (the
-// payload's own, unstripped content) followed by ".omakase/", "lefthook.yml"
-// only — no ".worktreeinclude" line.
+// .worktreeinclude file (not just the wiring entry) still must not appear in the
+// generated .worktreeinclude block — the block skips every prefix equal to
+// ".worktreeinclude", whether the prefix came from the wiring append or from a
+// placed path. The exclude block, by contrast, does list it.
 func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
@@ -1180,7 +1141,7 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 		"  + .worktreeinclude\n" + summaryTail
 	eq(t, "stdout", stdout.String(), wantOut)
 
-	// exclude block: DOES list .worktreeinclude (v1 has no skip there).
+	// exclude block: lists .worktreeinclude.
 	// Entries are root-anchored (leading "/") in the exclude block only.
 	wantExcludeBlock := "# >>> omakase-harness >>>\n" +
 		"/.omakase/\n" +
@@ -1209,7 +1170,7 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 
 // TestStatuslineAndStopNoticeStanzas: the closing summary appends the statusline
 // + stop-notice wire-up stanzas iff those files exist in the repo after
-// placement (bin/init.sh:672-685), byte-exact incl. the repo-root path line.
+// placement, including the repo-root path line.
 func TestStatuslineAndStopNoticeStanzas(t *testing.T) {
 	_, repo := initRepo(t)
 	stubLefthook(t)
@@ -1238,22 +1199,16 @@ func TestStatuslineAndStopNoticeStanzas(t *testing.T) {
 	eq(t, "summary with stanzas", stdout.String(), wantOut)
 }
 
-// ---------------------------------------------------------------- mode parity (review finding 1)
+// ------------------------------------------------------------ exclude/wtinc write mode
 //
-// See remove_test.go's fuller comment header for the underlying bash
-// mechanics (`awk ... > tmp && mv tmp f`, always producing a fresh
-// `0666 &^ umask` inode regardless of the pre-existing mode). init.go's
-// exclude/.worktreeinclude sites additionally APPEND a block after the strip
-// (`>> f`, bin/init.sh:556/572) -- but append mode never touches the file's
-// mode once the preceding strip+mv already established it, so the same
-// `0666 &^ umask` expectation holds for the fully-written (stripped +
-// appended) file. Each test below seeds a PRE-EXISTING file at 0600
-// (deliberately not `0666 &^ umask`) so a port that silently preserves the
-// original mode (os.WriteFile over an existing path, which only applies its
-// mode argument at creation) would be caught.
+// init rewrites the exclude and .worktreeinclude files so their final mode is
+// `0666 &^ umask` regardless of the pre-existing mode. Each test below seeds a
+// pre-existing file at 0600 (deliberately not `0666 &^ umask`) so a port that
+// silently preserves the original mode (os.WriteFile over an existing path only
+// applies its mode argument at creation) is caught.
 
 // TestExcludeWriteModeMatchesBashFreshInode: exclude pre-seeded at 0600 must
-// end up at `0666 &^ umask` after init's strip+append (bin/init.sh:556-564).
+// end up at `0666 &^ umask` after init's strip+append.
 func TestExcludeWriteModeMatchesBashFreshInode(t *testing.T) {
 	_, repo := initRepo(t)
 	stubLefthook(t)
@@ -1280,10 +1235,10 @@ func TestExcludeWriteModeMatchesBashFreshInode(t *testing.T) {
 	}
 }
 
-// TestWtincWriteModeMatchesBashFreshInode: .worktreeinclude pre-seeded at
-// 0600 must end up at `0666 &^ umask` after init's strip+append
-// (bin/init.sh:566-582). singleGatePayload guarantees len(placed) > 0,
-// which is required for this block to be written at all.
+// TestWtincWriteModeMatchesBashFreshInode: .worktreeinclude pre-seeded at 0600
+// must end up at `0666 &^ umask` after init's strip+append. singleGatePayload
+// guarantees len(placed) > 0, which is required for this block to be written at
+// all.
 func TestWtincWriteModeMatchesBashFreshInode(t *testing.T) {
 	dir, _ := initRepo(t)
 	stubLefthook(t)
