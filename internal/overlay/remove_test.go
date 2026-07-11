@@ -545,3 +545,148 @@ func TestSkeletonLefthookYmlRemovalFailurePropagates(t *testing.T) {
 		t.Errorf("exit = %d, want 1 (rm -f failure must abort, matching set -e); stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }
+
+// ---------------------------------------------------------------- multi-worktree sweep (issue #84 gap 1)
+//
+// The shared-state teardown (hook stubs, $OMK, exclude block) covers every
+// worktree at once, but placed files, the skeleton lefthook.yml, and
+// .worktreeinclude live per-checkout — heal copies them into every worktree.
+// remove must therefore sweep every worktree git lists, not just the one it
+// runs from; otherwise siblings keep orphaned copies that the now-stripped
+// exclude block no longer ignores.
+
+// addWorktree creates a linked worktree of dir on a fresh branch named name,
+// under its own temp parent, returning the path with symlinks resolved (the
+// form git itself reports).
+func addWorktree(t *testing.T, dir, name string) string {
+	t.Helper()
+	wt := filepath.Join(t.TempDir(), name)
+	runGitT(t, dir, "worktree", "add", "-q", "-b", name, wt)
+	resolved, err := filepath.EvalSymlinks(wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
+}
+
+func TestRemoveFromMainSweepsLinkedWorktrees(t *testing.T) {
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+	mustInit(t)
+	wt := addWorktree(t, dir, "wt-sibling")
+
+	// Hand-seed the state heal leaves in a linked worktree: the placed gate,
+	// the skeleton lefthook.yml, and a .worktreeinclude holding init's block.
+	writeFile(t, filepath.Join(wt, ".omakase", "gates", "example.sh"), gateContent)
+	writeFile(t, filepath.Join(wt, "lefthook.yml"), "# EXAMPLE USAGE:\n#   skeleton\n")
+	writeFile(t, filepath.Join(wt, ".worktreeinclude"), readFileT(t, filepath.Join(dir, ".worktreeinclude")))
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(), removedLine)
+	eq(t, "stderr", stderr.String(), "")
+
+	for _, p := range []string{
+		filepath.Join(wt, ".omakase"),
+		filepath.Join(wt, "lefthook.yml"),
+		filepath.Join(wt, ".worktreeinclude"),
+		filepath.Join(dir, ".omakase"),
+		filepath.Join(dir, ".worktreeinclude"),
+	} {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			t.Errorf("%s survived remove: %v", p, err)
+		}
+	}
+	if _, err := os.Lstat(repo.OMK); !os.IsNotExist(err) {
+		t.Errorf("$OMK still exists: %v", err)
+	}
+}
+
+// TestRemoveFromLinkedWorktreeSweepsMain is the original bug scenario: remove
+// run from a linked worktree wiped the shared state but left the main
+// checkout's placed files orphaned and un-ignored.
+func TestRemoveFromLinkedWorktreeSweepsMain(t *testing.T) {
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+	mustInit(t)
+	wt := addWorktree(t, dir, "wt-remove-here")
+	writeFile(t, filepath.Join(wt, ".omakase", "gates", "example.sh"), gateContent)
+	chdir(t, wt)
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stderr", stderr.String(), "")
+
+	for _, p := range []string{
+		filepath.Join(dir, ".omakase"),
+		filepath.Join(dir, ".worktreeinclude"),
+		filepath.Join(wt, ".omakase"),
+	} {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			t.Errorf("%s survived remove run from a linked worktree: %v", p, err)
+		}
+	}
+	if _, err := os.Lstat(repo.OMK); !os.IsNotExist(err) {
+		t.Errorf("$OMK still exists: %v", err)
+	}
+}
+
+// TestRemoveSweepSkipsTrackedInSiblingWorktree: trackedness is per-worktree.
+// A sibling's branch that commits the placed path owns that copy — the sweep
+// must leave it alone while still deleting the untracked copy in main.
+func TestRemoveSweepSkipsTrackedInSiblingWorktree(t *testing.T) {
+	dir, _ := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+	mustInit(t)
+	wt := addWorktree(t, dir, "wt-tracked")
+
+	writeFile(t, filepath.Join(wt, ".omakase", "gates", "example.sh"), "tracked variant\n")
+	// -f: the path is in the exclude block init wrote, so a plain add refuses.
+	runGitT(t, wt, "add", "-f", ".omakase/gates/example.sh")
+	runGitT(t, wt, "commit", "-q", "-m", "track the gate on this branch")
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "sibling's tracked copy preserved", readFileT(t, filepath.Join(wt, ".omakase", "gates", "example.sh")), "tracked variant\n")
+	if _, err := os.Lstat(filepath.Join(dir, ".omakase")); !os.IsNotExist(err) {
+		t.Errorf("main checkout's untracked placed file not deleted: %v", err)
+	}
+}
+
+// TestRemoveWarnsUnreachableWorktreeAndContinues: a listed worktree whose
+// directory is gone (deleted but never pruned) cannot be swept — remove must
+// say so on stderr and still finish the full teardown, exit 0.
+func TestRemoveWarnsUnreachableWorktreeAndContinues(t *testing.T) {
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+	mustInit(t)
+	wt := addWorktree(t, dir, "wt-vanished")
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0 (an unreachable worktree must not abort the sweep); stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(), removedLine)
+	if !strings.Contains(stderr.String(), "wt-vanished") || !strings.Contains(stderr.String(), "unreachable") {
+		t.Errorf("stderr = %q, want a warning naming the unreachable worktree", stderr.String())
+	}
+	if _, err := os.Lstat(filepath.Join(dir, ".omakase")); !os.IsNotExist(err) {
+		t.Errorf("main checkout not swept: %v", err)
+	}
+	if _, err := os.Lstat(repo.OMK); !os.IsNotExist(err) {
+		t.Errorf("$OMK still exists: %v", err)
+	}
+}

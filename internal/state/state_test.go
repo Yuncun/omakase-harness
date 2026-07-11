@@ -402,3 +402,91 @@ func TestWritePlacedOverwritesExistingFileWholesale(t *testing.T) {
 		t.Errorf("WritePlaced bytes = %q, want %q (must regenerate wholesale, not append)", got, want)
 	}
 }
+
+// ---------------------------------------------------------------- WorktreeRoots
+
+// evalSymlinksT resolves symlinks for path comparison: t.TempDir() on macOS
+// lives behind the /var -> /private/var symlink, while git prints resolved
+// paths.
+func evalSymlinksT(t *testing.T, p string) string {
+	t.Helper()
+	out, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestWorktreeRootsSingleCheckout(t *testing.T) {
+	dir := newTestRepo(t)
+	runGitT(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
+
+	got := WorktreeRoots(dir)
+	if len(got) != 1 || evalSymlinksT(t, got[0]) != evalSymlinksT(t, dir) {
+		t.Errorf("WorktreeRoots = %v, want just %q", got, dir)
+	}
+}
+
+func TestWorktreeRootsMainFirstThenLinked(t *testing.T) {
+	dir := newTestRepo(t)
+	runGitT(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
+	wt1 := filepath.Join(t.TempDir(), "wt1")
+	wt2 := filepath.Join(t.TempDir(), "wt2")
+	runGitT(t, dir, "worktree", "add", "-q", "-b", "b1", wt1)
+	runGitT(t, dir, "worktree", "add", "-q", "-b", "b2", wt2)
+
+	got := WorktreeRoots(dir)
+	if len(got) != 3 {
+		t.Fatalf("WorktreeRoots returned %d entries, want 3: %v", len(got), got)
+	}
+	for i, want := range []string{dir, wt1, wt2} {
+		if evalSymlinksT(t, got[i]) != evalSymlinksT(t, want) {
+			t.Errorf("WorktreeRoots[%d] = %q, want %q", i, got[i], want)
+		}
+	}
+}
+
+// TestWorktreeRootsDeletedDirStillListed: a worktree whose directory was
+// deleted but never pruned stays in git's list, so it must stay in ours —
+// the caller decides how to treat an unreachable root.
+func TestWorktreeRootsDeletedDirStillListed(t *testing.T) {
+	dir := newTestRepo(t)
+	runGitT(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
+	wt := filepath.Join(t.TempDir(), "gone")
+	runGitT(t, dir, "worktree", "add", "-q", "-b", "gone", wt)
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+
+	got := WorktreeRoots(dir)
+	if len(got) != 2 {
+		t.Errorf("WorktreeRoots returned %d entries, want 2 (deleted-but-unpruned worktree must still be listed): %v", len(got), got)
+	}
+}
+
+// TestWorktreeRootsBareEntrySkipped: a bare repository's own entry has no
+// checkout to sweep and must be dropped from the list.
+func TestWorktreeRootsBareEntrySkipped(t *testing.T) {
+	src := newTestRepo(t)
+	runGitT(t, src, "commit", "-q", "--allow-empty", "-m", "init")
+	bare := filepath.Join(t.TempDir(), "bare.git")
+	runGitT(t, src, "clone", "-q", "--bare", src, bare)
+	wt := filepath.Join(t.TempDir(), "wt")
+	runGitT(t, bare, "worktree", "add", "-q", "-b", "b", wt)
+
+	got := WorktreeRoots(wt)
+	if len(got) != 1 || evalSymlinksT(t, got[0]) != evalSymlinksT(t, wt) {
+		t.Errorf("WorktreeRoots = %v, want just %q (bare entry skipped)", got, wt)
+	}
+}
+
+// TestWorktreeRootsNotARepoFallsBackToRoot: on any git failure the list is
+// the passed root alone, so a caller's per-worktree walk degrades to
+// single-checkout behavior instead of skipping the checkout teardown.
+func TestWorktreeRootsNotARepoFallsBackToRoot(t *testing.T) {
+	dir := t.TempDir()
+	got := WorktreeRoots(dir)
+	if len(got) != 1 || got[0] != dir {
+		t.Errorf("WorktreeRoots = %v, want [%q]", got, dir)
+	}
+}
