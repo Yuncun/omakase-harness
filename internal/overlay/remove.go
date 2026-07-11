@@ -1,10 +1,11 @@
 // This file implements the `omakase remove` verb, the reverse of init. In
 // order: payload default resolution, repo discovery, the lefthook uninstall
-// (never fetching), the hook-stub marked-block strip, the placed-path
-// deletion (ledger-driven, or the pre-0.10 payload-enumeration fallback
-// behind an install-proof sentinel), the skeleton lefthook.yml and
-// .worktreeinclude teardown, the $OMK wipe, the exclude-block strip, and
-// the closing summary line.
+// (never fetching), the hook-stub marked-block strip, the per-worktree
+// sweep — placed-path deletion (ledger-driven, or the pre-0.10
+// payload-enumeration fallback behind an install-proof sentinel) plus the
+// skeleton lefthook.yml and .worktreeinclude teardown, applied to every
+// worktree git lists — the $OMK wipe, the exclude-block strip, and the
+// closing summary line.
 package overlay
 
 import (
@@ -52,7 +53,6 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	root := repo.Root
 	common := repo.CommonDir
 	omk := repo.OMK
-	isTracked := func(rel string) bool { return gitTracked(root, rel) }
 
 	const begin = "# >>> omakase-harness >>>"
 	const end = "# <<< omakase-harness <<<"
@@ -114,17 +114,16 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// ---- placed deletion ----
+	// ---- placed-path list ----
 	// The provenance ledger (placed.tsv) is authoritative when present: all
 	// its rows are deleted, enabled or not — remove is a total teardown; the
 	// enabled flag is an off switch, not an uninstall. Rows are processed
 	// in file order.
+	var rels []string
 	ledger := filepath.Join(omk, "placed.tsv")
 	if fileRegular(ledger) {
 		for _, row := range state.ReadPlaced(ledger) {
-			if delErr := DeletePlaced(root, row.Rel, isTracked); delErr != nil {
-				return 1
-			}
+			rels = append(rels, row.Rel)
 		}
 	} else if fileContains(exclude, begin) || isDir(omk) {
 		// No ledger (a pre-0.10 install) but omakase was installed here. The
@@ -135,39 +134,57 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 		// enumerates nothing — reachable in production since v0.18.0, when a
 		// fetched/PATH binary runs without the shim-exported
 		// OMAKASE_BASE_PAYLOAD and has no bundled payload/ sibling.
-		rels, _ := walkPayload(payload)
-		for _, rel := range rels {
-			if delErr := DeletePlaced(root, rel, isTracked); delErr != nil {
-				return 1
-			}
-		}
+		rels, _ = walkPayload(payload)
 	} else {
 		fmt.Fprintln(stderr, "omakase: nothing installed here; nothing to remove.")
 		return 0
 	}
 
-	// ---- skeleton lefthook.yml removal ----
-	lefthookYml := filepath.Join(root, "lefthook.yml")
-	if fileRegular(lefthookYml) && !isTracked("lefthook.yml") && fileContains(lefthookYml, "EXAMPLE USAGE") {
-		if err := removeF(lefthookYml); err != nil {
-			return 1
+	// ---- per-worktree sweep ----
+	// Placed files, the skeleton lefthook.yml, and .worktreeinclude live
+	// per-checkout — heal copies them into every worktree — so remove sweeps
+	// every worktree git lists, not just the one it runs from; otherwise
+	// siblings keep orphaned copies that the exclude block, stripped below,
+	// no longer ignores. Trackedness is re-checked against each worktree's
+	// own checkout. An unreachable worktree gets a warning and is skipped;
+	// the shared-state teardown below still covers it.
+	for _, wtRoot := range state.WorktreeRoots(root) {
+		if !isDir(wtRoot) {
+			fmt.Fprintf(stderr, "omakase: worktree %s is unreachable; its placed files were not removed.\n", wtRoot)
+			continue
 		}
-	}
+		wtTracked := func(rel string) bool { return gitTracked(wtRoot, rel) }
 
-	// ---- .worktreeinclude strip ----
-	// No gate here (unlike the hook stubs): the block is stripped
-	// unconditionally whenever the file exists and is untracked — a no-op
-	// content-wise if the markers are absent, but still rewritten.
-	wtinc := filepath.Join(root, ".worktreeinclude")
-	if fileRegular(wtinc) && !isTracked(".worktreeinclude") {
-		content, _ := os.ReadFile(wtinc)
-		out := textblock.Strip(content, begin, end)
-		if werr := rewriteFile(wtinc, out); werr != nil {
-			return 1
-		}
-		if len(out) == 0 { // empty after the strip: delete it
-			if err := removeF(wtinc); err != nil {
+		// placed deletion
+		for _, rel := range rels {
+			if delErr := DeletePlaced(wtRoot, rel, wtTracked); delErr != nil {
 				return 1
+			}
+		}
+
+		// skeleton lefthook.yml removal
+		lefthookYml := filepath.Join(wtRoot, "lefthook.yml")
+		if fileRegular(lefthookYml) && !wtTracked("lefthook.yml") && fileContains(lefthookYml, "EXAMPLE USAGE") {
+			if err := removeF(lefthookYml); err != nil {
+				return 1
+			}
+		}
+
+		// .worktreeinclude strip. No gate here (unlike the hook stubs): the
+		// block is stripped unconditionally whenever the file exists and is
+		// untracked — a no-op content-wise if the markers are absent, but
+		// still rewritten.
+		wtinc := filepath.Join(wtRoot, ".worktreeinclude")
+		if fileRegular(wtinc) && !wtTracked(".worktreeinclude") {
+			content, _ := os.ReadFile(wtinc)
+			out := textblock.Strip(content, begin, end)
+			if werr := rewriteFile(wtinc, out); werr != nil {
+				return 1
+			}
+			if len(out) == 0 { // empty after the strip: delete it
+				if err := removeF(wtinc); err != nil {
+					return 1
+				}
 			}
 		}
 	}

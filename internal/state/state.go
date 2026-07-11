@@ -56,6 +56,42 @@ func Discover(dir string) (*Repo, error) {
 	}, nil
 }
 
+// WorktreeRoots returns the root directory of every worktree attached to
+// the repository whose root is root — the main checkout first, then each
+// linked worktree, in `git worktree list --porcelain` order. A bare entry
+// has no checkout and is dropped; a listed-but-deleted worktree is still
+// returned (the caller decides how to treat an unreachable root). On any
+// git failure the list is root alone, so a caller's per-worktree walk
+// degrades to single-checkout behavior.
+func WorktreeRoots(root string) []string {
+	out, err := runGit(root, "worktree", "list", "--porcelain")
+	if err != nil {
+		return []string{root}
+	}
+	var roots []string
+	cur := ""
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			// Each block opens with its "worktree " line, so the previous
+			// block is complete here; flush it unless "bare" cleared it.
+			if cur != "" {
+				roots = append(roots, cur)
+			}
+			cur = strings.TrimPrefix(line, "worktree ")
+		case line == "bare":
+			cur = ""
+		}
+	}
+	if cur != "" {
+		roots = append(roots, cur)
+	}
+	if len(roots) == 0 {
+		return []string{root}
+	}
+	return roots
+}
+
 func runGit(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
