@@ -1264,3 +1264,83 @@ func TestWtincWriteModeMatchesBashFreshInode(t *testing.T) {
 		t.Errorf("wtinc mode after init = %o, want %o (0666 &^ umask -- the original seeded 0600 must NOT survive)", info.Mode().Perm(), want)
 	}
 }
+
+// -------------------------------------------------- lefthook.yml heal snapshot
+//
+// `lefthook install` writes an example lefthook.yml skeleton when the repo
+// ships no config. It lives outside placed.tsv, so init snapshots it to
+// $OMK/lefthook.yml as the worktree heal source (issue #80). The stub lefthook
+// does not write the skeleton, so these tests seed the untracked lefthook.yml
+// directly; the snapshot step reads it after the install call regardless.
+
+// TestLefthookSkeletonSnapshotted: an untracked lefthook.yml present after
+// install is copied byte-for-byte to $OMK/lefthook.yml, gitignored (clean
+// status).
+func TestLefthookSkeletonSnapshotted(t *testing.T) {
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+	skeleton := "# EXAMPLE USAGE:\n#   see https://lefthook.dev\n"
+	writeFile(t, filepath.Join(dir, "lefthook.yml"), skeleton)
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "lefthook.yml snapshot", readFileT(t, filepath.Join(repo.OMK, "lefthook.yml")), skeleton)
+	if out := gitStdout(repo.Root, "status", "--porcelain"); out != "" {
+		t.Errorf("git status not clean: %q", out)
+	}
+}
+
+// TestLefthookSnapshotRefreshedOnReinit: a later init overwrites the snapshot
+// with the current untracked lefthook.yml, so a user's edited config becomes
+// the heal source.
+func TestLefthookSnapshotRefreshedOnReinit(t *testing.T) {
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+	writeFile(t, filepath.Join(dir, "lefthook.yml"), "# EXAMPLE USAGE: v1\n")
+
+	var o1, e1 strings.Builder
+	if code := RunInit(nil, &o1, &e1); code != 0 {
+		t.Fatalf("first init exit = %d; stderr=%q", code, e1.String())
+	}
+	eq(t, "snapshot v1", readFileT(t, filepath.Join(repo.OMK, "lefthook.yml")), "# EXAMPLE USAGE: v1\n")
+
+	edited := "pre-commit:\n  jobs:\n    - run: echo edited\n"
+	writeFile(t, filepath.Join(dir, "lefthook.yml"), edited)
+
+	var o2, e2 strings.Builder
+	if code := RunInit(nil, &o2, &e2); code != 0 {
+		t.Fatalf("second init exit = %d; stderr=%q", code, e2.String())
+	}
+	eq(t, "snapshot refreshed", readFileT(t, filepath.Join(repo.OMK, "lefthook.yml")), edited)
+}
+
+// TestLefthookSnapshotDeletedWhenTracked: when the repo commits its own
+// lefthook.yml, init deletes any stale snapshot (the heal source must never go
+// stale) and leaves the tracked file untouched.
+func TestLefthookSnapshotDeletedWhenTracked(t *testing.T) {
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo.OMK, "lefthook.yml"), "# stale skeleton\n")
+
+	tracked := "pre-commit:\n  jobs:\n    - run: true\n"
+	writeFile(t, filepath.Join(dir, "lefthook.yml"), tracked)
+	runGitT(t, dir, "add", "lefthook.yml")
+	runGitT(t, dir, "commit", "-q", "-m", "track lefthook.yml")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if _, err := os.Lstat(filepath.Join(repo.OMK, "lefthook.yml")); !os.IsNotExist(err) {
+		t.Errorf("stale lefthook.yml snapshot not deleted for a tracked config: %v", err)
+	}
+	eq(t, "tracked lefthook.yml untouched", readFileT(t, filepath.Join(dir, "lefthook.yml")), tracked)
+}

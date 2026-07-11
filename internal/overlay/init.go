@@ -637,6 +637,25 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		return exitCode(runErr) // a `lefthook install` failure aborts with its code
 	}
 
+	// ---- lefthook.yml heal snapshot ----
+	// `lefthook install` writes an example lefthook.yml skeleton when the repo
+	// ships no config. omakase never placed it, so it is absent from the
+	// ledger and the worktree heal loop would leave a linked worktree without
+	// it, making lefthook print a sync-hooks failure on every hook run there.
+	// Snapshot the untracked file to $OMK/lefthook.yml, outside the ledger (a
+	// ledger row would draw re-init sweep and drift warnings on a file the
+	// user may edit); ensure-present.sh heals it into a worktree that lacks
+	// it. A tracked or absent lefthook.yml clears any stale snapshot so the
+	// heal source cannot go stale.
+	lefthookSnap := filepath.Join(omk, "lefthook.yml")
+	if fileRegular(filepath.Join(root, "lefthook.yml")) && !lefthookTracked {
+		if err := CopyEntry(filepath.Join(root, "lefthook.yml"), lefthookSnap); err != nil {
+			return 1
+		}
+	} else if err := removeF(lefthookSnap); err != nil {
+		return 1
+	}
+
 	// ---- install the hook-stub guard blocks ----
 	// install-guards.sh resolves the shared git dir from this process's cwd
 	// (inside the repo), streams inherited.

@@ -478,6 +478,32 @@ func TestWtincStripModeMatchesBashFreshInode(t *testing.T) {
 	eq(t, repo.Root, readFileT(t, wtinc), "my-own-ignore/\n") // sanity: content still correct alongside the mode check
 }
 
+// ---------------------------------------------------------------- lefthook.yml heal snapshot
+
+// TestLefthookSnapshotGoneAfterRemove: init snapshots the untracked lefthook.yml
+// skeleton to $OMK/lefthook.yml (issue #80); remove's whole-$OMK wipe takes it
+// with the rest of the shared dir, so no dedicated teardown is needed.
+func TestLefthookSnapshotGoneAfterRemove(t *testing.T) {
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+	writeFile(t, filepath.Join(dir, "lefthook.yml"), "# EXAMPLE USAGE:\n#   skeleton\n")
+	mustInit(t)
+
+	snap := filepath.Join(repo.OMK, "lefthook.yml")
+	if _, err := os.Stat(snap); err != nil {
+		t.Fatalf("precondition: init did not snapshot lefthook.yml: %v", err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if _, err := os.Lstat(snap); !os.IsNotExist(err) {
+		t.Errorf("lefthook.yml snapshot survived remove: %v", err)
+	}
+}
+
 // ------------------------------------------------------------ removeF error propagation
 //
 // Both the skeleton lefthook.yml removal and the .worktreeinclude removal must
