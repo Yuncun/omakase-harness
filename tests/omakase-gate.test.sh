@@ -144,11 +144,13 @@ OUT="$( cd "$REPO" && bash "$GATE" g3 --step 'false' 2>&1 )"; RC=$?
 OUT="$( cd "$REPO" && bash "$GATE" mg --glob 'src/* lib/*' --step 'false' 2>&1 )"; RC=$?
 [ "$RC" -ne 0 ] && pass "multi-pattern --glob matches the second pattern (lib/*)" || fail "multi-pattern glob missed the second pattern ($RC: $OUT)"
 
-# base fail-open: a repo with no remote and no resolvable base -> skip, never a git error
-REPONB="$TMP/repoNB"; newrepo "$REPONB"
+# no resolvable base (a repo with no remote): the gate cannot tell what changed, so it
+# RUNS the step unscoped — a silently-skipped check is the omission the gate exists to
+# prevent. Says why on stdout; never surfaces a raw git error.
+REPONB="$TMP/repoNB"; newrepo "$REPONB"; LEDGERNB="$(ledger_of "$REPONB")"
 ( cd "$REPONB" && mkdir -p src && printf 'a\n' > src/app.txt && git add src/app.txt && git commit -q -m c1 )
 OUT="$( cd "$REPONB" && bash "$GATE" fo --glob 'src/*' --step 'false' 2>&1 )"; RC=$?
-{ [ "$RC" -eq 0 ] && echo "$OUT" | grep -q 'no resolvable base'; } && pass "glob: fails open when no base resolves" || fail "did not fail open without a base ($RC: $OUT)"
+{ [ "$RC" -ne 0 ] && has_row "$LEDGERNB" fo fail && echo "$OUT" | grep -q 'no resolvable base'; } && pass "glob: no base -> runs unscoped (fail closed)" || fail "no-base glob gate did not run and block ($RC: $OUT)"
 
 # two-dot fallback: an orphan HEAD with unrelated history (three-dot fatal) must still find
 # an in-scope change via the two-dot fallback, so "no changes" cannot masquerade as skip.
