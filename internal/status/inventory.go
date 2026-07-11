@@ -228,8 +228,10 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 // renderInjected writes the Injected group's rows and reports whether
 // anything was shown. The group is "empty" — the caller prints the (none)
 // placeholder — when placed.tsv is missing, zero-size, or every row was
-// skipped ($rel empty or under .omakase/, which discloses under Hidden
-// instead).
+// skipped ($rel empty, or healthy .omakase/ machinery — noise the reader
+// didn't place by hand). An UNHEALTHY machinery row (drifted, or enabled
+// but missing) still renders: a weakened or stale gate must never be
+// invisible at rest.
 func renderInjected(w io.Writer, repo *state.Repo, placedPath string, md bool) bool {
 	info, err := os.Stat(placedPath)
 	if err != nil || info.Size() == 0 {
@@ -238,13 +240,37 @@ func renderInjected(w io.Writer, repo *state.Repo, placedPath string, md bool) b
 
 	shown := false
 	for _, row := range state.ReadPlaced(placedPath) {
-		if row.Rel == "" || strings.HasPrefix(row.Rel, ".omakase/") {
+		if row.Rel == "" {
+			continue
+		}
+		if strings.HasPrefix(row.Rel, ".omakase/") && !machineryNoteworthy(repo, row) {
 			continue
 		}
 		shown = true
 		writeInjectedRow(w, repo, row, md)
 	}
 	return shown
+}
+
+// machineryNoteworthy reports whether a .omakase/ machinery row deserves a
+// line in the Injected group: drifted from canonical, or enabled but missing
+// from this checkout. A dangling symlink counts as present (writeInjectedRow
+// renders it as an arrow row, not a missing one).
+func machineryNoteworthy(repo *state.Repo, row state.PlacedRow) bool {
+	if state.IsDrifted(repo.Root, row.Rel, row.Hash, row.Enabled) {
+		return true
+	}
+	if row.Enabled != "1" {
+		return false
+	}
+	full := filepath.Join(repo.Root, row.Rel)
+	if _, err := os.Stat(full); err == nil {
+		return false
+	}
+	if _, err := os.Lstat(full); err == nil {
+		return false
+	}
+	return true
 }
 
 // writeInjectedRow renders one placed.tsv row in branch order: Enabled=="0"

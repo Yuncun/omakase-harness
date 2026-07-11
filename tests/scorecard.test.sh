@@ -28,6 +28,11 @@ fail(){ echo "  FAIL: $1"; FAILED=1; }
 newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }
 ledger_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)/omakase/ledger.tsv"; }
 has_run(){ awk -F'\t' -v g="$2" -v v="$3" '$2==g && $3==v{f=1} END{exit f?0:1}' "$1"; }
+# digest helpers (shasum on macOS, sha256sum on Linux); "nodigest" when neither exists —
+# callers SKIP, matching the scripts' own degrade-to-silence rule.
+if command -v shasum >/dev/null 2>&1; then shastr(){ printf '%s' "$1" | shasum -a 256 | awk '{print $1}'; }; shafile(){ shasum -a 256 < "$1" | awk '{print $1}'; }
+elif command -v sha256sum >/dev/null 2>&1; then shastr(){ printf '%s' "$1" | sha256sum | awk '{print $1}'; }; shafile(){ sha256sum < "$1" | awk '{print $1}'; }
+else shastr(){ echo nodigest; }; shafile(){ echo nodigest; }; fi
 export PATH="$(dirname "$LEFTHOOK"):$PATH"
 
 # Freeze the Go module + build caches to their real locations: scenarios pin $HOME
@@ -135,6 +140,25 @@ OUT="$(notice "$SB")"
 echo "$OUT" | grep -q 'omakase init to update' && pass "a missing placed file -> re-init nudge" || fail "no nudge for a missing file ($OUT)"
 echo "$OUT" | grep -q 'files missing' && pass "the nudge names the reason" || fail "nudge missing its reason ($OUT)"
 
+# an enabled placed file PRESENT but hashing differently from its ledger row must nudge
+# too (issue #84 gap 3: a stale/edited gate was invisible at rest). The nudge points at
+# status, NOT init — the difference may be a deliberate local edit, and init would
+# clobber it. Needs a digest tool, like the script itself (no tool -> degrade silent).
+if [ "$(shastr x)" = nodigest ]; then
+  echo "  SKIP: no shasum/sha256sum — the drift nudge cannot be exercised"
+else
+  printf 'stale body\n' > "$REPO/.omakase/stale.sh"
+  printf '.omakase/stale.sh\tgate\tpayload\t%s\t1\n' "$(shastr 'canonical body')" > "$(dirname "$LEDGER")/placed.tsv"
+  OUT="$(notice "$SB")"
+  echo "$OUT" | grep -q 'differ from canonical' && pass "a drifted placed file -> drift nudge" || fail "no nudge for a drifted file ($OUT)"
+  echo "$OUT" | grep -q 'omakase status' && pass "the drift nudge points at status, not init" || fail "drift nudge does not point at status ($OUT)"
+  echo "$OUT" | grep -q 'omakase init to update' && fail "drift must not claim files are missing" || pass "drift nudge distinct from the missing nudge"
+  # back to canonical -> the nudge clears (the state change announces once, nudge-free)
+  printf '.omakase/stale.sh\tgate\tpayload\t%s\t1\n' "$(shafile "$REPO/.omakase/stale.sh")" > "$(dirname "$LEDGER")/placed.tsv"
+  OUT="$(notice "$SB")"
+  echo "$OUT" | grep -q 'differ from canonical' && fail "healthy file still carries the drift nudge ($OUT)" || pass "the drift nudge clears when the file matches its ledger hash"
+fi
+
 # a repo without the overlay stays silent (the global Stop hook must not chatter elsewhere)
 REPO2="$TMP/repoK2"; newrepo "$REPO2"
 OUT="$(printf '{"cwd":"%s","session_id":"x"}' "$REPO2" | bash "$NOTICE")"
@@ -241,16 +265,17 @@ OUT="$( cd "$REPO" && HOME="$HOMEE" bash "$SHOW" 2>&1 )"
 echo "$OUT" | grep -i -A1 'not installed by omakase' | grep -q '(none)' && pass "empty Global group shows (none)" || fail "empty Global group not (none) ($OUT)"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
-# ---------- Scenario I2: placed.tsv present but EVERY row is skipped (.omakase/* machinery) ----------
-# Ported from the retired status-parity suite (its P11). The provenance ledger exists and
-# is non-empty, yet the INJECTED inventory must render (none): the render loop drops
-# omakase's own .omakase/* machinery rows. A bare substring check for "(none)" would be
-# satisfied by the Committed or Global section (both also empty in this fixture), so the
-# check anchors to the line right AFTER the Injected header, per mode ("    (none)" term /
-# "- _(none)_" md). Hashes are a valid 64-hex shape but never read — machinery rows are
-# skipped before any drift check. The hand-built install carries no lefthook.yml, so no
-# real gate run is needed.
-echo "== Scenario I2: all-machinery placed.tsv renders Injected (none) =="
+# ---------- Scenario I2: machinery visibility — healthy hidden, unhealthy surfaces ----------
+# Reworked from the retired status-parity P11, which pinned .omakase/* machinery rows as
+# ALWAYS hidden. Healthy machinery is still noise — with every machinery file present and
+# matching its ledger hash the INJECTED inventory renders (none) — but an enabled
+# machinery row MISSING from the checkout must surface (issue #84 gap 3: a gutted gate
+# was invisible at rest; DRIFT surfacing is pinned in the Go goldens). The (none) check
+# anchors to the line right AFTER the Injected header, per mode ("    (none)" term /
+# "- _(none)_" md): a bare "(none)" would be satisfied by the empty Committed or Global
+# sections too. The hand-built install carries no lefthook.yml, so no real gate run is
+# needed.
+echo "== Scenario I2: healthy machinery hidden; missing machinery surfaces =="
 inj_empty(){ # $1 = captured output, $2 = mode (term|md), $3 = label
   local hdr empty
   if [ "$2" = md ]; then hdr='^### Injected '; empty='- _(none)_'
@@ -260,18 +285,34 @@ inj_empty(){ # $1 = captured output, $2 = mode (term|md), $3 = label
   then pass "$3: Injected group renders empty (line after the header is '$empty')"
   else fail "$3: Injected group is NOT empty right after its header"; fi
 }
-REPOI2="$TMP/repoI2"; newrepo "$REPOI2"
-HOMEI2="$TMP/homeI2"; rm -rf "$HOMEI2"; mkdir -p "$HOMEI2"
-COMMONI2="$(cd "$REPOI2" && cd "$(git rev-parse --git-common-dir)" && pwd)"; mkdir -p "$COMMONI2/omakase"
-{ printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/bin/omakase-gate.sh' guard payload 0000000000000000000000000000000000000000000000000000000000000000 1
-  printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/gates/example.sh'     guard payload 1111111111111111111111111111111111111111111111111111111111111111 1
-} > "$COMMONI2/omakase/placed.tsv"
-OUT="$( cd "$REPOI2" && HOME="$HOMEI2" bash "$SHOW" 2>&1 )"; RC=$?
-[ "$RC" -eq 0 ] && pass "I2: status exits 0 on the all-machinery install" || fail "I2: status exited $RC"
-inj_empty "$OUT" term "I2 [term]"
-OUT="$( cd "$REPOI2" && HOME="$HOMEI2" bash "$SHOW" --markdown 2>&1 )"; RC=$?
-[ "$RC" -eq 0 ] && pass "I2: --markdown exits 0 on the all-machinery install" || fail "I2: --markdown exited $RC"
-inj_empty "$OUT" md "I2 [md]"
+if [ "$(shastr x)" = nodigest ]; then
+  echo "  SKIP: no shasum/sha256sum — machinery health hashes cannot be built"
+else
+  REPOI2="$TMP/repoI2"; newrepo "$REPOI2"
+  HOMEI2="$TMP/homeI2"; rm -rf "$HOMEI2"; mkdir -p "$HOMEI2"
+  COMMONI2="$(cd "$REPOI2" && cd "$(git rev-parse --git-common-dir)" && pwd)"; mkdir -p "$COMMONI2/omakase"
+  mkdir -p "$REPOI2/.omakase/bin" "$REPOI2/.omakase/gates"
+  printf 'gate runner\n' > "$REPOI2/.omakase/bin/omakase-gate.sh"
+  printf 'example gate\n' > "$REPOI2/.omakase/gates/example.sh"
+  { printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/bin/omakase-gate.sh' guard payload "$(shafile "$REPOI2/.omakase/bin/omakase-gate.sh")" 1
+    printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/gates/example.sh'     guard payload "$(shafile "$REPOI2/.omakase/gates/example.sh")" 1
+  } > "$COMMONI2/omakase/placed.tsv"
+  OUT="$( cd "$REPOI2" && HOME="$HOMEI2" bash "$SHOW" 2>&1 )"; RC=$?
+  [ "$RC" -eq 0 ] && pass "I2: status exits 0 on the all-machinery install" || fail "I2: status exited $RC"
+  inj_empty "$OUT" term "I2 [term, all healthy]"
+  OUT="$( cd "$REPOI2" && HOME="$HOMEI2" bash "$SHOW" --markdown 2>&1 )"; RC=$?
+  [ "$RC" -eq 0 ] && pass "I2: --markdown exits 0 on the all-machinery install" || fail "I2: --markdown exited $RC"
+  inj_empty "$OUT" md "I2 [md, all healthy]"
+  # gut one machinery file -> its row surfaces with the MISSING marker
+  rm "$REPOI2/.omakase/gates/example.sh"
+  OUT="$( cd "$REPOI2" && HOME="$HOMEI2" bash "$SHOW" 2>&1 )"
+  echo "$OUT" | grep '\.omakase/gates/example\.sh' | grep -q 'MISSING' \
+    && pass "I2 [term]: a missing machinery row surfaces with the MISSING marker" \
+    || fail "I2 [term]: gutted machinery is still invisible ($OUT)"
+  echo "$OUT" | grep '\.omakase/bin/omakase-gate\.sh' >/dev/null \
+    && fail "I2 [term]: the still-healthy machinery row leaked into the listing" \
+    || pass "I2 [term]: the still-healthy machinery row stays hidden"
+fi
 
 # ---------- Scenario I3: an INJECTED symlink row that is ALSO drifted ----------
 # Ported from the retired status-parity suite (its P12). Drift for a symlink is a change
@@ -281,15 +322,12 @@ inj_empty "$OUT" md "I2 [md]"
 # is left untracked (drift returns false for a tracked path) and dangles on purpose
 # (drift never dereferences it).
 echo "== Scenario I3: drifted symlink row renders arrow + DRIFTED =="
-if command -v shasum >/dev/null 2>&1; then i3sha(){ printf '%s' "$1" | shasum -a 256 | awk '{print $1}'; }
-elif command -v sha256sum >/dev/null 2>&1; then i3sha(){ printf '%s' "$1" | sha256sum | awk '{print $1}'; }
-else i3sha(){ echo nodigest; }; fi
-if [ "$(i3sha x)" = nodigest ]; then
+if [ "$(shastr x)" = nodigest ]; then
   echo "  SKIP: no shasum/sha256sum on PATH — symlink drift cannot be computed"
 else
   REPOI3="$TMP/repoI3"; newrepo "$REPOI3"
   COMMONI3="$(cd "$REPOI3" && cd "$(git rev-parse --git-common-dir)" && pwd)"; mkdir -p "$COMMONI3/omakase"
-  printf '%s\t%s\t%s\t%s\t%s\n' '.claude/rules/link.md' rule payload "$(i3sha 'orig-target.md')" 1 > "$COMMONI3/omakase/placed.tsv"
+  printf '%s\t%s\t%s\t%s\t%s\n' '.claude/rules/link.md' rule payload "$(shastr 'orig-target.md')" 1 > "$COMMONI3/omakase/placed.tsv"
   mkdir -p "$REPOI3/.claude/rules"
   ( cd "$REPOI3/.claude/rules" && ln -s changed-target.md link.md )   # readlink 'changed-target.md' != ledger's 'orig-target.md' => DRIFTED
   OUT="$( cd "$REPOI3" && HOME="$HOMEI2" bash "$SHOW" 2>&1 )"
