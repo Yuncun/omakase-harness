@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Hook-time hardening (issue #84 gaps 4+5). Two failure classes, both shown
 # empirically by the 2026-07 worktree audit:
-#   E. ENV LEAK — a GIT_DIR/GIT_WORK_TREE pair exported for ANOTHER repo (a
-#      wrapper script, a parent hook, a stale shell) misdirects every rev-parse
-#      in the hook-time scripts: the fail-closed guard resolves the other repo,
-#      finds no ledger there, and exits 0 — fail OPEN — while heal targets the
-#      wrong tree. The scripts' repo is always the one they run IN, so each
-#      unsets both variables and resolves from cwd only.
+#   E. ENV LEAK — GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR exported for ANOTHER
+#      repo (a wrapper script, a parent hook, a stale shell — in a linked
+#      worktree git exports GIT_DIR and GIT_COMMON_DIR as a pair) misdirect
+#      every rev-parse in the hook-time scripts: the fail-closed guard resolves
+#      the other repo, finds no ledger there, and exits 0 — fail OPEN — while
+#      heal targets the wrong tree. GIT_COMMON_DIR alone is enough: it feeds
+#      --git-common-dir directly, so the ledger path lands in the other repo
+#      even when --show-toplevel is still correct. The scripts' repo is always
+#      the one they run IN, so each unsets all three and resolves from cwd only.
 #      E1 verify-overlay still BLOCKS a gutted overlay under the leaked env
 #      E2 ensure-present heals the cwd repo under the leaked env
 #      E3 omakase-gate's verdict row lands in the cwd repo's ledger, and the
@@ -55,9 +58,9 @@ REPOB="$TMP/repoB"; newrepo "$REPOB"
 REL="$(awk -F'\t' '{print $1; exit}' "$OMKA/placed.tsv" 2>/dev/null)"
 [ -n "$REL" ] || fail "setup: no placed rows in $OMKA/placed.tsv"
 
-echo "== E1: verify-overlay fails CLOSED under a leaked GIT_DIR/GIT_WORK_TREE =="
+echo "== E1: verify-overlay fails CLOSED under a leaked GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR =="
 rm -f "$REPOA/$REL"
-OUT="$( cd "$REPOA" && GIT_DIR="$REPOB/.git" GIT_WORK_TREE="$REPOB" sh "$OMKA/verify-overlay.sh" 2>&1 )"; RC=$?
+OUT="$( cd "$REPOA" && GIT_DIR="$REPOB/.git" GIT_WORK_TREE="$REPOB" GIT_COMMON_DIR="$REPOB/.git" sh "$OMKA/verify-overlay.sh" 2>&1 )"; RC=$?
 if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "missing: $REL"; then
   pass "E1: gutted overlay still blocks (exit $RC, names $REL)"
 else
@@ -65,7 +68,7 @@ else
 fi
 
 echo "== E2: ensure-present heals the cwd repo under the leaked env =="
-OUT="$( cd "$REPOA" && GIT_DIR="$REPOB/.git" GIT_WORK_TREE="$REPOB" bash "$OMKA/ensure-present.sh" 2>&1 )"; RC=$?
+OUT="$( cd "$REPOA" && GIT_DIR="$REPOB/.git" GIT_WORK_TREE="$REPOB" GIT_COMMON_DIR="$REPOB/.git" bash "$OMKA/ensure-present.sh" 2>&1 )"; RC=$?
 [ "$RC" -eq 0 ] || fail "E2: heal exited $RC ($OUT)"
 if [ -f "$REPOA/$REL" ]; then
   pass "E2: $REL healed back into the repo the script ran in"
@@ -80,7 +83,7 @@ fi
 
 echo "== E3: omakase-gate's ledger row lands in the cwd repo under the leaked env =="
 GATE="$HERE/../payload/.omakase/bin/omakase-gate.sh"
-( cd "$REPOA" && GIT_DIR="$REPOB/.git" GIT_WORK_TREE="$REPOB" bash "$GATE" leaktest --step 'true' ) >/dev/null 2>&1 \
+( cd "$REPOA" && GIT_DIR="$REPOB/.git" GIT_WORK_TREE="$REPOB" GIT_COMMON_DIR="$REPOB/.git" bash "$GATE" leaktest --step 'true' ) >/dev/null 2>&1 \
   || fail "E3: gate run exited non-zero"
 if awk -F'\t' '$2=="leaktest" && $3=="pass"{found=1} END{exit !found}' "$OMKA/ledger.tsv" 2>/dev/null; then
   pass "E3: pass row recorded in the cwd repo's ledger"

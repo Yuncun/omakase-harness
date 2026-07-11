@@ -1397,6 +1397,24 @@ func TestGitTrackedFoldGatedOnIgnoreCaseConfig(t *testing.T) {
 	}
 }
 
+// TestGitTrackedEmptyRelNeverTracked: `:(icase)` with an empty pattern
+// matches EVERY tracked file, so without a guard gitTracked(root, "") would
+// report an empty path as tracked whenever core.ignorecase is true and
+// anything is committed. Every current caller filters empty rels, but the
+// predicate must not hide that trap for the next one. Runs everywhere — the
+// config is forced, not probed.
+func TestGitTrackedEmptyRelNeverTracked(t *testing.T) {
+	dir, _ := initRepo(t)
+	writeFile(t, filepath.Join(dir, "CLAUDE.md"), "tracked\n")
+	runGitT(t, dir, "add", "CLAUDE.md")
+	runGitT(t, dir, "commit", "-q", "-m", "track CLAUDE.md")
+	runGitT(t, dir, "config", "core.ignorecase", "true")
+
+	if gitTracked(dir, "") {
+		t.Error(`gitTracked(root, "") = true, want false — :(icase) with an empty pattern matches every tracked file`)
+	}
+}
+
 // TestInitSkipsTrackedFileDifferingOnlyInCase: the never-touch-tracked rule
 // must hold across case. Pre-fix, init backed up and overwrote the tracked
 // file's content through the differently-cased payload path.

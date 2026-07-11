@@ -490,3 +490,27 @@ func TestWorktreeRootsNotARepoFallsBackToRoot(t *testing.T) {
 		t.Errorf("WorktreeRoots = %v, want [%q]", got, dir)
 	}
 }
+
+// TestWorktreeRootsPathWithNewlineAndSpace: non-z porcelain prints paths
+// verbatim, so a newline in a directory name splits one path across two
+// output lines — truncating the real worktree (never swept) to a prefix that
+// may name an unrelated existing directory (wrongly swept). NUL-terminated
+// output keeps every byte of the path in one record.
+func TestWorktreeRootsPathWithNewlineAndSpace(t *testing.T) {
+	dir := newTestRepo(t)
+	runGitT(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
+	wtNL := filepath.Join(t.TempDir(), "wt\nevil")
+	wtSP := filepath.Join(t.TempDir(), "wt sp")
+	runGitT(t, dir, "worktree", "add", "-q", "-b", "bnl", wtNL)
+	runGitT(t, dir, "worktree", "add", "-q", "-b", "bsp", wtSP)
+
+	got := WorktreeRoots(dir)
+	if len(got) != 3 {
+		t.Fatalf("WorktreeRoots returned %d entries, want 3: %q", len(got), got)
+	}
+	for i, want := range []string{dir, wtNL, wtSP} {
+		if evalSymlinksT(t, got[i]) != evalSymlinksT(t, want) {
+			t.Errorf("WorktreeRoots[%d] = %q, want %q", i, got[i], want)
+		}
+	}
+}

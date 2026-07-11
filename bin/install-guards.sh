@@ -4,9 +4,9 @@
 # postinstall regenerates the stubs, stripping our blocks — this re-arms them).
 # Idempotent (strip-then-insert). Installs two block kinds, both ABOVE lefthook's call:
 # fail-closed verify (pre-commit/pre-push) and worktree-bootstrap self-heal (post-checkout).
-# A leaked GIT_DIR/GIT_WORK_TREE (exported for ANOTHER repo) would re-arm that
+# A leaked GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR (exported for ANOTHER repo) would re-arm that
 # repo's hooks instead of this one's. Resolve from cwd only.
-unset GIT_DIR GIT_WORK_TREE
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
 COMMON="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" && pwd)" || exit 0
 HOOKS_DIR="$COMMON/hooks"
 

@@ -923,6 +923,9 @@ func physicalResolve(p string) string {
 // root/rel would hit the tracked file — so the check is retried with the
 // case-folding `:(icase)` pathspec.
 func gitTracked(root, rel string) bool {
+	if rel == "" {
+		return false // :(icase) with an empty pattern matches every tracked file
+	}
 	if exec.Command("git", "-C", root, "ls-files", "--error-unmatch", "--", rel).Run() == nil {
 		return true
 	}
