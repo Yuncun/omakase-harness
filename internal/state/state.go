@@ -64,13 +64,16 @@ func Discover(dir string) (*Repo, error) {
 // git failure the list is root alone, so a caller's per-worktree walk
 // degrades to single-checkout behavior.
 func WorktreeRoots(root string) []string {
-	out, err := runGit(root, "worktree", "list", "--porcelain")
+	// -z: attribute lines are NUL-terminated, so a path containing a newline
+	// (printed verbatim, unquoted in porcelain output) stays one record
+	// instead of truncating to a prefix that may name an unrelated directory.
+	out, err := runGit(root, "worktree", "list", "--porcelain", "-z")
 	if err != nil {
 		return []string{root}
 	}
 	var roots []string
 	cur := ""
-	for _, line := range strings.Split(out, "\n") {
+	for _, line := range strings.Split(out, "\x00") {
 		switch {
 		case strings.HasPrefix(line, "worktree "):
 			// Each block opens with its "worktree " line, so the previous
