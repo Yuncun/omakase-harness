@@ -1141,7 +1141,7 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 		"  + .worktreeinclude\n" + summaryTail
 	eq(t, "stdout", stdout.String(), wantOut)
 
-	// exclude block: DOES list .worktreeinclude (v1 has no skip there).
+	// exclude block: lists .worktreeinclude.
 	// Entries are root-anchored (leading "/") in the exclude block only.
 	wantExcludeBlock := "# >>> omakase-harness >>>\n" +
 		"/.omakase/\n" +

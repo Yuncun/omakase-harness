@@ -376,10 +376,10 @@ func TestDisabledPlacedRowStillDeleted(t *testing.T) {
 //
 // remove's marked-block rewrites produce a fresh file at mode `0666 &^ umask`
 // regardless of the prior mode. Each test below seeds a pre-existing file at a
-// mode that deliberately differs from `0666 &^ umask`, so a port that merely
+// mode that deliberately differs from `0666 &^ umask`, so an implementation that
 // preserves the original mode (os.WriteFile over an existing path only applies
 // its mode argument at creation) would leave the seeded mode in place instead of
-// normalizing -- the divergence rewriteFile (internal/overlay/overlay.go) fixes.
+// normalizing.
 
 // TestHookStubModeMatchesBashFreshInode: a hook stub seeded at 0640 (not
 // executable, and not 0666&^umask either) must end up at `0777 &^ umask` after
