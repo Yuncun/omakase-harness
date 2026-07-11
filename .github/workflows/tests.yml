@@ -30,3 +30,36 @@ jobs:
             bash "$t" || rc=1
           done
           exit $rc
+
+  tests-no-go:
+    # Covers the issue #70 machine shape: no Go toolchain, so the shim fetches the
+    # published release binary and drives init from it. GitHub's runners preinstall
+    # Go, so this runs in a slim Debian container that genuinely lacks one. The
+    # fetch suite needs no lefthook/node: it stubs lefthook via LEFTHOOK_BIN and no
+    # scenario that runs without Go invokes a real omakase binary except O10, which
+    # points LEFTHOOK_BIN at a no-op stub.
+    runs-on: ubuntu-latest
+    container: debian:stable-slim
+    steps:
+      # git and curl are absent from the slim image; ca-certificates lets curl
+      # verify TLS for the live GitHub download. Debian's base already carries
+      # bash, coreutils (sha256sum), tar, findutils, and mawk.
+      - name: Install suite dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git curl ca-certificates
+      - uses: actions/checkout@v4
+      - name: Assert no Go toolchain
+        run: |
+          if command -v go >/dev/null 2>&1; then
+            echo "expected no Go toolchain, but found $(command -v go)" >&2
+            exit 1
+          fi
+      - name: Trust the checkout despite the container's differing owner
+        run: git config --global safe.directory '*'
+      # OMAKASE_TEST_LIVE_FETCH=1 turns on O8's one real download of the pinned
+      # release and lets O10 reuse that binary. The pin is only bumped AFTER a
+      # release ships (the two-PR release flow), so the download never races an
+      # unpublished version.
+      - name: Run the fetch suite with a live download
+        run: OMAKASE_TEST_LIVE_FETCH=1 bash tests/omakase-fetch.test.sh
