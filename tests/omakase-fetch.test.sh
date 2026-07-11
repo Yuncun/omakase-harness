@@ -325,16 +325,28 @@ echo "== Scenario O10: a cache-resident release binary drives init end-to-end (i
 # The issue's exact shape: the omakase binary sits ALONE in the per-machine cache
 # (the fetch / PATH-install case, no payload/ sibling), so the --source merge base
 # is NOT discoverable binary-relative. resolve_omakase exports the plugin's own
-# bin/../payload in OMAKASE_BASE_PAYLOAD (fix #70) and the binary honors it. No
-# network anywhere: a real binary drives a LOCAL source clone.
-if ! command -v go >/dev/null 2>&1; then
-  echo "  SKIP: go not on PATH — O10 needs a real binary built from source"
-else
-  O10="$TMP/o10"; mkdir -p "$O10"
+# bin/../payload in OMAKASE_BASE_PAYLOAD (fix #70) and the binary honors it. O10
+# itself touches no network: a real binary drives a LOCAL source clone.
+#
+# Binary source, in order: go on PATH builds from source; else the pinned release
+# binary O8 fetched this run (OMAKASE_TEST_LIVE_FETCH=1) stands in, so a host
+# without Go still reaches the #70 path; else skip. Legs 7-9 are identical either
+# way — they need only a real omakase binary seeded into the cache.
+O10="$TMP/o10"; mkdir -p "$O10"
+O10BUILT=""
+if command -v go >/dev/null 2>&1; then
   # Build the real binary ONCE for the whole scenario — every leg shares it.
-  if ! ( cd "$HERE/.." && go build -o "$O10/omakase-built" ./cmd/omakase ) 2>"$O10/build.err"; then
-    fail "O10 could not build the omakase binary ($(cat "$O10/build.err"))"
+  if ( cd "$HERE/.." && go build -o "$O10/omakase-built" ./cmd/omakase ) 2>"$O10/build.err"; then
+    O10BUILT="$O10/omakase-built"
   else
+    fail "O10 could not build the omakase binary ($(cat "$O10/build.err"))"
+  fi
+elif [ "${OMAKASE_TEST_LIVE_FETCH:-}" = "1" ] && [ -x "${O8CACHED:-}" ]; then
+  O10BUILT="$O8CACHED"
+else
+  echo "  SKIP: no omakase binary available — put go on PATH to build one, or set OMAKASE_TEST_LIVE_FETCH=1 to reuse O8's fetched release binary"
+fi
+if [ -n "$O10BUILT" ]; then
     # Stub lefthook via LEFTHOOK_BIN (a no-op `install`): init's only lefthook call
     # is `lefthook install`, O10 fires no commit, and the host's real lefthook may
     # be an npm/node wrapper needing `node` (absent from CLEANPATH). Stubbing the
@@ -352,7 +364,7 @@ else
     # install shape (no payload/ sibling), fetched without any download.
     XDG="$O10/xdg"
     O10CACHE="$XDG/omakase/bin/$VER"; mkdir -p "$O10CACHE"
-    cp "$O10/omakase-built" "$O10CACHE/omakase"; chmod +x "$O10CACHE/omakase"
+    cp "$O10BUILT" "$O10CACHE/omakase"; chmod +x "$O10CACHE/omakase"
     O10BIN="$O10CACHE/omakase"
     O10HOME="$O10/home"; mkdir -p "$O10HOME"
 
@@ -398,7 +410,6 @@ else
     rc=$?
     [ "$rc" -eq 0 ] && pass "bare init (no --source, no remembered source) exits 0 via the cached binary" || fail "bare init exited $rc ($(cat "$O10ERR2"))"
     [ -x "$O10TGT2/.omakase/bin/omakase-gate.sh" ] && pass "bare install placed the base payload (OMAKASE_BASE_PAYLOAD feeds the plain default too)" || fail "bare install missing base machinery"
-  fi
 fi
 
 rm -rf "$TMP"
