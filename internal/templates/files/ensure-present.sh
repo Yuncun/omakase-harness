@@ -62,6 +62,14 @@ while IFS="$TAB" read -r rel kind src hash enabled || [ -n "$rel" ]; do
   cp -P "$SNAP/$rel" "$ROOT/$rel"
   case "$rel" in *.sh) [ -L "$ROOT/$rel" ] || chmod +x "$ROOT/$rel";; esac
 done < "$LEDGER"
+# Heal the lefthook.yml skeleton `lefthook install` writes at the main checkout.
+# It sits OUTSIDE the ledger, so copy it here: a linked worktree without it makes
+# lefthook print a sync-hooks failure on every hook run. Same rules as the ledger
+# loop — never overwrite a present file, never write a tracked path, best-effort.
+if [ -f "$COMMON/omakase/lefthook.yml" ] && [ ! -e "$ROOT/lefthook.yml" ] && [ ! -L "$ROOT/lefthook.yml" ] \
+   && ! git -C "$ROOT" ls-files --error-unmatch -- lefthook.yml >/dev/null 2>&1; then
+  cp "$COMMON/omakase/lefthook.yml" "$ROOT/lefthook.yml" || true
+fi
 # Re-arm the fail-closed guard blocks: lefthook's npm postinstall runs
 # `lefthook install -f` on every npm/yarn install, regenerating the hook stubs and
 # stripping the guard; this post-checkout hook still runs afterwards, so the guard

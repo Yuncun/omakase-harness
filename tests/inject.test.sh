@@ -72,6 +72,11 @@ grep -q "COMMITTED team agents" "$REPO/AGENTS.md" && pass "committed AGENTS.md N
 [ -f "$REPO/lefthook-local.yml" ] && pass "lefthook-local.yml placed (additive)" || fail "lefthook-local.yml missing"
 [ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status clean with committed harness present" || { fail "status not clean"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
 OUT=$(cd "$REPO" && echo x > g.txt && git add g.txt 2>/dev/null; git commit -m t 2>&1); echo "$OUT" | grep -q "omakase-example-gate-ran" && pass "personal gate fires alongside committed team config" || { fail "personal gate did not fire"; echo "$OUT" | sed 's/^/      /'; }
+# issue #80: the repo tracks its own lefthook.yml, so lefthook writes no skeleton
+# and init must NOT snapshot a heal source (git already carries lefthook.yml into
+# every worktree).
+BCOMMON="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+[ ! -e "$BCOMMON/omakase/lefthook.yml" ] && pass "tracked lefthook.yml: no heal snapshot written (#80)" || fail "tracked lefthook.yml wrongly snapshotted for heal"
 
 # ---------- Scenario C: worktree auto-install ----------
 # A fresh worktree has none of the gitignored harness files. init.sh snapshots the
@@ -90,6 +95,13 @@ grep -q '.omakase/gates/example.sh' "$COMMON/omakase/placed.tsv" 2>/dev/null && 
 [ -f "$COMMON/omakase/payload-snapshot/.omakase/gates/example.sh" ] && pass "payload snapshot captured the gate" || fail "snapshot missing the gate"
 grep -q "omakase-harness" "$REPO/.worktreeinclude" 2>/dev/null && pass ".worktreeinclude block written" || fail ".worktreeinclude block missing"
 [ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status still clean (harness artifacts out of git)" || { fail "status not clean after harness wiring"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
+
+# C1b: issue #80 — the repo ships no lefthook.yml, so `lefthook install` wrote an
+# example skeleton at the main checkout. It is untracked (gitignored), so a linked
+# worktree never receives it and lefthook prints a sync-hooks failure there on every
+# hook run. init snapshots the untracked skeleton as the worktree heal source.
+[ -f "$REPO/lefthook.yml" ] && pass "lefthook install wrote a lefthook.yml skeleton at the main checkout" || fail "no skeleton lefthook.yml at the main checkout (mechanism changed?)"
+[ -f "$COMMON/omakase/lefthook.yml" ] && pass "init snapshotted lefthook.yml as the worktree heal source (#80)" || fail "lefthook.yml heal snapshot missing from the shared omakase dir"
 
 # C2: mechanism — a fresh linked worktree now AUTO-self-heals on `git worktree add` (the
 # worktree-bootstrap block runs ensure-present.sh from the shared post-checkout stub), so
@@ -127,6 +139,13 @@ WTB="$TMP/repoC-wtbare"
 ( cd "$REPO" && git worktree add -q "$WTB" -b wtbare ) >/dev/null 2>&1
 [ -x "$WTB/.omakase/gates/example.sh" ] && pass "bare 'git worktree add' self-healed the gate (no manual ensure-present)" || fail "bare worktree did NOT self-heal — harness incomplete"
 [ -f "$WTB/lefthook-local.yml" ] && pass "bare worktree self-healed the lefthook config too" || fail "bare worktree missing lefthook-local.yml after self-heal"
+# C4b-#80: the bare worktree also self-heals the main lefthook.yml skeleton, so
+# lefthook finds config there and prints no sync-hooks failure.
+[ -f "$WTB/lefthook.yml" ] && pass "bare worktree self-healed lefthook.yml from the snapshot (#80)" || fail "bare worktree missing lefthook.yml — lefthook would print a sync-hooks failure"
+# C4b-#80 never-overwrite: a worktree's own edited lefthook.yml survives a re-run.
+printf 'MY WORKTREE LEFTHOOK EDIT\n' > "$WTB/lefthook.yml"
+( cd "$WTB" && bash "$COMMON/omakase/ensure-present.sh" )
+grep -q 'MY WORKTREE LEFTHOOK EDIT' "$WTB/lefthook.yml" && pass "ensure-present never overwrites a worktree's own lefthook.yml (#80)" || fail "ensure-present clobbered a worktree lefthook.yml edit"
 ( cd "$REPO" && git worktree remove --force "$WTB" ) 2>/dev/null; ( cd "$REPO" && git worktree prune ) 2>/dev/null
 
 # C5: remove tears the harness snapshot down too.
