@@ -1344,3 +1344,85 @@ func TestLefthookSnapshotDeletedWhenTracked(t *testing.T) {
 	}
 	eq(t, "tracked lefthook.yml untouched", readFileT(t, filepath.Join(dir, "lefthook.yml")), tracked)
 }
+
+// ---------------------------------------------------------------- case-fold collisions (issue #84 gap 2)
+//
+// On a case-insensitive filesystem (the macOS and Windows default; git init
+// sets core.ignorecase there) a payload path differing from a tracked file
+// only in case occupies the SAME disk path, but exact `git ls-files`
+// pathspec matching misses it — so init would overwrite the tracked file's
+// content and remove would delete it. gitTracked folds the check whenever
+// core.ignorecase says the filesystem folds; tests that need real folding
+// skip elsewhere.
+
+// caseFoldingFS reports whether t.TempDir()'s filesystem folds case.
+func caseFoldingFS(t *testing.T) bool {
+	t.Helper()
+	d := t.TempDir()
+	writeFile(t, filepath.Join(d, "case-probe"), "x")
+	_, err := os.Stat(filepath.Join(d, "CASE-PROBE"))
+	return err == nil
+}
+
+func TestGitTrackedFoldsCaseUnderIgnoreCase(t *testing.T) {
+	if !caseFoldingFS(t) {
+		t.Skip("needs a case-insensitive filesystem")
+	}
+	dir, _ := initRepo(t)
+	writeFile(t, filepath.Join(dir, "CLAUDE.md"), "tracked\n")
+	runGitT(t, dir, "add", "CLAUDE.md")
+	runGitT(t, dir, "commit", "-q", "-m", "track CLAUDE.md")
+
+	if !gitTracked(dir, "claude.md") {
+		t.Error("gitTracked(claude.md) = false with CLAUDE.md tracked on a case-folding filesystem, want true")
+	}
+	if gitTracked(dir, "other.md") {
+		t.Error("gitTracked(other.md) = true, want false (the fold must not become a wildcard)")
+	}
+}
+
+// TestGitTrackedFoldGatedOnIgnoreCaseConfig: the fold follows git's own
+// switch. With core.ignorecase off, differently-cased names are distinct
+// paths and must not match. Runs everywhere — the config is forced, not
+// probed.
+func TestGitTrackedFoldGatedOnIgnoreCaseConfig(t *testing.T) {
+	dir, _ := initRepo(t)
+	writeFile(t, filepath.Join(dir, "CLAUDE.md"), "tracked\n")
+	runGitT(t, dir, "add", "CLAUDE.md")
+	runGitT(t, dir, "commit", "-q", "-m", "track CLAUDE.md")
+	runGitT(t, dir, "config", "core.ignorecase", "false")
+
+	if gitTracked(dir, "claude.md") {
+		t.Error("gitTracked(claude.md) = true with core.ignorecase=false, want false")
+	}
+}
+
+// TestInitSkipsTrackedFileDifferingOnlyInCase: the never-touch-tracked rule
+// must hold across case. Pre-fix, init backed up and overwrote the tracked
+// file's content through the differently-cased payload path.
+func TestInitSkipsTrackedFileDifferingOnlyInCase(t *testing.T) {
+	if !caseFoldingFS(t) {
+		t.Skip("needs a case-insensitive filesystem")
+	}
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+	writeFile(t, filepath.Join(dir, "CLAUDE.md"), "the repo's own tracked instructions\n")
+	runGitT(t, dir, "add", "CLAUDE.md")
+	runGitT(t, dir, "commit", "-q", "-m", "track CLAUDE.md")
+
+	p := t.TempDir()
+	writeFile(t, filepath.Join(p, "claude.md"), "payload copy that must NOT land\n")
+	t.Setenv("OMAKASE_PAYLOAD", p)
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "tracked file content", readFileT(t, filepath.Join(dir, "CLAUDE.md")), "the repo's own tracked instructions\n")
+	if !strings.Contains(stderr.String(), "SKIP (already tracked) claude.md") {
+		t.Errorf("stderr = %q, want a SKIP (already tracked) line for claude.md", stderr.String())
+	}
+	if lexists(filepath.Join(repo.OMK, "clobbered", "claude.md")) {
+		t.Error("a clobbered/ backup exists — the overwrite path ran instead of the tracked skip")
+	}
+}

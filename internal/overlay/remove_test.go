@@ -690,3 +690,33 @@ func TestRemoveWarnsUnreachableWorktreeAndContinues(t *testing.T) {
 		t.Errorf("$OMK still exists: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------- case-fold collisions (issue #84 gap 2)
+
+// TestRemoveSkipsTrackedFileDifferingOnlyInCase: a stale ledger row whose
+// path differs from a tracked file only in case must not delete the tracked
+// file on a case-folding filesystem — DeletePlaced's tracked-skip has to
+// fold the same way init's placement check does.
+func TestRemoveSkipsTrackedFileDifferingOnlyInCase(t *testing.T) {
+	if !caseFoldingFS(t) {
+		t.Skip("needs a case-insensitive filesystem")
+	}
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+	writeFile(t, filepath.Join(dir, "CLAUDE.md"), "tracked\n")
+	runGitT(t, dir, "add", "CLAUDE.md")
+	runGitT(t, dir, "commit", "-q", "-m", "track CLAUDE.md")
+	mustInit(t)
+
+	// A row a pre-fix init could have written before the repo tracked the
+	// file at the other casing.
+	ledger := filepath.Join(repo.OMK, "placed.tsv")
+	writeFile(t, ledger, readFileT(t, ledger)+"claude.md\tdoc\tpayload\tdeadbeef\t1\n")
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "tracked file survives", readFileT(t, filepath.Join(dir, "CLAUDE.md")), "tracked\n")
+}
