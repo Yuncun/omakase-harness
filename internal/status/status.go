@@ -1,9 +1,8 @@
-// This file (status.go) is the `omakase status` verb entry point and the
-// identity + full-output assembly of bin/status.sh (bin/status.sh:14-354): flag
-// parsing, repo discovery, the placed.tsv-absent routing (pre-0.10 / not
-// installed), the installed-harness identity line, and the markdown / terminal
-// page order (identity -> footprint -> Guards -> inventory -> footer). The
-// guards chart lives in guards.go; the inventory renderers in inventory.go.
+// This file is the `omakase status` verb entry point: flag parsing, repo
+// discovery, the placed.tsv-absent routing (pre-0.10 / not installed), the
+// installed-harness identity line, and the markdown / terminal page order
+// (identity -> footprint -> Guards -> inventory -> footer). The guards chart
+// lives in guards.go; the inventory renderers in inventory.go.
 package status
 
 import (
@@ -19,22 +18,20 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/tui"
 )
 
-// schemeRe strips a leading URL scheme (lowercase only) for srcDisplay
-// (bin/status.sh:312, `sed -e 's,^[a-z][a-z]*://,,'`).
+// schemeRe strips a leading lowercase URL scheme for srcDisplay.
 var schemeRe = regexp.MustCompile(`^[a-z][a-z]*://`)
 
-// Run is the `omakase status` verb. argv is the arguments AFTER the verb; only
-// argv[0] selects markdown mode (bin/status.sh:17). It discovers the repo from
-// the current directory and writes the report to stdout. Not inside a git repo:
-// the one stderr line + exit 1 (bin/status.sh:20). Exit 0 otherwise.
+// Run is the `omakase status` verb. argv is the arguments after the verb;
+// only argv[0] selects markdown mode. It discovers the repo from the current
+// directory and writes the report to stdout. Outside a git repo it writes one
+// stderr line and exits 1; otherwise it exits 0.
 func Run(argv []string, stdout, stderr io.Writer) int {
 	// --help/-h short-circuits to usage — scanned first so `status --help` on
 	// a real terminal prints help rather than launching the interactive
-	// screen. Any OTHER unrecognized dash-flag is an error: a typo like
+	// screen. Any other unrecognized dash-flag is an error: a typo like
 	// `--enabel smoke` must not exit 0 with the page (an automation would read
-	// that as "re-enabled, green") — the legacy fallback (bin/legacy/status.sh)
-	// enforces the same rule in lockstep. Bare words keep falling through
-	// (parity; `md` is a real alias).
+	// that as "re-enabled, green"). Bare words keep falling through; `md` is a
+	// real alias.
 	known := map[string]bool{
 		"--markdown": true, "-m": true, "--plain": true,
 		"--disable": true, "--enable": true,
@@ -67,8 +64,7 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 			return runToggle(argv[i] == "--disable", argv[i+1], stdout, stderr)
 		}
 	}
-	// OMAKASE_ICON: default 🥡, used only in the md installed header
-	// (bin/status.sh:18, Global Constraint 6).
+	// OMAKASE_ICON: default 🥡, used only in the md installed header.
 	icon := os.Getenv("OMAKASE_ICON")
 	if icon == "" {
 		icon = "🥡"
@@ -80,7 +76,7 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	repo, err := state.Discover(wd)
-	if err != nil { // bin/status.sh:20
+	if err != nil {
 		fmt.Fprintln(stderr, "omakase: not inside a git repo")
 		return 1
 	}
@@ -88,8 +84,8 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 	home := os.Getenv("HOME")
 	placed := filepath.Join(repo.OMK, "placed.tsv")
 
-	// Step 1 (bin/status.sh:276-302): placed.tsv absent -> pre-0.10 if
-	// placed.list exists, else not-installed. Both render + exit 0.
+	// Step 1: placed.tsv absent -> pre-0.10 if placed.list exists, else
+	// not-installed. Both render and exit 0.
 	if _, e := os.Stat(placed); e != nil {
 		if _, e2 := os.Stat(filepath.Join(repo.OMK, "placed.list")); e2 == nil {
 			RenderPre010(stdout, repo.OMK, md)
@@ -99,20 +95,18 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	// Step 2 — identity (bin/status.sh:309-314).
+	// Step 2 — identity.
 	src := state.FirstLine(filepath.Join(repo.OMK, "source"))
 	hname := harnessName(src)
 	srcdisp := srcDisplay(src)
 	basever := state.FirstLine(filepath.Join(repo.Root, ".omakase", "VERSION"))
-	if basever == "" { // ${basever:-?} renders "?" when empty (bin/status.sh:323)
+	if basever == "" {
 		basever = "?"
 	}
-	// Count injected files by consent state: legacy counted every ledger row
-	// (`grep -c .`), but this stack's toggles are the first writers of
-	// enabled=0 rows — a declined file keeps its row but has no file on disk, so
-	// the all-rows count would overstate the footprint. Count enabled rows for
-	// the headline and note declined rows separately. An all-enabled repo has
-	// no enabled=0 rows, so the output stays byte-identical to legacy.
+	// Count injected files by consent state: a declined file keeps its ledger
+	// row but has no file on disk, so counting all rows would overstate the
+	// footprint. Count enabled rows for the headline and note declined rows
+	// separately.
 	nInjected, nToggledOff := 0, 0
 	for _, r := range state.ReadPlaced(placed) {
 		if r.Enabled == "0" {
@@ -122,10 +116,10 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// Interactive dispatch (Task 8): on a real terminal, and only for the
-	// default page (not --markdown, not the scriptable --plain), hand off to
-	// the live interactive screen. It sits AFTER the placed.tsv-absent early
-	// returns above, so not-installed / pre-0.10 repos keep the plain page.
+	// Interactive dispatch: on a real terminal, and only for the default page
+	// (not --markdown, not the scriptable --plain), hand off to the live
+	// interactive screen. It sits after the placed.tsv-absent early returns
+	// above, so not-installed / pre-0.10 repos keep the plain page.
 	if !md && !plain && interactiveTerminal() {
 		hdr := hname
 		if srcdisp != "" {
@@ -143,10 +137,9 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// toggledOffSuffix is " (k toggled off)" when k>0, else "" — appended after the
-// injected count so a page whose consent state has diverged from the ledger
-// says so, while an all-enabled page (k==0) stays byte-identical to legacy
-// output (the status-parity fence).
+// toggledOffSuffix is " (k toggled off)" when k>0, else "" — appended after
+// the injected count so a page whose consent state has diverged from the
+// ledger says so.
 func toggledOffSuffix(nToggledOff int) string {
 	if nToggledOff > 0 {
 		return fmt.Sprintf(" (%d toggled off)", nToggledOff)
@@ -154,10 +147,7 @@ func toggledOffSuffix(nToggledOff int) string {
 	return ""
 }
 
-// printStatusUsage prints the `omakase status` flag surface. The stack's new
-// state-writing flags (--disable/--enable) and the interactive-on-TTY screen
-// were undocumented, and unknown flags fall through silently; this handler is
-// the discoverable surface for both.
+// printStatusUsage prints the `omakase status` flag surface.
 func printStatusUsage(w io.Writer) {
 	fmt.Fprint(w, `usage: omakase status [--markdown|--plain] [--disable NAME | --enable NAME]
 
@@ -173,8 +163,7 @@ func printStatusUsage(w io.Writer) {
 `)
 }
 
-// renderMarkdown is the md page (bin/status.sh:320-335): the script owns the
-// formatting so `omakase status` relays it verbatim. Question-first order.
+// renderMarkdown prints the markdown status page in question-first order.
 func renderMarkdown(w io.Writer, repo *state.Repo, home, icon, hname, srcdisp, basever string, nInjected, nToggledOff int) {
 	fmt.Fprintf(w, "## %s %s\n", icon, hname)
 	fmt.Fprintln(w)
@@ -195,12 +184,11 @@ func renderMarkdown(w io.Writer, repo *state.Repo, home, icon, hname, srcdisp, b
 	fmt.Fprintln(w, "_Refresh:_ `omakase init`  ·  _Remove:_ `omakase remove`  ·  _read-only; running status changes nothing._")
 }
 
-// renderTerminal is the default page (bin/status.sh:338-354): optional branded
-// banner, then the same question-first order as markdown.
+// renderTerminal prints the default status page: an optional branded banner,
+// then the same question-first order as markdown.
 func renderTerminal(w io.Writer, repo *state.Repo, home, hname, srcdisp, basever string, nInjected, nToggledOff int) {
-	// Banner (bin/status.sh:340-341, `bash "$BANNER" 2>/dev/null || true`): if
-	// present, run it at the INVOCATION cwd (no `cd`), pass its stdout through,
-	// discard stderr, ignore failure.
+	// Banner: if present, run it at the invocation cwd, pass its stdout
+	// through, discard stderr, and ignore failure.
 	banner := filepath.Join(repo.Root, ".omakase", "bin", "omakase-banner.sh")
 	if info, e := os.Stat(banner); e == nil && !info.IsDir() {
 		cmd := exec.Command("bash", banner)
@@ -225,10 +213,10 @@ func renderTerminal(w io.Writer, repo *state.Repo, home, hname, srcdisp, basever
 	fmt.Fprintln(w, "Undo everything:                                                    omakase remove")
 }
 
-// harnessName derives the harness display name from the remembered source
-// (bin/status.sh:310-311): "omakase-harness" unless a source is set, in which
-// case strip from the first '#', then one trailing ".git", then one trailing
-// "/", then take the last '/'-segment.
+// harnessName derives the harness display name from the remembered source:
+// "omakase-harness" unless a source is set, in which case strip from the
+// first '#', then one trailing ".git", then one trailing "/", then take the
+// last '/'-segment.
 func harnessName(src string) string {
 	if src == "" {
 		return "omakase-harness"
@@ -245,8 +233,8 @@ func harnessName(src string) string {
 	return n
 }
 
-// srcDisplay is the source shown in the identity line (bin/status.sh:312): the
-// source minus a leading lowercase URL scheme and one trailing "/".
+// srcDisplay is the source shown in the identity line: the source minus a
+// leading lowercase URL scheme and one trailing "/".
 func srcDisplay(src string) string {
 	d := schemeRe.ReplaceAllString(src, "")
 	return strings.TrimSuffix(d, "/")

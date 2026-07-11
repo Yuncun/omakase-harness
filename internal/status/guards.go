@@ -1,10 +1,6 @@
-// This file (guards.go) ports the guards chart — the "run when" table — of
-// bin/status.sh (render_guards, bin/status.sh:188-274). The chart is derived
-// from `lefthook dump` (the normalized hook wiring) joined to the run ledger.
-// The heart of it is a dense awk program (bin/status.sh:208-273); it is ported
-// here RULE BY RULE, each Go branch carrying a comment citing the awk line it
-// mirrors. Stdlib only — the dump is walked line by line exactly as the awk
-// does (Global Constraint 3: replicate the awk's semantics, never "parse YAML").
+// This file renders the guards chart — the "run when" table. The chart is
+// derived from `lefthook dump` (the normalized hook wiring) joined to the run
+// ledger. The dump is walked line by line rather than parsed as YAML.
 package status
 
 import (
@@ -23,47 +19,40 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
-// Load-bearing output glyphs, transcribed from bin/status.sh (never approximated,
-// Global Constraint 10). The awk emits them as octal UTF-8:
-//
-//	✓ = \342\234\223 = U+2713 (bin/status.sh:247, the pass verdict)
-//	✗ = \342\234\227 = U+2717 (bin/status.sh:247, the fail verdict)
-//	— = \342\200\224 = U+2014 (bin/status.sh:249, the non-gate verdict cell)
+// Load-bearing output glyphs (U+2713 ✓ pass, U+2717 ✗ fail, U+2014 —
+// non-gate); never approximated.
 const (
-	glyphCheck  = "✓" // ✓
-	glyphCross  = "✗" // ✗
-	glyphEmDash = "—" // —
+	glyphCheck  = "✓"
+	glyphCross  = "✗"
+	glyphEmDash = "—"
 )
 
-// Regexes ported from the awk. The three line-anchored ones (hook header, job
-// name, run line) gate a rule AND, when they carry a trailing capture region,
-// strip their own match off the front of the line (the awk's sub(/^…/,"",line)).
+// Scan regexes. The three line-anchored ones (hook header, job name, run
+// line) gate a rule and, when they carry a trailing capture region, strip
+// their own match off the front of the line.
 var (
-	reHookHeader = regexp.MustCompile(`^[A-Za-z0-9_-]+:[[:space:]]*$`)               // bin/status.sh:215
-	reJobName    = regexp.MustCompile(`^[[:space:]]*-[[:space:]]+name:[[:space:]]*`) // bin/status.sh:216
-	reRun        = regexp.MustCompile(`^[[:space:]]*run:[[:space:]]*`)               // bin/status.sh:219
-	reGate       = regexp.MustCompile(`omakase-gate\.sh [A-Za-z0-9._-]+`)            // bin/status.sh:225
-	reGlob       = regexp.MustCompile(`--glob '[^']*'`)                              // bin/status.sh:235 (single-quoted --glob 'PATS')
+	reHookHeader = regexp.MustCompile(`^[A-Za-z0-9_-]+:[[:space:]]*$`)
+	reJobName    = regexp.MustCompile(`^[[:space:]]*-[[:space:]]+name:[[:space:]]*`)
+	reRun        = regexp.MustCompile(`^[[:space:]]*run:[[:space:]]*`)
+	reGate       = regexp.MustCompile(`omakase-gate\.sh [A-Za-z0-9._-]+`)
+	reGlob       = regexp.MustCompile(`--glob '[^']*'`)
 	// A YAML block-scalar indicator after `run:` — "|" or ">" with optional
-	// chomp/indent suffix. `lefthook dump` re-emits a block-scalar run: this
-	// way, with the command on the following deeper-indented line(s). No awk
-	// twin: the oracle rendered the bare indicator as the command and lost
-	// the ledger join (sanctioned forward divergence, see renderGuardsChart).
+	// chomp/indent suffix. `lefthook dump` re-emits a block-scalar run this
+	// way, with the command on the following deeper-indented line(s).
 	reBlockScalar = regexp.MustCompile(`^[|>][0-9+-]*[[:space:]]*$`)
 )
 
-// RenderGuards resolves lefthook, runs `<lefthook> dump` with cwd=root (stderr
-// discarded), and renders the chart — or, if lefthook can't be resolved or the
-// dump is empty, the one-line not-resolved note (bin/status.sh:193-199). The
-// join input (verdicts) is read from omk/ledger.tsv and the age reference from
-// $OMAKASE_NOW, exactly as the reference does (bin/status.sh:201-202).
+// RenderGuards resolves lefthook, runs `<lefthook> dump` with cwd=root
+// (stderr discarded), and renders the chart — or, if lefthook can't be
+// resolved or the dump is empty, the one-line not-resolved note. Verdicts are
+// read from omk/ledger.tsv and the age reference from $OMAKASE_NOW.
 func RenderGuards(w io.Writer, root, omk string, md bool) {
 	dump := ""
 	if lh := resolveLefthook(root); lh != "" {
 		dump = dumpLefthook(lh, root)
 	}
 
-	if dump == "" { // bin/status.sh:195-199
+	if dump == "" {
 		if md {
 			fmt.Fprintln(w, "_lefthook not resolved - gates are not running._")
 		} else {
@@ -72,23 +61,16 @@ func RenderGuards(w io.Writer, root, omk string, md bool) {
 		return
 	}
 
-	// bin/status.sh:202 — a missing ledger is /dev/null there; LatestVerdicts
-	// returns an empty map for a missing file, the same net effect.
+	// A missing ledger yields an empty verdict map.
 	verds := state.LatestVerdicts(filepath.Join(omk, "ledger.tsv"))
 	renderGuardsChart(w, dump, verds, nowFromEnv(), md)
 }
 
-// resolveLefthook resolves lefthook for the guards chart through the SHARED
-// tier walk (internal/lefthook.ResolveForStatus): LEFTHOOK_BIN, `lefthook` on
-// PATH, $root/node_modules/.bin/lefthook, then the omakase-managed cache — the
-// same order init and remove use, never fetching (status is read-only). Until
-// #72 this was a local 3-tier copy (mirroring the pre-cache
-// bin/status.sh:190-192) that missed the cache tier, so exactly the machines
-// self-provisioning exists for — no global lefthook, no node_modules —
-// rendered the FALSE "gates are not running" note while the gates ran fine.
-// "" if nothing resolves. (Cosmetic divergence from the old copy: tier 2 now
-// yields the bare token `lefthook` rather than LookPath's absolute path — the
-// value is only ever exec'd, never printed.)
+// resolveLefthook resolves lefthook for the guards chart through the shared
+// tier walk (lefthook.ResolveForStatus): LEFTHOOK_BIN, `lefthook` on PATH,
+// $root/node_modules/.bin/lefthook, then the omakase-managed cache — the same
+// order init and remove use, never fetching (status is read-only). Returns ""
+// if nothing resolves.
 func resolveLefthook(root string) string {
 	if lh, ok := lefthook.ResolveForStatus(root); ok {
 		return lh
@@ -97,10 +79,8 @@ func resolveLefthook(root string) string {
 }
 
 // dumpLefthook runs `<lh> dump` with cwd=root and returns its stdout with
-// trailing newlines stripped — the Go twin of
-// `DUMP="$( cd "$ROOT" && "$LH" dump 2>/dev/null || true )"` (bin/status.sh:193):
-// stdout is captured, stderr discarded, and the exit code ignored (a non-zero
-// dump that still printed keeps its stdout, matching the `|| true`).
+// trailing newlines stripped. stderr is discarded and the exit code ignored,
+// so a non-zero dump that still printed keeps its stdout.
 func dumpLefthook(lh, root string) string {
 	cmd := exec.Command(lh, "dump")
 	cmd.Dir = root
@@ -108,9 +88,8 @@ func dumpLefthook(lh, root string) string {
 	return strings.TrimRight(string(out), "\n")
 }
 
-// nowFromEnv is the age reference: OMAKASE_NOW if set, else the current epoch
-// (bin/status.sh:201, `now="${OMAKASE_NOW:-$(date +%s)}"`). A set-but-non-numeric
-// value coerces to its leading integer, matching awk's numeric coercion.
+// nowFromEnv is the age reference: OMAKASE_NOW if set, else the current
+// epoch. A set-but-non-numeric value coerces to its leading integer.
 func nowFromEnv() int64 {
 	s := os.Getenv("OMAKASE_NOW")
 	if s == "" {
@@ -120,8 +99,7 @@ func nowFromEnv() int64 {
 }
 
 // awkNumeric returns the leading integer of s (optional sign, digits), or 0.
-// This covers only awk's integer coercion, which is all the epoch inputs
-// here ever need — not awk's full numeric (float/exponent) string coercion.
+// It covers integer coercion only, not float or exponent forms.
 func awkNumeric(s string) int64 {
 	s = strings.TrimLeft(s, " \t")
 	i, neg := 0, false
@@ -148,13 +126,12 @@ func awkNumeric(s string) int64 {
 
 type guardRow struct{ hook, guard, enf, verdict string }
 
-// renderGuardsChart is the Go twin of the awk program (bin/status.sh:208-273),
-// ported rule by rule. It walks dump line by line, buffers one row per
-// non-cosmetic job (hook -> job -> first run), joins each ledgered gate to its
-// verdict, then emits a markdown table (md) or a width-aligned terminal table.
-// now is the age reference (already resolved from OMAKASE_NOW).
+// renderGuardsChart walks dump line by line, buffers one row per non-cosmetic
+// job (hook -> job -> first run), joins each ledgered gate to its verdict,
+// then emits a markdown table (md) or a width-aligned terminal table. now is
+// the age reference.
 func renderGuardsChart(w io.Writer, dump string, verds map[string]state.Verdict, now int64, md bool) {
-	// BEGIN: term widths start at the header label lengths (bin/status.sh:209).
+	// Term widths start at the header label lengths.
 	wH, wG, wE := utf8.RuneCountInString("RUN WHEN"), utf8.RuneCountInString("GUARD"), utf8.RuneCountInString("ENFORCES")
 
 	var rows []guardRow
@@ -167,8 +144,7 @@ func renderGuardsChart(w io.Writer, dump string, verds map[string]state.Verdict,
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
 
-		// Rule: hook header (col 0) -> curhook = text before the first ':'
-		// (bin/status.sh:215, `sub(/:.*/,"",curhook)`).
+		// Hook header (col 0): curhook is the text before the first ':'.
 		if reHookHeader.MatchString(line) {
 			if i := strings.IndexByte(line, ':'); i >= 0 {
 				curhook = line[:i]
@@ -176,33 +152,32 @@ func renderGuardsChart(w io.Writer, dump string, verds map[string]state.Verdict,
 			continue
 		}
 
-		// Rule: `- name: <job>` -> remainder is jobname; resets haverun
-		// (bin/status.sh:216-218).
+		// `- name: <job>`: the remainder is jobname; resets haverun.
 		if loc := reJobName.FindStringIndex(line); loc != nil {
 			jobname = line[loc[1]:]
 			haverun = false
 			continue
 		}
 
-		// Rule: `run: <cmd>` (bin/status.sh:219-256).
+		// `run: <cmd>`.
 		loc := reRun.FindStringIndex(line)
 		if loc == nil {
 			continue
 		}
-		// Only the FIRST run: after a name:; run lines with no pending name are
-		// skipped (bin/status.sh:220).
+		// Only the first run after a name:; run lines with no pending name are
+		// skipped.
 		if jobname == "" || haverun {
 			continue
 		}
 		haverun = true
 		runcmd := line[loc[1]:]
 
-		// Rule (Go only, no awk twin): a block-scalar run. The command lives
-		// on the following line(s), each indented deeper than the `run:` line;
-		// join them with single spaces into one logical command so the gate
-		// name, --cacheable/--glob description, and ledger join all work
-		// exactly as they do for a single-line run. Consuming the
-		// continuation lines here also keeps them from misparsing as rules.
+		// A block-scalar run: the command lives on the following line(s),
+		// each indented deeper than the `run:` line; join them with single
+		// spaces into one logical command so the gate name,
+		// --cacheable/--glob description, and ledger join all work as they
+		// do for a single-line run. Consuming the continuation lines here
+		// also keeps them from misparsing as rules.
 		if reBlockScalar.MatchString(runcmd) {
 			runIndent := len(line) - len(strings.TrimLeft(line, " "))
 			var parts []string
@@ -222,13 +197,13 @@ func renderGuardsChart(w io.Writer, dump string, verds map[string]state.Verdict,
 			runcmd = strings.Join(parts, " ")
 		}
 
-		// omakase-banner: cosmetic header box, not a guard (bin/status.sh:223).
+		// omakase-banner: cosmetic header box, not a guard.
 		if jobname == "omakase-banner" {
 			jobname = ""
 			continue
 		}
 
-		// A gate -> its canonical (ledgered) name (bin/status.sh:225-227).
+		// A gate -> its canonical (ledgered) name.
 		ledgered := false
 		gate := ""
 		if m := reGate.FindString(runcmd); m != "" {
@@ -236,51 +211,51 @@ func renderGuardsChart(w io.Writer, dump string, verds map[string]state.Verdict,
 			ledgered = true
 		}
 
-		// ENFORCES cell precedence (bin/status.sh:228-239).
+		// ENFORCES cell precedence.
 		var enf string
 		switch {
-		case strings.Contains(runcmd, "ensure-present.sh"): // bin/status.sh:228
+		case strings.Contains(runcmd, "ensure-present.sh"):
 			enf = "self-heal: restore any missing injected files"
-		case ledgered: // bin/status.sh:230-238 — describe by SAFE flags only
-			cached := strings.Contains(runcmd, "--cacheable") // bin/status.sh:232
-			scope := "runs every commit"                      // bin/status.sh:233
-			if m := reGlob.FindString(runcmd); m != "" {      // bin/status.sh:235-237
+		case ledgered: // describe by safe flags only
+			cached := strings.Contains(runcmd, "--cacheable")
+			scope := "runs every commit"
+			if m := reGlob.FindString(runcmd); m != "" {
 				g := strings.TrimPrefix(m, "--glob '")
 				g = strings.TrimSuffix(g, "'")
 				scope = "scope: " + g
 			}
 			if cached {
-				enf = "cached; " + scope // bin/status.sh:238
+				enf = "cached; " + scope
 			} else {
 				enf = scope
 			}
-		default: // bin/status.sh:239
+		default:
 			enf = runcmd
 		}
 
-		// Row name = gate if ledgered, else the job name (bin/status.sh:240).
+		// Row name = gate if ledgered, else the job name.
 		gname := jobname
 		if ledgered {
 			gname = gate
 		}
 
-		// Verdict cell (bin/status.sh:241-249).
+		// Verdict cell.
 		var vc string
-		if v, ok := verds[gate]; gate != "" && ok { // has a ledger row (gate in seen)
+		if v, ok := verds[gate]; gate != "" && ok { // has a ledger row
 			d := now - v.Epoch
-			if d < 0 { // clamp >= 0 (bin/status.sh:242)
+			if d < 0 { // clamp >= 0
 				d = 0
 			}
 			vc = verdictGlyph(v.Verdict) + " - " + age(d) + " ago"
-		} else if ledgered { // wired gate, never run (bin/status.sh:248)
+		} else if ledgered { // wired gate, never run
 			vc = "- not yet run"
-		} else { // non-gate job (bin/status.sh:249)
+		} else { // non-gate job
 			vc = glyphEmDash
 		}
 
 		rows = append(rows, guardRow{curhook, gname, enf, vc})
-		// Grow term widths to the longest cell (bin/status.sh:251-253). Only the
-		// ASCII columns are padded; the verdict cell is always last and unpadded.
+		// Grow term widths to the longest cell. Only the ASCII columns are
+		// padded; the verdict cell is always last and unpadded.
 		if l := utf8.RuneCountInString(curhook); l > wH {
 			wH = l
 		}
@@ -293,24 +268,23 @@ func renderGuardsChart(w io.Writer, dump string, verds map[string]state.Verdict,
 		jobname = ""
 	}
 
-	// END (bin/status.sh:257-272).
 	if md {
-		if len(rows) == 0 { // bin/status.sh:259
+		if len(rows) == 0 {
 			fmt.Fprintln(w, "_(no guards wired)_")
 			return
 		}
 		fmt.Fprintln(w, "| Run when | Guard | Enforces | Last verdict |")
 		fmt.Fprintln(w, "| --- | --- | --- | --- |")
-		for _, r := range rows { // bin/status.sh:263 — escape only Guard + Enforces
+		for _, r := range rows { // escape only Guard + Enforces
 			fmt.Fprintf(w, "| `%s` | %s | %s | %s |\n", r.hook, mdcell(r.guard), mdcell(r.enf), r.verdict)
 		}
 		return
 	}
-	if len(rows) == 0 { // bin/status.sh:266
+	if len(rows) == 0 {
 		fmt.Fprintln(w, "  (no guards wired)")
 		return
 	}
-	// bin/status.sh:268-269 — header + rows, same format, verdict last & unpadded.
+	// Header + rows, verdict last and unpadded.
 	fmt.Fprintf(w, "  %-*s   %-*s   %-*s   %s\n", wH, "RUN WHEN", wG, "GUARD", wE, "ENFORCES", "LAST VERDICT")
 	for _, r := range rows {
 		fmt.Fprintf(w, "  %-*s   %-*s   %-*s   %s\n", wH, r.hook, wG, r.guard, wE, r.enf, r.verdict)
@@ -318,15 +292,14 @@ func renderGuardsChart(w io.Writer, dump string, verds map[string]state.Verdict,
 }
 
 // mdcell escapes a literal `|` (which would break the md table) and folds
-// newlines to spaces — the awk's mdcell() (bin/status.sh:210), applied ONLY to
-// the Guard and Enforces cells.
+// newlines to spaces, applied only to the Guard and Enforces cells.
 func mdcell(s string) string {
 	s = strings.ReplaceAll(s, "|", "\\|")
 	s = strings.ReplaceAll(s, "\n", " ")
 	return s
 }
 
-// verdictGlyph is the pass/fail lead of a verdict cell (bin/status.sh:247).
+// verdictGlyph is the pass/fail lead of a verdict cell.
 func verdictGlyph(verdict string) string {
 	if verdict == "fail" {
 		return glyphCross + " fail"
@@ -334,7 +307,7 @@ func verdictGlyph(verdict string) string {
 	return glyphCheck + " pass"
 }
 
-// age buckets d (seconds, already clamped >= 0) exactly as bin/status.sh:243-246.
+// age buckets d (seconds, already clamped >= 0) into <1m / m / h / d.
 func age(d int64) string {
 	switch {
 	case d < 60:

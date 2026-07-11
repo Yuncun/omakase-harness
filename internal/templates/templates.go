@@ -1,15 +1,12 @@
-// Package templates embeds the three hook-time sh scripts
-// (bin/ensure-present.sh, bin/verify-overlay.sh, bin/install-guards.sh) plus
-// the payload's gate primitive (payload/.omakase/bin/omakase-gate.sh), and
-// installs them atomically. These live under internal/templates/files/ as
-// BYTE-IDENTICAL DUPLICATES of their bin/ (or payload/) originals -- go:embed
-// cannot reference a path outside its own package directory, so they cannot
-// be the SAME file on disk. TestEmbeddedMatchesBin and
-// TestEmbeddedGateMatchesPayload (templates_test.go) read each original at
-// test time and assert equality; keep every copy in lockstep by hand
-// whenever a bin/ or payload gate original changes. bin/ensure-present.sh,
-// bin/verify-overlay.sh, and bin/install-guards.sh themselves are untouched
-// this phase (Global Constraint 5).
+// Package templates embeds the three hook-time sh scripts (ensure-present.sh,
+// verify-overlay.sh, install-guards.sh) plus the payload's gate primitive
+// (omakase-gate.sh) and installs them atomically. They live under
+// internal/templates/files/ as byte-identical duplicates of their bin/ (or
+// payload/) originals — go:embed cannot reference a path outside its own
+// package directory, so they cannot be the same file on disk.
+// TestEmbeddedMatchesBin and TestEmbeddedGateMatchesPayload read each original
+// at test time and assert equality; keep every copy in lockstep by hand
+// whenever a bin/ or payload gate original changes.
 package templates
 
 import (
@@ -22,14 +19,9 @@ import (
 var files embed.FS
 
 // Install writes the embedded script `name` (e.g. "ensure-present.sh") to
-// dest, atomically: embedded bytes -> dest+".tmp" -> chmod 0755 -> rename.
-// The Go twin of install_script (bin/init.sh:450-453,
-// `cp "$SCRIPT_DIR/$1" "$2.tmp" && chmod +x "$2.tmp" && mv -f "$2.tmp" "$2"`).
-// On any failure the ".tmp" is removed and the error's message is exactly
-// bash's own failure line, `omakase: failed to install %s -> %s`
-// (bin/init.sh:452) -- bash prints this to stderr and exits 1 itself; here
-// that decision belongs to the caller (it owns the stdout/stderr streams
-// and exit code), so Install only returns the error.
+// dest atomically: embedded bytes -> dest+".tmp" -> chmod 0755 -> rename. On
+// any failure the ".tmp" is removed and an error is returned; the caller owns
+// the stderr stream and exit code.
 func Install(name, dest string) error {
 	failure := fmt.Errorf("omakase: failed to install %s -> %s", name, dest)
 

@@ -34,7 +34,7 @@ func installOne(t *testing.T, rows string, files map[string]string) (string, *st
 // --disable/--enable on harness machinery (.omakase/, lefthook wiring) must
 // refuse with exit 2 and delete nothing — the CLI surface classifies machinery
 // the same way the TUI and MCP menu do, so `--disable .omakase` can no longer
-// wipe the gate primitive and brick every commit. (Fix D / finding 5)
+// wipe the gate primitive and brick every commit.
 func TestRunToggleRefusesMachinery(t *testing.T) {
 	gateRel := ".omakase/bin/omakase-gate.sh"
 	rows := gateRel + "\tgate\tacme\tdeadbeef\t1\n"
@@ -61,7 +61,7 @@ func TestRunToggleRefusesMachinery(t *testing.T) {
 
 // A --disable/--enable target that matches no placed path and no wired gate name
 // (a typo) must refuse with exit 2 instead of writing a phantom gate entry with
-// a false success. (Fix E / findings 4+17)
+// a false success.
 func TestRunToggleRejectsUnknownName(t *testing.T) {
 	rows := "AGENTS.md\tdoc\tacme\t" + sha256Hex("body\n") + "\t1\n"
 	_, repo := installOne(t, rows, map[string]string{"AGENTS.md": "body\n"})
@@ -82,8 +82,8 @@ func TestRunToggleRejectsUnknownName(t *testing.T) {
 	}
 }
 
-// A --disable target that IS a lefthook-wired gate name is accepted and
-// recorded — the narrowing in Fix E must not over-refuse real gates.
+// A --disable target that is a lefthook-wired gate name is accepted and
+// recorded; real gates must not be over-refused.
 func TestRunToggleAcceptsWiredGate(t *testing.T) {
 	_, repo := installOne(t, "AGENTS.md\tdoc\tacme\t"+sha256Hex("b\n")+"\t1\n", map[string]string{"AGENTS.md": "b\n"})
 	lh := writeFakeLefthook(t, "pre-commit:\n  jobs:\n    - name: smoke\n      run: bash .omakase/bin/omakase-gate.sh smoke --step 'exit 9'\n")
@@ -102,7 +102,6 @@ func TestRunToggleAcceptsWiredGate(t *testing.T) {
 
 // status --help / -h prints a usage block on stdout and exits 0, instead of
 // falling through to the page (or launching the TUI on a real terminal).
-// (Fix E / finding 17)
 func TestStatusHelp(t *testing.T) {
 	for _, flag := range []string{"--help", "-h"} {
 		var stdout, stderr bytes.Buffer

@@ -14,9 +14,8 @@ import (
 
 // ---------------------------------------------------------------- fixtures
 
-// newGitRepo mirrors the newrepo() fixture pattern of tests/placed.test.sh
-// (and internal/state's newTestRepo): a real temp git repo with an identity
-// that never blocks a commit on signing.
+// newGitRepo builds a real temp git repo with an identity that never blocks a
+// commit on signing.
 func newGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -58,11 +57,9 @@ func sha256Hex(s string) string {
 
 // buildHomeFixture builds the fake HOME used across the golden tests: a
 // Claude Code personal layout (CLAUDE.md, settings.json, one rule/command/
-// agent file each, one skill dir) plus a Copilot CLI personal skill dir —
-// the same shape as tests/scorecard.test.sh:166-173, extended with
-// commands/agents/copilot rows so every personal_list branch
-// (bin/status.sh:72-88) is exercised. File names are lowercase ASCII so
-// bytewise sort.Strings cannot diverge from bash's glob order (brief note).
+// agent file each, one skill dir) plus a Copilot CLI personal skill dir, with
+// commands/agents/copilot rows so every PersonalList branch is exercised. File
+// names are lowercase ASCII so bytewise sort.Strings gives a stable order.
 func buildHomeFixture(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
@@ -78,10 +75,9 @@ func buildHomeFixture(t *testing.T) string {
 }
 
 // buildInstalledFixture builds the "installed" repo fixture used by the
-// contract-capture goldens: two committed harness files (+ one non-harness
-// tracked file to prove exclusion), and a placed.tsv covering every render
-// branch (brief: normal, disabled, missing, drifted, symlink, .omakase/,
-// 6-tab row).
+// goldens: two committed harness files (+ one non-harness tracked file to
+// prove exclusion), and a placed.tsv covering every render branch (normal,
+// disabled, missing, drifted, symlink, .omakase/, 6-tab row).
 func buildInstalledFixture(t *testing.T) (*state.Repo, string) {
 	t.Helper()
 	dir := newGitRepo(t)
@@ -112,7 +108,7 @@ func buildInstalledFixture(t *testing.T) (*state.Repo, string) {
 	driftedLedgerHash := sha256Hex("original\n")
 	writeFile(t, dir, "drifted.txt", "changed\n") // content changed after the ledger hash was recorded -> drift
 
-	target := "nonexistent-target.txt" // dangling on purpose (brief: "applies to dangling links too")
+	target := "nonexistent-target.txt" // dangling on purpose
 	if err := os.Symlink(target, filepath.Join(dir, "linked.txt")); err != nil {
 		t.Fatal(err)
 	}
@@ -155,16 +151,12 @@ func buildNotInstalledFixture(t *testing.T) (*state.Repo, string) {
 
 // ---------------------------------------------------------------- golden tests
 //
-// Expected strings below are transcribed VERBATIM from a run of the current
-// bash bin/status.sh (commit d5f1757) against the fixtures built above (same
-// file names/contents/hashes), with HOME set to the fixture home and cwd
-// inside the fixture repo. Each block is marked "contract capture from
-// bin/status.sh @ d5f1757". Do not paraphrase or retype these strings.
+// The expected strings below are the exact output for the fixtures built above,
+// with HOME set to the fixture home and cwd inside the fixture repo.
 
-// contract capture from bin/status.sh @ d5f1757
-// (bash bin/status.sh, installed fixture, terminal mode: full-output lines
-// 7-25 — the render_inventory() slice, i.e. everything from "COMMITTED..."
-// through the last GLOBAL row, no leading/trailing blank line.)
+// Terminal-mode inventory for the installed fixture: the RenderInventory slice,
+// everything from "COMMITTED..." through the last GLOBAL row, no leading or
+// trailing blank line.
 const wantInventoryTermInstalled = `COMMITTED (this repo) — tracked harness files
     + .claude/rules/team.md   (rule)
     + CLAUDE.md   (doc)
@@ -186,9 +178,7 @@ GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, appl
     + ~/.copilot/skills/coskill/   (skill)
 `
 
-// contract capture from bin/status.sh @ d5f1757
-// (bash bin/status.sh --markdown, installed fixture: full-output lines
-// 11-31 — the render_inventory() slice in md mode.)
+// Markdown-mode inventory for the installed fixture: the RenderInventory slice.
 const wantInventoryMDInstalled = "### Committed (this repo) — tracked harness files\n" +
 	"- `.claude/rules/team.md` — rule\n" +
 	"- `CLAUDE.md` — doc\n" +
@@ -229,9 +219,8 @@ func TestRenderInventoryMDInstalled(t *testing.T) {
 	}
 }
 
-// contract capture from bin/status.sh @ d5f1757
-// (bash bin/status.sh, not-installed fixture, terminal mode — entire
-// output: the not-installed message + render_inventory(), whole scope.)
+// Terminal-mode output for the not-installed fixture: the not-installed message
+// plus the full RenderInventory.
 const wantNotInstalledTerm = `No omakase harness is installed in this repo.
 Run  omakase init  to inject one.
 
@@ -250,8 +239,7 @@ GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, appl
     + ~/.copilot/skills/coskill/   (skill)
 `
 
-// contract capture from bin/status.sh @ d5f1757
-// (bash bin/status.sh --markdown, not-installed fixture — entire output.)
+// Markdown-mode output for the not-installed fixture.
 const wantNotInstalledMD = "**No omakase harness is installed in this repo.** Run `omakase init` to inject one.\n" +
 	"\n" +
 	"### Committed (this repo) — tracked harness files\n" +
@@ -288,17 +276,15 @@ func TestRenderNotInstalledMD(t *testing.T) {
 	}
 }
 
-// contract capture from bin/status.sh @ d5f1757
-// (bash bin/status.sh, pre-0.10 fixture ($OMK/placed.list present,
-// placed.tsv absent), terminal mode — entire output.)
+// Terminal-mode output for the pre-0.10 fixture ($OMK/placed.list present,
+// placed.tsv absent).
 const wantPre010Term = `Pre-0.10 omakase install detected (record: placed.list).
 Run  omakase init  to migrate to the provenance ledger. Placed files:
   old-file-one.md
   old-file-two.sh
 `
 
-// contract capture from bin/status.sh @ d5f1757
-// (bash bin/status.sh --markdown, pre-0.10 fixture — entire output.)
+// Markdown-mode output for the pre-0.10 fixture.
 const wantPre010MD = "**Pre-0.10 omakase install detected** (record: `placed.list`). Run `omakase init` to migrate to the provenance ledger. Placed files:\n" +
 	"- `old-file-one.md`\n" +
 	"- `old-file-two.sh`\n"
@@ -386,12 +372,11 @@ func TestPersonalListNoHome(t *testing.T) {
 	}
 }
 
-// TestPersonalListUnsetHome pins the unset-HOME contract (ultrareview
-// bug_002): with home == "" the roots must be the ABSOLUTE "/.claude" and
-// "/.copilot" — bash's `${HOME:-}/.claude` — never the cwd-relative
-// ".claude". The cwd is set to a directory that DOES carry .claude/rules/,
-// so a regression to filepath.Join (which drops the empty element and goes
-// relative) would surface those files and fail here.
+// TestPersonalListUnsetHome pins the unset-HOME contract: with home == "" the
+// roots must be the absolute "/.claude" and "/.copilot", never the cwd-relative
+// ".claude". The cwd is set to a directory that does carry .claude/rules/, so a
+// regression to filepath.Join (which drops the empty element and goes relative)
+// would surface those files and fail here.
 func TestPersonalListUnsetHome(t *testing.T) {
 	if isDir("/.claude") || isDir("/.copilot") {
 		t.Skip("machine has a root-level /.claude or /.copilot — the unset-HOME contrast is not testable here")
@@ -409,34 +394,31 @@ func TestPersonalListUnsetHome(t *testing.T) {
 	}
 }
 
-// TestPersonalListGlobSemantics locks the two glob-edge-case rules the brief
-// calls out (not bash-capturable in isolation, so this is a semantics test,
-// not a contract-capture golden): "*/ " matches dirs AND symlinks-to-dirs
-// (checked via os.Stat, not DirEntry.IsDir()), and "*.md" matches ANY
-// dirent ending .md (even a directory) gated by [ -e ]/os.Stat — a dangling
-// symlink named *.md must be excluded, a directory named *.md must be
+// TestPersonalListGlobSemantics locks two glob edge-case rules: "*/" matches
+// dirs and symlinks-to-dirs (checked via os.Stat, not DirEntry.IsDir()), and
+// "*.md" matches any dirent ending .md (even a directory) gated by os.Stat — a
+// dangling symlink named *.md must be excluded, a directory named *.md must be
 // included.
 func TestPersonalListGlobSemantics(t *testing.T) {
 	home := t.TempDir()
 	writeFile(t, home, ".claude/rules/real.md", "x\n")
-	// a directory named *.md: matches the *.md glob, passes the -e/Stat gate.
+	// a directory named *.md: matches the *.md glob, passes the Stat gate.
 	if err := os.MkdirAll(filepath.Join(home, ".claude/rules/dirlooksmd.md"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// a dangling symlink named *.md: matches the glob, fails the -e/Stat gate.
+	// a dangling symlink named *.md: matches the glob, fails the Stat gate.
 	if err := os.Symlink(filepath.Join(home, "nope"), filepath.Join(home, ".claude/rules/dangling.md")); err != nil {
 		t.Fatal(err)
 	}
-	// a real dir, and a symlink-to-dir, under skills/: both are "*/ " rows.
+	// a real dir, and a symlink-to-dir, under skills/: both are "*/" rows.
 	if err := os.MkdirAll(filepath.Join(home, ".claude/skills/realskill"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(filepath.Join(home, ".claude/skills/realskill"), filepath.Join(home, ".claude/skills/linkedskill")); err != nil {
 		t.Fatal(err)
 	}
-	// bash's default glob (dotglob unset, confirmed against bash 3.2/5.x: a
-	// bare `*.md` or `*/ ` never matches a leading-dot name) must exclude a
-	// dotfile *.md and a dot-directory under skills/.
+	// The glob never matches a leading-dot name, so a dotfile *.md and a
+	// dot-directory under skills/ must both be excluded.
 	writeFile(t, home, ".claude/rules/.hidden.md", "x\n")
 	if err := os.MkdirAll(filepath.Join(home, ".claude/skills/.hiddenskill"), 0o755); err != nil {
 		t.Fatal(err)

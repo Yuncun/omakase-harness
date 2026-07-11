@@ -2,13 +2,12 @@
 // job, split by pre-commit/pre-push/other and by whether the job is a
 // consent-tracked gate (wired through omakase-gate.sh) or a plain lefthook
 // job. It is a data-layer sibling of internal/status/guards.go, not a
-// replacement — guards.go is PARITY-FROZEN (it feeds the shipped `status
-// guards` chart and tests/status-parity.test.sh depends on its exact
-// output), so this file DELIBERATELY re-declares its own copies of the four
+// replacement — guards.go is parity-frozen (it feeds the shipped `status
+// guards` chart, and downstream tests depend on its exact
+// output), so this file deliberately re-declares its own copies of the four
 // scanning regexes and the resolve/dump helpers rather than import or
-// refactor guards.go. That duplication is plan-mandated (Task 6 brief) to
-// keep guards.go's parity risk at zero; keep the two in lockstep by hand if
-// lefthook's dump format ever changes.
+// refactor guards.go. The duplication keeps guards.go's output stable; keep
+// the two in lockstep by hand if lefthook's dump format ever changes.
 package tui
 
 import (

@@ -11,15 +11,12 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
-// fixtureDump is a REAL `lefthook dump` (captured from an init'd fixture repo at
-// omk-cap, itself base bin/init.sh + payload/lefthook-local.yml) extended BY HAND
-// per the task brief to exercise every awk rule in one pass: two hooks
-// (pre-commit/pre-push) plus post-checkout, a cosmetic omakase-banner job (cleared),
-// a plain gate (markers -> runs every commit), a non-gate job whose run cmd carries a
-// literal `|` (lint -> mdcell escaping), a --cacheable + --glob 'a/*|b/*' gate (tests),
-// a --glob 'src/*' gate wired but never run (review -> not yet run), and an
-// ensure-present.sh job (self-heal). Byte-identical to omk-cap/dump.txt, the input the
-// goldens below were captured from via the real bin/status.sh.
+// fixtureDump is a lefthook dump shaped to exercise every render rule in one
+// pass: two hooks (pre-commit/pre-push) plus post-checkout, a cosmetic
+// omakase-banner job (cleared), a plain gate (markers -> runs every commit), a
+// non-gate job whose run cmd carries a literal `|` (lint -> mdcell escaping), a
+// --cacheable + --glob 'a/*|b/*' gate (tests), a --glob 'src/*' gate wired but
+// never run (review -> not yet run), and an ensure-present.sh job (self-heal).
 const fixtureDump = `pre-commit:
   jobs:
     - name: omakase-banner
@@ -40,24 +37,24 @@ post-checkout:
       run: bash "$(git rev-parse --git-common-dir)/omakase/ensure-present.sh"
 `
 
-// fixtureLedger is the ledger the goldens were captured with: markers passed 300s
-// before now, tests failed 7200s before now (now pinned at 2000000000).
+// fixtureLedger is the ledger the goldens use: markers passed 300s before now,
+// tests failed 7200s before now (now pinned at 2000000000).
 const fixtureLedger = "1999999700\tmarkers\tpass\tabc123\n1999992800\ttests\tfail\tdef456\n"
 
-// contract capture from bin/status.sh @ d5f1757 (guards slice, --markdown,
-// fixtureDump + fixtureLedger, OMAKASE_NOW=2000000000). Do not retype.
+// Expected markdown guards chart for fixtureDump + fixtureLedger at
+// OMAKASE_NOW=2000000000.
 const wantGuardsMD = "| Run when | Guard | Enforces | Last verdict |\n| --- | --- | --- | --- |\n| `pre-commit` | markers | runs every commit | ✓ pass - 5m ago |\n| `pre-commit` | lint | sh -c 'echo a \\| grep a' | — |\n| `pre-push` | tests | cached; scope: a/*\\|b/* | ✗ fail - 2h ago |\n| `pre-push` | review | cached; scope: src/* | - not yet run |\n| `post-checkout` | omakase-ensure-present | self-heal: restore any missing injected files | — |\n"
 
-// contract capture from bin/status.sh @ d5f1757 (guards slice, terminal,
-// fixtureDump + fixtureLedger, OMAKASE_NOW=2000000000).
+// Expected terminal guards chart for fixtureDump + fixtureLedger at
+// OMAKASE_NOW=2000000000.
 const wantGuardsTerm = "  RUN WHEN        GUARD                    ENFORCES                                        LAST VERDICT\n  pre-commit      markers                  runs every commit                               ✓ pass - 5m ago\n  pre-commit      lint                     sh -c 'echo a | grep a'                         —\n  pre-push        tests                    cached; scope: a/*|b/*                          ✗ fail - 2h ago\n  pre-push        review                   cached; scope: src/*                            - not yet run\n  post-checkout   omakase-ensure-present   self-heal: restore any missing injected files   —\n"
 
-// contract capture (terminal, same inputs, OMAKASE_NOW=1999999710 -> markers age
-// 10s "<1m", tests age 6910s "1h") — covers the <1m + Nh age buckets.
+// Terminal chart, same inputs, OMAKASE_NOW=1999999710 -> markers age 10s "<1m",
+// tests age 6910s "1h" — covers the <1m and Nh age buckets.
 const wantGuardsTermLt1m = "  RUN WHEN        GUARD                    ENFORCES                                        LAST VERDICT\n  pre-commit      markers                  runs every commit                               ✓ pass - <1m ago\n  pre-commit      lint                     sh -c 'echo a | grep a'                         —\n  pre-push        tests                    cached; scope: a/*|b/*                          ✗ fail - 1h ago\n  pre-push        review                   cached; scope: src/*                            - not yet run\n  post-checkout   omakase-ensure-present   self-heal: restore any missing injected files   —\n"
 
-// contract capture (terminal, same inputs, OMAKASE_NOW=2000300000 -> both gates
-// ~3d old) — covers the Nd age bucket.
+// Terminal chart, same inputs, OMAKASE_NOW=2000300000 -> both gates ~3d old —
+// covers the Nd age bucket.
 const wantGuardsTermDays = "  RUN WHEN        GUARD                    ENFORCES                                        LAST VERDICT\n  pre-commit      markers                  runs every commit                               ✓ pass - 3d ago\n  pre-commit      lint                     sh -c 'echo a | grep a'                         —\n  pre-push        tests                    cached; scope: a/*|b/*                          ✗ fail - 3d ago\n  pre-push        review                   cached; scope: src/*                            - not yet run\n  post-checkout   omakase-ensure-present   self-heal: restore any missing injected files   —\n"
 
 // A dump whose only job is the cosmetic banner -> zero rows -> the no-guards note.
@@ -67,11 +64,11 @@ const bannerOnlyDump = `pre-commit:
       run: bash .omakase/bin/omakase-banner.sh pre-commit
 `
 
-// A dump with block-scalar run lines, shaped exactly as `lefthook dump`
-// re-emits a folded (`run: >`) or literal (`run: |`) wiring line: the
-// indicator on the run: line, the command on deeper-indented line(s). The
-// gate name, --cacheable/--glob description, and ledger join must all work
-// as if the run were single-line; a multi-line literal joins with spaces.
+// A dump with block-scalar run lines, shaped the way `lefthook dump` re-emits a
+// folded (`run: >`) or literal (`run: |`) wiring line: the indicator on the
+// run: line, the command on deeper-indented line(s). The gate name,
+// --cacheable/--glob description, and ledger join must all work as if the run
+// were single-line; a multi-line literal joins with spaces.
 const blockScalarDump = `pre-push:
   jobs:
     - name: visual-verify
@@ -85,10 +82,10 @@ const blockScalarDump = `pre-push:
       run: bash .omakase/bin/omakase-gate.sh after --step 'true'
 `
 
-// TestGuardsChartBlockScalar: the visual-verify gate resolves its name, its
-// cached+scope description, and its ledger verdict through the block scalar;
-// the multi-line non-gate job renders its joined command in ENFORCES; the
-// following single-line job still parses (continuation consumption does not
+// TestGuardsChartBlockScalar checks that the visual-verify gate resolves its
+// name, its cached+scope description, and its ledger verdict through the block
+// scalar; the multi-line non-gate job renders its joined command in ENFORCES;
+// the following single-line job still parses (continuation consumption does not
 // swallow it).
 func TestGuardsChartBlockScalar(t *testing.T) {
 	verds := verdictsFrom(t, "1999999700\tvisual-verify\tpass\tabc123\n")
@@ -104,9 +101,9 @@ func TestGuardsChartBlockScalar(t *testing.T) {
 	}
 }
 
-// verdictsFrom writes ledger bytes to a temp ledger.tsv and reads them back the way
-// production does (state.LatestVerdicts), so the chart tests join verdicts through the
-// exact same frozen-format reader the binary uses.
+// verdictsFrom writes ledger bytes to a temp ledger.tsv and reads them back the
+// way production does, through state.LatestVerdicts, so the chart tests join
+// verdicts through the same reader the binary uses.
 func verdictsFrom(t *testing.T, ledger string) map[string]state.Verdict {
 	t.Helper()
 	dir := t.TempDir()
@@ -172,7 +169,7 @@ func TestGuardsChartNoGuardsWired(t *testing.T) {
 }
 
 // writeFakeLefthook writes an executable stub that emits dumpText on `dump` (and
-// nothing otherwise), returning its path — the LEFTHOOK_BIN resolution seam.
+// nothing otherwise), returning its path for LEFTHOOK_BIN.
 func writeFakeLefthook(t *testing.T, dumpText string) string {
 	t.Helper()
 	return writeFakeLefthookAt(t, t.TempDir(), dumpText)
@@ -200,12 +197,11 @@ func writeFakeLefthookAt(t *testing.T, dir, dumpText string) string {
 }
 
 // stripLefthookEnv isolates lefthook resolution from the host machine:
-// LEFTHOOK_BIN cleared, PATH rebuilt lefthook-free (the shell suites'
-// lhfree_path idiom — a distro package at /usr/bin/lefthook must not satisfy
-// tier 2, while /bin/sh + cat stay reachable for the stubs), HOME and the
-// cache root pinned to fresh temp dirs so a developer's real
-// ~/.cache/omakase/lefthook can never satisfy — or pollute — a resolution
-// test. Returns the cache root.
+// LEFTHOOK_BIN cleared, PATH rebuilt lefthook-free (a distro package at
+// /usr/bin/lefthook must not satisfy tier 2, while /bin/sh + cat stay reachable
+// for the stubs), HOME and the cache root pinned to fresh temp dirs so a
+// developer's real ~/.cache/omakase/lefthook can never satisfy — or pollute — a
+// resolution test. Returns the cache root.
 func stripLefthookEnv(t *testing.T) string {
 	t.Helper()
 	t.Setenv("LEFTHOOK_BIN", "")
@@ -216,9 +212,8 @@ func stripLefthookEnv(t *testing.T) string {
 	return cache
 }
 
-// lefthookFreePath is the Go twin of tests/status-parity.test.sh:lhfree_path —
-// the real PATH plus the system dirs, minus every dir carrying an executable
-// lefthook.
+// lefthookFreePath returns the real PATH plus the system dirs, minus every dir
+// carrying an executable lefthook.
 func lefthookFreePath() string {
 	seen := map[string]bool{}
 	var out []string
@@ -275,11 +270,10 @@ func TestRenderGuardsResolvedChart(t *testing.T) {
 	}
 }
 
-// TestRenderGuardsResolvesFromOmakaseCache is the #72 regression: on a machine
-// with no LEFTHOOK_BIN, no PATH lefthook, and no node_modules — exactly the
-// zero-setup adopter init self-provisions for — status must resolve the
-// cached binary and render the real chart, not the false
-// "gates are not running" note.
+// TestRenderGuardsResolvesFromOmakaseCache is a regression test: on a machine
+// with no LEFTHOOK_BIN, no PATH lefthook, and no node_modules (the zero-setup
+// state adopter init self-provisions for), status must resolve the cached
+// binary and render the real chart, not the false "gates are not running" note.
 func TestRenderGuardsResolvesFromOmakaseCache(t *testing.T) {
 	cache := stripLefthookEnv(t)
 	writeFakeLefthookAt(t, filepath.Join(cache, "omakase", "lefthook", lefthook.PinnedVersion()), fixtureDump)
@@ -296,7 +290,7 @@ func TestRenderGuardsResolvesFromOmakaseCache(t *testing.T) {
 	}
 }
 
-// TestRenderGuardsNotResolvedAnywhere drives a GENUINE resolution failure
+// TestRenderGuardsNotResolvedAnywhere drives a genuine resolution failure
 // (every tier empty, including the cache), unlike TestRenderGuardsNotResolved
 // above, which covers the resolved-but-empty-dump path via LEFTHOOK_BIN.
 func TestRenderGuardsNotResolvedAnywhere(t *testing.T) {
@@ -317,7 +311,7 @@ func TestRenderGuardsNotResolvedAnywhere(t *testing.T) {
 }
 
 // TestRenderGuardsLefthookBinBeatsCache pins the tier order: an explicit
-// LEFTHOOK_BIN wins over a cached binary. The cache stub emits an EMPTY dump
+// LEFTHOOK_BIN wins over a cached binary. The cache stub emits an empty dump
 // (which would render the note), the override emits the fixture — a rendered
 // chart proves tier 1 was used.
 func TestRenderGuardsLefthookBinBeatsCache(t *testing.T) {

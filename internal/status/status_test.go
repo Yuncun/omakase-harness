@@ -12,13 +12,13 @@ import (
 
 // ---------------------------------------------------------------- fixtures
 
-// buildStatusFixture builds an installed repo byte-identical to the omk-cap fixture
-// the full-output goldens were captured from: two committed harness files (+ a
-// non-harness tracked file), one present, non-drifted injected file (normal.txt) plus
-// the .omakase machinery row (skipped in inventory), a remembered source (acme/harness),
-// a base VERSION, and a ledger. It returns the repo, the fixture HOME (shared with the
-// inventory goldens), and a fake lefthook that emits fixtureDump. No dependence on
-// bin/init.sh — the $OMK layout is hand-built.
+// buildStatusFixture builds an installed repo for the full-output goldens: two
+// committed harness files (+ a non-harness tracked file), one present,
+// non-drifted injected file (normal.txt) plus the .omakase machinery row
+// (skipped in inventory), a remembered source (acme/harness), a base VERSION,
+// and a ledger. It returns the repo, the fixture HOME (shared with the
+// inventory goldens), and a fake lefthook that emits fixtureDump. The $OMK
+// layout is hand-built.
 func buildStatusFixture(t *testing.T) (*state.Repo, string, string) {
 	t.Helper()
 	dir := newGitRepo(t)
@@ -58,8 +58,8 @@ func writeOMK(t *testing.T, omk, name, content string) {
 	}
 }
 
-// pinStatusEnv sets the env the goldens were captured under and chdirs into the repo,
-// so Run's os.Getwd/os.Getenv see the fixture.
+// pinStatusEnv sets the env the goldens expect and chdirs into the repo, so
+// Run's os.Getwd/os.Getenv see the fixture.
 func pinStatusEnv(t *testing.T, repo *state.Repo, home, lefthook string) {
 	t.Helper()
 	t.Chdir(repo.Root)
@@ -75,19 +75,18 @@ func withRoot(golden, root string) string {
 
 // ---------------------------------------------------------------- full-output goldens
 //
-// Transcribed VERBATIM (strconv.Quote of the captured bytes, `{{ROOT}}` templating the
-// per-run temp path) from a run of bin/status.sh @ d5f1757 against buildStatusFixture's
-// exact bytes. Do not paraphrase or retype.
+// {{ROOT}} templates the per-run temp path; each golden is the exact output for
+// buildStatusFixture.
 
-// contract capture from bin/status.sh --markdown @ d5f1757 (installed fixture).
+// Markdown output for the installed fixture.
 const wantFullMD = "## 🥡 harness\n\n`acme/harness` · base omakase 0.11.3 · installed in `{{ROOT}}`\n\n**Zero footprint** — 2 file(s) injected, 0 committed; all gitignored via `.git/info/exclude` (invisible to git).\n\n### Guards — what runs when you commit / push\n\n| Run when | Guard | Enforces | Last verdict |\n| --- | --- | --- | --- |\n| `pre-commit` | markers | runs every commit | ✓ pass - 5m ago |\n| `pre-commit` | lint | sh -c 'echo a \\| grep a' | — |\n| `pre-push` | tests | cached; scope: a/*\\|b/* | ✗ fail - 2h ago |\n| `pre-push` | review | cached; scope: src/* | - not yet run |\n| `post-checkout` | omakase-ensure-present | self-heal: restore any missing injected files | — |\n\n### Committed (this repo) — tracked harness files\n- `.claude/rules/team.md` — rule\n- `CLAUDE.md` — doc\n\n### Injected (omakase) — placed by `omakase init`, gitignored\n- `normal.txt` — doc, from acme/harness\n\n### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)\n- `~/.claude/CLAUDE.md` — doc\n- `~/.claude/settings.json` — config\n- `~/.claude/rules/alpha.md` — rule\n- `~/.claude/rules/beta.md` — rule\n- `~/.claude/commands/cmd1.md` — command\n- `~/.claude/agents/agent1.md` — agent\n- `~/.claude/skills/myskill/` — skill\n- `~/.copilot/skills/coskill/` — skill\n\n_Refresh:_ `omakase init`  ·  _Remove:_ `omakase remove`  ·  _read-only; running status changes nothing._\n"
 
-// contract capture from bin/status.sh @ d5f1757 (installed fixture, terminal, no banner).
+// Terminal output for the installed fixture, no banner.
 const wantFullTerm = "harness — acme/harness · base omakase 0.11.3 · installed in {{ROOT}}\nzero footprint: 2 injected, 0 committed, all gitignored (.git/info/exclude)\n\nGUARDS — what runs when you commit / push\n  RUN WHEN        GUARD                    ENFORCES                                        LAST VERDICT\n  pre-commit      markers                  runs every commit                               ✓ pass - 5m ago\n  pre-commit      lint                     sh -c 'echo a | grep a'                         —\n  pre-push        tests                    cached; scope: a/*|b/*                          ✗ fail - 2h ago\n  pre-push        review                   cached; scope: src/*                            - not yet run\n  post-checkout   omakase-ensure-present   self-heal: restore any missing injected files   —\n\nCOMMITTED (this repo) — tracked harness files\n    + .claude/rules/team.md   (rule)\n    + CLAUDE.md   (doc)\nINJECTED (omakase) — placed by omakase init, gitignored\n    + normal.txt   (doc, from acme/harness)\nGLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)\n    + ~/.claude/CLAUDE.md   (doc)\n    + ~/.claude/settings.json   (config)\n    + ~/.claude/rules/alpha.md   (rule)\n    + ~/.claude/rules/beta.md   (rule)\n    + ~/.claude/commands/cmd1.md   (command)\n    + ~/.claude/agents/agent1.md   (agent)\n    + ~/.claude/skills/myskill/   (skill)\n    + ~/.copilot/skills/coskill/   (skill)\n\nUpdate to the latest harness (syncs files; removes dropped ones):   omakase init\nUndo everything:                                                    omakase remove\n"
 
-// contract capture from bin/status.sh @ d5f1757, terminal, WITH a deterministic banner
-// script at .omakase/bin/omakase-banner.sh printing two lines — proves the banner exec
-// + multi-line stdout passthrough.
+// Terminal output for the installed fixture with a deterministic banner script
+// at .omakase/bin/omakase-banner.sh printing two lines — proves the banner exec
+// and multi-line stdout passthrough.
 const bannerScript = "#!/usr/bin/env bash\necho \"== omakase ==\"\necho \"banner line two\"\n"
 const wantFullTermBanner = "== omakase ==\nbanner line two\nharness — acme/harness · base omakase 0.11.3 · installed in {{ROOT}}\nzero footprint: 2 injected, 0 committed, all gitignored (.git/info/exclude)\n\nGUARDS — what runs when you commit / push\n  RUN WHEN        GUARD                    ENFORCES                                        LAST VERDICT\n  pre-commit      markers                  runs every commit                               ✓ pass - 5m ago\n  pre-commit      lint                     sh -c 'echo a | grep a'                         —\n  pre-push        tests                    cached; scope: a/*|b/*                          ✗ fail - 2h ago\n  pre-push        review                   cached; scope: src/*                            - not yet run\n  post-checkout   omakase-ensure-present   self-heal: restore any missing injected files   —\n\nCOMMITTED (this repo) — tracked harness files\n    + .claude/rules/team.md   (rule)\n    + CLAUDE.md   (doc)\nINJECTED (omakase) — placed by omakase init, gitignored\n    + normal.txt   (doc, from acme/harness)\nGLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)\n    + ~/.claude/CLAUDE.md   (doc)\n    + ~/.claude/settings.json   (config)\n    + ~/.claude/rules/alpha.md   (rule)\n    + ~/.claude/rules/beta.md   (rule)\n    + ~/.claude/commands/cmd1.md   (command)\n    + ~/.claude/agents/agent1.md   (agent)\n    + ~/.claude/skills/myskill/   (skill)\n    + ~/.copilot/skills/coskill/   (skill)\n\nUpdate to the latest harness (syncs files; removes dropped ones):   omakase init\nUndo everything:                                                    omakase remove\n"
 
@@ -143,10 +142,8 @@ func TestStatusRunTermBanner(t *testing.T) {
 	}
 }
 
-// TestStatusRunTermBannerCwd pins the banner-exec contract precisely
-// (bin/status.sh:341, `bash "$BANNER" 2>/dev/null || true`): the banner
-// script inherits the INVOCATION cwd, not repo.Root, because the bash
-// reference never `cd`s before running it. A cwd-sensitive fake banner
+// TestStatusRunTermBannerCwd pins the banner-exec contract: the banner script
+// inherits the invocation cwd, not repo.Root. A cwd-sensitive fake banner
 // (prints `pwd`) run from a subdirectory of the repo must see that
 // subdirectory, proving Run does not force cmd.Dir = repo.Root.
 func TestStatusRunTermBannerCwd(t *testing.T) {
@@ -179,13 +176,10 @@ func TestStatusRunTermBannerCwd(t *testing.T) {
 	}
 }
 
-// TestPipedStatusNeverInteractive is the regression fence for the Task 8
-// interactive dispatch: status.Run given bytes.Buffer writers (never *os.File)
-// must still emit the plain terminal page, never enter the TUI. It passes both
-// BEFORE the dispatch exists (no TUI path at all) and AFTER (interactiveTerminal
-// gates on the PROCESS's os.Stdin/os.Stdout, which under `go test` is a pipe,
-// not a terminal), so it can be committed first as the fence the dispatch is
-// built against.
+// TestPipedStatusNeverInteractive checks that status.Run given bytes.Buffer
+// writers (never *os.File) still emits the plain terminal page, never the TUI.
+// interactiveTerminal gates on the process's os.Stdin/os.Stdout, which under
+// `go test` is a pipe, not a terminal.
 func TestPipedStatusNeverInteractive(t *testing.T) {
 	repo, home, lh := buildStatusFixture(t)
 	pinStatusEnv(t, repo, home, lh)
@@ -207,9 +201,8 @@ func TestPipedStatusNeverInteractive(t *testing.T) {
 
 // Once a file is toggled off (enabled=0), the zero-footprint count must reflect
 // consent state: N counts enabled rows only, with a "(k toggled off)" note, so
-// the page whose whole point is showing consent state no longer overstates
-// what is on disk. All-enabled output stays byte-identical (the parity fence).
-// (Fix G / finding 9)
+// the page whose whole point is showing consent state no longer overstates what
+// is on disk.
 func TestStatusFootprintCountsConsentState(t *testing.T) {
 	repo, home, lh := buildStatusFixture(t)
 	// Mark normal.txt disabled (as FileOff would), leaving the machinery gate
@@ -352,8 +345,8 @@ func TestStatusRunPre010(t *testing.T) {
 // ---------------------------------------------------------------- identity derivation
 
 func TestHarnessName(t *testing.T) {
-	// Cases cross-checked against the exact bash expansions of bin/status.sh:311
-	// (n=${src%%#*}; n=${n%.git}; n=${n%/}; hname=${n##*/}).
+	// harnessName strips the #fragment, a trailing .git, and a trailing /, then
+	// takes the last path segment.
 	cases := map[string]string{
 		"":                                       "omakase-harness",
 		"acme/harness":                           "harness",
@@ -370,7 +363,7 @@ func TestHarnessName(t *testing.T) {
 }
 
 func TestSrcDisplay(t *testing.T) {
-	// Cross-checked against sed -e 's,^[a-z][a-z]*://,,' -e 's,/$,,' (bin/status.sh:312).
+	// srcDisplay strips a leading scheme:// and a trailing slash.
 	cases := map[string]string{
 		"":                                       "",
 		"acme/harness":                           "acme/harness",

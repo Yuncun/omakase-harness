@@ -7,11 +7,10 @@ import (
 	"testing"
 )
 
-// AGENTS.md's sha256, hardcoded per the brief: printf '%s' "AGENTS.md" | shasum -a 256
+// AGENTS.md's sha256: printf '%s' "AGENTS.md" | shasum -a 256
 const sha256OfAgentsMDString = "a54ff182c7e8acf56acfd6e4b9c3ff41e2c41a31c9b211b2deb9df75d9a478f9"
 
-// newTestRepo builds a real temp git repo, mirroring the newrepo() fixture
-// pattern of tests/placed.test.sh: t.TempDir() + `git init` + the
+// newTestRepo builds a real temp git repo: t.TempDir() + `git init` + the
 // user.email/user.name/commit.gpgsign config every repo-scoped test in this
 // suite relies on so a commit never blocks on signing/identity.
 func newTestRepo(t *testing.T) string {
@@ -157,11 +156,8 @@ func TestReadPlaced(t *testing.T) {
 	content := "rel1\tkind1\tsrc1\thash1\t1\n" +
 		"rel2\tkind2\tsrc2\thash2\t1\textra\n" + // 6th tab absorbed into Enabled
 		"rel3\tkind3\n" + // short row: Src/Hash/Enabled all empty
-		// empty Rel: dropped. Malformed (no real writer emits an empty field) --
-		// exercises ReadPlaced's own drop-empty-Rel rule in isolation, not a
-		// bash-parity claim: per ReadPlaced's doc comment, bash's real `read`
-		// strips a leading tab and shifts fields left, so it would never see an
-		// empty Rel here at all.
+		// empty Rel: dropped. Exercises ReadPlaced's drop-empty-Rel rule in
+		// isolation.
 		"\tkind4\tsrc4\thash4\t1\n"
 	writeFile(t, dir, "placed.tsv", content)
 
@@ -218,7 +214,7 @@ func TestLatestVerdicts(t *testing.T) {
 		"50\tgateA\tpass\tsha3\n" + // earlier epoch: must not override
 		"abc\tgateB\tpass\tsha4\n" + // non-numeric epoch: dropped
 		"200\tgateB\tpass\tsha5\n" +
-		"10\tgateC\n" // NF<4: dropped
+		"10\tgateC\n" // fewer than 4 fields: dropped
 	writeFile(t, dir, "ledger.tsv", content)
 
 	got := LatestVerdicts(p)
@@ -290,7 +286,7 @@ func TestWritePlacedHappyPathExactBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Hand-computed literal: printf '%s\t%s\t%s\t%s\t%s\n' per row (init.sh:608).
+	// Hand-computed literal: printf '%s\t%s\t%s\t%s\t%s\n' per row.
 	want := ".claude/rules/a.md\trule\tpayload\tabc123\t1\n" +
 		"AGENTS.md\tdoc\tpayload\tdef456\t1\n"
 	if string(got) != want {

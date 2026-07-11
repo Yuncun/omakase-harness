@@ -8,11 +8,11 @@ import (
 
 var embeddedNames = []string{"ensure-present.sh", "verify-overlay.sh", "install-guards.sh"}
 
-// TestEmbeddedMatchesBin is the lockstep test: internal/templates/files/*.sh
-// are DUPLICATES of bin/*.sh -- go:embed cannot reach a path outside its own
-// package directory, so they cannot be the SAME file on disk. Kept honest
-// here by reading both at test time and asserting byte equality; keep the
-// two copies in lockstep by hand whenever a bin/ original changes.
+// TestEmbeddedMatchesBin checks that internal/templates/files/*.sh stay
+// duplicates of bin/*.sh: go:embed cannot reach a path outside its own package
+// directory, so they cannot be the same file on disk. This reads both at test
+// time and asserts byte equality; keep the two copies in lockstep by hand
+// whenever a bin/ original changes.
 func TestEmbeddedMatchesBin(t *testing.T) {
 	for _, name := range embeddedNames {
 		t.Run(name, func(t *testing.T) {
@@ -31,8 +31,8 @@ func TestEmbeddedMatchesBin(t *testing.T) {
 	}
 }
 
-// TestEmbeddedGateMatchesPayload is the lockstep test for the payload gate
-// script: internal/templates/files/omakase-gate.sh is a DUPLICATE of
+// TestEmbeddedGateMatchesPayload checks that
+// internal/templates/files/omakase-gate.sh stays a duplicate of
 // payload/.omakase/bin/omakase-gate.sh, not the bin/ trio (go:embed still
 // cannot reach outside its own package directory). Keep the two copies in
 // lockstep by hand whenever the payload original changes.
@@ -50,9 +50,8 @@ func TestEmbeddedGateMatchesPayload(t *testing.T) {
 	}
 }
 
-// TestInstallAtomic covers the temp+rename+chmod install path
-// (bin/init.sh:450-453's install_script): the destination ends up with the
-// embedded bytes, mode 0755, and no ".tmp" left behind.
+// TestInstallAtomic covers the temp+rename+chmod install path: the destination
+// ends up with the embedded bytes, mode 0755, and no ".tmp" left behind.
 func TestInstallAtomic(t *testing.T) {
 	for _, name := range embeddedNames {
 		t.Run(name, func(t *testing.T) {
@@ -93,7 +92,7 @@ func TestInstallAtomic(t *testing.T) {
 }
 
 // TestInstallOverwritesExisting exercises re-install over an already-placed
-// script (the re-run case bin/init.sh:612-643 hits on every `omakase init`).
+// script (the re-run case hit on every `omakase init`).
 func TestInstallOverwritesExisting(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "ensure-present.sh")
@@ -116,8 +115,8 @@ func TestInstallOverwritesExisting(t *testing.T) {
 	}
 }
 
-// TestInstallUnknownName covers the "failed to install" message
-// (bin/init.sh:452) for a name with no matching embedded asset.
+// TestInstallUnknownName covers the "failed to install" message for a name with
+// no matching embedded asset.
 func TestInstallUnknownName(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "dest.sh")
