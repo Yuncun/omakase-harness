@@ -29,6 +29,10 @@
 # Env: OMAKASE_SKIP_<NAME>=1 (audited bypass; name upper-cased, '-'->'_'),
 #      OMAKASE_NOW (test hook: pins the epoch).
 set -uo pipefail   # NOT -e: we must capture the step's exit code, not die on it.
+# A leaked GIT_DIR/GIT_WORK_TREE (exported for ANOTHER repo) would send the
+# verdict row, the cache lookup, and the step's own git calls to that repo.
+# The gate's repo is always the one it runs in: resolve from cwd only.
+unset GIT_DIR GIT_WORK_TREE
 
 die_misuse() { echo "omakase-gate: $1" >&2; exit 2; }
 

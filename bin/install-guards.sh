@@ -4,6 +4,9 @@
 # postinstall regenerates the stubs, stripping our blocks — this re-arms them).
 # Idempotent (strip-then-insert). Installs two block kinds, both ABOVE lefthook's call:
 # fail-closed verify (pre-commit/pre-push) and worktree-bootstrap self-heal (post-checkout).
+# A leaked GIT_DIR/GIT_WORK_TREE (exported for ANOTHER repo) would re-arm that
+# repo's hooks instead of this one's. Resolve from cwd only.
+unset GIT_DIR GIT_WORK_TREE
 COMMON="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" && pwd)" || exit 0
 HOOKS_DIR="$COMMON/hooks"
 
@@ -63,9 +66,14 @@ fi
 GUARD
     printf '%s\n' "$GEND"
     tail -n +2 "$hf.tmp"
-  } > "$hf"
+  } > "$hf.new"
+  # Compose-then-rename: this re-arm can run WHILE git is executing this very
+  # hook (heal calls it from post-checkout), and a truncating `>` onto the live
+  # file feeds the running interpreter garbage mid-read. Rename swaps in a
+  # fresh inode; any open reader keeps its original bytes to the end.
   rm -f "$hf.tmp"
-  chmod +x "$hf"
+  chmod +x "$hf.new"
+  mv -f "$hf.new" "$hf"
 done
 
 # --- worktree-bootstrap: self-heal the harness into a fresh `git worktree add`. ---
@@ -91,7 +99,8 @@ fi
 BOOT
     printf '%s\n' "$WEND"
     tail -n +2 "$hf.tmp"
-  } > "$hf"
-  rm -f "$hf.tmp"
-  chmod +x "$hf"
+  } > "$hf.new"
+  rm -f "$hf.tmp"   # compose-then-rename, same as the fail-closed loop above
+  chmod +x "$hf.new"
+  mv -f "$hf.new" "$hf"
 fi
