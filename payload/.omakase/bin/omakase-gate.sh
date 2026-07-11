@@ -15,6 +15,7 @@
 #   --cacheable   a fresh PASS for the exact HEAD short-circuits and skips the step.
 #   --glob PATS   space-separated case-globs (a single * spans directories). If set and no
 #                 changed file in the range matches, skip. ABSENT = always in scope.
+#                 No resolvable base to diff against (no remote) = run unscoped.
 #   --record      append a PASS row for HEAD and exit 0; no step runs. Fails LOUD.
 #
 # A "deferred gate" is just --cacheable + a step that blocks: the step refuses, an
@@ -104,8 +105,10 @@ if [ -n "$common" ] && [ -f "$common/omakase/disabled-gates" ] \
   exit 0
 fi
 
-# (3) --glob scope: run only when a changed file in the range matches. Base resolves
-# fail-OPEN (unresolvable -> skip, never a raw git error); the threat model is omission.
+# (3) --glob scope: run only when a changed file in the range matches. With no
+# resolvable base (a repo with no remote) the gate cannot tell what changed, so it
+# RUNS unscoped rather than skipping — the threat model is omission, and a silent
+# skip in every remote-less repo IS the omission. Never surfaces a raw git error.
 if [ -n "$GLOB" ]; then
   resolve_base() {
     local c
@@ -116,30 +119,30 @@ if [ -n "$GLOB" ]; then
     return 1
   }
   if ! BASE="$(resolve_base)"; then
-    echo "omakase-gate[$NAME]: no resolvable base ref - skipping scope check (fail-open)"
-    exit 0
-  fi
-  # merge-base bounded (three-dot); two-dot fallback if the range is unresolvable
-  # (unrelated histories) so a range error cannot masquerade as "no changes".
-  if ! CHANGED="$(git diff --name-only "${BASE}...HEAD" 2>/dev/null)"; then
-    CHANGED="$(git diff --name-only "${BASE}..HEAD" 2>/dev/null || true)"
-  fi
-  matched=0
-  if [ -n "$CHANGED" ]; then
-    set -f   # noglob: $GLOB must word-split into literal case patterns, not expand here
-    while IFS= read -r file; do
-      [ -n "$file" ] || continue
-      for g in $GLOB; do
-        # shellcheck disable=SC2254
-        case "$file" in $g) matched=1; break;; esac
-      done
-      [ "$matched" -eq 1 ] && break
-    done <<< "$CHANGED"
-    set +f
-  fi
-  if [ "$matched" -eq 0 ]; then
-    echo "omakase-gate[$NAME]: no changed file matches the glob - skipping"
-    exit 0
+    echo "omakase-gate[$NAME]: no resolvable base ref - cannot scope, running the step"
+  else
+    # merge-base bounded (three-dot); two-dot fallback if the range is unresolvable
+    # (unrelated histories) so a range error cannot masquerade as "no changes".
+    if ! CHANGED="$(git diff --name-only "${BASE}...HEAD" 2>/dev/null)"; then
+      CHANGED="$(git diff --name-only "${BASE}..HEAD" 2>/dev/null || true)"
+    fi
+    matched=0
+    if [ -n "$CHANGED" ]; then
+      set -f   # noglob: $GLOB must word-split into literal case patterns, not expand here
+      while IFS= read -r file; do
+        [ -n "$file" ] || continue
+        for g in $GLOB; do
+          # shellcheck disable=SC2254
+          case "$file" in $g) matched=1; break;; esac
+        done
+        [ "$matched" -eq 1 ] && break
+      done <<< "$CHANGED"
+      set +f
+    fi
+    if [ "$matched" -eq 0 ]; then
+      echo "omakase-gate[$NAME]: no changed file matches the glob - skipping"
+      exit 0
+    fi
   fi
 fi
 
