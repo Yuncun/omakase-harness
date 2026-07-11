@@ -916,9 +916,20 @@ func physicalResolve(p string) string {
 
 // --- small predicates / helpers ---
 
-// gitTracked is `git -C root ls-files --error-unmatch -- rel` exit 0.
+// gitTracked is `git -C root ls-files --error-unmatch -- rel` exit 0. On a
+// case-insensitive filesystem (core.ignorecase, which git init sets there)
+// a tracked file differing from rel only in case occupies the same disk
+// path, but exact pathspec matching misses it — writing or deleting
+// root/rel would hit the tracked file — so the check is retried with the
+// case-folding `:(icase)` pathspec.
 func gitTracked(root, rel string) bool {
-	return exec.Command("git", "-C", root, "ls-files", "--error-unmatch", "--", rel).Run() == nil
+	if exec.Command("git", "-C", root, "ls-files", "--error-unmatch", "--", rel).Run() == nil {
+		return true
+	}
+	if gitOutTrim(root, "config", "--get", "--type=bool", "core.ignorecase") != "true" {
+		return false
+	}
+	return exec.Command("git", "-C", root, "ls-files", "--error-unmatch", "--", ":(icase)"+rel).Run() == nil
 }
 
 // gitStdout returns a git command's stdout; stderr is discarded and the exit
