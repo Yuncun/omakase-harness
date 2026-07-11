@@ -1,31 +1,14 @@
-// This file (source.go) ports the `--source` arm of bin/init.sh — the harness
-// SOURCE mechanism (spec §1): shorthand/ref rewrites (bin/init.sh:155-171),
-// fetch_source (bin/init.sh:104-151: the disposable cache slug, the
-// refresh-or-reclone, the #ref pin, and the fail-closed manifest validation),
-// and the base+delta merge staging (bin/init.sh:181-197). RunInit calls
-// expandSource + runSource in place of Task 3's stub; the source-conditional
-// tails (placed.tsv column 3, $OMK/source, the summary `recommends:` line) are
-// wired through the existing engine in init.go.
+// This file implements the --source arm of `omakase init`: shorthand/ref
+// rewrites, the disposable source cache (refresh-or-reclone, the optional
+// #ref pin, fail-closed manifest validation), and the base+delta merge
+// staging. RunInit calls expandSource + runSource; the source-conditional
+// tails (placed.tsv column 3, $OMK/source, the summary recommends: line)
+// are wired through init.go.
 //
-// bin/init.sh STAYS bash, untouched: the frozen v1 sources.test.sh /
-// roundtrip.test.sh / recommends.test.sh still run through it. This Go arm goes
-// live only at Task 6's shim cutover; source_test.go + init_test.go are this
-// task's safety net.
-//
-// Sanctioned divergences (documented at each site): (a) the base+delta merge
-// traversal walks with filepath.WalkDir (lexical) rather than find's readdir
-// order — Global Constraint 6, consistent with the place loop; (b) the merge
-// staging dir's random suffix differs from v1's mktemp XXXXXX (Global Constraint
-// 6, sanctioned) and never surfaces in output. Since v0.18.0 the binary may run
-// APART from the plugin (a fetched release cache / a PATH install), so the merge
-// BASE payload's location is handed over by the shims in OMAKASE_BASE_PAYLOAD;
-// it resolves binary-relative ($SCRIPT_DIR/../payload) ONLY as a last resort
-// (see defaultPayload). It still never honors OMAKASE_PAYLOAD (that is the
-// plain-install override, not the merge base — bin/init.sh:181); the
-// basePayloadOverride package var is a production-inert TEST SEAM, not a
-// behavioral change. runSource also fails BEFORE any clone/fetch when the base
-// is absent — a sanctioned reorder of v1's post-clone cp failure (documented at
-// the site).
+// The merge base payload's location is handed over by the shims in
+// OMAKASE_BASE_PAYLOAD and resolves binary-relative only as a last resort
+// (see defaultPayload). OMAKASE_PAYLOAD is never honored here: that is the
+// plain-install override, not the merge base.
 package overlay
 
 import (
@@ -43,30 +26,21 @@ import (
 	"strings"
 )
 
-// reOwnerRepo is the owner/repo shorthand test (bin/init.sh:164): two path
-// segments, each starting alnum then [A-Za-z0-9._-]. The `-` sits last in the
-// class so it is a literal, matching the bash bracket expression byte-for-byte.
+// reOwnerRepo is the owner/repo shorthand test: two path segments, each
+// starting alnum then [A-Za-z0-9._-].
 var reOwnerRepo = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// basePayloadOverride is a TEST SEAM for the binary-relative base payload
-// (bin/init.sh:181/199's $SCRIPT_DIR/../payload). It is "" in production, so
-// defaultPayload falls through to the OMAKASE_BASE_PAYLOAD env tier (the shim
-// handoff) or the os.Executable-relative resolution; tests set it because
-// os.Executable points at the test binary, not a deployed omakase. Guarded like
-// the rest of the engine by the tests' non-parallel discipline (they share cwd +
-// env via t.Setenv already).
+// basePayloadOverride is a test seam for the binary-relative base payload.
+// It is "" in production; tests set it because os.Executable points at the
+// test binary, not a deployed omakase.
 var basePayloadOverride string
 
 // defaultPayload resolves the base harness payload. Precedence:
-// basePayloadOverride (TEST SEAM, "" in production) > OMAKASE_BASE_PAYLOAD >
-// the binary-relative $SCRIPT_DIR/../payload (bin/init.sh:181,199: dist/omakase
-// => repo root => payload/). Since v0.18.0 the binary may run apart from the
-// plugin (fetched cache / PATH), where the binary-relative path no longer finds
-// payload/, so the shims export the plugin's own bin/../payload in
-// OMAKASE_BASE_PAYLOAD and it takes precedence; the binary-relative resolution
-// stays as a last resort. This is NOT the OMAKASE_PAYLOAD override — that is
-// layered on by the plain install path (bin/init.sh:199) and deliberately NOT by
-// the merge base (bin/init.sh:181).
+// basePayloadOverride (test seam, "" in production) > OMAKASE_BASE_PAYLOAD
+// (the shim handoff) > the binary-relative ../payload. A fetched or PATH
+// binary has no payload/ sibling, so the shims export the plugin's own
+// bin/../payload in OMAKASE_BASE_PAYLOAD. This is not the OMAKASE_PAYLOAD
+// override, which applies only to a plain install, never the merge base.
 func defaultPayload() string {
 	if basePayloadOverride != "" {
 		return basePayloadOverride
@@ -80,30 +54,29 @@ func defaultPayload() string {
 	return ""
 }
 
-// expandSource ports the shorthand / ref / local-dir-absolutize rewrites
-// (bin/init.sh:160-171). It returns the resolved source string and the pinned
-// ref ("" if none). Applied to BOTH a freshly given source and a remembered
-// one, so a bare re-run round-trips a pinned ref. Skipped when source is empty
-// or already names an EXISTING local path (a real path wins over the shorthand;
-// `-e` dereferences, so a dangling symlink counts as absent). The #ref split can
-// leave source empty (a pathological "#ref"), which the caller's branch honors.
+// expandSource applies the shorthand / ref / local-dir-absolutize rewrites,
+// returning the resolved source string and the pinned ref ("" if none).
+// Applied to both a freshly given source and a remembered one, so a bare
+// re-run round-trips a pinned ref; skipped when source is empty or already
+// names an existing local path. The #ref split can leave source empty (a
+// pathological "#ref"), which the caller's branch honors.
 func expandSource(source string) (string, string) {
 	ref := ""
 	// Shorthand + #ref only when source is non-empty and not an existing path.
 	if source != "" && !pathExists(source) {
-		if i := strings.IndexByte(source, '#'); i >= 0 { // *#* : first '#' splits
-			ref = source[i+1:]  // ${SOURCE#*#}
-			source = source[:i] // ${SOURCE%%#*}
+		if i := strings.IndexByte(source, '#'); i >= 0 { // the first '#' splits
+			ref = source[i+1:]
+			source = source[:i]
 		}
 		// owner/repo -> a GitHub URL, unless it already looks like a URL/scp path.
 		if !isURLish(source) && reOwnerRepo.MatchString(source) {
 			source = "https://github.com/" + source
 		}
 	}
-	// A local directory source becomes ABSOLUTE before it is cached, ledgered, or
-	// remembered (a relative remembered path breaks bare re-runs from another cwd).
-	// bin/init.sh uses `cd "$SOURCE" && pwd` (logical); filepath.Abs cleans without
-	// resolving symlinks, matching that for absolute inputs (all tests pass one).
+	// A local directory source becomes absolute before it is cached,
+	// ledgered, or remembered: a relative remembered path breaks bare
+	// re-runs from another cwd. filepath.Abs cleans without resolving
+	// symlinks.
 	if source != "" && isDir(source) {
 		if abs, err := filepath.Abs(source); err == nil {
 			source = abs
@@ -112,15 +85,15 @@ func expandSource(source string) (string, string) {
 	return source, ref
 }
 
-// isURLish is the bash `case ... in *://*|git@*) false;; *) true;;` guard
-// (bin/init.sh:163): the owner/repo shorthand is NOT applied when the string
-// already contains a scheme (`://`) or is an scp-style `git@host:...`.
+// isURLish reports whether s already contains a scheme ("://") or is an
+// scp-style `git@host:...` path; the owner/repo shorthand is not applied
+// then.
 func isURLish(s string) bool {
 	return strings.Contains(s, "://") || strings.HasPrefix(s, "git@")
 }
 
-// pathExists is bash `[ -e p ]`: exists, following symlinks (a dangling symlink
-// is `false`, so it is treated as absent and the shorthand still applies).
+// pathExists reports whether p exists, following symlinks; a dangling
+// symlink counts as absent, so the shorthand still applies.
 func pathExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
@@ -128,27 +101,23 @@ func pathExists(p string) bool {
 
 // sourceResult carries what a --source install contributes back to RunInit.
 type sourceResult struct {
-	payload    string // the merged base+delta staging dir (becomes PAYLOAD)
+	payload    string // the merged base+delta staging dir (becomes the payload)
 	merged     string // the staging dir to clean up on every exit path (== payload)
-	label      string // SOURCE_LABEL: placed.tsv column 3 (bin/init.sh:174)
-	remembered string // written to $OMK/source (bin/init.sh:600) — same string
-	recommends string // manifest recommends:, surfaced in the summary (bin/init.sh:662)
+	label      string // placed.tsv column 3
+	remembered string // written to $OMK/source
+	recommends string // manifest recommends:, surfaced in the summary
 }
 
 // runSource fetches the source into the disposable cache, validates it, and
-// stages the base+source merge (bin/init.sh:172-197). On any failure it has
-// already written the byte-exact message, cleaned up any staging dir it created,
-// and returns a non-zero code; the caller returns that code. On success the
-// caller MUST `defer os.RemoveAll(result.merged)` — v1's EXIT trap
-// (bin/init.sh:63-68) removes the staging dir on EVERY subsequent exit path.
+// stages the base+source merge. On any failure it has already written the
+// message and cleaned up any staging dir it created; the caller returns the
+// code. On success the caller must `defer os.RemoveAll(result.merged)` so
+// the staging dir is removed on every subsequent exit path.
 func runSource(source, sourceRef, basePayload string, stdout, stderr io.Writer) (sourceResult, int) {
-	// Fail BEFORE any clone/fetch when the merge base is absent — a sanctioned
-	// reorder of v1, which only discovered this at the post-clone cp
-	// (bin/init.sh:184). Since v0.18.0 the binary can run apart from the plugin
-	// (fetched cache / PATH), so the shims hand the base location over in
-	// OMAKASE_BASE_PAYLOAD (see defaultPayload); a missing base means that
-	// handoff never happened, and failing before touching the network is the
-	// friendlier order. The message names the path so a bad handoff is diagnosable.
+	// Fail before any clone/fetch when the merge base is absent: a missing
+	// base means the shim handoff (OMAKASE_BASE_PAYLOAD, see defaultPayload)
+	// never happened. The message names the path so a bad handoff is
+	// diagnosable.
 	if info, err := os.Stat(basePayload); err != nil || !info.IsDir() {
 		fmt.Fprintf(stderr, "omakase: base payload not found at %s — set OMAKASE_BASE_PAYLOAD or run omakase via the plugin's bin/ shims\n", basePayload)
 		return sourceResult{}, 1
@@ -156,17 +125,15 @@ func runSource(source, sourceRef, basePayload string, stdout, stderr io.Writer) 
 
 	payloadDir, recommends, code := fetchSource(source, sourceRef, stdout, stderr)
 	if code != 0 {
-		return sourceResult{}, code // nothing staged yet — matches v1's empty MERGED
+		return sourceResult{}, code // nothing staged yet
 	}
 
 	label := source
 	if sourceRef != "" {
-		label = source + "#" + sourceRef // bin/init.sh:174 ${SOURCE_REF:+#$SOURCE_REF}
+		label = source + "#" + sourceRef
 	}
 
-	// Merge staging: os.MkdirTemp honors TMPDIR the way v1's
-	// `mktemp -d "${TMPDIR:-/tmp}/omakase-merge.XXXXXX"` does (os.TempDir == that
-	// same ${TMPDIR:-/tmp}). The random suffix differs (GC6-sanctioned) and never
+	// The staging dir lands under ${TMPDIR:-/tmp}; its random suffix never
 	// surfaces — placement derives its rel paths against this dir.
 	merged, err := os.MkdirTemp(os.TempDir(), "omakase-merge.")
 	if err != nil {
@@ -174,21 +141,19 @@ func runSource(source, sourceRef, basePayload string, stdout, stderr io.Writer) 
 		return sourceResult{}, 1
 	}
 
-	// Copy the BASE payload tree first (cp -RP "$base/." "$MERGED/", bin/init.sh:184).
-	// The base's existence was already checked up top; naming it here still covers a
-	// genuine copy error (permissions, a base that disappeared mid-run).
+	// Copy the base payload tree first. Its existence was checked up top;
+	// the message still covers a genuine copy error (permissions, a base
+	// that disappeared mid-run).
 	if err := copyTree(basePayload, merged); err != nil {
 		os.RemoveAll(merged)
 		fmt.Fprintf(stderr, "omakase: failed to copy the base payload (%s) into the merge staging dir\n", basePayload)
 		return sourceResult{}, 1
 	}
 
-	// Overlay the source delta with REPLACE semantics — mkdir -p parent, rm -rf
-	// dest, cp -P — one file at a time so a base symlink at the same path is
-	// removed and the SOURCE wins (never written THROUGH), and a source symlink is
-	// carried across as a symlink (bin/init.sh:186-196). Walk order is
-	// filepath.WalkDir's lexical order (Global Constraint 6), consistent with the
-	// place loop; the per-entry effect is order-independent (each rel is disjoint).
+	// Overlay the source delta with replace semantics, one file at a time: a
+	// base symlink at the same path is removed and the source wins (never
+	// written through), and a source symlink is carried across as a symlink.
+	// The per-entry effect is order-independent (each rel is disjoint).
 	rels, err := walkPayload(payloadDir)
 	if err != nil {
 		os.RemoveAll(merged)
@@ -196,16 +161,16 @@ func runSource(source, sourceRef, basePayload string, stdout, stderr io.Writer) 
 	}
 	overlayOne := func(rel string) error {
 		dst := filepath.Join(merged, rel)
-		// safeMkdirAll refuses a symlinked parent under the merge root: the base
-		// (or an earlier delta entry) must never leave a directory-symlink that a
-		// later file is written straight through, out of the staging dir.
+		// safeMkdirAll: the base (or an earlier delta entry) must never
+		// leave a directory symlink that a later file is written through,
+		// out of the staging dir.
 		if err := safeMkdirAll(merged, filepath.Dir(dst)); err != nil {
 			return err
 		}
-		if err := os.RemoveAll(dst); err != nil { // rm -rf: also clears a base DIR at this path
+		if err := os.RemoveAll(dst); err != nil { // also clears a base dir at this path
 			return err
 		}
-		return CopyEntry(filepath.Join(payloadDir, rel), dst) // cp -P
+		return CopyEntry(filepath.Join(payloadDir, rel), dst)
 	}
 	for _, rel := range rels {
 		if err := overlayOne(rel); err != nil {
@@ -224,40 +189,31 @@ func runSource(source, sourceRef, basePayload string, stdout, stderr io.Writer) 
 	}, 0
 }
 
-// fetchSource ports fetch_source (bin/init.sh:104-151): resolve the disposable
-// cache dir from the source slug, refresh an existing clone (or discard + reclone
-// a stale/corrupt one), pin an optional #ref, then validate the manifest
-// FAIL-CLOSED before anything is placed. On success it prints the "cached at"
-// line and returns the cache's payload/ dir + the manifest's recommends value.
-// On any failure it writes the byte-exact message and returns a non-zero code.
+// fetchSource resolves the disposable cache dir from the source slug,
+// refreshes an existing clone (or discards and reclones a stale/corrupt
+// one), pins an optional #ref, then validates the manifest fail-closed
+// before anything is placed. On success it prints the "cached at" line and
+// returns the cache's payload/ dir and the manifest's recommends value; on
+// failure it writes the message and returns a non-zero code.
 func fetchSource(src, sourceRef string, stdout, stderr io.Writer) (payloadDir, recommends string, code int) {
 	cache := sourceCacheDir(src)
 
-	// An existing clone is refreshed to the remote default branch (never merged —
-	// cache state has no standing). Any failure discards it and falls through to a
-	// fresh clone (bin/init.sh:113-127).
-	//
-	// This refresh (a reset --hard to the remote default, inside refreshCache)
-	// runs BEFORE the #ref checkout further below — so a BRANCH pin does NOT
-	// survive a bare re-run: the hard-reset lands the cache's checked-out branch
-	// on default-branch content, and re-checking out that same branch name then
-	// yields the DEFAULT content, not the pinned one (a TAG pin does survive,
-	// since a tag's ref is immutable — see TestBranchPinNotPreserved vs.
-	// TestRememberedSourceRoundTrip in source_test.go). This is a v1 quirk
-	// (bin/init.sh:117-138), reproduced here deliberately, not a Go bug. Phase
-	// 4's `update` verb is expected to redesign exactly this refresh-then-
-	// checkout sequence.
+	// An existing clone is refreshed to the remote default branch (never
+	// merged — cache state has no standing). The refresh runs before the
+	// #ref checkout below, so a branch pin does not survive a bare re-run:
+	// the hard reset lands the checked-out branch on default-branch content,
+	// and re-checking out that branch name yields the default content. A tag
+	// pin does survive, since a tag's ref is immutable (see
+	// TestBranchPinNotPreserved vs. TestRememberedSourceRoundTrip).
 	if isDir(filepath.Join(cache, ".git")) {
 		if !refreshCache(cache) {
-			// A refresh failure can mean two different things: the cache is
-			// genuinely corrupt (falls through to reclone below, unchanged), or
-			// the fetch merely could not reach the remote (offline/transient) —
-			// in which case the on-disk checkout is still a usable copy. A bare-
-			// init repair must survive with no network, so only discard the
-			// cache when it does NOT look like a healthy, reusable checkout:
-			// `git` itself considers it structurally sound (HEAD resolves, no
-			// network needed) AND it still carries a manifest + payload/.
-			// Otherwise this is the pre-existing stale/corrupt-cache path.
+			// A refresh failure can mean the cache is genuinely corrupt
+			// (discard and reclone) or the fetch merely could not reach the
+			// remote (offline/transient), in which case the on-disk checkout
+			// is still usable — a bare-init repair must survive with no
+			// network. Discard only when the cache does not look like a
+			// healthy, reusable checkout: HEAD resolves locally and it still
+			// carries a manifest + payload/.
 			if cacheGitHealthy(cache) &&
 				fileRegular(filepath.Join(cache, "omakase.manifest")) &&
 				isDir(filepath.Join(cache, "payload")) {
@@ -270,9 +226,9 @@ func fetchSource(src, sourceRef string, stdout, stderr io.Writer) (payloadDir, r
 	}
 	if !isDir(filepath.Join(cache, ".git")) {
 		os.RemoveAll(cache)
-		os.MkdirAll(filepath.Dir(cache), 0o755) // mkdir -p "${cache%/*}"
+		os.MkdirAll(filepath.Dir(cache), 0o755)
 		clone := exec.Command("git", "clone", "-q", "--", src, cache)
-		clone.Stdout = stdout // inherited, matching v1's un-redirected clone (-q => silent on success)
+		clone.Stdout = stdout // -q: silent on success
 		clone.Stderr = stderr
 		if err := clone.Run(); err != nil {
 			fmt.Fprintf(stderr, "omakase: could not clone source '%s' into the cache (%s)\n", src, cache)
@@ -280,9 +236,8 @@ func fetchSource(src, sourceRef string, stdout, stderr io.Writer) (payloadDir, r
 		}
 	}
 
-	// Pin to a requested #ref (branch or tag). Fetch tags so a tag ref resolves;
-	// tag-fetch failure is ignored (bin/init.sh:134-138). Both git calls redirect
-	// to /dev/null in v1 (nil Stdout/Stderr here does the same).
+	// Pin to a requested #ref (branch or tag). Tags are fetched first so a
+	// tag ref resolves; a tag-fetch failure is ignored.
 	if sourceRef != "" {
 		gitCacheQuiet(cache, "fetch", "-q", "--tags", "origin") // failure ignored
 		co := exec.Command("git", "-C", cache, "-c", "advice.detachedHead=false", "checkout", "-q", sourceRef)
@@ -292,7 +247,7 @@ func fetchSource(src, sourceRef string, stdout, stderr io.Writer) (payloadDir, r
 		}
 	}
 
-	// Fail-closed manifest validation BEFORE anything is placed (bin/init.sh:141-148).
+	// Fail-closed manifest validation, before anything is placed.
 	manifestPath := filepath.Join(cache, "omakase.manifest")
 	if !fileRegular(manifestPath) {
 		fmt.Fprintf(stderr, "omakase: source '%s' has no omakase.manifest at its root — not an omakase source\n", src)
@@ -314,32 +269,31 @@ func fetchSource(src, sourceRef string, stdout, stderr io.Writer) (payloadDir, r
 
 	verPart := ""
 	if ver != "" {
-		verPart = ", version: " + ver // ${ver:+, version: $ver}
+		verPart = ", version: " + ver
 	}
 	fmt.Fprintf(stdout, "omakase: source '%s' (name: %s%s) cached at %s\n", src, name, verPart, cache)
 	return payloadDir, recommends, 0
 }
 
-// refreshCache is the && chain at bin/init.sh:117-121: fetch origin, then set the
-// remote HEAD (failure ignored) and read the default branch, then hard-reset to
-// it. Returns true iff the whole chain succeeds; a false return tells the caller
-// to discard and reclone. All child output is discarded (v1's >/dev/null 2>&1).
+// refreshCache fetches origin, sets the remote HEAD (failure ignored),
+// reads the default branch, and hard-resets to it. Returns true iff the
+// whole chain succeeds; false tells the caller to discard and reclone. All
+// child output is discarded.
 func refreshCache(cache string) bool {
 	if !gitCacheQuiet(cache, "fetch", "-q", "origin") {
 		return false
 	}
-	gitCacheQuiet(cache, "remote", "set-head", "origin", "-a") // || true
+	gitCacheQuiet(cache, "remote", "set-head", "origin", "-a") // failure ignored
 	def := gitCacheOut(cache, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
-	if def == "" { // [ -n "$def" ]
+	if def == "" {
 		return false
 	}
 	return gitCacheQuiet(cache, "reset", "-q", "--hard", def)
 }
 
-// sourceCacheDir is bin/init.sh:112:
-// "${XDG_CACHE_HOME:-$HOME/.cache}/omakase/sources/<slug>". Built by string
-// concatenation, NOT filepath.Join, so it is byte-identical to v1 (the path is
-// printed verbatim in the "cached at" and "stale or corrupt" messages).
+// sourceCacheDir is "${XDG_CACHE_HOME:-$HOME/.cache}/omakase/sources/<slug>",
+// built by string concatenation; the path is printed verbatim in the
+// "cached at" and "stale or corrupt" messages.
 func sourceCacheDir(src string) string {
 	root := os.Getenv("XDG_CACHE_HOME")
 	if root == "" {
@@ -348,28 +302,28 @@ func sourceCacheDir(src string) string {
 	return root + "/omakase/sources/" + sourceSlug(src)
 }
 
-// sourceSlug is bin/init.sh:108-111: a filesystem-safe basename (first 50 BYTES)
-// plus "-" plus the first 8 hex of sha256(src), so distinct sources never
-// collide and one source always maps to one dir.
+// sourceSlug is a filesystem-safe basename (first 50 bytes) plus "-" plus
+// the first 8 hex of sha256(src), so distinct sources never collide and one
+// source always maps to one dir.
 func sourceSlug(src string) string {
 	sum := sha256.Sum256([]byte(src))
 	urlhash := hex.EncodeToString(sum[:])
 	base := sanitizeBase(src)
-	if len(base) > 50 { // printf '%.50s' — first 50 BYTES (base is ASCII after the tr)
+	if len(base) > 50 { // first 50 bytes; base is ASCII after sanitizeBase
 		base = base[:50]
 	}
-	return base + "-" + urlhash[:8] // printf '%.8s' of the hex digest
+	return base + "-" + urlhash[:8]
 }
 
-// sanitizeBase is bin/init.sh:109-110:
-// `sed 's,/*$,,; s,.*/,,; s,\.git$,,' | tr -c 'A-Za-z0-9._-' '-'`, empty => "source".
+// sanitizeBase reduces src to its basename with trailing "/" runs and a
+// ".git" suffix stripped, every byte outside [A-Za-z0-9._-] replaced with
+// '-', and "" mapped to "source".
 func sanitizeBase(src string) string {
-	s := strings.TrimRight(src, "/") // s,/*$,,
+	s := strings.TrimRight(src, "/")
 	if i := strings.LastIndexByte(s, '/'); i >= 0 {
-		s = s[i+1:] // s,.*/,, (basename)
+		s = s[i+1:] // basename
 	}
-	s = strings.TrimSuffix(s, ".git") // s,\.git$,,
-	// tr -c 'A-Za-z0-9._-' '-' : replace every byte NOT in the set with '-'.
+	s = strings.TrimSuffix(s, ".git")
 	var b strings.Builder
 	b.Grow(len(s))
 	for i := 0; i < len(s); i++ {
@@ -387,11 +341,10 @@ func sanitizeBase(src string) string {
 	return out
 }
 
-// manifestField reproduces `sed -n 's/^<key>:[[:space:]]*//p' | head -n1 |
-// sed 's/[[:space:]]*$//'` (bin/init.sh:142/145/148): the value of the FIRST
-// line beginning "<key>:", with leading whitespace after the colon and all
-// trailing whitespace (space, tab, CR, NL, VT, FF — POSIX [[:space:]]) stripped,
-// so a CRLF manifest never leaks a ^M downstream. "" when no such line exists.
+// manifestField returns the value of the first line beginning "<key>:",
+// with whitespace after the colon and all trailing whitespace (including
+// CR) stripped, so a CRLF manifest never leaks a ^M downstream; "" when no
+// such line exists.
 func manifestField(content []byte, key string) string {
 	prefix := key + ":"
 	const ws = " \t\r\n\v\f" // POSIX [[:space:]]
@@ -403,27 +356,24 @@ func manifestField(content []byte, key string) string {
 			continue
 		}
 		v := line[len(prefix):]
-		v = strings.TrimLeft(v, ws)  // ^<key>:[[:space:]]*
-		v = strings.TrimRight(v, ws) // [[:space:]]*$
+		v = strings.TrimLeft(v, ws)
+		v = strings.TrimRight(v, ws)
 		return v
 	}
 	return ""
 }
 
-// dirNonEmpty is `[ -n "$(ls -A "$dir")" ]` (bin/init.sh:144): the directory has
-// at least one entry, including dotfiles (os.ReadDir excludes only "." / "..").
+// dirNonEmpty reports whether the directory has at least one entry,
+// including dotfiles.
 func dirNonEmpty(dir string) bool {
 	entries, err := os.ReadDir(dir)
 	return err == nil && len(entries) > 0
 }
 
-// copyTree mirrors `cp -RP "$src/." "$dst/"` (bin/init.sh:184): the CONTENTS of
-// src are copied into dst, recursing real directories and preserving symlinks
-// (never following them — WalkDir does not descend into a symlinked dir, and
-// CopyEntry recreates the link). Walk order is filepath.WalkDir's LEXICAL order
-// (Global Constraint 6). Fresh directories are created 0755 masked by umask, as
-// `cp -R` makes them; regular files and symlinks go through CopyEntry (cp -P).
-// dst must already exist (the caller's MkdirTemp).
+// copyTree copies the contents of src into dst, recursing real directories
+// and preserving symlinks (never following them). Fresh directories are
+// created 0o755 masked by umask; regular files and symlinks go through
+// CopyEntry. dst must already exist.
 func copyTree(src, dst string) error {
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -449,26 +399,21 @@ func copyTree(src, dst string) error {
 }
 
 // cacheGitHealthy reports whether cache/.git is a structurally sound git
-// checkout — HEAD resolves to a real object — checked with a purely local git
-// operation (no network). A repo with a mangled ref store (e.g. a corrupted
-// .git/HEAD) fails this even if payload/ + omakase.manifest are still present
-// on disk from an earlier clone; a healthy clone whose remote has merely gone
-// unreachable passes it. This is the signal that tells a failed refreshCache
-// apart from a genuinely corrupt cache (see fetchSource's refresh block).
+// checkout — HEAD resolves to a real object — using a purely local git
+// operation. A mangled ref store fails this; a healthy checkout whose remote
+// has gone unreachable passes it.
 func cacheGitHealthy(cache string) bool {
 	return gitCacheQuiet(cache, "rev-parse", "--verify", "-q", "HEAD")
 }
 
-// gitCacheQuiet runs `git -C cache <args...>` with all child output discarded
-// (nil Stdout/Stderr => the null device), returning whether it exited 0 —
-// v1's `git -C "$cache" ... >/dev/null 2>&1`.
+// gitCacheQuiet runs `git -C cache <args...>` with all child output
+// discarded, returning whether it exited 0.
 func gitCacheQuiet(cache string, args ...string) bool {
 	return exec.Command("git", append([]string{"-C", cache}, args...)...).Run() == nil
 }
 
-// gitCacheOut runs `git -C cache <args...>` and returns its stdout with trailing
-// newlines stripped (command-substitution semantics), "" on any error and with
-// stderr suppressed — v1's `$(git -C "$cache" ... 2>/dev/null || true)`.
+// gitCacheOut runs `git -C cache <args...>` and returns its stdout with
+// trailing newlines stripped, "" on any error, with stderr suppressed.
 func gitCacheOut(cache string, args ...string) string {
 	out, err := exec.Command("git", append([]string{"-C", cache}, args...)...).Output()
 	if err != nil {

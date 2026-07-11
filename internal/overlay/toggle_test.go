@@ -11,10 +11,9 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
-// placeSingleGate runs a fresh init against singleGatePayload's fixture so
-// each toggle test starts from a real placed .omakase/gates/example.sh row
-// (ledger + snapshot + on-disk file), matching TestFreshInit's arrangement
-// (init_test.go:124).
+// placeSingleGate runs a fresh init against singleGatePayload's fixture so each
+// toggle test starts from a real placed .omakase/gates/example.sh row (ledger +
+// snapshot + on-disk file).
 func placeSingleGate(t *testing.T) (string, *state.Repo) {
 	t.Helper()
 	dir, repo := initRepo(t)
@@ -64,11 +63,12 @@ func TestGateOffOnIdempotent(t *testing.T) {
 	}
 }
 
-// GateOff self-heals a placed gate script that is pre-2b when a gate is
-// toggled — file rewritten from the embedded copy, snapshot + ledger hash
-// updated so the fail-closed drift guards stay quiet. init also heals now
-// (TestReinitHealsStaleGateScript), so this test reverts the on-disk copy to a
-// stale stub AFTER init to isolate GateOff's own heal path.
+// GateOff self-heals a stale placed gate script (one predating the menu-bypass
+// check) when a gate is toggled — the file is rewritten from the embedded copy,
+// and the snapshot + ledger hash are updated so the fail-closed drift guards stay
+// quiet. init also heals now (TestReinitHealsStaleGateScript), so this test
+// reverts the on-disk copy to a stale stub after init to isolate GateOff's own
+// heal path.
 func TestGateOffHealsOldGateScript(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
@@ -110,11 +110,10 @@ func TestGateOffHealsOldGateScript(t *testing.T) {
 	eq(t, "ledger Hash", rows[idx].Hash, state.HashOf(placed))
 }
 
-// A bare re-init from a stale (pre-2b) payload must not leave the placed gate
-// script pre-2b: init re-heals it after the place loop, so a gate the human
-// disabled stays honored across the documented refresh flow rather than the
-// gate silently re-arming while the consent surfaces still show it off.
-// (Fix C / findings 3+7)
+// A bare re-init from a stale payload must not leave the placed gate script
+// stale: init re-heals it after the place loop, so a gate the human disabled
+// stays honored across the documented refresh flow rather than the gate silently
+// re-arming while the consent surfaces still show it off.
 func TestReinitHealsStaleGateScript(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
@@ -138,9 +137,9 @@ func TestReinitHealsStaleGateScript(t *testing.T) {
 		t.Fatalf("GateOff: %v", err)
 	}
 
-	// Bare re-init from the SAME stale payload: the place loop overwrites the
+	// Bare re-init from the same stale payload: the place loop overwrites the
 	// placed script with the stale payload copy, then the init heal restores
-	// the 2b check.
+	// the menu-bypass check.
 	out.Reset()
 	errOut.Reset()
 	if code := RunInit(nil, &out, &errOut); code != 0 {
@@ -162,11 +161,10 @@ func TestReinitHealsStaleGateScript(t *testing.T) {
 	eq(t, "ledger Hash", rows[idx].Hash, state.HashOf(placed))
 }
 
-// A git-TRACKED placed gate script must NOT be healed (overwritten) by a gate
+// A git-tracked placed gate script must not be healed (overwritten) by a gate
 // toggle — omakase never rewrites a committed file. GateOff still records the
-// disable, but warns that the tracked, pre-2b script won't honor it until the
-// repo updates the script itself, and leaves the script untouched. (Fix B /
-// finding 2)
+// disable, but warns that the tracked, stale script won't honor it until the repo
+// updates the script itself, and leaves the script untouched.
 func TestGateOffSkipsTrackedGateScript(t *testing.T) {
 	dir, repo := initRepo(t)
 	rel := ".omakase/bin/omakase-gate.sh"
@@ -288,7 +286,6 @@ func TestFileOffNotPlaced(t *testing.T) {
 // restoring the snapshot over it — the symmetric guard to FileOff's ErrEdited.
 // Without it, a group/bulk "all on" (which calls FileOn on every child,
 // already-on ones included) destroys an edited on-child with a success message.
-// (Fix A / findings 6+10)
 func TestFileOnRefusesEdited(t *testing.T) {
 	dir, repo := placeSingleGate(t)
 	rel := ".omakase/gates/example.sh"
@@ -338,9 +335,8 @@ func placeTwoRules(t *testing.T) (string, *state.Repo) {
 
 // Group turn-on must not clobber an edited, still-enabled sibling: with b.md
 // toggled off (the group is now mixed) and a.md locally edited, restoring the
-// group calls FileOn on BOTH children. FileOn(a.md) must refuse (ErrEdited,
-// edit intact) while FileOn(b.md) restores the toggled-off sibling. (Fix A,
-// group case)
+// group calls FileOn on both children. FileOn(a.md) must refuse (ErrEdited, edit
+// intact) while FileOn(b.md) restores the toggled-off sibling.
 func TestFileOnGroupSkipsEditedSibling(t *testing.T) {
 	dir, repo := placeTwoRules(t)
 	a := ".claude/rules/a.md"
@@ -377,7 +373,7 @@ func TestFileOnGroupSkipsEditedSibling(t *testing.T) {
 // ------------------------------------------------------------ consent merge
 
 // Re-init must not resurrect a file the developer toggled off (consent merge),
-// and must refresh its snapshot so a later FileOn restores the NEW payload copy.
+// and must refresh its snapshot so a later FileOn restores the new payload copy.
 func TestReinitPreservesDeclined(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
@@ -420,7 +416,7 @@ func TestReinitPreservesDeclined(t *testing.T) {
 	}
 	eq(t, "Enabled", rows[idx].Enabled, "0")
 
-	// snapshot is refreshed from the CURRENT payload copy even though the file
+	// snapshot is refreshed from the current payload copy even though the file
 	// itself was never re-placed on disk.
 	snap := filepath.Join(repo.OMK, "payload-snapshot", rel)
 	eq(t, "snapshot content", readFileT(t, snap), ruleContent)
@@ -431,9 +427,9 @@ func TestReinitPreservesDeclined(t *testing.T) {
 	}
 	eq(t, "restored content", readFileT(t, full), ruleContent)
 
-	// The machinery decline is IGNORED: machinery is never a consent item, so
+	// The machinery decline is ignored: machinery is never a consent item, so
 	// re-init re-places the gate primitive and flips its row back to enabled=1
-	// (recovers repos bricked by a pre-guard binary's --disable .omakase).
+	// (recovers repos broken by a pre-guard binary's --disable .omakase).
 	if !lexists(filepath.Join(dir, mach)) {
 		t.Errorf("machinery not re-placed by re-init: %s", mach)
 	}
@@ -444,10 +440,10 @@ func TestReinitPreservesDeclined(t *testing.T) {
 	eq(t, "machinery Enabled", rows[midx].Enabled, "1")
 }
 
-// TestReinitAllDeclinedStillWritesWorktreeinclude: when the ONLY placed file
-// is toggled off before re-init, placed ends up empty but declinedKept holds
-// that row — the .worktreeinclude block must still be (re)written from the
-// same prefixes used for .git/info/exclude, not silently skipped.
+// TestReinitAllDeclinedStillWritesWorktreeinclude: when the only placed file is
+// toggled off before re-init, placed ends up empty but declinedKept holds that
+// row — the .worktreeinclude block must still be (re)written from the same
+// prefixes used for .git/info/exclude, not silently skipped.
 //
 // .worktreeinclude is removed right after the first init (simulating it being
 // absent — e.g. a fresh checkout of this untracked, per-worktree file) so the

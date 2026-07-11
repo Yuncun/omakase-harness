@@ -7,21 +7,13 @@ import (
 	"testing"
 )
 
-// These are the RunRemove integration tests. Every byte-exact expectation
-// that isn't a pure derivation of an earlier RunInit call (the "nothing
-// installed" line, the final summary line, the hook-stub strip/chmod
-// behavior including its substring-gate quirk, the pre-0.10 fallback) was
-// validated against a live `bash bin/remove.sh` run of the same fixture
-// before being frozen — the same "bash-byte-capture" discipline
-// init_test.go's header documents. Shared helpers (initRepo, stubLefthook,
+// RunRemove integration tests. Shared helpers (initRepo, stubLefthook,
 // singleGatePayload, writeFile, readFileT, eq, chdir, runGitT, gitStdout,
-// gateContent, summaryTail) live in init_test.go / overlay_test.go, same
-// package.
+// gateContent, summaryTail) live in init_test.go / overlay_test.go.
 //
-// Global Constraint 6 (walk order) applies here only to the pre-0.10
-// payload-enumeration fallback; every other loop in remove.go walks
-// existing state (a ledger, a hooks dir listing) in FILE/LEXICAL order,
-// matching bash exactly — no divergence to account for in these fixtures.
+// Walk order matters only for the pre-0.10 payload-enumeration fallback; every
+// other loop in remove.go walks existing state (a ledger, a hooks dir listing)
+// in file/lexical order.
 
 // mustInit runs a fresh RunInit and fails the test immediately if it does
 // not exit 0 -- the "a real install already happened" precondition several
@@ -39,16 +31,13 @@ const removedLine = "omakase: removed. Hooks uninstalled, placed files deleted, 
 
 // ---------------------------------------------------------------- full teardown
 
-// TestFullTeardownAfterInit is the round-trip proof: everything a real
-// RunInit placed or wrote is gone or restored byte-exact afterward. The two
-// hook-stub fixtures are hand-seeded in EXACTLY the shape
-// internal/templates/files/install-guards.sh writes (verified by reading
-// that file), at mode 644 (non-executable) so the chmod-restoration step is
-// meaningfully exercised rather than a silent no-op — real lefthook-managed
-// stubs are always executable already, which is why bash's own awk>tmp&&mv
-// dance (losing the bit) plus the trailing chmod +x (restoring it) is
-// usually invisible; forcing the "before" state to non-executable here
-// proves the chmod actually ran instead of the file merely staying as it was.
+// TestFullTeardownAfterInit is the round-trip proof: everything a real RunInit
+// placed or wrote is gone or restored afterward. The two hook-stub fixtures are
+// hand-seeded in the shape internal/templates/files/install-guards.sh writes, at
+// mode 644 (non-executable) so the chmod-restoration step is meaningfully
+// exercised rather than a silent no-op — forcing the "before" state to
+// non-executable proves the chmod actually ran instead of the file merely
+// staying as it was.
 func TestFullTeardownAfterInit(t *testing.T) {
 	dir, repo := initRepo(t)
 	log := stubLefthook(t)
@@ -98,11 +87,11 @@ func TestFullTeardownAfterInit(t *testing.T) {
 		t.Errorf(".omakase not pruned away: %v", err)
 	}
 
-	// exclude restored BYTE-EXACT to the pre-init seeded bytes.
+	// exclude restored to the pre-init seeded bytes.
 	eq(t, "exclude restored", readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude")), "scratch/\n*.tmp\n")
 
 	// wtinc: init's only content was the derived block, so stripping it
-	// leaves zero bytes -- the file must be DELETED ([ -s ] false).
+	// leaves zero bytes -- the file must be deleted.
 	if _, err := os.Lstat(filepath.Join(dir, ".worktreeinclude")); !os.IsNotExist(err) {
 		t.Errorf(".worktreeinclude not deleted (should be empty after strip): %v", err)
 	}
@@ -124,13 +113,12 @@ func TestFullTeardownAfterInit(t *testing.T) {
 	}
 }
 
-// TestHookStubSubstringGateQuirk pins the deliberate mismatch between
-// remove.sh's strip GATE (grep -qF -- a plain substring test anywhere in
-// the file) and the strip itself (textblock.Strip -- only drops lines EQUAL
-// to the marker): a begin marker that appears only as a mid-line substring
-// still fires the gate (so chmod +x still runs) even though the strip is a
-// complete no-op on content (no line equals the marker). Verified against a
-// live `bash bin/remove.sh` run of this exact fixture.
+// TestHookStubSubstringGateQuirk pins the deliberate mismatch between the strip
+// gate (a plain substring test anywhere in the file) and the strip itself
+// (textblock.Strip, which drops only lines equal to the marker): a begin marker
+// that appears only as a mid-line substring still fires the gate (so chmod +x
+// still runs) even though the strip is a no-op on content (no line equals the
+// marker).
 func TestHookStubSubstringGateQuirk(t *testing.T) {
 	_, repo := initRepo(t)
 	stubLefthook(t)
@@ -161,9 +149,8 @@ func TestHookStubSubstringGateQuirk(t *testing.T) {
 
 // TestNeverInstalledNoSentinelIsANoOp: a repo omakase never touched has no
 // ledger, no exclude block, no $OMK -- RunRemove must report the "nothing
-// installed" line on stderr and exit 0 without touching anything. A stray
-// argv is also passed here to pin that RunRemove ignores its argv entirely
-// (bin/remove.sh has no arg-parsing at all).
+// installed" line on stderr and exit 0 without touching anything. A stray argv is
+// also passed here to pin that RunRemove ignores its argv entirely.
 func TestNeverInstalledNoSentinelIsANoOp(t *testing.T) {
 	initRepo(t)
 	stubLefthook(t)
@@ -209,11 +196,10 @@ func TestDoubleRemoveIsANoOp(t *testing.T) {
 // ---------------------------------------------------------------- pre-0.10 fallback
 
 // TestPre010FallbackPayloadEnumeration: no placed.tsv ever existed, but the
-// exclude block IS present -- the sentinel a pre-0.10 install always left.
-// remove must fall back to enumerating the payload and delete every file it
-// finds there, byte-capture-verified against a live `bash bin/remove.sh`
-// run of this exact fixture (hand-placed files mirroring what a pre-0.10
-// init would have copied, since there is no ledger to drive deletion from).
+// exclude block is present -- the sentinel a pre-0.10 install always left. remove
+// must fall back to enumerating the payload and delete every file it finds there.
+// The files are hand-placed (matching what a pre-0.10 init would have copied)
+// since there is no ledger to drive deletion from.
 func TestPre010FallbackPayloadEnumeration(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
@@ -243,10 +229,10 @@ func TestPre010FallbackPayloadEnumeration(t *testing.T) {
 	eq(t, "exclude stripped", readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude")), "scratch/\n*.tmp\n")
 }
 
-// TestSentinelViaOmkDirWithoutExcludeBlock covers the OTHER half of the
-// sentinel OR (remove.sh:59): no ledger, no exclude block at all, but a
-// leftover $OMK dir (e.g. from an interrupted prior remove) is enough on
-// its own to authorize the payload-enumeration fallback.
+// TestSentinelViaOmkDirWithoutExcludeBlock covers the other half of the sentinel
+// condition: no ledger, no exclude block at all, but a leftover $OMK dir (e.g.
+// from an interrupted prior remove) is enough on its own to authorize the
+// payload-enumeration fallback.
 func TestSentinelViaOmkDirWithoutExcludeBlock(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
@@ -274,9 +260,9 @@ func TestSentinelViaOmkDirWithoutExcludeBlock(t *testing.T) {
 
 // ---------------------------------------------------------------- skeleton lefthook.yml
 
-// TestTrackedLefthookYmlPreserved: a lefthook.yml the repo COMMITS is never
+// TestTrackedLefthookYmlPreserved: a lefthook.yml the repo commits is never
 // touched, even though its content matches the skeleton's "EXAMPLE USAGE"
-// marker -- trackedness is checked first (remove.sh:73).
+// marker -- trackedness is checked first.
 func TestTrackedLefthookYmlPreserved(t *testing.T) {
 	dir, _ := initRepo(t)
 	stubLefthook(t)
@@ -297,9 +283,9 @@ func TestTrackedLefthookYmlPreserved(t *testing.T) {
 	eq(t, "tracked lefthook.yml preserved", readFileT(t, filepath.Join(dir, "lefthook.yml")), content)
 }
 
-// TestUntrackedLefthookYmlWithoutMarkerPreserved: an untracked lefthook.yml
-// that is the project's OWN real config (no "EXAMPLE USAGE" skeleton
-// banner) must survive -- remove only deletes the auto-created skeleton.
+// TestUntrackedLefthookYmlWithoutMarkerPreserved: an untracked lefthook.yml that
+// is the project's own real config (no "EXAMPLE USAGE" skeleton banner) must
+// survive -- remove only deletes the auto-created skeleton.
 func TestUntrackedLefthookYmlWithoutMarkerPreserved(t *testing.T) {
 	dir, _ := initRepo(t)
 	stubLefthook(t)
@@ -316,10 +302,9 @@ func TestUntrackedLefthookYmlWithoutMarkerPreserved(t *testing.T) {
 	eq(t, "custom lefthook.yml preserved", readFileT(t, filepath.Join(dir, "lefthook.yml")), content)
 }
 
-// TestUntrackedSkeletonLefthookYmlDeleted: an untracked lefthook.yml
-// carrying the "EXAMPLE USAGE" banner (lefthook's own default, auto-created
-// by `lefthook install` when no config existed) is exactly what remove.sh
-// is willing to delete.
+// TestUntrackedSkeletonLefthookYmlDeleted: an untracked lefthook.yml carrying the
+// "EXAMPLE USAGE" banner (lefthook's own default, auto-created by `lefthook
+// install` when no config existed) is what remove deletes.
 func TestUntrackedSkeletonLefthookYmlDeleted(t *testing.T) {
 	dir, _ := initRepo(t)
 	stubLefthook(t)
@@ -339,9 +324,9 @@ func TestUntrackedSkeletonLefthookYmlDeleted(t *testing.T) {
 
 // ---------------------------------------------------------------- .worktreeinclude
 
-// TestWtincUserContentSurvivesBlockStripped: content OUTSIDE the marked
-// block is never touched -- only the block itself is removed, and the file
-// stays because it is not empty afterward.
+// TestWtincUserContentSurvivesBlockStripped: content outside the marked block is
+// never touched -- only the block itself is removed, and the file stays because
+// it is not empty afterward.
 func TestWtincUserContentSurvivesBlockStripped(t *testing.T) {
 	dir, _ := initRepo(t)
 	stubLefthook(t)
@@ -362,8 +347,8 @@ func TestWtincUserContentSurvivesBlockStripped(t *testing.T) {
 // ---------------------------------------------------------------- ledger semantics
 
 // TestDisabledPlacedRowStillDeleted: the ledger's "enabled" column is an
-// off-switch for drift/guard machinery, not an uninstall flag -- remove
-// deletes every row regardless (remove.sh:40-43's comment).
+// off-switch for drift/guard machinery, not an uninstall flag -- remove deletes
+// every row regardless.
 func TestDisabledPlacedRowStillDeleted(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
@@ -387,28 +372,19 @@ func TestDisabledPlacedRowStillDeleted(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------- mode parity (review finding 1)
+// ------------------------------------------------------------ marked-block rewrite mode
 //
-// bash's marked-block rewrites go through `awk ... > "$f.tmp" && mv "$f.tmp"
-// "$f"` -- a NEW inode, mode `0666 &^ umask`, regardless of what mode $f had
-// going in. Confirmed against a live shell run (umask 022):
-//
-//	$ printf orig > f; chmod 0640 f; stat -f '%Lp' f   # 640
-//	$ awk '{print}' f > f.tmp && mv f.tmp f; stat -f '%Lp' f   # 644 = 0666 &^ 022
-//
-// Each test below seeds a PRE-EXISTING file at a mode that deliberately
-// differs from `0666 &^ umask`, so a port that merely preserves the original
-// mode (os.WriteFile over an existing path, which only applies its mode
-// argument at creation) would leave the seeded mode in place instead of
-// normalizing to bash's fresh-inode mode -- exactly the divergence rewriteFile
-// (internal/overlay/overlay.go) fixes. Verified red (fails) against the
-// pre-fix os.WriteFile call sites before this fix landed; see the task-5
-// report addendum for the stash-based red/green run.
+// remove's marked-block rewrites produce a fresh file at mode `0666 &^ umask`
+// regardless of the prior mode. Each test below seeds a pre-existing file at a
+// mode that deliberately differs from `0666 &^ umask`, so a port that merely
+// preserves the original mode (os.WriteFile over an existing path only applies
+// its mode argument at creation) would leave the seeded mode in place instead of
+// normalizing -- the divergence rewriteFile (internal/overlay/overlay.go) fixes.
 
 // TestHookStubModeMatchesBashFreshInode: a hook stub seeded at 0640 (not
-// executable, and not 0666&^umask either) must end up at `0777 &^ umask`
-// after remove -- the strip's fresh 0666&^umask base, then chmod +x's
-// `0111&^umask` on top (remove.sh:24-37).
+// executable, and not 0666&^umask either) must end up at `0777 &^ umask` after
+// remove -- the strip's fresh 0666&^umask base, then chmod +x's `0111&^umask` on
+// top.
 func TestHookStubModeMatchesBashFreshInode(t *testing.T) {
 	_, repo := initRepo(t)
 	stubLefthook(t)
@@ -441,10 +417,9 @@ func TestHookStubModeMatchesBashFreshInode(t *testing.T) {
 	}
 }
 
-// TestExcludeStripModeMatchesBashFreshInode: the exclude file seeded at 0600
-// (not 0666&^umask) must end up at exactly `0666 &^ umask` after the
-// unconditional strip (remove.sh:87-90 has no chmod +x -- exclude is never
-// executable).
+// TestExcludeStripModeMatchesBashFreshInode: the exclude file seeded at 0600 (not
+// 0666&^umask) must end up at exactly `0666 &^ umask` after the unconditional
+// strip (no chmod +x -- exclude is never executable).
 func TestExcludeStripModeMatchesBashFreshInode(t *testing.T) {
 	_, repo := initRepo(t)
 	stubLefthook(t)
@@ -472,8 +447,8 @@ func TestExcludeStripModeMatchesBashFreshInode(t *testing.T) {
 }
 
 // TestWtincStripModeMatchesBashFreshInode: same fresh-inode reasoning for the
-// .worktreeinclude strip (remove.sh:77-82), seeded at 0600 with content that
-// survives the strip (so the file isn't deleted for being empty).
+// .worktreeinclude strip, seeded at 0600 with content that survives the strip (so
+// the file isn't deleted for being empty).
 func TestWtincStripModeMatchesBashFreshInode(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
@@ -503,31 +478,26 @@ func TestWtincStripModeMatchesBashFreshInode(t *testing.T) {
 	eq(t, repo.Root, readFileT(t, wtinc), "my-own-ignore/\n") // sanity: content still correct alongside the mode check
 }
 
-// ---------------------------------------------------------------- removeF error propagation (review finding 2)
+// ------------------------------------------------------------ removeF error propagation
 //
-// remove.sh:74 (`grep -q "EXAMPLE USAGE" ... && rm -f "$ROOT/lefthook.yml"`)
-// and remove.sh:81 (`[ -s "$WTINC" ] || rm -f "$WTINC"`) both run under
-// `set -e`: an `rm -f` failure there aborts the script with a nonzero exit.
-// The Go port previously discarded removeF's error at both call sites --
-// these tests force a removal failure (a non-empty, non-writable PARENT
-// directory so the unlink itself fails, not just a missing file, which
-// removeF already treats as success) and assert RunRemove now propagates it
-// as exit 1 instead of silently continuing to exit 0.
+// Both the skeleton lefthook.yml removal and the .worktreeinclude removal must
+// propagate an rm failure as exit 1, not silently continue. These tests force a
+// removal failure (a non-empty, non-writable parent directory so the unlink
+// itself fails, not just a missing file, which removeF already treats as success)
+// and assert RunRemove now propagates it as exit 1 instead of exiting 0.
 
-// TestSkeletonLefthookYmlRemovalFailurePropagates: making the repo root
-// read-only means `rm -f lefthook.yml` cannot unlink the entry (removing a
-// file requires write permission on its PARENT directory, not the file
-// itself) -- RunRemove must report that failure as exit 1, matching set -e.
+// TestSkeletonLefthookYmlRemovalFailurePropagates: making the repo root read-only
+// means `rm -f lefthook.yml` cannot unlink the entry (removing a file requires
+// write permission on its parent directory, not the file itself) -- RunRemove
+// must report that failure as exit 1.
 //
-// Uses an EMPTY payload (nothing placed) rather than singleGatePayload
-// deliberately: a nested placed path (e.g. .omakase/gates/example.sh) would
-// make the ledger-driven deletion loop, which runs BEFORE this step, prune
-// ROOT/.omakase itself once its contents are gone -- rmdir-ing a direct
-// child of ROOT needs write permission on ROOT, so THAT step would fail
-// first instead (an error path DeletePlaced already propagated correctly
-// before this fix), masking the site actually under test here. An empty
-// payload keeps the ledger-driven loop a true no-op (zero rows), isolating
-// the failure to the lefthook.yml removeF call.
+// Uses an empty payload (nothing placed) rather than singleGatePayload
+// deliberately: a nested placed path (e.g. .omakase/gates/example.sh) would make
+// the ledger-driven deletion loop, which runs before this step, prune
+// root/.omakase itself once its contents are gone -- rmdir-ing a direct child of
+// root needs write permission on root, so that step would fail first instead,
+// masking the site under test here. An empty payload keeps the ledger-driven loop
+// a no-op (zero rows), isolating the failure to the lefthook.yml removeF call.
 func TestSkeletonLefthookYmlRemovalFailurePropagates(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root ignores directory write permission; this fixture needs a non-root unlink to fail")
