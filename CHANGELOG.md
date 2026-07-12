@@ -5,12 +5,65 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-07-11
+
+### Added
+- **Worktree discipline now has layers earlier than the commit gate** (#86). The
+  commit-time allowlist gate is unchanged and remains the fail-closed last line;
+  two softer layers fire before it:
+  - `omakase-statusline.sh` appends a persistent `⚠ MAIN CHECKOUT · use a
+    worktree` segment whenever this is the main checkout and other worktrees are
+    active. A one-shot session-start reminder scrolls out of view; a status bar
+    cannot.
+  - **New `payload/.omakase/bin/omakase-worktree-guard.sh`** — an opt-in Claude
+    Code `PreToolUse` hook (matcher `Edit|Write`) that denies an edit to a
+    product file in the main checkout while other worktrees are active, before
+    the edit lands. Its allowlist mirrors the commit gate's (`AGENTS.md`,
+    `CLAUDE.md`, `.claude/**`, root `*.md`) plus two classes that cannot leak
+    into a commit anyway (`.omakase/**`, `.git/**`). It fails **open** on
+    anything it cannot resolve. `init` prints the wire-up stanza; Copilot CLI
+    does not run `PreToolUse` hooks, so this is Claude-Code-only hardening.
+
+  Both honor the same standdowns as the gate: `OMAKASE_SKIP_WORKTREE_DISCIPLINE=1`
+  and a `worktree-discipline` line in the menu's disabled-gates file.
+
 ### Changed
 - **`init`/`status`/`remove` shims fail closed when no omakase binary can be
   resolved** — recovery guidance on stderr (naming the `OMAKASE_BIN` escape
   hatch; `remove` never downloads, so it asks for a local or already-cached
   binary) and exit 1, matching `mcp.sh`. A silent bash fallback would mask
   binary-distribution failures.
+
+### Fixed
+- **`omakase remove` now sweeps every worktree**, not just the checkout it ran
+  from (#87). It wiped the shared state but left sibling worktrees holding
+  orphaned, no-longer-ignored copies of the placed files with zero gates armed.
+- **`init` and `remove` no longer touch a tracked file whose path differs only in
+  case** (#88). Under `core.ignorecase` (the macOS/Windows default) `git
+  ls-files` matches exactly, so a payload path colliding case-insensitively with
+  a tracked file overwrote it on init and deleted it on remove.
+- **Hook-time scripts resolve the repo from their own cwd** (#89, #91). A leaked
+  `GIT_DIR` / `GIT_WORK_TREE` / `GIT_COMMON_DIR` exported for another repo
+  misdirected every `rev-parse`: `verify-overlay` looked for the ledger in the
+  wrong repo and exited 0 on a gutted overlay, and `omakase-gate` wrote its
+  verdict into the wrong git dir. All four scripts now unset the three variables.
+- **Hook files are re-armed atomically** (#89) — `install-guards.sh` composes into
+  a sibling file and renames it over the hook, so an interpreter running that
+  hook keeps reading its original bytes.
+- **A worktree path containing a newline no longer truncates the worktree sweep**
+  (#91) — `git worktree list` output is now parsed NUL-terminated.
+- **`status` and the stop notice surface a weakened overlay** (#90). Drifted or
+  enabled-but-missing `.omakase/` machinery rows were skipped entirely, so a
+  gutted gate was invisible; healthy rows still stay hidden. The stop notice now
+  also nudges when a placed file's hash differs from its ledger row, pointing at
+  `status` (never `init`, which would clobber a deliberate edit).
+- **A glob-scoped gate with no resolvable base runs its step instead of silently
+  skipping** (#92). In a repo with no remote, no base ref resolved for the
+  change-scope diff, so every glob-scoped gate never ran while `status` reported
+  them armed.
+- **The `lefthook.yml` skeleton heals into new worktrees** (#83). `lefthook
+  install` writes an example config when the repo ships none; omakase never
+  placed it, so the worktree heal loop skipped it.
 
 ### Removed
 - **The v1 bash fallback bodies (`bin/legacy/`)** — the Go binary has been the
