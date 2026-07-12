@@ -707,6 +707,12 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "         status when a turn ends. Enable by adding a Stop hook to .claude/settings.json:")
 		fmt.Fprintln(stdout, "           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-stop-notice.sh")
 	}
+	if fileRegular(filepath.Join(root, ".omakase", "bin", "omakase-worktree-guard.sh")) {
+		fmt.Fprintln(stdout, "omakase: worktree guard (Claude Code only, opt-in) — while other worktrees are active,")
+		fmt.Fprintln(stdout, "         denies edits to product files in the MAIN checkout before they happen. Enable by")
+		fmt.Fprintln(stdout, "         adding a PreToolUse hook (matcher \"Edit|Write\") to .claude/settings.json:")
+		fmt.Fprintln(stdout, "           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh")
+	}
 	return 0
 }
 

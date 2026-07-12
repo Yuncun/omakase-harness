@@ -1169,8 +1169,8 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 }
 
 // TestStatuslineAndStopNoticeStanzas: the closing summary appends the statusline
-// + stop-notice wire-up stanzas iff those files exist in the repo after
-// placement, including the repo-root path line.
+// + stop-notice + worktree-guard wire-up stanzas iff those files exist in the
+// repo after placement, including the repo-root path line.
 func TestStatuslineAndStopNoticeStanzas(t *testing.T) {
 	_, repo := initRepo(t)
 	stubLefthook(t)
@@ -1178,16 +1178,18 @@ func TestStatuslineAndStopNoticeStanzas(t *testing.T) {
 	t.Setenv("OMAKASE_PAYLOAD", p)
 	writeFile(t, filepath.Join(p, ".omakase", "bin", "omakase-statusline.sh"), "#!/bin/sh\n")
 	writeFile(t, filepath.Join(p, ".omakase", "bin", "omakase-stop-notice.sh"), "#!/bin/sh\n")
+	writeFile(t, filepath.Join(p, ".omakase", "bin", "omakase-worktree-guard.sh"), "#!/bin/sh\n")
 
 	var stdout, stderr strings.Builder
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	// WalkDir lexical: omakase-statusline.sh before omakase-stop-notice.sh. The
-	// path line prints repo.Root (git's normalized toplevel), not the temp dir.
-	wantOut := "omakase: placed 2 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
+	// WalkDir lexical: statusline < stop-notice < worktree-guard. The path line
+	// prints repo.Root (git's normalized toplevel), not the temp dir.
+	wantOut := "omakase: placed 3 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
 		"  + .omakase/bin/omakase-statusline.sh\n" +
 		"  + .omakase/bin/omakase-stop-notice.sh\n" +
+		"  + .omakase/bin/omakase-worktree-guard.sh\n" +
 		summaryTail +
 		"omakase: status line — compose the scorecard into your existing bar (it never\n" +
 		"         takes over the bar). Add this command to your status-line script:\n" +
@@ -1195,7 +1197,11 @@ func TestStatuslineAndStopNoticeStanzas(t *testing.T) {
 		"         Claude Code: your ~/.claude statusLine script. Copilot CLI: ~/.copilot. tmux: status-right.\n" +
 		"omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line 'harness active'\n" +
 		"         status when a turn ends. Enable by adding a Stop hook to .claude/settings.json:\n" +
-		"           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-stop-notice.sh\n"
+		"           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-stop-notice.sh\n" +
+		"omakase: worktree guard (Claude Code only, opt-in) — while other worktrees are active,\n" +
+		"         denies edits to product files in the MAIN checkout before they happen. Enable by\n" +
+		"         adding a PreToolUse hook (matcher \"Edit|Write\") to .claude/settings.json:\n" +
+		"           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh\n"
 	eq(t, "summary with stanzas", stdout.String(), wantOut)
 }
 
