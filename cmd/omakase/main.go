@@ -1,5 +1,5 @@
 // Command omakase is the install-time binary: one static executable that
-// dispatches the verbs (status, init, remove, mcp).
+// dispatches the verbs (status, init, remove, mcp, statusline, stop-notice).
 package main
 
 import (
@@ -77,6 +77,12 @@ var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 	"mcp": func(argv []string, stdout, stderr io.Writer) int {
 		return mcpserver.Run(argv[2:], stdout, stderr)
 	},
+	"statusline": func(argv []string, stdout, stderr io.Writer) int {
+		return runStatusline(os.Stdin, stdout)
+	},
+	"stop-notice": func(argv []string, stdout, stderr io.Writer) int {
+		return runStopNotice(os.Stdin, stdout)
+	},
 }
 
 // run dispatches argv to a verb and returns the exit code, writing only to
@@ -106,5 +112,12 @@ func run(argv []string, stdout, stderr io.Writer) int {
 }
 
 func main() {
+	// Every real init refreshes the machine-wide binary copy the status-bar
+	// wiring points at. Done here and not inside RunInit so unit tests that
+	// call RunInit directly can never overwrite a developer's cached binary
+	// with a test binary.
+	if len(os.Args) > 1 && os.Args[1] == "init" {
+		overlay.SelfInstallCurrent()
+	}
 	os.Exit(run(os.Args, os.Stdout, os.Stderr))
 }

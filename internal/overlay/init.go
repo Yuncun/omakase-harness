@@ -26,6 +26,8 @@ import (
 
 	"github.com/Yuncun/omakase-harness/internal/harness"
 	"github.com/Yuncun/omakase-harness/internal/lefthook"
+	"github.com/Yuncun/omakase-harness/internal/probe"
+	"github.com/Yuncun/omakase-harness/internal/render"
 	"github.com/Yuncun/omakase-harness/internal/state"
 	"github.com/Yuncun/omakase-harness/internal/templates"
 	"github.com/Yuncun/omakase-harness/internal/textblock"
@@ -603,7 +605,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 
 	// Heal a placed gate script that a stale (pre-2b) payload just
 	// (re)placed; otherwise a bare re-init would revert an already-healed
-	// script, silently re-arming a gate the human disabled. healGateScript
+	// script, silently re-enabling a gate the human disabled. healGateScript
 	// no-ops when the script is absent, already 2b-capable, or git-tracked
 	// (warning), and otherwise rewrites it and refreshes the snapshot and
 	// ledger hash so drift detection stays quiet.
@@ -688,7 +690,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see init.sh --help): %s\n", s)
 		}
 	}
-	fmt.Fprintln(stdout, "omakase: ignores -> .git/info/exclude; hooks installed; new worktrees auto-install the harness. Nothing to commit.")
+	fmt.Fprintln(stdout, "omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.")
 	fmt.Fprintln(stdout, "omakase: see the whole harness any time with  omakase status")
 	// A source's manifest recommends: line; only a source install sets it.
 	if recommends != "" {
@@ -696,23 +698,38 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "omakase: to customize, fork the harness source (clone -> edit -> publish) and")
 	fmt.Fprintln(stdout, "         init from your copy; do not edit injected files in place (overwritten on re-init).")
-	if fileRegular(filepath.Join(root, ".omakase", "bin", "omakase-statusline.sh")) {
-		fmt.Fprintln(stdout, "omakase: status line — compose the scorecard into your existing bar (it never")
-		fmt.Fprintln(stdout, "         takes over the bar). Add this command to your status-line script:")
-		fmt.Fprintf(stdout, "           bash %s/.omakase/bin/omakase-statusline.sh\n", root)
-		fmt.Fprintln(stdout, "         Claude Code: your ~/.claude statusLine script. Copilot CLI: ~/.copilot. tmux: status-right.")
+	// The status-bar / stop-notice wiring runs the machine-wide binary copy
+	// (main() refreshes it on every real init), so these stanzas print
+	// unconditionally — the feature ships in the binary, not the payload.
+	stable := StableBinPath()
+	if stable == "" {
+		stable = "omakase" // no resolvable home: fall back to PATH wiring
 	}
-	if fileRegular(filepath.Join(root, ".omakase", "bin", "omakase-stop-notice.sh")) {
-		fmt.Fprintln(stdout, "omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line 'harness active'")
-		fmt.Fprintln(stdout, "         status when a turn ends. Enable by adding a Stop hook to .claude/settings.json:")
-		fmt.Fprintln(stdout, "           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-stop-notice.sh")
-	}
+	fmt.Fprintln(stdout, "omakase: status bar (optional) — one machine-wide segment for every omakase repo; it")
+	fmt.Fprintln(stdout, "         shows this harness's verified state and goes dark elsewhere. Wire your status")
+	fmt.Fprintln(stdout, "         line to run:")
+	fmt.Fprintf(stdout, "           %s statusline\n", stable)
+	fmt.Fprintln(stdout, "         Claude Code: statusLine.command in ~/.claude/settings.json. ccstatusline: a")
+	fmt.Fprintln(stdout, "         custom-command widget. Copilot CLI: statusLine in ~/.copilot/settings.json.")
+	fmt.Fprintln(stdout, "omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line harness status when")
+	fmt.Fprintln(stdout, "         a turn ends. Enable by adding a Stop hook to .claude/settings.json:")
+	fmt.Fprintf(stdout, "           %s stop-notice\n", stable)
 	if fileRegular(filepath.Join(root, ".omakase", "bin", "omakase-worktree-guard.sh")) {
 		fmt.Fprintln(stdout, "omakase: worktree guard (Claude Code only, opt-in) — while other worktrees are active,")
 		fmt.Fprintln(stdout, "         denies edits to product files in the MAIN checkout before they happen. Enable by")
 		fmt.Fprintln(stdout, "         adding a PreToolUse hook (matcher \"Edit|Write\") to .claude/settings.json:")
 		fmt.Fprintln(stdout, "           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh")
 	}
+
+	// ---- prove, don't assert ----
+	// The closing line is the three status-bar proofs run fresh against what
+	// this init just wrote — never an unconditional claim (a "hooks installed"
+	// assertion once shipped green-while-broken, #72/#85).
+	verdict, err := probe.Collect(root)
+	if err != nil {
+		verdict = nil
+	}
+	fmt.Fprintln(stdout, render.InitVerdict(verdict))
 	return 0
 }
 

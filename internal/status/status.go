@@ -158,7 +158,7 @@ func printStatusUsage(w io.Writer) {
   --disable NAME  turn a gate off, or remove a placed file/dir; NAME is a wired
                   gate name or a placed path. Recorded so commits/pushes skip it
                   until re-enabled.
-  --enable NAME   undo a --disable: restore the file/dir or re-arm the gate
+  --enable NAME   undo a --disable: restore the file/dir or turn the gate back on
   --help, -h      show this help
 `)
 }
@@ -209,8 +209,8 @@ func renderTerminal(w io.Writer, repo *state.Repo, home, hname, srcdisp, basever
 	fmt.Fprintln(w)
 	RenderInventory(w, repo, home, false)
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Update to the latest harness (syncs files; removes dropped ones):   omakase init")
-	fmt.Fprintln(w, "Undo everything:                                                    omakase remove")
+	fmt.Fprintln(w, "Restore the harness (replaces missing or changed files; removes dropped ones):   omakase init")
+	fmt.Fprintln(w, "Undo everything:                                                                 omakase remove")
 }
 
 // harnessName derives the harness display name from the remembered source:

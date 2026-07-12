@@ -113,7 +113,7 @@ func TestGateOffHealsOldGateScript(t *testing.T) {
 // A bare re-init from a stale payload must not leave the placed gate script
 // stale: init re-heals it after the place loop, so a gate the human disabled
 // stays honored across the documented refresh flow rather than the gate silently
-// re-arming while the consent surfaces still show it off.
+// re-enabling while the consent surfaces still show it off.
 func TestReinitHealsStaleGateScript(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)

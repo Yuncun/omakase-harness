@@ -26,12 +26,14 @@ The base harness exposes exactly **one stable primitive a custom harness may ref
 or repurposed out from under your wiring; anything else is an internal refactor you never see.
 
 The other base scripts are **optional UX, opt-in, and not part of the contract**:
-`omakase-banner.sh` (the branded box), `omakase-statusline.sh` (the status-line segment),
-`omakase-stop-notice.sh` (the Stop-hook notice), and `omakase-worktree-guard.sh` (a Claude
-Code PreToolUse hook that denies edits to product files in the main checkout while other
+`omakase-banner.sh` (the branded box) and `omakase-worktree-guard.sh` (a Claude Code
+PreToolUse hook that denies edits to product files in the main checkout while other
 worktrees are active — the pre-edit half of worktree discipline; a commit-time allowlist
 gate is the fail-closed half). Wire them only if you want them — skip them and your
 harness still works. Do not build wiring that depends on their names being stable.
+The status-bar segment and the Stop-hook notice are **binary subcommands**, not placed
+scripts: `omakase statusline` and `omakase stop-notice` (init prints the wiring). They
+probe the shared ledger and hooks, so a custom harness gets them for free.
 
 The install- and build-time wiring guard rejects any wiring that references a `.omakase/*.sh`
 the surface does not ship, so a drift between your wiring and the surface **fails closed at

@@ -17,7 +17,7 @@
 # This layer fails OPEN: anything it cannot parse or resolve is allowed silently. It is
 # a pre-layer for the developer's attention; the commit-time gate is the layer that
 # fails closed. Copilot CLI does not run PreToolUse hooks — this is Claude-Code-only
-# hardening, not the portable layer (that is the statusline warning + the gate).
+# hardening, not the portable layer (that is the commit-time gate).
 set -uo pipefail
 # A leaked GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR (exported for ANOTHER repo) would judge
 # the wrong repo's worktrees. Resolve from the hook's cwd only.
