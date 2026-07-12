@@ -44,9 +44,14 @@ var schemeRe = regexp.MustCompile(`^[a-z][a-z]*://`)
 // ✓ on a green pill when all three proofs pass, the problem facts on an
 // amber pill, or a dim "unverified" when a proof could not run. ⎇ always
 // carries the branch (its conventional meaning): a worktree's FOLDER name
-// is frozen at creation and goes stale as branches change inside it. The
-// worktree fact that matters — main checkout while others are active — is
-// its own trailing pill (issue #86), independent of harness health.
+// is frozen at creation and goes stale as branches change inside it.
+//
+// The bar answers exactly one question — is the harness verifiably running
+// here — and carries no workflow advice: worktree discipline (don't edit
+// the main checkout while agent sessions run in worktrees) is harness
+// POLICY, enforced by a custom harness's commit gate and the opt-in
+// pre-edit guard, not by the base bar (#85 discussion; retired the #86
+// soft layer).
 func Statusline(st *probe.State, o Opts) string {
 	if st == nil || !st.Installed {
 		return ""
@@ -67,23 +72,17 @@ func Statusline(st *probe.State, o Opts) string {
 	problems := problemFacts(st)
 	unknown := st.Armed == probe.Unknown || st.FilesPresent == probe.Unknown || st.HashesMatch == probe.Unknown
 
-	var out string
 	switch {
 	case len(problems) > 0:
 		if unknown {
 			problems = append(problems, "unverified")
 		}
-		out = pill(identity+" ", dimOn, o.Color) + " " + pill("⚠ "+strings.Join(problems, " · ")+" ", amberOn, o.Color)
+		return pill(identity+" ", dimOn, o.Color) + " " + pill("⚠ "+strings.Join(problems, " · ")+" ", amberOn, o.Color)
 	case unknown:
-		out = pill(identity+" · unverified ", dimOn, o.Color)
+		return pill(identity+" · unverified ", dimOn, o.Color)
 	default:
-		out = pill(identity+" ✓ ", greenOn, o.Color)
+		return pill(identity+" ✓ ", greenOn, o.Color)
 	}
-
-	if st.MainCheckout && st.WorktreeCount > 1 && !st.DisciplineOff {
-		out += " " + pill("⚠ main checkout · use a worktree ", amberOn, o.Color)
-	}
-	return out
 }
 
 // StopNotice renders the end-of-turn message body ("" = say nothing).

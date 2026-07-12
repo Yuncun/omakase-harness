@@ -10,15 +10,13 @@ import (
 // proven is a fully-verified fact sheet; tests mutate copies of it.
 func proven() *probe.State {
 	return &probe.State{
-		Installed:     true,
-		Project:       "pixterm-engine",
-		Branch:        "main",
-		Source:        "https://github.com/Yuncun/pixterm-harness",
-		Armed:         probe.OK,
-		FilesPresent:  probe.OK,
-		HashesMatch:   probe.OK,
-		MainCheckout:  true,
-		WorktreeCount: 1,
+		Installed:    true,
+		Project:      "pixterm-engine",
+		Branch:       "main",
+		Source:       "https://github.com/Yuncun/pixterm-harness",
+		Armed:        probe.OK,
+		FilesPresent: probe.OK,
+		HashesMatch:  probe.OK,
 	}
 }
 
@@ -111,50 +109,16 @@ func TestStatuslineProblemPlusUnknownShowsBoth(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------- discipline
-
-func TestStatuslineMainCheckoutWarning(t *testing.T) {
-	st := proven()
-	st.WorktreeCount = 3
-	got := plain(st)
-	if !strings.Contains(got, "main checkout · use a worktree") {
-		t.Fatalf("main-checkout warning missing: %q", got)
-	}
-	if !strings.Contains(got, "✓") {
-		t.Fatalf("discipline warning must not suppress the proven state: %q", got)
-	}
-
-	st.DisciplineOff = true
-	if got := plain(st); strings.Contains(got, "main checkout") {
-		t.Fatalf("warning shown despite standdown: %q", got)
-	}
-
-	st = proven()
-	st.WorktreeCount = 3
-	st.MainCheckout = false
-	st.Worktree = "feature-x"
-	if got := plain(st); strings.Contains(got, "main checkout") {
-		t.Fatalf("warning shown in a linked worktree: %q", got)
-	}
-}
-
 // ---------------------------------------------------------------- identity
 
-// ⎇ always shows the branch: a worktree's folder name is frozen at
-// creation and goes stale as branches change inside it (Eric misread the
-// folder name as a branch on day one — that confusion is the spec).
-func TestStatuslineBranchNotWorktreeFolderName(t *testing.T) {
+// ⎇ shows the branch (its conventional meaning) — never a worktree folder
+// name, which is frozen at creation and goes stale as branches change
+// inside it (Eric misread a stale folder name as a branch on day one).
+func TestStatuslineShowsTheBranch(t *testing.T) {
 	st := proven()
-	st.MainCheckout = false
-	st.WorktreeCount = 2
-	st.Worktree = "issue-72-status-failclosed" // stale folder name
 	st.Branch = "issue-85-statusline"
-	got := plain(st)
-	if !strings.Contains(got, "⎇issue-85-statusline") {
+	if got := plain(st); !strings.Contains(got, "⎇issue-85-statusline") {
 		t.Fatalf("branch not shown: %q", got)
-	}
-	if strings.Contains(got, "issue-72-status-failclosed") {
-		t.Fatalf("stale worktree folder name shown: %q", got)
 	}
 }
 

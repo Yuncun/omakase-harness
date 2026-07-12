@@ -50,7 +50,6 @@ type State struct {
 
 	// Identity facts.
 	Project      string // basename of the main worktree's root
-	Worktree     string // linked-worktree directory name; "" in the main checkout
 	Branch       string // current branch, or the short sha when detached
 	Source       string // $OMK/source first line; "" = bare base install
 	NameOverride string // $OMAKASE_NAME, else .omakase/NAME; "" = none
@@ -62,11 +61,6 @@ type State struct {
 	HashesMatch  Tri // no enabled row drifted from its ledger hash
 	Missing      int // enabled rows absent (FilesPresent detail)
 	Drifted      int // enabled rows whose content diverged (HashesMatch detail)
-
-	// Worktree-discipline facts (issue #86).
-	MainCheckout  bool
-	WorktreeCount int
-	DisciplineOff bool // the audited skip env, or the menu's persistent disable
 
 	LastRun *RunSummary // nil when the ledger records no sha-bearing run
 
@@ -91,14 +85,10 @@ func Collect(cwd string) (*State, error) {
 	}
 	st.Installed = true
 
-	// Identity.
-	roots := state.WorktreeRoots(repo.Root)
-	st.WorktreeCount = len(roots)
-	st.MainCheckout = repo.Root == roots[0]
-	st.Project = filepath.Base(roots[0])
-	if !st.MainCheckout {
-		st.Worktree = filepath.Base(repo.Root)
-	}
+	// Identity. The project is named by the MAIN worktree's root (first
+	// WorktreeRoots entry), so a linked worktree still reports the project
+	// it belongs to, not its own folder name.
+	st.Project = filepath.Base(state.WorktreeRoots(repo.Root)[0])
 	st.Branch = branch(repo.Root)
 	st.Source = state.FirstLine(filepath.Join(repo.OMK, "source"))
 	st.BaseVersion = state.FirstLine(filepath.Join(repo.Root, ".omakase", "VERSION"))
@@ -111,13 +101,6 @@ func Collect(cwd string) (*State, error) {
 	// Proofs.
 	st.Armed = armed(repo.Root)
 	st.FilesPresent, st.HashesMatch, st.Missing, st.Drifted = files(repo.Root, repo.OMK)
-
-	// Discipline standdowns, same pair the commit gate honors.
-	if os.Getenv("OMAKASE_SKIP_WORKTREE_DISCIPLINE") == "1" {
-		st.DisciplineOff = true
-	} else if hasLine(filepath.Join(repo.OMK, "disabled-gates"), "worktree-discipline") {
-		st.DisciplineOff = true
-	}
 
 	st.LastRun = lastRun(filepath.Join(repo.OMK, "ledger.tsv"))
 	return st, nil
@@ -281,24 +264,6 @@ func lastRun(ledger string) *RunSummary {
 		}
 	}
 	return sum
-}
-
-// hasLine reports whether path contains line exactly (the disabled-gates
-// membership test, matching the gate's `grep -Fxq`).
-func hasLine(path, line string) bool {
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	for sc.Scan() {
-		if sc.Text() == line {
-			return true
-		}
-	}
-	return false
 }
 
 func gitOut(dir string, args ...string) (string, error) {

@@ -123,9 +123,6 @@ func TestCollectIdentityFacts(t *testing.T) {
 	if st.Branch != "main" {
 		t.Fatalf("Branch = %q, want main", st.Branch)
 	}
-	if st.Worktree != "" {
-		t.Fatalf("Worktree = %q, want empty in the main checkout", st.Worktree)
-	}
 	if st.Source != "github.com/acme/team-harness" {
 		t.Fatalf("Source = %q", st.Source)
 	}
@@ -284,7 +281,9 @@ func TestCollectEmptyLedgerHashSkipsDrift(t *testing.T) {
 
 // ---------------------------------------------------------------- worktrees
 
-func TestCollectWorktreeFacts(t *testing.T) {
+// A linked worktree reports the project it belongs to (the main root's
+// basename, not its own folder), its own branch, and the shared hooks.
+func TestCollectFromALinkedWorktree(t *testing.T) {
 	root := newTestRepo(t)
 	installHarness(t, root)
 	wt := filepath.Join(t.TempDir(), "feature-x")
@@ -294,20 +293,7 @@ func TestCollectWorktreeFacts(t *testing.T) {
 	writeFile(t, wt, ".omakase/bin/omakase-gate.sh", "#!/bin/sh\n")
 
 	main := collect(t, root)
-	if !main.MainCheckout || main.WorktreeCount != 2 {
-		t.Fatalf("main checkout: MainCheckout=%v count=%d, want true/2", main.MainCheckout, main.WorktreeCount)
-	}
-	if main.Worktree != "" {
-		t.Fatalf("main checkout Worktree = %q, want empty", main.Worktree)
-	}
-
 	linked := collect(t, wt)
-	if linked.MainCheckout {
-		t.Fatal("linked worktree reported as main checkout")
-	}
-	if linked.Worktree != "feature-x" {
-		t.Fatalf("Worktree = %q, want feature-x", linked.Worktree)
-	}
 	if linked.Branch != "feature-x" {
 		t.Fatalf("Branch = %q, want feature-x", linked.Branch)
 	}
@@ -316,24 +302,6 @@ func TestCollectWorktreeFacts(t *testing.T) {
 	}
 	if got, want := linked.Project, filepath.Base(main.Root); got != want {
 		t.Fatalf("Project in worktree = %q, want main-root basename %q", got, want)
-	}
-}
-
-func TestCollectDisciplineStanddowns(t *testing.T) {
-	root := newTestRepo(t)
-	omk := installHarness(t, root)
-	if st := collect(t, root); st.DisciplineOff {
-		t.Fatal("DisciplineOff: want false by default")
-	}
-	writeFile(t, root, filepath.Join(".git", "omakase", "disabled-gates"), "worktree-discipline\n")
-	_ = omk
-	if st := collect(t, root); !st.DisciplineOff {
-		t.Fatal("DisciplineOff: want true with a disabled-gates line")
-	}
-	os.Remove(filepath.Join(root, ".git", "omakase", "disabled-gates"))
-	t.Setenv("OMAKASE_SKIP_WORKTREE_DISCIPLINE", "1")
-	if st := collect(t, root); !st.DisciplineOff {
-		t.Fatal("DisciplineOff: want true with the skip env set")
 	}
 }
 

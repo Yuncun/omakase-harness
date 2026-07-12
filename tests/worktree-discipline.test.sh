@@ -2,10 +2,9 @@
 # TDD spec for the EARLIER-THAN-COMMIT worktree-discipline layers (issue #86). The
 # commit-time gate (a custom harness's allowlist gate over omakase-gate.sh) stays the
 # fail-closed last line; these two layers fire before it:
-#   - `omakase statusline` (binary): appends a persistent "main checkout · use a worktree"
-#                                   segment when this is the main checkout AND other
-#                                   worktrees are active — covered by the Go tests in
-#                                   internal/probe + internal/render, not here.
+# (The #86 soft layer — a statusline "main checkout" warning — was retired in the #85
+#  redesign: the base bar shows harness health only; worktree discipline is harness
+#  POLICY, carried by a custom harness's commit gate and this opt-in guard.)
 #   - omakase-worktree-guard.sh   : opt-in Claude Code PreToolUse hook (matcher Edit|Write).
 #                                   Denies edits to product files in the MAIN checkout while
 #                                   other worktrees are active; the allowlist mirrors the
