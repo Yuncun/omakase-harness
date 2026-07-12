@@ -1,57 +1,119 @@
-<!-- AGENTS / maintainers: keep this README sparse — intro, install, commands, a short
-     "how it works", and the links to docs/. Deeper detail belongs in docs/ (concepts,
-     authoring, reference), NOT here. This README is a doorway, not a manual. -->
+<!-- Maintainers: this README is sell-first but lean — intro, demo, install, commands,
+     what a harness is, how it works, why not commit, sharing. Deeper detail belongs in
+     docs/ (concepts, authoring, reference), not here. -->
 
-# omakase
+<h1 align="center">omakase</h1>
 
-Omakase installs a repository's local development harness (git hooks, gates, lint
-rules, agent instructions) into any target repo as a gitignored overlay. The harness
-runs from the target's working tree but never enters its git history. One repo defines
-a harness; any number of repos install it.
+<p align="center">
+  <a href="https://github.com/Yuncun/omakase-harness/actions/workflows/tests.yml"><img src="https://github.com/Yuncun/omakase-harness/actions/workflows/tests.yml/badge.svg" alt="tests"></a>
+  <a href="https://github.com/Yuncun/omakase-harness/releases"><img src="https://img.shields.io/github/v/release/Yuncun/omakase-harness" alt="release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Yuncun/omakase-harness" alt="license"></a>
+</p>
 
-A project's enforcement layer usually lives committed inside the repo it guards. That
-couples it to one project, forces it on every contributor, and copies the same checks
-into every repo that wants them. Omakase keeps a harness in its own repo.
-Installing registers each placed file in `.git/info/exclude`, so git never tracks it and
-it never reaches a pull request. Removing deletes exactly what was placed.
+<p align="center"><b>A harness manager for coding agents.</b><br>
+Organize, share, and deploy agent instructions, skills, and git-hook gates.
+They are placed in the working tree and never committed.</p>
+
+omakase installs a harness from one repo into any number of others. Instruction
+files go where your agent reads them. Gates are wired to git hooks. Every placed
+file is registered in `.git/info/exclude`, so nothing enters git history or
+shows up in a pull request. `omakase status` lists each item and lets you turn
+it off. `omakase remove` deletes everything it placed.
+
+<!-- demo.gif slot — VHS tape to live at docs/tapes/demo.tape.
+     Storyboard: init → status menu opens, toggle one gate → a commit trips the lint gate
+     → git status: clean. The transcript below is a SKETCH with invented output; the tape
+     replaces it. -->
+
+```
+$ omakase init acme/webapp-harness
+placed 14 files, wired 3 gates (lint, test, secrets) — nothing committed
+
+$ git status
+nothing to commit, working tree clean
+```
 
 ## Install
 
-Claude Code and GitHub Copilot CLI (same commands — Copilot reads the same plugin
-manifest; its skill names are not `omakase:`-prefixed):
+```
+brew install yuncun/tap/omakase
+```
 
-    /plugin marketplace add yuncun/omakase-harness
-    /plugin install omakase@omakase
-    /omakase:init
+<!-- tap not published yet — ship with whichever methods are live at publish time -->
 
-Any other environment, or a plain shell:
+Or grab a binary from [releases](https://github.com/Yuncun/omakase-harness/releases)
+(checksums published), or build from source:
 
-    cd /path/to/target-repo
-    bash /path/to/omakase/bin/init.sh
+```
+go install github.com/Yuncun/omakase-harness/cmd/omakase@latest
+```
 
-The plugin wraps the same `bin/` scripts behind skills: `/omakase:init`,
-`/omakase:status`, `/omakase:remove`, plus `/omakase:add-gate` (authoring: wire a
-check into a git hook).
+Inside Claude Code or GitHub Copilot CLI, the plugin wraps the same commands:
 
-## Commands
+```
+/plugin marketplace add yuncun/omakase-harness
+/plugin install omakase@omakase
+/omakase:init
+```
 
-    init.sh [<owner/repo[#ref]> | --source <git-url|path>] [--cut-over]
-                              overlay the harness, exclude it from git, install hooks
-    status.sh                 the menu: see and toggle every steering file and gate
-                              (interactive on a terminal; static page when piped)
-    remove.sh                 delete the placed files, uninstall hooks, restore the repo
+## Use
 
-`init` installs lefthook if absent, fetching a pinned, checksum-verified binary into a
-per-machine cache — the same mechanism self-provisions the omakase binary itself when a
-clone has no Go. `omakase mcp` serves the same status + consent menu inside Claude Code
-and Copilot CLI. Flags and environment variables are in the
-[reference](docs/reference.md).
+```
+omakase init owner/repo   place that repo's harness here: files in, gates wired, all of it excluded
+omakase status            the menu — see every item, toggle any of them off (plain text when piped)
+omakase init              bare: repair or refresh from the remembered source
+omakase remove            delete everything placed, unwire the hooks
+omakase mcp               the same menu, served inside Claude Code and Copilot CLI
+```
+
+## What's a harness?
+
+Everything a team places in a repo to shape how agents (and people) work there,
+without being part of the product itself. It has two halves:
+
+- **steering**, before the agent acts: instructions, rules, skills
+- **checking**, after it produces: lint, test, and secret gates on commit and push
+
+A rule of thumb for what belongs in a harness: two contributors could disagree
+about it and still build the identical product. A 25-minute test gate or a
+coding convention passes that test. Source code and the CI that defines
+correctness do not.
 
 ## How it works
 
-Gates run through git hooks, installed via lefthook, so they fire on commit and push
-whatever produced the change: an agent, an IDE, or a plain `git` command. Installed files
-are never staged or committed, and `remove` reverses every step.
+Placing works differently for each half. Steering files are copied to where the
+agent reads them and excluded from git. Gates are also excluded, and wired to
+git hooks through [lefthook](https://github.com/evilmartians/lefthook), fetched
+as a pinned, checksum-verified binary if absent. Hooks fire on commit and push
+regardless of what made the change: an agent, an IDE, or plain `git`. The source
+repo is remembered, so a bare `omakase init` repairs or refreshes the overlay,
+and anything you turned off stays off. A skipped gate prints that it was
+skipped.
+
+For scripts and agents, `omakase status --plain` prints a stable text page, and
+`--disable` / `--enable` do what the menu does.
+
+## Why not just commit these files?
+
+The short version — the manifesto has the full argument with sources:
+<!-- manifesto link goes here once the gh-pages essay exists -->
+
+- Instruction files rot. They are reviewed like documentation but consumed like
+  configuration. OpenAI's codex repo shipped a 322-line AGENTS.md that pointed
+  at a file that no longer existed.
+- Committed config activates on every clone behind one folder-trust click.
+  Committed hook config is a known attack class with CVEs, and enterprise push
+  rulesets now block those file paths.
+- Attention is per-person. Every committed skill and rule spends every
+  contributor's instruction budget, whether or not it helps them.
+- These files are working preferences, not the product. Contributors can
+  disagree about them while shipping identical code.
+
+## Share your harness
+
+A harness is a repo with a `payload/` directory and an `omakase.manifest`.
+Publish it and anyone can install it with `omakase init you/your-harness`.
+See [authoring](docs/authoring.md).
 
 ## Documentation
 
