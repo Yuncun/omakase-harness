@@ -41,10 +41,18 @@ var schemeRe = regexp.MustCompile(`^[a-z][a-z]*://`)
 // segment) when st is nil or the harness is not installed here.
 //
 // Shape: `<icon> <project> ⎇<branch> · <harness>` followed by the state —
-// ✓ on a green pill when all three proofs pass, the problem facts on an
-// amber pill, or a dim "unverified" when a proof could not run. ⎇ always
-// carries the branch (its conventional meaning): a worktree's FOLDER name
-// is frozen at creation and goes stale as branches change inside it.
+// ✓ on a green pill when all three proofs pass, one problem fact and its
+// fix on an amber pill, or a dim "unverified" when a proof could not run.
+// ⎇ always carries the branch (its conventional meaning): a worktree's
+// FOLDER name is frozen at creation and goes stale as branches change
+// inside it.
+//
+// The amber state is one fact + one fix, never counts or a fact list —
+// counts and per-file detail belong to `omakase status` (#85 field audit:
+// no comparable tool renders counted health facts on an ambient surface).
+// Hooks-not-installed outranks files-changed because a dead hook runs
+// nothing, and a proven problem outranks an unverified proof because it is
+// actionable now; neither ordering can paint green.
 //
 // The bar answers exactly one question — is the harness verifiably running
 // here — and carries no workflow advice: worktree discipline (don't edit
@@ -69,15 +77,12 @@ func Statusline(st *probe.State, o Opts) string {
 		identity += " · " + h
 	}
 
-	problems := problemFacts(st)
-	unknown := st.Armed == probe.Unknown || st.FilesPresent == probe.Unknown || st.HashesMatch == probe.Unknown
+	problem := problemFact(st)
+	unknown := st.HooksInstalled == probe.Unknown || st.FilesPresent == probe.Unknown || st.HashesMatch == probe.Unknown
 
 	switch {
-	case len(problems) > 0:
-		if unknown {
-			problems = append(problems, "unverified")
-		}
-		return pill(identity+" ", dimOn, o.Color) + " " + pill("⚠ "+strings.Join(problems, " · ")+" ", amberOn, o.Color)
+	case problem != "":
+		return pill(identity+" ", dimOn, o.Color) + " " + pill("⚠ "+problem+" — omakase init ", amberOn, o.Color)
 	case unknown:
 		return pill(identity+" · unverified ", dimOn, o.Color)
 	default:
@@ -97,22 +102,14 @@ func StopNotice(st *probe.State, ranThisTurn bool) string {
 		name = "omakase"
 	}
 
-	if st.Armed == probe.Problem {
-		return name + " is not active — hooks are not armed · omakase init to arm"
+	if st.HooksInstalled == probe.Problem {
+		return name + " is not active — hooks not installed · omakase init"
+	}
+	if st.FilesPresent == probe.Problem || st.HashesMatch == probe.Problem {
+		return name + " — harness files changed · omakase init"
 	}
 
-	var nudges []string
-	if st.FilesPresent == probe.Problem {
-		nudges = append(nudges, name+" — "+countNoun(st.Missing, "file")+" missing · omakase init to update")
-	}
-	if st.HashesMatch == probe.Problem {
-		nudges = append(nudges, name+" — files differ from canonical · omakase status to review")
-	}
-	if len(nudges) > 0 {
-		return strings.Join(nudges, "\n")
-	}
-
-	if st.Armed == probe.Unknown || st.FilesPresent == probe.Unknown || st.HashesMatch == probe.Unknown {
+	if st.HooksInstalled == probe.Unknown || st.FilesPresent == probe.Unknown || st.HashesMatch == probe.Unknown {
 		return name + " — state could not be verified"
 	}
 
@@ -150,20 +147,18 @@ func HarnessSlot(st *probe.State) string {
 	return n
 }
 
-// problemFacts lists the affirmatively-failing proofs as short facts, in a
-// fixed order so the bar is stable frame to frame.
-func problemFacts(st *probe.State) []string {
-	var facts []string
-	if st.Armed == probe.Problem {
-		facts = append(facts, "hooks not armed")
+// problemFact collapses the affirmatively-failing proofs to the single most
+// severe fact, or "" when none fail. Missing and drifted files share one
+// fact — the fix is the same either way, and ensure-present.sh already heals
+// missing files silently on the next checkout.
+func problemFact(st *probe.State) string {
+	switch {
+	case st.HooksInstalled == probe.Problem:
+		return "hooks not installed"
+	case st.FilesPresent == probe.Problem || st.HashesMatch == probe.Problem:
+		return "harness files changed"
 	}
-	if st.FilesPresent == probe.Problem {
-		facts = append(facts, countNoun(st.Missing, "file")+" missing")
-	}
-	if st.HashesMatch == probe.Problem {
-		facts = append(facts, countNoun(st.Drifted, "file")+" drifted")
-	}
-	return facts
+	return ""
 }
 
 // pill wraps s in one color segment, or returns it bare without color.

@@ -10,13 +10,13 @@ import (
 // proven is a fully-verified fact sheet; tests mutate copies of it.
 func proven() *probe.State {
 	return &probe.State{
-		Installed:    true,
-		Project:      "pixterm-engine",
-		Branch:       "main",
-		Source:       "https://github.com/Yuncun/pixterm-harness",
-		Armed:        probe.OK,
-		FilesPresent: probe.OK,
-		HashesMatch:  probe.OK,
+		Installed:      true,
+		Project:        "pixterm-engine",
+		Branch:         "main",
+		Source:         "https://github.com/Yuncun/pixterm-harness",
+		HooksInstalled: probe.OK,
+		FilesPresent:   probe.OK,
+		HashesMatch:    probe.OK,
 	}
 }
 
@@ -49,11 +49,11 @@ func TestStatuslineProvenIsGreenOnlyWhenAllProofsOK(t *testing.T) {
 		t.Fatalf("proven color misses the green pill: %q", c)
 	}
 	for _, mutate := range []func(*probe.State){
-		func(s *probe.State) { s.Armed = probe.Problem },
-		func(s *probe.State) { s.Armed = probe.Unknown },
-		func(s *probe.State) { s.FilesPresent = probe.Problem; s.Missing = 1 },
+		func(s *probe.State) { s.HooksInstalled = probe.Problem },
+		func(s *probe.State) { s.HooksInstalled = probe.Unknown },
+		func(s *probe.State) { s.FilesPresent = probe.Problem },
 		func(s *probe.State) { s.FilesPresent = probe.Unknown },
-		func(s *probe.State) { s.HashesMatch = probe.Problem; s.Drifted = 1 },
+		func(s *probe.State) { s.HashesMatch = probe.Problem },
 		func(s *probe.State) { s.HashesMatch = probe.Unknown },
 	} {
 		st := proven()
@@ -69,15 +69,16 @@ func TestStatuslineProvenIsGreenOnlyWhenAllProofsOK(t *testing.T) {
 
 // ---------------------------------------------------------------- problems
 
-func TestStatuslineProblemFacts(t *testing.T) {
+// The amber state is one fact + one fix — never counts, never a fact list
+// (#85 field audit; detail lives in `omakase status`). Hooks-not-installed
+// outranks files-changed: a dead hook runs nothing, and the fix is the same.
+func TestStatuslineProblemIsOneFactPlusFix(t *testing.T) {
 	st := proven()
-	st.Armed = probe.Problem
+	st.HooksInstalled = probe.Problem
 	st.FilesPresent = probe.Problem
-	st.Missing = 2
 	st.HashesMatch = probe.Problem
-	st.Drifted = 1
 	got := plain(st)
-	want := "🥡 pixterm-engine ⎇main · pixterm-harness ⚠ hooks not armed · 2 files missing · 1 file drifted"
+	want := "🥡 pixterm-engine ⎇main · pixterm-harness ⚠ hooks not installed — omakase init"
 	if got != want {
 		t.Fatalf("problem plain:\n got %q\nwant %q", got, want)
 	}
@@ -86,9 +87,26 @@ func TestStatuslineProblemFacts(t *testing.T) {
 	}
 }
 
+// Missing and drifted files collapse to ONE state with one fix.
+func TestStatuslineFileProblemsCollapseToOneState(t *testing.T) {
+	for _, mutate := range []func(*probe.State){
+		func(s *probe.State) { s.FilesPresent = probe.Problem },
+		func(s *probe.State) { s.HashesMatch = probe.Problem },
+		func(s *probe.State) { s.FilesPresent = probe.Problem; s.HashesMatch = probe.Problem },
+	} {
+		st := proven()
+		mutate(st)
+		got := plain(st)
+		want := "🥡 pixterm-engine ⎇main · pixterm-harness ⚠ harness files changed — omakase init"
+		if got != want {
+			t.Fatalf("file problem plain:\n got %q\nwant %q", got, want)
+		}
+	}
+}
+
 func TestStatuslineUnknownNeverReadsAsWorking(t *testing.T) {
 	st := proven()
-	st.Armed = probe.Unknown
+	st.HooksInstalled = probe.Unknown
 	got := plain(st)
 	if !strings.Contains(got, "unverified") {
 		t.Fatalf("unknown plain misses 'unverified': %q", got)
@@ -99,13 +117,18 @@ func TestStatuslineUnknownNeverReadsAsWorking(t *testing.T) {
 	}
 }
 
-func TestStatuslineProblemPlusUnknownShowsBoth(t *testing.T) {
+// A proven problem outranks an unverified proof — the amber fact + fix
+// renders alone; green stays impossible (invariant test above).
+func TestStatuslineProblemOutranksUnknown(t *testing.T) {
 	st := proven()
-	st.Armed = probe.Problem
+	st.HooksInstalled = probe.Problem
 	st.HashesMatch = probe.Unknown
 	got := plain(st)
-	if !strings.Contains(got, "hooks not armed") || !strings.Contains(got, "unverified") {
-		t.Fatalf("mixed state misses a fact: %q", got)
+	if !strings.Contains(got, "hooks not installed — omakase init") {
+		t.Fatalf("mixed state misses the problem fact: %q", got)
+	}
+	if strings.Contains(got, "✓") {
+		t.Fatalf("mixed state reads as working: %q", got)
 	}
 }
 
@@ -180,20 +203,17 @@ func TestStopNoticeLastRun(t *testing.T) {
 
 func TestStopNoticeProblems(t *testing.T) {
 	st := proven()
-	st.Armed = probe.Problem
-	if got := StopNotice(st, false); !strings.Contains(got, "is not active") {
-		t.Fatalf("not-armed notice: %q", got)
+	st.HooksInstalled = probe.Problem
+	if got := StopNotice(st, false); got != "pixterm-harness is not active — hooks not installed · omakase init" {
+		t.Fatalf("hooks notice: %q", got)
 	}
 
 	st = proven()
 	st.FilesPresent = probe.Problem
-	st.Missing = 2
 	st.HashesMatch = probe.Problem
-	st.Drifted = 1
 	got := StopNotice(st, false)
-	if !strings.Contains(got, "2 files missing · omakase init to update") ||
-		!strings.Contains(got, "files differ from canonical · omakase status to review") {
-		t.Fatalf("nudge notice: %q", got)
+	if got != "pixterm-harness — harness files changed · omakase init" {
+		t.Fatalf("files notice: %q", got)
 	}
 	if strings.Contains(got, "✓") {
 		t.Fatalf("✓ rendered with failing proofs: %q", got)

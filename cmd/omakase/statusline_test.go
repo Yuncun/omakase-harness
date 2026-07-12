@@ -12,7 +12,7 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
-// harnessRepo builds a temp git repo with a minimal installed, armed, clean
+// harnessRepo builds a temp git repo with a minimal installed, hooked, clean
 // overlay: one enabled placed file whose ledger hash matches, and a
 // lefthook pre-commit stub in the shared hooks dir.
 func harnessRepo(t *testing.T) string {

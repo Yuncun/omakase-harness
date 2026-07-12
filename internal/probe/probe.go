@@ -55,12 +55,12 @@ type State struct {
 	NameOverride string // $OMAKASE_NAME, else .omakase/NAME; "" = none
 	BaseVersion  string // .omakase/VERSION first line
 
-	// Proofs.
-	Armed        Tri // git's effective hooks dir holds a lefthook-managed stub
-	FilesPresent Tri // every enabled placed row exists in this worktree
-	HashesMatch  Tri // no enabled row drifted from its ledger hash
-	Missing      int // enabled rows absent (FilesPresent detail)
-	Drifted      int // enabled rows whose content diverged (HashesMatch detail)
+	// Proofs. "Installed" follows the field's vocabulary (pre-commit:
+	// "pre-commit installed at <path>"; lefthook: `lefthook install`) —
+	// no coined words like "armed" on any surface.
+	HooksInstalled Tri // git's effective hooks dir holds a lefthook-managed stub
+	FilesPresent   Tri // every enabled placed row exists in this worktree
+	HashesMatch    Tri // no enabled row drifted from its ledger hash
 
 	LastRun *RunSummary // nil when the ledger records no sha-bearing run
 
@@ -99,8 +99,8 @@ func Collect(cwd string) (*State, error) {
 	}
 
 	// Proofs.
-	st.Armed = armed(repo.Root)
-	st.FilesPresent, st.HashesMatch, st.Missing, st.Drifted = files(repo.Root, repo.OMK)
+	st.HooksInstalled = hooksInstalled(repo.Root)
+	st.FilesPresent, st.HashesMatch = files(repo.Root, repo.OMK)
 
 	st.LastRun = lastRun(filepath.Join(repo.OMK, "ledger.tsv"))
 	return st, nil
@@ -120,12 +120,12 @@ func branch(root string) string {
 	return sha
 }
 
-// armed proves whether a commit/push in this repo would actually run the
-// harness: git's effective hooks dir (rev-parse --git-path hooks honors
-// core.hooksPath) must hold a lefthook-managed pre-commit or pre-push stub.
-// No stub, or a foreign manager's stub, is an affirmative Problem; a git
-// failure or an unreadable existing stub is Unknown.
-func armed(root string) Tri {
+// hooksInstalled proves whether a commit/push in this repo would actually
+// run the harness: git's effective hooks dir (rev-parse --git-path hooks
+// honors core.hooksPath) must hold a lefthook-managed pre-commit or pre-push
+// stub. No stub, or a foreign manager's stub, is an affirmative Problem; a
+// git failure or an unreadable existing stub is Unknown.
+func hooksInstalled(root string) Tri {
 	dir, err := gitOut(root, "rev-parse", "--git-path", "hooks")
 	if err != nil {
 		return Unknown
@@ -156,8 +156,9 @@ func armed(root string) Tri {
 // presence and hash fidelity. A tracked path never drifts (upstream owns
 // it), a row without a ledger hash cannot be judged and is skipped, and an
 // unreadable path degrades that proof to Unknown rather than guessing.
-func files(root, omk string) (present, hashes Tri, missing, drifted int) {
+func files(root, omk string) (present, hashes Tri) {
 	rows := state.ReadPlaced(filepath.Join(omk, "placed.tsv"))
+	var missing, drifted int
 	presentUnknown, hashUnknown := false, false
 	for _, r := range rows {
 		if r.Enabled != "1" {
@@ -205,7 +206,7 @@ func files(root, omk string) (present, hashes Tri, missing, drifted int) {
 	} else if hashUnknown {
 		hashes = Unknown
 	}
-	return present, hashes, missing, drifted
+	return present, hashes
 }
 
 // lastRun summarises the newest sha-bearing run in the ledger (see

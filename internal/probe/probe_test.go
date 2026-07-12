@@ -48,7 +48,7 @@ func writeFile(t *testing.T, dir, rel, content string) {
 }
 
 // installHarness gives the repo a minimal installed overlay: two enabled
-// placed files with correct ledger hashes, an armed lefthook pre-commit
+// placed files with correct ledger hashes, an installed lefthook pre-commit
 // stub in the shared hooks dir, and the identity files. Returns the OMK dir.
 func installHarness(t *testing.T, root string) string {
 	t.Helper()
@@ -65,13 +65,13 @@ func installHarness(t *testing.T, root string) string {
 	if err := state.WritePlaced(filepath.Join(omk, "placed.tsv"), rows); err != nil {
 		t.Fatal(err)
 	}
-	armRepo(t, root)
+	installHookStub(t, root)
 	return omk
 }
 
-// armRepo writes a lefthook-managed pre-commit stub into the repo's shared
+// installHookStub writes a lefthook-managed pre-commit stub into the repo's shared
 // hooks dir (what `lefthook install` leaves behind).
-func armRepo(t *testing.T, root string) {
+func installHookStub(t *testing.T, root string) {
 	t.Helper()
 	writeFile(t, root, ".git/hooks/pre-commit", "#!/bin/sh\n# lefthook\ncall_lefthook \"$@\"\n")
 }
@@ -169,36 +169,36 @@ func TestCollectAllProven(t *testing.T) {
 	root := newTestRepo(t)
 	installHarness(t, root)
 	st := collect(t, root)
-	if st.Armed != OK {
-		t.Fatalf("Armed = %v, want OK", st.Armed)
+	if st.HooksInstalled != OK {
+		t.Fatalf("HooksInstalled = %v, want OK", st.HooksInstalled)
 	}
-	if st.FilesPresent != OK || st.Missing != 0 {
-		t.Fatalf("FilesPresent = %v (missing %d), want OK/0", st.FilesPresent, st.Missing)
+	if st.FilesPresent != OK {
+		t.Fatalf("FilesPresent = %v, want OK", st.FilesPresent)
 	}
-	if st.HashesMatch != OK || st.Drifted != 0 {
-		t.Fatalf("HashesMatch = %v (drifted %d), want OK/0", st.HashesMatch, st.Drifted)
+	if st.HashesMatch != OK {
+		t.Fatalf("HashesMatch = %v, want OK", st.HashesMatch)
 	}
 }
 
-func TestCollectNotArmedWhenNoStub(t *testing.T) {
+func TestCollectHooksNotInstalledWhenNoStub(t *testing.T) {
 	root := newTestRepo(t)
 	installHarness(t, root)
 	os.Remove(filepath.Join(root, ".git", "hooks", "pre-commit"))
-	if st := collect(t, root); st.Armed != Problem {
-		t.Fatalf("Armed = %v, want Problem with no hook stub", st.Armed)
+	if st := collect(t, root); st.HooksInstalled != Problem {
+		t.Fatalf("HooksInstalled = %v, want Problem with no hook stub", st.HooksInstalled)
 	}
 }
 
-func TestCollectNotArmedWhenStubIsForeign(t *testing.T) {
+func TestCollectHooksNotInstalledWhenStubIsForeign(t *testing.T) {
 	root := newTestRepo(t)
 	installHarness(t, root)
 	writeFile(t, root, ".git/hooks/pre-commit", "#!/bin/sh\n# husky\n")
-	if st := collect(t, root); st.Armed != Problem {
-		t.Fatalf("Armed = %v, want Problem with a foreign stub", st.Armed)
+	if st := collect(t, root); st.HooksInstalled != Problem {
+		t.Fatalf("HooksInstalled = %v, want Problem with a foreign stub", st.HooksInstalled)
 	}
 }
 
-func TestCollectArmedHonorsCoreHooksPath(t *testing.T) {
+func TestCollectHooksInstalledHonorsCoreHooksPath(t *testing.T) {
 	root := newTestRepo(t)
 	installHarness(t, root)
 	// Move the effective hooks dir away: the default-dir stub no longer
@@ -208,12 +208,12 @@ func TestCollectArmedHonorsCoreHooksPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	runGit(t, root, "config", "core.hooksPath", hooks)
-	if st := collect(t, root); st.Armed != Problem {
-		t.Fatalf("Armed = %v, want Problem (stub lives outside the effective dir)", st.Armed)
+	if st := collect(t, root); st.HooksInstalled != Problem {
+		t.Fatalf("HooksInstalled = %v, want Problem (stub lives outside the effective dir)", st.HooksInstalled)
 	}
 	writeFile(t, root, "custom-hooks/pre-push", "#!/bin/sh\nlefthook run pre-push\n")
-	if st := collect(t, root); st.Armed != OK {
-		t.Fatalf("Armed = %v, want OK via core.hooksPath", st.Armed)
+	if st := collect(t, root); st.HooksInstalled != OK {
+		t.Fatalf("HooksInstalled = %v, want OK via core.hooksPath", st.HooksInstalled)
 	}
 }
 
@@ -222,8 +222,8 @@ func TestCollectMissingFile(t *testing.T) {
 	installHarness(t, root)
 	os.Remove(filepath.Join(root, ".omakase", "bin", "omakase-gate.sh"))
 	st := collect(t, root)
-	if st.FilesPresent != Problem || st.Missing != 1 {
-		t.Fatalf("FilesPresent = %v missing=%d, want Problem/1", st.FilesPresent, st.Missing)
+	if st.FilesPresent != Problem {
+		t.Fatalf("FilesPresent = %v, want Problem", st.FilesPresent)
 	}
 }
 
@@ -232,8 +232,8 @@ func TestCollectDriftedFile(t *testing.T) {
 	installHarness(t, root)
 	writeFile(t, root, ".omakase/bin/omakase-gate.sh", "#!/bin/sh\n# edited\n")
 	st := collect(t, root)
-	if st.HashesMatch != Problem || st.Drifted != 1 {
-		t.Fatalf("HashesMatch = %v drifted=%d, want Problem/1", st.HashesMatch, st.Drifted)
+	if st.HashesMatch != Problem {
+		t.Fatalf("HashesMatch = %v, want Problem", st.HashesMatch)
 	}
 }
 
@@ -258,8 +258,8 @@ func TestCollectDisabledRowIgnored(t *testing.T) {
 	}
 	os.Remove(filepath.Join(root, ".omakase", "bin", "omakase-gate.sh"))
 	st := collect(t, root)
-	if st.FilesPresent != OK || st.Missing != 0 {
-		t.Fatalf("FilesPresent = %v missing=%d, want OK/0 (row disabled)", st.FilesPresent, st.Missing)
+	if st.FilesPresent != OK {
+		t.Fatalf("FilesPresent = %v, want OK (row disabled)", st.FilesPresent)
 	}
 }
 
@@ -297,8 +297,8 @@ func TestCollectFromALinkedWorktree(t *testing.T) {
 	if linked.Branch != "feature-x" {
 		t.Fatalf("Branch = %q, want feature-x", linked.Branch)
 	}
-	if linked.Armed != OK {
-		t.Fatalf("Armed = %v in linked worktree, want OK (hooks are shared)", linked.Armed)
+	if linked.HooksInstalled != OK {
+		t.Fatalf("HooksInstalled = %v in linked worktree, want OK (hooks are shared)", linked.HooksInstalled)
 	}
 	if got, want := linked.Project, filepath.Base(main.Root); got != want {
 		t.Fatalf("Project in worktree = %q, want main-root basename %q", got, want)

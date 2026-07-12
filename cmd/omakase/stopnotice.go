@@ -5,7 +5,7 @@
 //
 // It speaks only when something changed since the last turn: a new session,
 // a hook run that finished this turn (the ledger's newest run epoch
-// advanced), or a change in the probed state (armed/present/hashes). A
+// advanced), or a change in the probed state (hooks/files/hashes). A
 // per-worktree marker file under $OMK remembers what was last announced.
 package main
 
@@ -45,9 +45,9 @@ func runStopNotice(stdin io.Reader, stdout io.Writer) int {
 		return 0
 	}
 
-	// The announce signature: any change in the proofs or their counts
-	// re-announces, so a state that silently degraded mid-session speaks.
-	sig := fmt.Sprintf("a%d f%d h%d m%d d%d", st.Armed, st.FilesPresent, st.HashesMatch, st.Missing, st.Drifted)
+	// The announce signature: any change in the proofs re-announces, so a
+	// state that silently degraded mid-session speaks.
+	sig := fmt.Sprintf("h%d f%d c%d", st.HooksInstalled, st.FilesPresent, st.HashesMatch)
 	var epoch int64
 	if st.LastRun != nil {
 		epoch = st.LastRun.Epoch
