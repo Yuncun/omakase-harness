@@ -40,11 +40,13 @@ var schemeRe = regexp.MustCompile(`^[a-z][a-z]*://`)
 // Statusline renders the one-line status-bar segment, or "" (a dark
 // segment) when st is nil or the harness is not installed here.
 //
-// Shape: `<icon> <project> ⎇<worktree|branch> · <harness>` followed by the
-// state — ✓ on a green pill when all three proofs pass, the problem facts
-// on an amber pill, or a dim "unverified" when a proof could not run. The
-// main-checkout discipline warning (issue #86) is its own trailing pill,
-// independent of harness health.
+// Shape: `<icon> <project> ⎇<branch> · <harness>` followed by the state —
+// ✓ on a green pill when all three proofs pass, the problem facts on an
+// amber pill, or a dim "unverified" when a proof could not run. ⎇ always
+// carries the branch (its conventional meaning): a worktree's FOLDER name
+// is frozen at creation and goes stale as branches change inside it. The
+// worktree fact that matters — main checkout while others are active — is
+// its own trailing pill (issue #86), independent of harness health.
 func Statusline(st *probe.State, o Opts) string {
 	if st == nil || !st.Installed {
 		return ""
@@ -55,8 +57,8 @@ func Statusline(st *probe.State, o Opts) string {
 	}
 
 	identity := icon + " " + st.Project
-	if place := placeOf(st); place != "" {
-		identity += " ⎇" + place
+	if st.Branch != "" {
+		identity += " ⎇" + st.Branch
 	}
 	if h := HarnessSlot(st); h != "" {
 		identity += " · " + h
@@ -147,14 +149,6 @@ func HarnessSlot(st *probe.State) string {
 		n = n[i+1:]
 	}
 	return n
-}
-
-// placeOf is the ⎇ fact: the linked worktree's name, else the branch.
-func placeOf(st *probe.State) string {
-	if st.Worktree != "" {
-		return st.Worktree
-	}
-	return st.Branch
 }
 
 // problemFacts lists the affirmatively-failing proofs as short facts, in a

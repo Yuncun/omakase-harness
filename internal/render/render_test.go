@@ -140,14 +140,21 @@ func TestStatuslineMainCheckoutWarning(t *testing.T) {
 
 // ---------------------------------------------------------------- identity
 
-func TestStatuslineWorktreeBeatsBranch(t *testing.T) {
+// ⎇ always shows the branch: a worktree's folder name is frozen at
+// creation and goes stale as branches change inside it (Eric misread the
+// folder name as a branch on day one — that confusion is the spec).
+func TestStatuslineBranchNotWorktreeFolderName(t *testing.T) {
 	st := proven()
 	st.MainCheckout = false
 	st.WorktreeCount = 2
-	st.Worktree = "issue-85-statusline"
-	st.Branch = "issue-85"
-	if got := plain(st); !strings.Contains(got, "⎇issue-85-statusline") {
-		t.Fatalf("worktree name not shown: %q", got)
+	st.Worktree = "issue-72-status-failclosed" // stale folder name
+	st.Branch = "issue-85-statusline"
+	got := plain(st)
+	if !strings.Contains(got, "⎇issue-85-statusline") {
+		t.Fatalf("branch not shown: %q", got)
+	}
+	if strings.Contains(got, "issue-72-status-failclosed") {
+		t.Fatalf("stale worktree folder name shown: %q", got)
 	}
 }
 
