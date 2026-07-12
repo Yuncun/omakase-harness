@@ -696,17 +696,22 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "omakase: to customize, fork the harness source (clone -> edit -> publish) and")
 	fmt.Fprintln(stdout, "         init from your copy; do not edit injected files in place (overwritten on re-init).")
-	if fileRegular(filepath.Join(root, ".omakase", "bin", "omakase-statusline.sh")) {
-		fmt.Fprintln(stdout, "omakase: status line — compose the scorecard into your existing bar (it never")
-		fmt.Fprintln(stdout, "         takes over the bar). Add this command to your status-line script:")
-		fmt.Fprintf(stdout, "           bash %s/.omakase/bin/omakase-statusline.sh\n", root)
-		fmt.Fprintln(stdout, "         Claude Code: your ~/.claude statusLine script. Copilot CLI: ~/.copilot. tmux: status-right.")
+	// The status-bar / stop-notice wiring runs the machine-wide binary copy
+	// (main() refreshes it on every real init), so these stanzas print
+	// unconditionally — the feature ships in the binary, not the payload.
+	stable := StableBinPath()
+	if stable == "" {
+		stable = "omakase" // no resolvable home: fall back to PATH wiring
 	}
-	if fileRegular(filepath.Join(root, ".omakase", "bin", "omakase-stop-notice.sh")) {
-		fmt.Fprintln(stdout, "omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line 'harness active'")
-		fmt.Fprintln(stdout, "         status when a turn ends. Enable by adding a Stop hook to .claude/settings.json:")
-		fmt.Fprintln(stdout, "           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-stop-notice.sh")
-	}
+	fmt.Fprintln(stdout, "omakase: status bar (optional) — one machine-wide segment for every omakase repo; it")
+	fmt.Fprintln(stdout, "         shows this harness's verified state and goes dark elsewhere. Wire your status")
+	fmt.Fprintln(stdout, "         line to run:")
+	fmt.Fprintf(stdout, "           %s statusline\n", stable)
+	fmt.Fprintln(stdout, "         Claude Code: statusLine.command in ~/.claude/settings.json. ccstatusline: a")
+	fmt.Fprintln(stdout, "         custom-command widget. Copilot CLI: statusLine in ~/.copilot/settings.json.")
+	fmt.Fprintln(stdout, "omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line harness status when")
+	fmt.Fprintln(stdout, "         a turn ends. Enable by adding a Stop hook to .claude/settings.json:")
+	fmt.Fprintf(stdout, "           %s stop-notice\n", stable)
 	if fileRegular(filepath.Join(root, ".omakase", "bin", "omakase-worktree-guard.sh")) {
 		fmt.Fprintln(stdout, "omakase: worktree guard (Claude Code only, opt-in) — while other worktrees are active,")
 		fmt.Fprintln(stdout, "         denies edits to product files in the MAIN checkout before they happen. Enable by")

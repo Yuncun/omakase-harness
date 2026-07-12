@@ -2,9 +2,10 @@
 # TDD spec for the EARLIER-THAN-COMMIT worktree-discipline layers (issue #86). The
 # commit-time gate (a custom harness's allowlist gate over omakase-gate.sh) stays the
 # fail-closed last line; these two layers fire before it:
-#   - omakase-statusline.sh       : appends a persistent "⚠ MAIN CHECKOUT · use a worktree"
+#   - `omakase statusline` (binary): appends a persistent "main checkout · use a worktree"
 #                                   segment when this is the main checkout AND other
-#                                   worktrees are active. Soft, continuous, host-agnostic.
+#                                   worktrees are active — covered by the Go tests in
+#                                   internal/probe + internal/render, not here.
 #   - omakase-worktree-guard.sh   : opt-in Claude Code PreToolUse hook (matcher Edit|Write).
 #                                   Denies edits to product files in the MAIN checkout while
 #                                   other worktrees are active; the allowlist mirrors the
@@ -17,7 +18,6 @@
 # the layer that must fail closed.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CANARY="$HERE/../payload/.omakase/bin/omakase-statusline.sh"
 GUARD="$HERE/../payload/.omakase/bin/omakase-worktree-guard.sh"
 TMP="${TMPDIR:-/tmp}/omakase-wtdisc-test.$$"
 FAILED=0
@@ -25,36 +25,6 @@ pass(){ echo "  PASS: $1"; }
 fail(){ echo "  FAIL: $1"; FAILED=1; }
 newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }
 common_of(){ ( cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd ); }
-
-# ---------- Scenario A: statusline main-checkout warning ----------
-echo "== Scenario A: statusline main-checkout warning =="
-REPO="$TMP/repoA"; newrepo "$REPO"; mkdir -p "$REPO/.omakase"
-
-OUT="$( cd "$REPO" && NO_COLOR=1 bash "$CANARY" )"
-echo "$OUT" | grep -q 'is running' || fail "canary baseline broken ($OUT)"
-echo "$OUT" | grep -qi 'main checkout' && fail "warned with no other worktree ($OUT)" || pass "no worktrees -> no warning"
-
-( cd "$REPO" && git worktree add -q "$TMP/wtA" -b wt-a )
-mkdir -p "$TMP/wtA/.omakase"   # worktree overlay present (heal would place it)
-OUT="$( cd "$REPO" && NO_COLOR=1 bash "$CANARY" )"
-echo "$OUT" | grep -q 'MAIN CHECKOUT · use a worktree' && pass "main checkout + worktree -> warning" || fail "no warning in main checkout ($OUT)"
-echo "$OUT" | grep -q 'is running' && pass "warning keeps the running segment" || fail "running segment lost ($OUT)"
-
-OUT="$( cd "$TMP/wtA" && NO_COLOR=1 bash "$CANARY" )"
-echo "$OUT" | grep -qi 'main checkout' && fail "warned inside a linked worktree ($OUT)" || pass "linked worktree -> no warning"
-
-OUT="$( cd "$REPO" && NO_COLOR=1 OMAKASE_SKIP_WORKTREE_DISCIPLINE=1 bash "$CANARY" )"
-echo "$OUT" | grep -qi 'main checkout' && fail "skip env ignored ($OUT)" || pass "OMAKASE_SKIP_WORKTREE_DISCIPLINE=1 silences the warning"
-
-COMMON="$(common_of "$REPO")"; mkdir -p "$COMMON/omakase"
-printf 'worktree-discipline\n' > "$COMMON/omakase/disabled-gates"
-OUT="$( cd "$REPO" && NO_COLOR=1 bash "$CANARY" )"
-echo "$OUT" | grep -qi 'main checkout' && fail "disabled-gates ignored ($OUT)" || pass "disabled-gates 'worktree-discipline' silences the warning"
-rm -f "$COMMON/omakase/disabled-gates"
-
-OUT="$( cd "$REPO" && bash "$CANARY" )"
-printf '%s' "$OUT" | grep -q "$(printf '\033')" && pass "colored warning by default" || fail "no ANSI in colored mode ($OUT)"
-echo "$OUT" | grep -q 'MAIN CHECKOUT' && pass "warning present in colored mode" || fail "warning lost in colored mode ($OUT)"
 
 # ---------- Scenario B: PreToolUse worktree guard ----------
 echo "== Scenario B: omakase-worktree-guard PreToolUse hook =="

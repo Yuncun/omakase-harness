@@ -30,6 +30,27 @@ const summaryTail = "omakase: ignores -> .git/info/exclude; hooks installed; new
 
 const gateContent = "#!/usr/bin/env bash\necho hi\n"
 
+// uxStanzas is the status-bar + stop-notice wiring block every successful
+// init appends after summaryTail (the features live in the binary, not the
+// payload, so the stanzas are unconditional). The path comes from
+// StableBinPath() at call time, matching what RunInit printed under the
+// test's environment.
+func uxStanzas() string {
+	stable := StableBinPath()
+	if stable == "" {
+		stable = "omakase"
+	}
+	return "omakase: status bar (optional) — one machine-wide segment for every omakase repo; it\n" +
+		"         shows this harness's verified state and goes dark elsewhere. Wire your status\n" +
+		"         line to run:\n" +
+		"           " + stable + " statusline\n" +
+		"         Claude Code: statusLine.command in ~/.claude/settings.json. ccstatusline: a\n" +
+		"         custom-command widget. Copilot CLI: statusLine in ~/.copilot/settings.json.\n" +
+		"omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line harness status when\n" +
+		"         a turn ends. Enable by adding a Stop hook to .claude/settings.json:\n" +
+		"           " + stable + " stop-notice\n"
+}
+
 func sha256hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
@@ -130,7 +151,7 @@ func TestFreshInit(t *testing.T) {
 	}
 
 	wantOut := "omakase: placed 1 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
-		"  + .omakase/gates/example.sh\n" + summaryTail
+		"  + .omakase/gates/example.sh\n" + summaryTail + uxStanzas()
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "")
 
@@ -227,7 +248,7 @@ func TestTrackedSkip(t *testing.T) {
 	wantOut := "omakase: placed 1 file(s), overwrote 0 to match payload, skipped 1 committed path(s).\n" +
 		"  + .omakase/gates/example.sh\n" +
 		"  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see init.sh --help): AGENTS.md\n" +
-		summaryTail
+		summaryTail + uxStanzas()
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "omakase: SKIP (already tracked) AGENTS.md\n")
 	// committed file left untouched.
@@ -1138,7 +1159,7 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 
 	wantOut := "omakase: placed 2 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
 		"  + .omakase/gates/example.sh\n" +
-		"  + .worktreeinclude\n" + summaryTail
+		"  + .worktreeinclude\n" + summaryTail + uxStanzas()
 	eq(t, "stdout", stdout.String(), wantOut)
 
 	// exclude block: lists .worktreeinclude.
@@ -1168,36 +1189,34 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 	}
 }
 
-// TestStatuslineAndStopNoticeStanzas: the closing summary appends the statusline
-// + stop-notice + worktree-guard wire-up stanzas iff those files exist in the
-// repo after placement, including the repo-root path line.
-func TestStatuslineAndStopNoticeStanzas(t *testing.T) {
-	_, repo := initRepo(t)
+// TestUXStanzas: the closing summary always appends the status-bar and
+// stop-notice wiring stanzas (those features live in the binary), with a
+// deterministic stable path under a pinned XDG_CACHE_HOME, and appends the
+// worktree-guard stanza iff that script exists in the repo after placement.
+func TestUXStanzas(t *testing.T) {
+	_, _ = initRepo(t)
 	stubLefthook(t)
+	t.Setenv("XDG_CACHE_HOME", "/xdg-test")
 	p := t.TempDir()
 	t.Setenv("OMAKASE_PAYLOAD", p)
-	writeFile(t, filepath.Join(p, ".omakase", "bin", "omakase-statusline.sh"), "#!/bin/sh\n")
-	writeFile(t, filepath.Join(p, ".omakase", "bin", "omakase-stop-notice.sh"), "#!/bin/sh\n")
 	writeFile(t, filepath.Join(p, ".omakase", "bin", "omakase-worktree-guard.sh"), "#!/bin/sh\n")
 
 	var stdout, stderr strings.Builder
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	// WalkDir lexical: statusline < stop-notice < worktree-guard. The path line
-	// prints repo.Root (git's normalized toplevel), not the temp dir.
-	wantOut := "omakase: placed 3 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
-		"  + .omakase/bin/omakase-statusline.sh\n" +
-		"  + .omakase/bin/omakase-stop-notice.sh\n" +
+	wantOut := "omakase: placed 1 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
 		"  + .omakase/bin/omakase-worktree-guard.sh\n" +
 		summaryTail +
-		"omakase: status line — compose the scorecard into your existing bar (it never\n" +
-		"         takes over the bar). Add this command to your status-line script:\n" +
-		"           bash " + repo.Root + "/.omakase/bin/omakase-statusline.sh\n" +
-		"         Claude Code: your ~/.claude statusLine script. Copilot CLI: ~/.copilot. tmux: status-right.\n" +
-		"omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line 'harness active'\n" +
-		"         status when a turn ends. Enable by adding a Stop hook to .claude/settings.json:\n" +
-		"           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-stop-notice.sh\n" +
+		"omakase: status bar (optional) — one machine-wide segment for every omakase repo; it\n" +
+		"         shows this harness's verified state and goes dark elsewhere. Wire your status\n" +
+		"         line to run:\n" +
+		"           /xdg-test/omakase/bin/current/omakase statusline\n" +
+		"         Claude Code: statusLine.command in ~/.claude/settings.json. ccstatusline: a\n" +
+		"         custom-command widget. Copilot CLI: statusLine in ~/.copilot/settings.json.\n" +
+		"omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line harness status when\n" +
+		"         a turn ends. Enable by adding a Stop hook to .claude/settings.json:\n" +
+		"           /xdg-test/omakase/bin/current/omakase stop-notice\n" +
 		"omakase: worktree guard (Claude Code only, opt-in) — while other worktrees are active,\n" +
 		"         denies edits to product files in the MAIN checkout before they happen. Enable by\n" +
 		"         adding a PreToolUse hook (matcher \"Edit|Write\") to .claude/settings.json:\n" +

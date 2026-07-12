@@ -1,19 +1,13 @@
 #!/usr/bin/env bash
 # TDD spec for the harness STATUS SURFACES:
-#   - omakase-statusline.sh  : the CANARY — "<name> is running" where the harness is
-#                              active, dark elsewhere. No verdict, only the 🥡 icon.
-#   - omakase-stop-notice.sh : the Stop-hook status — "<name> is active ✓" (light ✓, no colour)
-#                              when gates are armed, plus a "Last run: N/N checks at <clk>"
-#                              line after a run (a failure shows there, in words; the header keeps
-#                              "is active ✓"), "<name> is not active" when gates aren't armed, and
-#                              a "files missing · omakase init" nudge. Detail -> omakase status.
-#   - bin/status.sh            : omakase status GUARDS chart (+ --markdown)
+#   - bin/status.sh : omakase status GUARDS chart (+ --markdown) and the inventory.
+# (The statusline segment and the Stop-hook notice are binary subcommands now —
+#  `omakase statusline` / `omakase stop-notice` — covered by the Go tests in
+#  internal/probe, internal/render and cmd/omakase.)
 # Ledger lines are TAB-separated (epoch, name, verdict, sha); assertions use
 # awk, not grep -P (BSD).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CANARY="$HERE/../payload/.omakase/bin/omakase-statusline.sh"
-NOTICE="$HERE/../payload/.omakase/bin/omakase-stop-notice.sh"
 BANNER_REL=".omakase/bin/omakase-banner.sh"
 SHOW="$HERE/../bin/status.sh"
 INIT="$HERE/../bin/init.sh"
@@ -45,124 +39,6 @@ if command -v go >/dev/null 2>&1; then
   export GOMODCACHE="$(go env GOMODCACHE)"
   export GOCACHE="$(go env GOCACHE)"
 fi
-
-# ---------- Scenario C: the canary ----------
-echo "== Scenario C: omakase-statusline canary =="
-REPO="$TMP/repoC"; newrepo "$REPO"
-OUT="$( cd "$REPO" && NO_COLOR=1 bash "$CANARY" )"
-[ -z "$OUT" ] && pass "dark where the harness is not installed" || fail "canary lit without harness ($OUT)"
-mkdir -p "$REPO/.omakase"
-OUT="$( cd "$REPO" && NO_COLOR=1 bash "$CANARY" )"
-echo "$OUT" | grep -q '🥡' && pass "shows the takeout icon" || fail "no icon ($OUT)"
-echo "$OUT" | grep -q 'omakase is running' && pass "says 'omakase is running' (default name)" || fail "wrong text ($OUT)"
-printf '%s' "$OUT" | grep -q "$(printf '\033')" && fail "NO_COLOR not honored" || pass "NO_COLOR strips ANSI"
-OUT="$( cd "$REPO" && bash "$CANARY" )"
-printf '%s' "$OUT" | grep -q "$(printf '\033')" && pass "ANSI color by default" || fail "no color by default"
-OUT="$( cd "$REPO" && OMAKASE_NAME=widget NO_COLOR=1 bash "$CANARY" )"
-echo "$OUT" | grep -q 'widget is running' && pass "OMAKASE_NAME overrides the name" || fail "name override failed ($OUT)"
-printf 'gizmo\n' > "$REPO/.omakase/NAME"
-OUT="$( cd "$REPO" && NO_COLOR=1 bash "$CANARY" )"
-echo "$OUT" | grep -q 'gizmo is running' && pass ".omakase/NAME sets the name" || fail "NAME file ignored ($OUT)"
-OUTSIDE="$TMP/notarepo"; rm -rf "$OUTSIDE"; mkdir -p "$OUTSIDE"
-OUT="$( cd "$OUTSIDE" && bash "$CANARY" )"
-[ -z "$OUT" ] && pass "dark outside any git repo" || fail "canary lit outside a repo ($OUT)"
-
-# ---------- Scenario K: the Stop-hook status notice ----------
-echo "== Scenario K: omakase-stop-notice status notice =="
-REPO="$TMP/repoK"; newrepo "$REPO"; LEDGER="$(ledger_of "$REPO")"; mkdir -p "$(dirname "$LEDGER")"
-mkdir -p "$REPO/.omakase"                                   # active (overlay present)
-arm(){ mkdir -p "$REPO/.git/hooks"; printf '#!/bin/sh\nlefthook run %s\n' "$1" > "$REPO/.git/hooks/$1"; chmod +x "$REPO/.git/hooks/$1"; }
-arm pre-commit                                             # gates armed (a lefthook stub)
-HEAD="$(cd "$REPO" && git rev-parse HEAD)"
-SA=sess-aaa; SB=sess-bbb
-notice(){ printf '{"cwd":"%s","session_id":"%s"}' "$REPO" "$1" | bash "$NOTICE"; }
-
-OUT="$(notice "$SA")"
-echo "$OUT" | grep -q 'omakase is active ✓' && pass "armed + no runs -> 'is active ✓'" || fail "no active baseline ($OUT)"
-OUT="$(notice "$SA")"; [ -z "$OUT" ] && pass "same session, no change -> silent" || fail "fired with no change ($OUT)"
-OUT="$(notice "$SB")"; echo "$OUT" | grep -q 'is active ✓' && pass "a new session re-announces the resting state" || fail "no reshow on new session ($OUT)"
-
-# a pre-push run, all three gates pass on HEAD
-T=$(date +%s)
-for g in gamma alpha beta; do printf '%s\t%s\tpass\t%s\n' "$T" "$g" "$HEAD" >> "$LEDGER"; done
-OUT="$(notice "$SB")"
-echo "$OUT" | grep -q 'Last run:' && pass "a run shows Last run:" || fail "no Last run line ($OUT)"
-echo "$OUT" | grep -q '3/3 checks at' && pass "all-pass -> 'N/N checks at <time>'" || fail "no N/N run summary ($OUT)"
-echo "$OUT" | grep -q 'is active ✓' && pass "a clean run keeps the 'is active ✓' header" || fail "no active header on a clean run ($OUT)"
-echo "$OUT" | grep -qE '[0-9]+:[0-9][0-9][AP]M' && pass "shows a clock time" || fail "no clock time ($OUT)"
-echo "$OUT" | grep -q '✓' && pass "the header carries the light ✓" || fail "no ✓ on a clean run ($OUT)"
-OUT="$(notice "$SB")"; [ -z "$OUT" ] && pass "after a run, no new run -> silent" || fail "re-fired after a run ($OUT)"
-
-# a later run with a failure: beta fails (gamma/alpha still pass)
-T2=$((T + 5))
-for g in gamma alpha; do printf '%s\t%s\tpass\t%s\n' "$T2" "$g" "$HEAD" >> "$LEDGER"; done
-printf '%s\tbeta\tfail\t%s\n' "$T2" "$HEAD" >> "$LEDGER"
-OUT="$(notice "$SB")"
-echo "$OUT" | grep -q 'omakase is active ✓' && pass "a failed run keeps the 'is active ✓' header" || fail "failed run changed the header ($OUT)"
-echo "$OUT" | grep -qE '✗|❌|✖' && fail "a failed run must not show an X glyph" || pass "no X on a failed run"
-echo "$OUT" | grep -q '1 check failed' && pass "failure -> count failed (singular, not a fraction)" || fail "no failure count ($OUT)"
-echo "$OUT" | grep -qE '[0-9]+/[0-9]+' && fail "failure line should not show a pass fraction" || pass "failure line drops the run fraction"
-
-# fail-then-fixed on the SAME commit: beta passes again -> back to all green (latest verdict wins)
-T3=$((T2 + 5))
-printf '%s\tbeta\tpass\t%s\n' "$T3" "$HEAD" >> "$LEDGER"
-OUT="$(notice "$SB")"
-echo "$OUT" | grep -q '3/3 checks at' && pass "fail-then-fixed counts as passed (latest verdict per gate)" || fail "fixed gate not re-counted ($OUT)"
-
-# an empty-sha row (a pre-commit on an unborn HEAD, e.g. the first commit's pre-commit)
-# must NOT become "the last run" and mask a later real run
-T4=$((T3 + 5))
-printf '%s\tprecommit-gate\tpass\t\n' "$T4" >> "$LEDGER"   # 4 cols, empty sha
-OUT="$(notice "$SB")"; [ -z "$OUT" ] && pass "empty-sha row alone -> silent (not a run)" || fail "empty-sha row spoke ($OUT)"
-T5=$((T4 + 5))
-for g in gamma alpha beta; do printf '%s\t%s\tpass\t%s\n' "$T5" "$g" "$HEAD" >> "$LEDGER"; done
-OUT="$(notice "$SB")"
-echo "$OUT" | grep -q '3/3 checks at' && pass "a real run after an empty-sha row still announces" || fail "real run masked by empty-sha row ($OUT)"
-
-# a fresh run with TWO failures -> plural "N checks failed" (the singular path is not hardcoded)
-T6=$((T5 + 5))
-printf '%s\tgamma\tpass\t%s\n' "$T6" "$HEAD" >> "$LEDGER"
-for g in alpha beta; do printf '%s\t%s\tfail\t%s\n' "$T6" "$g" "$HEAD" >> "$LEDGER"; done
-OUT="$(notice "$SB")"
-echo "$OUT" | grep -q '2 checks failed' && pass "two failures -> plural 'N checks failed'" || fail "no plural failure count ($OUT)"
-echo "$OUT" | grep -qE '[0-9]+/[0-9]+' && fail "plural failure line should not show a fraction" || pass "plural failure line drops the fraction"
-
-# gates no longer armed -> 'is not active'
-rm -f "$REPO/.git/hooks/pre-commit"
-OUT="$(notice "$SB")"
-echo "$OUT" | grep -q 'omakase is not active' && pass "no armed hook -> 'is not active'" || fail "not 'is not active' with hooks gone ($OUT)"
-printf '%s' "$OUT" | grep -qE '✓|✗|✅|❌' && fail "'is not active' should carry no glyph" || pass "'is not active' has no glyph"
-
-# re-armed, but an enabled placed file is missing -> re-init nudge
-arm pre-commit
-printf '.omakase/gone.sh\tgate\tpayload\tdeadbeef\t1\n' > "$(dirname "$LEDGER")/placed.tsv"
-OUT="$(notice "$SB")"
-echo "$OUT" | grep -q 'omakase init to update' && pass "a missing placed file -> re-init nudge" || fail "no nudge for a missing file ($OUT)"
-echo "$OUT" | grep -q 'files missing' && pass "the nudge names the reason" || fail "nudge missing its reason ($OUT)"
-
-# an enabled placed file PRESENT but hashing differently from its ledger row must nudge
-# too (issue #84 gap 3: a stale/edited gate was invisible at rest). The nudge points at
-# status, NOT init — the difference may be a deliberate local edit, and init would
-# clobber it. Needs a digest tool, like the script itself (no tool -> degrade silent).
-if [ "$(shastr x)" = nodigest ]; then
-  echo "  SKIP: no shasum/sha256sum — the drift nudge cannot be exercised"
-else
-  printf 'stale body\n' > "$REPO/.omakase/stale.sh"
-  printf '.omakase/stale.sh\tgate\tpayload\t%s\t1\n' "$(shastr 'canonical body')" > "$(dirname "$LEDGER")/placed.tsv"
-  OUT="$(notice "$SB")"
-  echo "$OUT" | grep -q 'differ from canonical' && pass "a drifted placed file -> drift nudge" || fail "no nudge for a drifted file ($OUT)"
-  echo "$OUT" | grep -q 'omakase status' && pass "the drift nudge points at status, not init" || fail "drift nudge does not point at status ($OUT)"
-  echo "$OUT" | grep -q 'omakase init to update' && fail "drift must not claim files are missing" || pass "drift nudge distinct from the missing nudge"
-  # back to canonical -> the nudge clears (the state change announces once, nudge-free)
-  printf '.omakase/stale.sh\tgate\tpayload\t%s\t1\n' "$(shafile "$REPO/.omakase/stale.sh")" > "$(dirname "$LEDGER")/placed.tsv"
-  OUT="$(notice "$SB")"
-  echo "$OUT" | grep -q 'differ from canonical' && fail "healthy file still carries the drift nudge ($OUT)" || pass "the drift nudge clears when the file matches its ledger hash"
-fi
-
-# a repo without the overlay stays silent (the global Stop hook must not chatter elsewhere)
-REPO2="$TMP/repoK2"; newrepo "$REPO2"
-OUT="$(printf '{"cwd":"%s","session_id":"x"}' "$REPO2" | bash "$NOTICE")"
-[ -z "$OUT" ] && pass "no overlay -> silent (not an omakase repo)" || fail "fired in a non-omakase repo ($OUT)"
 
 # ---------- Scenario S: omakase status surfaces a 4-col ledger verdict on the guards chart ----------
 # Since #23 `show` lists gates from the lefthook WIRING, joined to the latest ledger verdict.

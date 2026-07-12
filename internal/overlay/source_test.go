@@ -107,7 +107,8 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 		"omakase: see the whole harness any time with  omakase status\n" +
 		"omakase: this harness recommends — install the widget plugin\n" +
 		"omakase: to customize, fork the harness source (clone -> edit -> publish) and\n" +
-		"         init from your copy; do not edit injected files in place (overwritten on re-init).\n"
+		"         init from your copy; do not edit injected files in place (overwritten on re-init).\n" +
+		uxStanzas()
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "")
 
