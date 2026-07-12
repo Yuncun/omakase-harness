@@ -190,7 +190,7 @@ func pill(s, color string, on bool) string {
 	return color + s + colOff
 }
 
-// countNoun is "1 file" / "3 files".
+// countNoun is "1 check" / "3 checks".
 func countNoun(n int, noun string) string {
 	if n == 1 {
 		return fmt.Sprintf("1 %s", noun)

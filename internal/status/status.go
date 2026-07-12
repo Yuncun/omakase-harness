@@ -158,7 +158,7 @@ func printStatusUsage(w io.Writer) {
   --disable NAME  turn a gate off, or remove a placed file/dir; NAME is a wired
                   gate name or a placed path. Recorded so commits/pushes skip it
                   until re-enabled.
-  --enable NAME   undo a --disable: restore the file/dir or re-arm the gate
+  --enable NAME   undo a --disable: restore the file/dir or turn the gate back on
   --help, -h      show this help
 `)
 }

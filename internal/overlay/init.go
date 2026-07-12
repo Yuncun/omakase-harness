@@ -605,7 +605,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 
 	// Heal a placed gate script that a stale (pre-2b) payload just
 	// (re)placed; otherwise a bare re-init would revert an already-healed
-	// script, silently re-arming a gate the human disabled. healGateScript
+	// script, silently re-enabling a gate the human disabled. healGateScript
 	// no-ops when the script is absent, already 2b-capable, or git-tracked
 	// (warning), and otherwise rewrites it and refreshes the snapshot and
 	// ledger hash so drift detection stays quiet.
