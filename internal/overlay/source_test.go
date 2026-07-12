@@ -103,12 +103,12 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 		"  + .claude/rules/r.md\n" +
 		"  + .omakase/bin/base.sh\n" +
 		"  + .omakase/gates/src.sh\n" +
-		"omakase: ignores -> .git/info/exclude; hooks installed; new worktrees auto-install the harness. Nothing to commit.\n" +
+		"omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.\n" +
 		"omakase: see the whole harness any time with  omakase status\n" +
 		"omakase: this harness recommends — install the widget plugin\n" +
 		"omakase: to customize, fork the harness source (clone -> edit -> publish) and\n" +
 		"         init from your copy; do not edit injected files in place (overwritten on re-init).\n" +
-		uxStanzas()
+		uxStanzas() + verifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "")
 

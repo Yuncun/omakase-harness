@@ -26,6 +26,8 @@ import (
 
 	"github.com/Yuncun/omakase-harness/internal/harness"
 	"github.com/Yuncun/omakase-harness/internal/lefthook"
+	"github.com/Yuncun/omakase-harness/internal/probe"
+	"github.com/Yuncun/omakase-harness/internal/render"
 	"github.com/Yuncun/omakase-harness/internal/state"
 	"github.com/Yuncun/omakase-harness/internal/templates"
 	"github.com/Yuncun/omakase-harness/internal/textblock"
@@ -688,7 +690,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see init.sh --help): %s\n", s)
 		}
 	}
-	fmt.Fprintln(stdout, "omakase: ignores -> .git/info/exclude; hooks installed; new worktrees auto-install the harness. Nothing to commit.")
+	fmt.Fprintln(stdout, "omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.")
 	fmt.Fprintln(stdout, "omakase: see the whole harness any time with  omakase status")
 	// A source's manifest recommends: line; only a source install sets it.
 	if recommends != "" {
@@ -718,6 +720,16 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "         adding a PreToolUse hook (matcher \"Edit|Write\") to .claude/settings.json:")
 		fmt.Fprintln(stdout, "           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh")
 	}
+
+	// ---- prove, don't assert ----
+	// The closing line is the three status-bar proofs run fresh against what
+	// this init just wrote — never an unconditional claim (a "hooks installed"
+	// assertion once shipped green-while-broken, #72/#85).
+	verdict, err := probe.Collect(root)
+	if err != nil {
+		verdict = nil
+	}
+	fmt.Fprintln(stdout, render.InitVerdict(verdict))
 	return 0
 }
 

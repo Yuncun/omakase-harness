@@ -209,8 +209,8 @@ func renderTerminal(w io.Writer, repo *state.Repo, home, hname, srcdisp, basever
 	fmt.Fprintln(w)
 	RenderInventory(w, repo, home, false)
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Update to the latest harness (syncs files; removes dropped ones):   omakase init")
-	fmt.Fprintln(w, "Undo everything:                                                    omakase remove")
+	fmt.Fprintln(w, "Restore the harness (replaces missing or changed files; removes dropped ones):   omakase init")
+	fmt.Fprintln(w, "Undo everything:                                                                 omakase remove")
 }
 
 // harnessName derives the harness display name from the remembered source:

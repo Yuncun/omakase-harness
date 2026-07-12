@@ -23,10 +23,15 @@ import (
 
 // summaryTail is the fixed stdout block every successful init prints after its
 // +/^/~/- lines.
-const summaryTail = "omakase: ignores -> .git/info/exclude; hooks installed; new worktrees auto-install the harness. Nothing to commit.\n" +
+const summaryTail = "omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.\n" +
 	"omakase: see the whole harness any time with  omakase status\n" +
 	"omakase: to customize, fork the harness source (clone -> edit -> publish) and\n" +
 	"         init from your copy; do not edit injected files in place (overwritten on re-init).\n"
+
+// verifiedLine is init's closing verdict — the three probes run fresh after
+// the install. All-OK here, because stubLefthook writes a real pre-commit
+// stub on `install` and init just placed every file.
+const verifiedLine = "omakase: verified — hooks installed ✓ · files present ✓ · files match ✓\n"
 
 const gateContent = "#!/usr/bin/env bash\necho hi\n"
 
@@ -99,7 +104,14 @@ func stubLefthook(t *testing.T) string {
 	dir := t.TempDir()
 	stub := filepath.Join(dir, "lefthook")
 	log := filepath.Join(dir, "argv.log")
-	writeFile(t, stub, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$LEFTHOOK_STUB_LOG\"\nexit 0\n")
+	// `install` mimics the one side effect init later probes for its closing
+	// verdict: a lefthook-managed pre-commit stub in git's effective hooks dir.
+	writeFile(t, stub, "#!/bin/sh\n"+
+		"printf '%s\\n' \"$*\" >> \"$LEFTHOOK_STUB_LOG\"\n"+
+		"if [ \"$1\" = install ]; then\n"+
+		"  d=\"$(git rev-parse --git-path hooks)\" && mkdir -p \"$d\" && printf '#!/bin/sh\\n# lefthook\\n' > \"$d/pre-commit\"\n"+
+		"fi\n"+
+		"exit 0\n")
 	if err := os.Chmod(stub, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +163,7 @@ func TestFreshInit(t *testing.T) {
 	}
 
 	wantOut := "omakase: placed 1 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
-		"  + .omakase/gates/example.sh\n" + summaryTail + uxStanzas()
+		"  + .omakase/gates/example.sh\n" + summaryTail + uxStanzas() + verifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "")
 
@@ -248,7 +260,7 @@ func TestTrackedSkip(t *testing.T) {
 	wantOut := "omakase: placed 1 file(s), overwrote 0 to match payload, skipped 1 committed path(s).\n" +
 		"  + .omakase/gates/example.sh\n" +
 		"  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see init.sh --help): AGENTS.md\n" +
-		summaryTail + uxStanzas()
+		summaryTail + uxStanzas() + verifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "omakase: SKIP (already tracked) AGENTS.md\n")
 	// committed file left untouched.
@@ -1159,7 +1171,7 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 
 	wantOut := "omakase: placed 2 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
 		"  + .omakase/gates/example.sh\n" +
-		"  + .worktreeinclude\n" + summaryTail + uxStanzas()
+		"  + .worktreeinclude\n" + summaryTail + uxStanzas() + verifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
 
 	// exclude block: lists .worktreeinclude.
@@ -1220,7 +1232,8 @@ func TestUXStanzas(t *testing.T) {
 		"omakase: worktree guard (Claude Code only, opt-in) — while other worktrees are active,\n" +
 		"         denies edits to product files in the MAIN checkout before they happen. Enable by\n" +
 		"         adding a PreToolUse hook (matcher \"Edit|Write\") to .claude/settings.json:\n" +
-		"           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh\n"
+		"           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh\n" +
+		verifiedLine
 	eq(t, "summary with stanzas", stdout.String(), wantOut)
 }
 

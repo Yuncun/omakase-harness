@@ -125,6 +125,26 @@ func StopNotice(st *probe.State, ranThisTurn bool) string {
 	return msg
 }
 
+// InitVerdict is the closing line of `omakase init`: the same three proofs
+// the status bar renders, run fresh after the install, so init ends with
+// evidence instead of an assertion (#85 — the asserted "hooks installed"
+// shipped the green-while-broken counter-example, #72). The fix verb cannot
+// be `omakase init` here — it just ran — so failures point at status.
+func InitVerdict(st *probe.State) string {
+	if st == nil {
+		return "omakase: could not verify the install — run omakase status"
+	}
+	switch {
+	case st.HooksInstalled == probe.Problem:
+		return "omakase: NOT verified — hooks not installed — run omakase status"
+	case st.FilesPresent == probe.Problem || st.HashesMatch == probe.Problem:
+		return "omakase: NOT verified — harness files changed — run omakase status"
+	case st.HooksInstalled == probe.OK && st.FilesPresent == probe.OK && st.HashesMatch == probe.OK:
+		return "omakase: verified — hooks installed ✓ · files present ✓ · files match ✓"
+	}
+	return "omakase: could not verify the install — run omakase status"
+}
+
 // HarnessSlot is the harness identity shown after the repo facts: the NAME
 // override, else the source's short name, else "" for a bare base install
 // (the icon already says omakase; repeating it is noise).

@@ -176,6 +176,31 @@ func TestStatuslineIconOverride(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------- verdict
+
+func TestInitVerdict(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*probe.State)
+		want   string
+	}{
+		{"proven", func(s *probe.State) {}, "omakase: verified — hooks installed ✓ · files present ✓ · files match ✓"},
+		{"hooks", func(s *probe.State) { s.HooksInstalled = probe.Problem }, "omakase: NOT verified — hooks not installed — run omakase status"},
+		{"files", func(s *probe.State) { s.HashesMatch = probe.Problem }, "omakase: NOT verified — harness files changed — run omakase status"},
+		{"unknown", func(s *probe.State) { s.FilesPresent = probe.Unknown }, "omakase: could not verify the install — run omakase status"},
+	}
+	for _, c := range cases {
+		st := proven()
+		c.mutate(st)
+		if got := InitVerdict(st); got != c.want {
+			t.Fatalf("%s:\n got %q\nwant %q", c.name, got, c.want)
+		}
+	}
+	if got := InitVerdict(nil); !strings.Contains(got, "could not verify") {
+		t.Fatalf("nil state: %q", got)
+	}
+}
+
 // ---------------------------------------------------------------- notice
 
 func TestStopNoticeProven(t *testing.T) {
