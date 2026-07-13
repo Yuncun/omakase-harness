@@ -46,6 +46,7 @@ func hookStubLefthook(t *testing.T) string {
 	writeFile(t, stub, "#!/bin/sh\n"+
 		"printf 'argv:%s\\n' \"$*\" >> \"$HOOKSTUB_LOG\"\n"+
 		"printf 'config:%s\\n' \"${LEFTHOOK_CONFIG:-unset}\" >> \"$HOOKSTUB_LOG\"\n"+
+		"printf 'indexfile:%s\\n' \"${GIT_INDEX_FILE:-unset}\" >> \"$HOOKSTUB_LOG\"\n"+
 		"printf 'stdin:%s\\n' \"$(cat)\" >> \"$HOOKSTUB_LOG\"\n"+
 		"exit \"${HOOKSTUB_EXIT:-0}\"\n")
 	if err := os.Chmod(stub, 0o755); err != nil {
@@ -194,6 +195,41 @@ func TestHookGateDropsLeakedLefthookConfig(t *testing.T) {
 	}
 	if !strings.Contains(readFileT(t, log), "config:"+wiring+"\n") {
 		t.Errorf("leaked LEFTHOOK_CONFIG survived: %q", readFileT(t, log))
+	}
+}
+
+// The leak must also be dropped when the repo has its OWN lefthook.yml —
+// there the leak would displace the project's config entirely, silently
+// skipping its committed gates and running another repo's commands here.
+func TestHookGateDropsLeakedConfigWithProjectLefthookYml(t *testing.T) {
+	repo := hookRepo(t)
+	log := hookStubLefthook(t)
+	writeFile(t, filepath.Join(repo.Root, "lefthook-local.yml"), "pre-commit:\n  jobs:\n    - name: x\n      run: true\n")
+	writeFile(t, filepath.Join(repo.Root, "lefthook.yml"), "pre-commit:\n  jobs:\n    - name: own\n      run: true\n")
+	t.Setenv("LEFTHOOK_CONFIG", "/some/other/repo/lefthook.yml")
+	var out, errb strings.Builder
+	if code := RunHook([]string{"pre-commit"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	if !strings.Contains(readFileT(t, log), "config:unset\n") {
+		t.Errorf("leaked LEFTHOOK_CONFIG survived past the project's own lefthook.yml: %q", readFileT(t, log))
+	}
+}
+
+// GIT_INDEX_FILE must SURVIVE the env scrub: git points it at the temporary
+// index during partial commits, and the gates must see that staged set. Only
+// GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR are scrubbed.
+func TestHookKeepsGitIndexFile(t *testing.T) {
+	repo := hookRepo(t)
+	log := hookStubLefthook(t)
+	writeFile(t, filepath.Join(repo.Root, "lefthook-local.yml"), "pre-commit:\n  jobs:\n    - name: x\n      run: true\n")
+	t.Setenv("GIT_INDEX_FILE", "/tmp/sentinel-index")
+	var out, errb strings.Builder
+	if code := RunHook([]string{"pre-commit"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	if !strings.Contains(readFileT(t, log), "indexfile:/tmp/sentinel-index\n") {
+		t.Errorf("GIT_INDEX_FILE did not reach the gate runner: %q", readFileT(t, log))
 	}
 }
 

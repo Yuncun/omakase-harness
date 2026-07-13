@@ -298,7 +298,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		if rerr != nil {
 			continue
 		}
-		if bytes.Contains(content, []byte("omakase dispatcher")) {
+		if bytes.Contains(content, []byte("# omakase dispatcher")) {
 			continue // omakase's own hook (a re-init), any version's text
 		}
 		if bytes.Contains(bytes.ToLower(content), []byte("lefthook")) {

@@ -187,10 +187,13 @@ func runLefthook(lh, name string, hookArgs []string, root string, useLocalConfig
 	cmd.Dir = root
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, kv := range os.Environ() {
-		// Drop any inherited LEFTHOOK_CONFIG: a value leaked for another
-		// repo would run that repo's gates here (same class as the GIT_DIR
-		// scrub above). The harness wiring below is the only config.
-		if useLocalConfig && strings.HasPrefix(kv, "LEFTHOOK_CONFIG=") {
+		// Drop any inherited LEFTHOOK_CONFIG unconditionally: a value leaked
+		// for another repo would run that repo's gates here (same class as
+		// the GIT_DIR scrub above) — including when this repo has its own
+		// lefthook.yml, where the leak would displace the project's config.
+		// The append below (or lefthook's default resolution) is the only
+		// config source.
+		if strings.HasPrefix(kv, "LEFTHOOK_CONFIG=") {
 			continue
 		}
 		env = append(env, kv)
