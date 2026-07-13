@@ -5,7 +5,39 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added
+- **The edit lifecycle: `omakase diff` + keep/restore** (#98 Part 2). Editing
+  a placed file is the expected lifecycle, not misuse: modified →
+  `omakase diff` → keep or restore. `omakase diff [path…]` is a new, strictly
+  read-only human verb showing what YOU changed, in the forward direction
+  (your edit renders as an addition), against the harness version — or
+  against your accepted version once you've kept a file. The plumbing
+  actions live on status, siblings of `--disable`:
+  `omakase status --keep <path>` accepts the on-disk version as yours (the
+  accepted copy is stored under `$OMK/kept/`, the ledger hash moves to it,
+  and everything — status, statusline, stop-notice — reads green again:
+  green means "matches what you've consented to");
+  `omakase status --restore <path>` puts the harness's version back and
+  clears the mark, and works on plain drift too. Both resolve names exactly
+  like `--disable` and refuse machinery and tracked paths with exit 2.
+- **Kept files survive every lifecycle verb**: repair `init` and
+  `init <new-source>` leave them untouched (a missing kept file is refilled
+  with the ACCEPTED copy; the harness version of a kept path the new source
+  no longer ships is carried across the snapshot rebuild so `--restore`
+  keeps working offline); the checkout heal refills from the accepted copy;
+  a disable/enable cycle round-trips the accepted version; `remove` leaves
+  kept files on disk (they are yours) and reports them. Kept rows render as
+  their own state — `kept (yours)` — on the status page, and the verified
+  init verdict counts them.
+- **Two-tier help**: `omakase --help` lists the four human verbs (init,
+  status, diff, remove) first and groups hook/statusline/stop-notice/mcp
+  under "commands used by your tools, not by you".
+
 ### Changed
+- **The status page's committed section is retitled** "The project's harness
+  (committed — managed by git, not omakase)" — the two-layer naming: the
+  project's harness (committed, git-managed, omakase lists but never
+  touches) vs your harness (injected, omakase-managed).
 - **omakase owns `.git/hooks`: permanent dispatcher hooks, lefthook demoted to
   gate-runner** (#98). Each hook file (pre-commit, pre-push, post-checkout) is
   now a permanent ~5-line dispatcher that execs the machine-wide binary copy
