@@ -41,17 +41,20 @@ check into a git hook).
                               (interactive on a terminal; static page when piped)
     remove.sh                 delete the placed files, uninstall hooks, restore the repo
 
-`init` installs lefthook if absent, fetching a pinned, checksum-verified binary into a
-per-machine cache — the same mechanism self-provisions the omakase binary itself when a
-clone has no Go. `omakase mcp` serves the same status + consent menu inside Claude Code
+`init` fetches lefthook (the gate runner) if absent — a pinned, checksum-verified binary
+in a per-machine cache; the same mechanism self-provisions the omakase binary itself when
+a clone has no Go. `omakase mcp` serves the same status + consent menu inside Claude Code
 and Copilot CLI. Flags and environment variables are in the
 [reference](docs/reference.md).
 
 ## How it works
 
-Gates run through git hooks, installed via lefthook, so they fire on commit and push
-whatever produced the change: an agent, an IDE, or a plain `git` command. Installed files
-are never staged or committed, and `remove` reverses every step.
+Gates run through git hooks, so they fire on commit and push whatever produced the
+change: an agent, an IDE, or a plain `git` command. `init` writes one permanent
+dispatcher per hook; at commit time it verifies the harness is complete (fail closed)
+and runs the wired gates through a pinned lefthook. Nothing rewrites a hook file after
+init — not lefthook, not omakase itself. Installed files are never staged or committed,
+and `remove` reverses every step.
 
 ## Documentation
 

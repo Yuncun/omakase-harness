@@ -22,6 +22,9 @@
 #      edited live hook files). A1 pins the invariant end-to-end: bytes, inode,
 #      and mtime of every dispatcher unchanged across a real commit, a branch
 #      checkout, and a gate-config edit.
+#      A2 branch state is read at fire time: two worktrees with DIFFERENT gate
+#      wiring each run their OWN branch's gates on commit — the pre-#98 scheme
+#      raced here because both worktrees kept rewriting the one shared hook.
 #   M. MIRRORS — the gate primitive ships as two byte-identical copies
 #      (payload + the Go binary's embedded template). Pin the pair so a fix to
 #      one copy cannot silently miss the other.
@@ -104,6 +107,36 @@ printf '# an edited gate config\n' >> "$REPOA/lefthook-local.yml"
 AFTER="$(snap_hooks)"
 [ "$BEFORE" = "$AFTER" ] && pass "A1: dispatcher bytes+inode+mtime unchanged across commit, checkout, and config edit" \
   || fail "A1: a hook file changed at hook time — the #96 writer class is back"
+
+echo "== A2: two worktrees with different wiring each run their own gates =="
+WTA="$TMP/wt-alpha"
+( cd "$REPOA" && git worktree add -q "$WTA" -b alpha ) >/dev/null 2>&1
+# Each side gets its own wiring with a distinct gate marker. The worktree copy
+# is gitignored per checkout, so the two coexist on one shared .git.
+cat > "$REPOA/lefthook-local.yml" <<'YML'
+pre-commit:
+  jobs:
+    - name: main-gate
+      run: echo GATE-MAIN-RAN
+YML
+cat > "$WTA/lefthook-local.yml" <<'YML'
+pre-commit:
+  jobs:
+    - name: alpha-gate
+      run: echo GATE-ALPHA-RAN
+YML
+HOOKS_SNAP="$(snap_hooks)"
+OUTM="$( cd "$REPOA" && echo m > m.txt && git add m.txt && git commit -m m 2>&1 )"
+OUTA="$( cd "$WTA"   && echo a > a.txt && git add a.txt && git commit -m a 2>&1 )"
+{ printf '%s' "$OUTM" | grep -q 'GATE-MAIN-RAN' && ! printf '%s' "$OUTM" | grep -q 'GATE-ALPHA-RAN'; } \
+  && pass "A2: the main checkout ran ITS wiring only" \
+  || fail "A2: main-checkout commit ran the wrong gates ($OUTM)"
+{ printf '%s' "$OUTA" | grep -q 'GATE-ALPHA-RAN' && ! printf '%s' "$OUTA" | grep -q 'GATE-MAIN-RAN'; } \
+  && pass "A2: the linked worktree ran ITS wiring only" \
+  || fail "A2: worktree commit ran the wrong gates ($OUTA)"
+[ "$HOOKS_SNAP" = "$(snap_hooks)" ] && pass "A2: zero writes to .git/hooks from either worktree's commit" \
+  || fail "A2: a worktree commit wrote to the shared hooks dir"
+( cd "$REPOA" && git worktree remove --force "$WTA" ) 2>/dev/null; ( cd "$REPOA" && git worktree prune ) 2>/dev/null
 
 rm -rf "$TMP"
 [ "$FAILED" -eq 0 ] && echo "hooktime-hardening: ALL PASS" || echo "hooktime-hardening: FAILURES"
