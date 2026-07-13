@@ -12,9 +12,5 @@ pre-commit:
     - name: block-marker
       run: bash .omakase/bin/omakase-gate.sh block-marker --step 'bash .omakase/gates/block-marker.sh'
 
-# Worktree auto-install (from the base harness): on checkout, copy any MISSING injected
-# file into the worktree. Never overwrites a local edit, never touches a tracked path.
-post-checkout:
-  jobs:
-    - name: omakase-ensure-present
-      run: bash "$(git rev-parse --git-common-dir)/omakase/ensure-present.sh"
+# Worktree auto-install happens outside this file: on checkout, omakase itself copies any
+# MISSING injected file into the worktree. Never overwrites a local edit or a tracked path.

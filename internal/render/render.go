@@ -169,8 +169,8 @@ func HarnessSlot(st *probe.State) string {
 
 // problemFact collapses the affirmatively-failing proofs to the single most
 // severe fact, or "" when none fail. Missing and drifted files share one
-// fact — the fix is the same either way, and ensure-present.sh already heals
-// missing files silently on the next checkout.
+// fact — the fix is the same either way, and the post-checkout heal already
+// restores missing files silently on the next checkout.
 func problemFact(st *probe.State) string {
 	switch {
 	case st.HooksInstalled == probe.Problem:
