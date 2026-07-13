@@ -9,8 +9,8 @@
 # bash behavior): an omakase-OWNED top dir (.omakase, .claude, ...) is one wholesale
 # entry with a trailing '/'; a top dir SHARED with the project (.github) is excluded
 # file-by-file (full placed path per entry); entries appear deduped in placed.tsv row
-# order; two wiring entries follow that are excluded but never in placed.tsv —
-# lefthook.yml and .worktreeinclude, each only when the repo does not track it.
+# order; one wiring entry follows that is excluded but never in placed.tsv —
+# .worktreeinclude, only when the repo does not track it.
 # Every entry carries a leading '/' (root-anchored — an unanchored gitignore
 # pattern matches at any depth and would hide same-named nested paths).
 # Golden bytes are DERIVED in-run from the seeded inputs + placed.tsv (no committed
@@ -50,7 +50,6 @@ derive_block(){ # $1=repo root, $2=placed.tsv, $3=out file
     case "${rel%%/*}" in .github) top="$rel";; *) top="${rel%%/*}";; esac
     grep -qxF -- "$top" "$ent" || printf '%s\n' "$top" >> "$ent"
   done < "$placed"
-  git -C "$root" ls-files --error-unmatch -- lefthook.yml >/dev/null 2>&1 || printf '%s\n' "lefthook.yml" >> "$ent"
   git -C "$root" ls-files --error-unmatch -- .worktreeinclude >/dev/null 2>&1 || printf '%s\n' ".worktreeinclude" >> "$ent"
   {
     printf '%s\n' "$BEGIN_MARK"
@@ -121,14 +120,14 @@ check_exclude_golden(){
     || { fail "$label: placed path(s) covered by NO exclude-block entry"; indent "$uncovered"; }
 
   # set equality, direction 2: nothing inside the block that placed.tsv does not
-  # explain — every entry maps back to placed content, except the two wiring
-  # entries (lefthook.yml, .worktreeinclude), which are excluded but never placed.
+  # explain — every entry maps back to placed content, except the one wiring
+  # entry (.worktreeinclude), which is excluded but never placed.
   orphans=""
   while IFS= read -r entl; do
     [ -n "$entl" ] || { orphans="$orphans(empty line)
 "; continue; }
     entl="${entl#/}"   # entries are root-anchored; compare against bare rels
-    case "$entl" in lefthook.yml|.worktreeinclude) continue;; esac
+    case "$entl" in .worktreeinclude) continue;; esac
     base="${entl%/}"
     if [ "$base" != "$entl" ]; then
       hit="$(cut -f1 "$placed" | awk -v p="$base/" 'index($0,p)==1{f=1} END{print f+0}')"
@@ -138,7 +137,7 @@ check_exclude_golden(){
     [ "$hit" = 1 ] || orphans="$orphans$entl
 "
   done < "$scratch.block.actual"
-  [ -z "$orphans" ] && pass "$label: no block entry outside placed.tsv (+ the two wiring entries)" \
+  [ -z "$orphans" ] && pass "$label: no block entry outside placed.tsv (+ the wiring entry)" \
     || { fail "$label: block entr(ies) that no placed.tsv path explains"; indent "$orphans"; }
 }
 
@@ -150,8 +149,10 @@ check_omk_layout(){
   common="$(common_of "$repo")"; omk="$common/omakase"
   [ -f "$omk/placed.tsv" ] && pass "$label: \$OMK/placed.tsv exists" || fail "$label: \$OMK/placed.tsv missing"
   [ -d "$omk/payload-snapshot" ] && pass "$label: \$OMK/payload-snapshot/ exists" || fail "$label: \$OMK/payload-snapshot/ missing"
-  [ -x "$omk/ensure-present.sh" ] && pass "$label: ensure-present.sh generated and executable" || fail "$label: ensure-present.sh missing or not executable"
-  [ -x "$omk/verify-overlay.sh" ] && pass "$label: verify-overlay.sh generated and executable" || fail "$label: verify-overlay.sh missing or not executable"
+  # The hook-time scripts live in the binary since #98; $OMK must NOT carry
+  # per-repo copies (init deletes any pre-#98 leftovers).
+  [ ! -e "$omk/ensure-present.sh" ] && pass "$label: no per-repo ensure-present.sh (job lives in the binary)" || fail "$label: stale ensure-present.sh in \$OMK"
+  [ ! -e "$omk/verify-overlay.sh" ] && pass "$label: no per-repo verify-overlay.sh (job lives in the binary)" || fail "$label: stale verify-overlay.sh in \$OMK"
   bad=""
   while IFS=$'\t' read -r rel _rest; do
     [ -n "$rel" ] || continue

@@ -2,8 +2,9 @@
 # Proof of the provenance store placed.tsv (spec §2 + safety fix 5): init writes
 # .git/omakase/placed.tsv, one row per placed artifact, TAB-separated columns
 #   path  kind  source  sha256  enabled
-# and every consumer (ensure-present, verify-overlay, remove, show, the
-# upstream-collision guard) reads placed.tsv instead of the old placed.list.
+# and every consumer (the post-checkout heal and gate verify in `omakase hook`,
+# remove, show, the upstream-collision guard) reads placed.tsv instead of the
+# old placed.list.
 # (This is the provenance store, NOT ledger.tsv, which is the gate run + cache store.)
 #   M. placed.tsv written with correct columns / kinds / hashes; placed.list gone
 #   N. symlink row: hash is the link TARGET STRING; round-trips (CLAUDE.md case)
@@ -18,6 +19,10 @@ INIT="$HERE/../bin/init.sh"
 REMOVE="$HERE/../bin/remove.sh"
 SHOW="$HERE/../bin/status.sh"
 LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
+OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
+[ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
+verify(){ ( cd "$1" && LEFTHOOK=0 "$OMAKASE" hook pre-commit ); }   # verify-only gate run
+heal(){ ( cd "$1" && "$OMAKASE" hook post-checkout ); }
 TMP="${TMPDIR:-/tmp}/omakase-ledger-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
@@ -43,10 +48,6 @@ pre-commit:
   jobs:
     - name: omakase-example
       run: bash .omakase/gates/example.sh
-post-checkout:
-  jobs:
-    - name: omakase-ensure-present
-      run: bash "$(git rev-parse --git-common-dir)/omakase/ensure-present.sh"
 YML
   printf 'a rule\n' > "$p/.claude/rules/style.md"
   printf 'spaced rule\n' > "$p/.claude/rules/my rule.md"
@@ -92,27 +93,24 @@ awk -F'\t' '$3!="payload"{bad=1} END{exit bad?1:0}' "$LEDGER" && pass "source co
 awk -F'\t' '$5!="1"{bad=1} END{exit bad?1:0}' "$LEDGER" && pass "enabled column is 1 on every row" || fail "row not enabled=1 at placement"
 [ "$(col "$LEDGER" .claude/rules/style.md 4)" = "$(sha_file "$REPO/.claude/rules/style.md")" ] && pass "sha256 matches the placed file content" || fail "sha256 mismatch"
 
-grep -q 'placed\.list' "$COMMON/omakase/ensure-present.sh" "$COMMON/omakase/verify-overlay.sh" "$COMMON/omakase/install-guards.sh" 2>/dev/null \
-  && fail "a generated script still references placed.list" || pass "generated scripts carry no placed.list reference"
-
 # ---------- Scenario N: symlink row (CLAUDE.md -> AGENTS.md) ----------
 echo "== Scenario N: symlink row hashes the link target string and round-trips =="
 [ "$(col "$LEDGER" CLAUDE.md 2)" = doc ] && pass "kind: CLAUDE.md symlink -> doc" || fail "CLAUDE.md kind wrong"
 [ "$(col "$LEDGER" CLAUDE.md 4)" = "$(sha_str AGENTS.md)" ] && pass "symlink hash = sha256 of the target path string" || fail "symlink hash is not the target-string hash"
 rm -f "$REPO/CLAUDE.md"
-( cd "$REPO" && bash "$COMMON/omakase/ensure-present.sh" )
-{ [ -L "$REPO/CLAUDE.md" ] && [ "$(readlink "$REPO/CLAUDE.md")" = AGENTS.md ]; } && pass "ensure-present restored the symlink AS a symlink" || fail "symlink did not round-trip"
+heal "$REPO"
+{ [ -L "$REPO/CLAUDE.md" ] && [ "$(readlink "$REPO/CLAUDE.md")" = AGENTS.md ]; } && pass "the heal restored the symlink AS a symlink" || fail "symlink did not round-trip"
 
 # ---------- Scenario O: space-in-path row round-trips ----------
 echo "== Scenario O: a path containing a space survives every consumer =="
 nf=$(awk -F'\t' '$1==".claude/rules/my rule.md"{print NF; exit}' "$LEDGER")
 [ "${nf:-0}" -eq 5 ] && pass "space-in-path row intact (5 fields)" || fail "space-in-path row missing/split ($nf fields)"
 rm -f "$REPO/.claude/rules/my rule.md"
-ERR=$( cd "$REPO" && sh "$COMMON/omakase/verify-overlay.sh" 2>&1 ); rc=$?
-{ [ "$rc" -ne 0 ] && echo "$ERR" | grep -q 'my rule.md'; } && pass "verify-overlay blocks on the missing spaced path, names it" || fail "verify-overlay missed the spaced path ($ERR)"
-( cd "$REPO" && bash "$COMMON/omakase/ensure-present.sh" )
-grep -q 'spaced rule' "$REPO/.claude/rules/my rule.md" 2>/dev/null && pass "ensure-present restored the spaced path with content intact" || fail "spaced path not restored"
-( cd "$REPO" && sh "$COMMON/omakase/verify-overlay.sh" ) >/dev/null 2>&1 && pass "verify-overlay passes after restore" || fail "verify-overlay still blocking"
+ERR=$( verify "$REPO" 2>&1 ); rc=$?
+{ [ "$rc" -ne 0 ] && echo "$ERR" | grep -q 'my rule.md'; } && pass "the gate verify blocks on the missing spaced path, names it" || fail "the verify missed the spaced path ($ERR)"
+heal "$REPO"
+grep -q 'spaced rule' "$REPO/.claude/rules/my rule.md" 2>/dev/null && pass "the heal restored the spaced path with content intact" || fail "spaced path not restored"
+verify "$REPO" >/dev/null 2>&1 && pass "the gate verify passes after restore" || fail "the verify still blocking"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 [ ! -e "$REPO/.claude/rules/my rule.md" ] && pass "remove deleted the spaced path" || fail "remove left the spaced path"
 [ ! -e "$REPO/.omakase" ] && pass "remove deleted the placed tree (ledger-driven)" || fail "remove left placed files"
@@ -127,16 +125,16 @@ COMMON="$(common_of "$REPO")"; LEDGER="$COMMON/omakase/placed.tsv"
 awk -F'\t' -v OFS='\t' '$1==".claude/rules/style.md" || $1==".claude/skills/demo/SKILL.md" {$5=0} 1' "$LEDGER" > "$LEDGER.tmp" && mv "$LEDGER.tmp" "$LEDGER"
 rm -f "$REPO/.claude/rules/style.md"
 
-( cd "$REPO" && bash "$COMMON/omakase/ensure-present.sh" )
-[ ! -e "$REPO/.claude/rules/style.md" ] && pass "ensure-present does NOT resurrect a disabled artifact" || fail "disabled artifact was restored"
-( cd "$REPO" && sh "$COMMON/omakase/verify-overlay.sh" ) >/dev/null 2>&1 && pass "verify-overlay does NOT block on a disabled missing artifact" || fail "disabled artifact blocked the gate check"
+heal "$REPO"
+[ ! -e "$REPO/.claude/rules/style.md" ] && pass "the heal does NOT resurrect a disabled artifact" || fail "disabled artifact was restored"
+verify "$REPO" >/dev/null 2>&1 && pass "the gate verify does NOT block on a disabled missing artifact" || fail "disabled artifact blocked the gate check"
 OUT=$( cd "$REPO" && echo p > p.txt && git add p.txt && git commit -m p 2>&1 ); rc=$?
 { [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'omakase-example-gate-ran'; } && pass "real commit passes with a disabled artifact missing (gate still fires)" || fail "commit blocked or gate dead ($OUT)"
 # enabled=1 paths still fail closed alongside the disabled one
 rm -f "$REPO/.claude/commands/go.md"
-( cd "$REPO" && sh "$COMMON/omakase/verify-overlay.sh" ) >/dev/null 2>&1 && fail "verify-overlay ignored an enabled missing artifact" || pass "enabled missing artifact still blocks (disabled row did not mask it)"
-( cd "$REPO" && bash "$COMMON/omakase/ensure-present.sh" )
-[ -f "$REPO/.claude/commands/go.md" ] && pass "ensure-present still restores enabled artifacts" || fail "enabled artifact not restored"
+verify "$REPO" >/dev/null 2>&1 && fail "the gate verify ignored an enabled missing artifact" || pass "enabled missing artifact still blocks (disabled row did not mask it)"
+heal "$REPO"
+[ -f "$REPO/.claude/commands/go.md" ] && pass "the heal still restores enabled artifacts" || fail "enabled artifact not restored"
 OUT=$( cd "$REPO" && bash "$SHOW" 2>&1 )
 echo "$OUT" | grep '.claude/rules/style.md' | grep -qi 'disabled' && pass "show marks the disabled row as disabled" || fail "show does not surface the disabled state ($OUT)"
 echo "$OUT" | grep '.claude/rules/style.md' | grep -qi 'MISSING' && fail "show calls a disabled artifact MISSING" || pass "show does not call a disabled artifact MISSING"

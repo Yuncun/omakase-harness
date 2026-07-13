@@ -227,6 +227,70 @@ func TestHookGateForwardsArgsAndStdin(t *testing.T) {
 	}
 }
 
+// fakeGitLFS puts a logging git-lfs first on PATH and returns its log path.
+func fakeGitLFS(t *testing.T, exit string) string {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "lfs.log")
+	writeFile(t, filepath.Join(dir, "git-lfs"), "#!/bin/sh\necho \"$@\" >> \""+log+"\"\nexit "+exit+"\n")
+	if err := os.Chmod(filepath.Join(dir, "git-lfs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return log
+}
+
+// lefthook forwards `git lfs <hook>` natively only for hooks its config
+// defines (pinned 2.1.9 behavior); an LFS hook the wiring does not name gets
+// omakase's own forward, so displacing a stock git-lfs hook loses nothing.
+func TestHookGateForwardsLFSWhenUnwired(t *testing.T) {
+	repo := hookRepo(t)
+	log := hookStubLefthook(t)
+	writeFile(t, filepath.Join(repo.Root, "lefthook-local.yml"), "pre-commit:\n  jobs:\n    - name: x\n      run: true\n")
+	lfsLog := fakeGitLFS(t, "0")
+	var out, errb strings.Builder
+	if code := RunHook([]string{"pre-push", "origin", "u"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	if !strings.Contains(readFileT(t, lfsLog), "pre-push origin u") {
+		t.Errorf("git lfs pre-push not forwarded: %q", readFileT(t, lfsLog))
+	}
+	if !strings.Contains(readFileT(t, log), "argv:run pre-push") {
+		t.Error("lefthook still owes its (jobless) run after the LFS forward")
+	}
+}
+
+// The direct LFS forward fails closed on a gate hook, like the stock stub.
+func TestHookGateLFSFailureBlocks(t *testing.T) {
+	repo := hookRepo(t)
+	log := hookStubLefthook(t)
+	writeFile(t, filepath.Join(repo.Root, "lefthook-local.yml"), "pre-commit:\n  jobs:\n    - name: x\n      run: true\n")
+	fakeGitLFS(t, "3")
+	var out, errb strings.Builder
+	if code := RunHook([]string{"pre-push"}, strings.NewReader(""), &out, &errb); code != 3 {
+		t.Fatalf("exit = %d, want git-lfs's 3", code)
+	}
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Error("gates ran despite the LFS failure")
+	}
+}
+
+// A hook the wiring DOES define skips omakase's own forward — lefthook
+// forwards LFS natively there, and a double run would be waste.
+func TestHookGateSkipsOwnLFSWhenWired(t *testing.T) {
+	repo := hookRepo(t)
+	hookStubLefthook(t)
+	writeFile(t, filepath.Join(repo.Root, "lefthook-local.yml"), "pre-push:\n  jobs:\n    - name: x\n      run: true\n")
+	lfsLog := fakeGitLFS(t, "0")
+	var out, errb strings.Builder
+	if code := RunHook([]string{"pre-push", "origin", "u"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if _, err := os.Stat(lfsLog); !os.IsNotExist(err) {
+		t.Errorf("omakase forwarded LFS for a wired hook (lefthook owns it there): %q", readFileT(t, lfsLog))
+	}
+}
+
 func TestHookGateHonorsLefthookZero(t *testing.T) {
 	repo := hookRepo(t)
 	log := hookStubLefthook(t)

@@ -128,6 +128,22 @@ func runGateHook(name string, hookArgs []string, repo *state.Repo, stdin io.Read
 		fmt.Fprintln(stderr, "omakase: restore it with a bare  omakase init  (self-fetches lefthook), or install lefthook / set LEFTHOOK_BIN. Skip once with LEFTHOOK=0; git --no-verify bypasses hooks entirely.")
 		return 1
 	}
+
+	// lefthook forwards `git lfs <hook>` natively ONLY for a hook its config
+	// defines jobs for (verified against the pinned 2.1.9); a gate the
+	// wiring does not name — the base harness ships pre-push commented out —
+	// would silently lose the displaced stock git-lfs hook's job. Forward it
+	// here first, fail closed like the stock stub. (A hook defined only via
+	// lefthook `extends:` escapes the key scan and gets both this forward
+	// and lefthook's; git-lfs runs are idempotent, so the double forward is
+	// spend, not breakage.)
+	wired := (hasLocal && wiringDefinesHook(filepath.Join(root, "lefthook-local.yml"), name)) ||
+		(hasMain && wiringDefinesHook(filepath.Join(root, "lefthook.yml"), name))
+	if !wired {
+		if code := runGitLFS(name, hookArgs, root, stdin, stdout, stderr, true); code != 0 {
+			return code
+		}
+	}
 	return runLefthook(lh, name, hookArgs, root, !hasMain, stdin, stdout, stderr)
 }
 
