@@ -12,6 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/Yuncun/omakase-harness/internal/hook"
 	"github.com/Yuncun/omakase-harness/internal/overlay"
 	"github.com/Yuncun/omakase-harness/internal/state"
 	"github.com/Yuncun/omakase-harness/internal/tui"
@@ -92,6 +93,19 @@ func placedFixture(t *testing.T) (string, *state.Repo) {
 		t.Fatal(err)
 	}
 	t.Setenv("OMAKASE_PAYLOAD", payload)
+
+	// Isolate XDG_CACHE_HOME and plant an exit-0 stable binary: init writes
+	// real dispatchers (#98), and the real `git commit` calls below fire
+	// them — without isolation they would exec the developer's actual cached
+	// omakase against this throwaway fixture.
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	stable := hook.StableBinPath()
+	if err := os.MkdirAll(filepath.Dir(stable), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stable, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	var stdout, stderr strings.Builder
 	if code := overlay.RunInit(nil, &stdout, &stderr); code != 0 {

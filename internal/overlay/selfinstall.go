@@ -1,7 +1,9 @@
 // Self-install of the machine-wide binary copy. The statusline / stop-notice
-// wiring printed by init must survive plugin updates and cache eviction, so
-// it points at ONE stable path instead of a version-numbered cache dir or a
-// per-repo script; every real `omakase init` refreshes the copy there.
+// wiring printed by init — and, since issue #98, the permanent .git/hooks
+// dispatchers — must survive plugin updates and cache eviction, so they
+// point at ONE stable path (hook.StableBinPath) instead of a
+// version-numbered cache dir or a per-repo script; every real
+// `omakase init` refreshes the copy there.
 package overlay
 
 import (
@@ -10,32 +12,20 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/Yuncun/omakase-harness/internal/hook"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
-// StableBinPath is the machine-wide binary location the host wiring points
-// at: ${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase. "" when
-// no home directory can be resolved.
-func StableBinPath() string {
-	cache := os.Getenv("XDG_CACHE_HOME")
-	if cache == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		cache = filepath.Join(home, ".cache")
-	}
-	return filepath.Join(cache, "omakase", "bin", "current", "omakase")
-}
-
-// SelfInstallCurrent copies the running executable to StableBinPath when the
-// two differ (hash-compared, atomic rename). Strictly best-effort: the copy
-// only feeds the cosmetic status surfaces, so no failure here may ever fail
-// the verb that triggered it. Called from main() and never from RunInit, so
-// unit tests exercising RunInit cannot overwrite a developer's real cached
-// binary with a test binary.
+// SelfInstallCurrent copies the running executable to hook.StableBinPath
+// when the two differ (hash-compared, atomic rename). Best-effort in itself
+// — no failure here may ever fail the verb that triggered it — but the copy
+// is load-bearing once dispatchers exist: gate hooks fail closed without
+// it, so RunInit verifies it after writing dispatchers and the probe's hook
+// proof checks it on every status run. Called from main() and never from
+// RunInit, so unit tests exercising RunInit cannot overwrite a developer's
+// real cached binary with a test binary.
 func SelfInstallCurrent() {
-	dest := StableBinPath()
+	dest := hook.StableBinPath()
 	if dest == "" {
 		return
 	}

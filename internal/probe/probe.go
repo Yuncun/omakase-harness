@@ -13,12 +13,14 @@ package probe
 
 import (
 	"bufio"
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/Yuncun/omakase-harness/internal/hook"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
@@ -29,6 +31,18 @@ const (
 	Unknown Tri = iota // could not verify — never treat as OK
 	OK
 	Problem
+)
+
+// HookIssue pins a HooksInstalled Problem to its cause — a fact, not a
+// message; render owns the wording (the amber-string decision is issue #98
+// PR C).
+type HookIssue int
+
+const (
+	HookIssueNone    HookIssue = iota
+	HookIssueAbsent            // a dispatcher file is missing
+	HookIssueForeign           // a hook file exists but is not omakase's dispatcher (e.g. `lefthook install -f` rewrote it, or a pre-#98 install awaiting its migration init)
+	HookIssueBinary            // dispatchers intact but the machine-wide binary copy they exec is gone: commits would block, not silently skip
 )
 
 // RunSummary is the most recent hook run recorded in $OMK/ledger.tsv: the
@@ -55,12 +69,12 @@ type State struct {
 	NameOverride string // $OMAKASE_NAME, else .omakase/NAME; "" = none
 	BaseVersion  string // .omakase/VERSION first line
 
-	// Proofs. "Installed" follows the field's vocabulary (pre-commit:
-	// "pre-commit installed at <path>"; lefthook: `lefthook install`) —
-	// no coined words like "armed" on any surface.
-	HooksInstalled Tri // git's effective hooks dir holds a lefthook-managed stub
-	FilesPresent   Tri // every enabled placed row exists in this worktree
-	HashesMatch    Tri // no enabled row drifted from its ledger hash
+	// Proofs. "Installed" follows the field's vocabulary — no coined words
+	// like "armed" on any surface.
+	HooksInstalled Tri       // gate hooks are omakase dispatchers AND their binary target exists
+	HookIssue      HookIssue // why HooksInstalled is Problem (HookIssueNone otherwise)
+	FilesPresent   Tri       // every enabled placed row exists in this worktree
+	HashesMatch    Tri       // no enabled row drifted from its ledger hash
 
 	LastRun *RunSummary // nil when the ledger records no sha-bearing run
 
@@ -99,7 +113,7 @@ func Collect(cwd string) (*State, error) {
 	}
 
 	// Proofs.
-	st.HooksInstalled = hooksInstalled(repo.Root)
+	st.HooksInstalled, st.HookIssue = hooksInstalled(repo.Root)
 	st.FilesPresent, st.HashesMatch = files(repo.Root, repo.OMK)
 
 	st.LastRun = lastRun(filepath.Join(repo.OMK, "ledger.tsv"))
@@ -121,35 +135,51 @@ func branch(root string) string {
 }
 
 // hooksInstalled proves whether a commit/push in this repo would actually
-// run the harness: git's effective hooks dir (rev-parse --git-path hooks
-// honors core.hooksPath) must hold a lefthook-managed pre-commit or pre-push
-// stub. No stub, or a foreign manager's stub, is an affirmative Problem; a
-// git failure or an unreadable existing stub is Unknown.
-func hooksInstalled(root string) Tri {
+// run the harness: each gate hook in git's effective hooks dir (rev-parse
+// --git-path hooks honors core.hooksPath) must be byte-equal to the
+// dispatcher omakase writes for that name — a substring test would call a
+// clobbered hook healthy — and the machine-wide binary copy the dispatchers
+// exec must exist (a dispatcher with no binary behind it blocks every
+// commit; status must say so before the user hits that wall, the #72
+// lesson). Missing or foreign hooks are an affirmative Problem with the
+// cause pinned; a git failure or an unreadable hook file is Unknown.
+func hooksInstalled(root string) (Tri, HookIssue) {
 	dir, err := gitOut(root, "rev-parse", "--git-path", "hooks")
 	if err != nil {
-		return Unknown
+		return Unknown, HookIssueNone
 	}
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(root, dir)
 	}
-	unreadable := false
+	unreadable, absent := false, false
 	for _, h := range []string{"pre-commit", "pre-push"} {
 		b, err := os.ReadFile(filepath.Join(dir, h))
 		if err != nil {
-			if !os.IsNotExist(err) {
+			if os.IsNotExist(err) {
+				absent = true
+			} else {
 				unreadable = true
 			}
 			continue
 		}
-		if strings.Contains(strings.ToLower(string(b)), "lefthook") {
-			return OK
+		if !bytes.Equal(b, hook.Dispatcher(h)) {
+			return Problem, HookIssueForeign
 		}
 	}
 	if unreadable {
-		return Unknown
+		return Unknown, HookIssueNone
 	}
-	return Problem
+	if absent {
+		return Problem, HookIssueAbsent
+	}
+	stable := hook.StableBinPath()
+	if stable == "" {
+		return Unknown, HookIssueNone
+	}
+	if info, err := os.Stat(stable); err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+		return Problem, HookIssueBinary
+	}
+	return OK, HookIssueNone
 }
 
 // files walks the enabled placed.tsv rows of this worktree and proves

@@ -9,12 +9,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Yuncun/omakase-harness/internal/hook"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
 // harnessRepo builds a temp git repo with a minimal installed, hooked, clean
-// overlay: one enabled placed file whose ledger hash matches, and a
-// lefthook pre-commit stub in the shared hooks dir.
+// overlay: one enabled placed file whose ledger hash matches, the gate-hook
+// dispatchers in the shared hooks dir, and a stable binary copy behind them
+// (isolated XDG_CACHE_HOME).
 func harnessRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -42,7 +44,19 @@ func harnessRepo(t *testing.T) string {
 		}
 	}
 	write(".omakase/VERSION", "0.18.1\n")
-	write(".git/hooks/pre-commit", "#!/bin/sh\n# lefthook\n")
+	for _, h := range []string{"pre-commit", "pre-push"} {
+		if err := hook.Write(filepath.Join(dir, ".git", "hooks"), h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	stable := hook.StableBinPath()
+	if err := os.MkdirAll(filepath.Dir(stable), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stable, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	omk := filepath.Join(dir, ".git", "omakase")
 	if err := os.MkdirAll(omk, 0o755); err != nil {
 		t.Fatal(err)

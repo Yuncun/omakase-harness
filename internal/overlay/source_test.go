@@ -29,6 +29,9 @@ func srcTestEnv(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("OMAKASE_PAYLOAD", "")
 	t.Setenv("OMAKASE_BASE_PAYLOAD", "")
+	// The fresh XDG_CACHE_HOME has no stable binary copy; init verifies the
+	// dispatchers' exec target, so plant one to keep runs warning-free.
+	plantStableBin(t)
 }
 
 // useBasePayloadDir creates the base-harness payload fixture and points the base

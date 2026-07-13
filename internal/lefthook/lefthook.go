@@ -300,5 +300,14 @@ func ResolveForStatus(root string) (string, bool) {
 	return resolve(root, false, io.Discard)
 }
 
+// ResolveForHook resolves a lefthook binary for `omakase hook` gate runs:
+// no fetch — no network at commit time; init provisioned the cache — and
+// silent on failure (the caller prints the blocking lines). One token,
+// never word-split. Walks the same tiers as init, so a lefthook init could
+// resolve is never reported missing at commit time (the #72 lesson).
+func ResolveForHook(root string) (string, bool) {
+	return resolve(root, false, io.Discard)
+}
+
 // PinnedVersion returns the pinned lefthook release version.
 func PinnedVersion() string { return lefthookVersion }

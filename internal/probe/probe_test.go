@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Yuncun/omakase-harness/internal/hook"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
@@ -48,8 +49,9 @@ func writeFile(t *testing.T, dir, rel, content string) {
 }
 
 // installHarness gives the repo a minimal installed overlay: two enabled
-// placed files with correct ledger hashes, an installed lefthook pre-commit
-// stub in the shared hooks dir, and the identity files. Returns the OMK dir.
+// placed files with correct ledger hashes, the gate-hook dispatchers in the
+// shared hooks dir with a stable binary copy behind them, and the identity
+// files. Returns the OMK dir.
 func installHarness(t *testing.T, root string) string {
 	t.Helper()
 	omk := filepath.Join(root, ".git", "omakase")
@@ -65,15 +67,35 @@ func installHarness(t *testing.T, root string) string {
 	if err := state.WritePlaced(filepath.Join(omk, "placed.tsv"), rows); err != nil {
 		t.Fatal(err)
 	}
-	installHookStub(t, root)
+	installDispatchers(t, filepath.Join(root, ".git", "hooks"))
+	stubStableBin(t)
 	return omk
 }
 
-// installHookStub writes a lefthook-managed pre-commit stub into the repo's shared
-// hooks dir (what `lefthook install` leaves behind).
-func installHookStub(t *testing.T, root string) {
+// installDispatchers writes the two gate-hook dispatchers (what `omakase
+// init` leaves behind) into hooksDir.
+func installDispatchers(t *testing.T, hooksDir string) {
 	t.Helper()
-	writeFile(t, root, ".git/hooks/pre-commit", "#!/bin/sh\n# lefthook\ncall_lefthook \"$@\"\n")
+	for _, h := range []string{"pre-commit", "pre-push"} {
+		if err := hook.Write(hooksDir, h); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// stubStableBin points XDG_CACHE_HOME at a temp dir holding an executable
+// file at the stable binary path the dispatchers exec.
+func stubStableBin(t *testing.T) {
+	t.Helper()
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	bin := filepath.Join(cache, "omakase", "bin", "current", "omakase")
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func collect(t *testing.T, cwd string) *State {
@@ -172,6 +194,9 @@ func TestCollectAllProven(t *testing.T) {
 	if st.HooksInstalled != OK {
 		t.Fatalf("HooksInstalled = %v, want OK", st.HooksInstalled)
 	}
+	if st.HookIssue != HookIssueNone {
+		t.Fatalf("HookIssue = %v, want HookIssueNone", st.HookIssue)
+	}
 	if st.FilesPresent != OK {
 		t.Fatalf("FilesPresent = %v, want OK", st.FilesPresent)
 	}
@@ -180,38 +205,76 @@ func TestCollectAllProven(t *testing.T) {
 	}
 }
 
-func TestCollectHooksNotInstalledWhenNoStub(t *testing.T) {
+func TestCollectHooksAbsent(t *testing.T) {
 	root := newTestRepo(t)
 	installHarness(t, root)
 	os.Remove(filepath.Join(root, ".git", "hooks", "pre-commit"))
-	if st := collect(t, root); st.HooksInstalled != Problem {
-		t.Fatalf("HooksInstalled = %v, want Problem with no hook stub", st.HooksInstalled)
+	st := collect(t, root)
+	if st.HooksInstalled != Problem {
+		t.Fatalf("HooksInstalled = %v, want Problem with a missing dispatcher", st.HooksInstalled)
+	}
+	if st.HookIssue != HookIssueAbsent {
+		t.Fatalf("HookIssue = %v, want HookIssueAbsent", st.HookIssue)
 	}
 }
 
-func TestCollectHooksNotInstalledWhenStubIsForeign(t *testing.T) {
+// A hook file that is not byte-equal to the dispatcher is clobbered —
+// `lefthook install -f` from an npm postinstall, a foreign manager, or a
+// pre-#98 omakase stub awaiting its migration init. Substring matching
+// would call these healthy; byte equality is the proof.
+func TestCollectHooksForeign(t *testing.T) {
+	for name, content := range map[string]string{
+		"husky":              "#!/bin/sh\n# husky\n",
+		"lefthook stub":      "#!/bin/sh\n# lefthook\ncall_lefthook \"$@\"\n",
+		"edited dispatcher":  string(hook.Dispatcher("pre-commit")) + "# extra line\n",
+		"wrong-name content": string(hook.Dispatcher("pre-push")),
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := newTestRepo(t)
+			installHarness(t, root)
+			writeFile(t, root, ".git/hooks/pre-commit", content)
+			st := collect(t, root)
+			if st.HooksInstalled != Problem {
+				t.Fatalf("HooksInstalled = %v, want Problem", st.HooksInstalled)
+			}
+			if st.HookIssue != HookIssueForeign {
+				t.Fatalf("HookIssue = %v, want HookIssueForeign", st.HookIssue)
+			}
+		})
+	}
+}
+
+// Dispatchers intact but their binary target gone: every commit would block
+// (fail closed), so status must warn before the user hits that wall.
+func TestCollectHooksBinaryMissing(t *testing.T) {
 	root := newTestRepo(t)
 	installHarness(t, root)
-	writeFile(t, root, ".git/hooks/pre-commit", "#!/bin/sh\n# husky\n")
-	if st := collect(t, root); st.HooksInstalled != Problem {
-		t.Fatalf("HooksInstalled = %v, want Problem with a foreign stub", st.HooksInstalled)
+	if err := os.Remove(filepath.Join(os.Getenv("XDG_CACHE_HOME"), "omakase", "bin", "current", "omakase")); err != nil {
+		t.Fatal(err)
+	}
+	st := collect(t, root)
+	if st.HooksInstalled != Problem {
+		t.Fatalf("HooksInstalled = %v, want Problem with the stable binary gone", st.HooksInstalled)
+	}
+	if st.HookIssue != HookIssueBinary {
+		t.Fatalf("HookIssue = %v, want HookIssueBinary", st.HookIssue)
 	}
 }
 
 func TestCollectHooksInstalledHonorsCoreHooksPath(t *testing.T) {
 	root := newTestRepo(t)
 	installHarness(t, root)
-	// Move the effective hooks dir away: the default-dir stub no longer
-	// counts, and a lefthook stub in the configured dir does.
+	// Move the effective hooks dir away: the default-dir dispatchers no
+	// longer count, and dispatchers in the configured dir do.
 	hooks := filepath.Join(root, "custom-hooks")
 	if err := os.MkdirAll(hooks, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, root, "config", "core.hooksPath", hooks)
 	if st := collect(t, root); st.HooksInstalled != Problem {
-		t.Fatalf("HooksInstalled = %v, want Problem (stub lives outside the effective dir)", st.HooksInstalled)
+		t.Fatalf("HooksInstalled = %v, want Problem (dispatchers live outside the effective dir)", st.HooksInstalled)
 	}
-	writeFile(t, root, "custom-hooks/pre-push", "#!/bin/sh\nlefthook run pre-push\n")
+	installDispatchers(t, hooks)
 	if st := collect(t, root); st.HooksInstalled != OK {
 		t.Fatalf("HooksInstalled = %v, want OK via core.hooksPath", st.HooksInstalled)
 	}
