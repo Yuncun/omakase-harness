@@ -3,6 +3,9 @@
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
+OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
+[ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
+heal(){ ( cd "$1" && "$OMAKASE" hook post-checkout ); }
 REMOVE="$HERE/../bin/remove.sh"
 LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 TMP="${TMPDIR:-/tmp}/omakase-inject-test.$$"
@@ -25,10 +28,6 @@ pre-commit:
   jobs:
     - name: omakase-example
       run: bash .omakase/bin/omakase-gate.sh omakase-example --step 'bash .omakase/gates/example.sh'
-post-checkout:
-  jobs:
-    - name: omakase-ensure-present
-      run: bash "$(git rev-parse --git-common-dir)/omakase/ensure-present.sh"
 YML
 }
 
@@ -90,69 +89,57 @@ mkpayload "$PAY"; newrepo "$REPO"
 COMMON="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 
 # C1: init wrote the harness snapshot artifacts + a .worktreeinclude block, all out of git.
-[ -x "$COMMON/omakase/ensure-present.sh" ] && pass "ensure-present.sh written (executable)" || fail "ensure-present.sh missing"
+grep -q 'omakase dispatcher' "$COMMON/hooks/post-checkout" 2>/dev/null && pass "post-checkout dispatcher written (the heal lives in the binary)" || fail "post-checkout dispatcher missing"
 grep -q '.omakase/gates/example.sh' "$COMMON/omakase/placed.tsv" 2>/dev/null && pass "placed.tsv provenance ledger written" || fail "placed.tsv missing/empty"
 [ -f "$COMMON/omakase/payload-snapshot/.omakase/gates/example.sh" ] && pass "payload snapshot captured the gate" || fail "snapshot missing the gate"
 grep -q "omakase-harness" "$REPO/.worktreeinclude" 2>/dev/null && pass ".worktreeinclude block written" || fail ".worktreeinclude block missing"
 [ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status still clean (harness artifacts out of git)" || { fail "status not clean after harness wiring"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
 
-# C1b: issue #80 — the repo ships no lefthook.yml, so `lefthook install` wrote an
-# example skeleton at the main checkout. It is untracked (gitignored), so a linked
-# worktree never receives it and lefthook prints a sync-hooks failure there on every
-# hook run. init snapshots the untracked skeleton as the worktree heal source.
-[ -f "$REPO/lefthook.yml" ] && pass "lefthook install wrote a lefthook.yml skeleton at the main checkout" || fail "no skeleton lefthook.yml at the main checkout (mechanism changed?)"
-[ -f "$COMMON/omakase/lefthook.yml" ] && pass "init snapshotted lefthook.yml as the worktree heal source (#80)" || fail "lefthook.yml heal snapshot missing from the shared omakase dir"
+# C1b: the lefthook.yml skeleton is dead (#98): the hook runner points lefthook
+# straight at the placed wiring (explicit config), so no skeleton is written at
+# the main checkout and no heal snapshot exists — the whole #80 problem is moot.
+[ ! -e "$REPO/lefthook.yml" ] && pass "no lefthook.yml skeleton at the main checkout (explicit config, #98)" || fail "a lefthook.yml skeleton appeared (mechanism regressed?)"
+[ ! -e "$COMMON/omakase/lefthook.yml" ] && pass "no lefthook.yml heal snapshot in the shared omakase dir" || fail "stale lefthook.yml heal snapshot written"
 
-# C2: mechanism — a fresh linked worktree now AUTO-self-heals on `git worktree add` (the
-# worktree-bootstrap block runs ensure-present.sh from the shared post-checkout stub), so
-# the gate is present immediately; a manual re-run of ensure-present is idempotent.
+# C2: mechanism — a fresh linked worktree AUTO-self-heals on `git worktree add`
+# (the post-checkout dispatcher runs the binary's native heal), so the gate is
+# present immediately; a manual re-run of the heal is idempotent.
 WT="$TMP/repoC-wt"
 ( cd "$REPO" && git worktree add -q "$WT" -b wtprobe ) >/dev/null 2>&1
-[ -x "$WT/.omakase/gates/example.sh" ] && pass "fresh worktree auto-self-healed the gate on add (worktree-bootstrap)" || fail "fresh worktree did not auto-self-heal the gate"
-( cd "$WT" && bash "$COMMON/omakase/ensure-present.sh" )
-[ -x "$WT/.omakase/gates/example.sh" ] && pass "ensure-present re-run is idempotent (gate still present, executable)" || fail "ensure-present disturbed an already-present gate"
+[ -x "$WT/.omakase/gates/example.sh" ] && pass "fresh worktree auto-self-healed the gate on add (post-checkout dispatcher)" || fail "fresh worktree did not auto-self-heal the gate"
+heal "$WT" >/dev/null 2>&1
+[ -x "$WT/.omakase/gates/example.sh" ] && pass "heal re-run is idempotent (gate still present, executable)" || fail "the heal disturbed an already-present gate"
 
 # C3: never-overwrite — a local edit in the worktree survives a re-run.
 echo 'LOCAL EDIT' > "$WT/.omakase/gates/example.sh"
-( cd "$WT" && bash "$COMMON/omakase/ensure-present.sh" )
-grep -q 'LOCAL EDIT' "$WT/.omakase/gates/example.sh" && pass "ensure-present never overwrites a local edit" || fail "ensure-present clobbered a local edit"
+heal "$WT" >/dev/null 2>&1
+grep -q 'LOCAL EDIT' "$WT/.omakase/gates/example.sh" && pass "the heal never overwrites a local edit" || fail "the heal clobbered a local edit"
 
-# C4: end-to-end self-heal — in a worktree that already has the harness (lefthook-local.yml present, as
-# .worktreeinclude would copy it), deleting a gate then checking out restores it
-# via the real lefthook post-checkout job.
-cp "$PAY/lefthook-local.yml" "$WT/lefthook-local.yml"
+# C4: end-to-end self-heal — deleting a gate then checking out restores it via
+# the real post-checkout dispatcher chain.
 rm -f "$WT/.omakase/gates/example.sh"
 ( cd "$WT" && git checkout -q -b wtprobe2 ) 2>/dev/null
-[ -f "$WT/.omakase/gates/example.sh" ] && pass "post-checkout self-heal restored a deleted gate in a worktree that already has the harness" || fail "post-checkout did not self-heal"
+[ -f "$WT/.omakase/gates/example.sh" ] && pass "post-checkout self-heal restored a deleted gate in a worktree" || fail "post-checkout did not self-heal"
 
 ( cd "$REPO" && git worktree remove --force "$WT" ) 2>/dev/null; ( cd "$REPO" && git worktree prune ) 2>/dev/null
 
-# C4b: REGRESSION — a bare `git worktree add` self-heals with NO hand-holding (no manual
-# ensure-present, no pre-seeded lefthook-local.yml). This is the worktree-bootstrap fix:
-# a fresh worktree has no gitignored lefthook config, so lefthook's post-checkout job
-# no-ops; the harness only materializes because install-guards.sh injected a
-# worktree-bootstrap block into the SHARED post-checkout stub that runs ensure-present.sh
-# directly. Pre-fix this gate would be ABSENT after the add (the "harness incomplete" bug).
+# C4b: REGRESSION — a bare `git worktree add` self-heals with NO hand-holding: the
+# SHARED post-checkout dispatcher runs the binary's native heal, which needs no
+# per-worktree lefthook config at all. Pre-fix this gate would be ABSENT after the
+# add (the "harness incomplete" bug).
 PCHOOK="$COMMON/hooks/post-checkout"
-grep -qF "omakase-harness worktree-bootstrap" "$PCHOOK" 2>/dev/null && pass "worktree-bootstrap block injected into the shared post-checkout stub" || fail "post-checkout stub missing the worktree-bootstrap block"
+grep -q 'omakase dispatcher' "$PCHOOK" 2>/dev/null && pass "shared post-checkout hook is the omakase dispatcher" || fail "post-checkout is not the dispatcher"
 WTB="$TMP/repoC-wtbare"
 ( cd "$REPO" && git worktree add -q "$WTB" -b wtbare ) >/dev/null 2>&1
-[ -x "$WTB/.omakase/gates/example.sh" ] && pass "bare 'git worktree add' self-healed the gate (no manual ensure-present)" || fail "bare worktree did NOT self-heal — harness incomplete"
-[ -f "$WTB/lefthook-local.yml" ] && pass "bare worktree self-healed the lefthook config too" || fail "bare worktree missing lefthook-local.yml after self-heal"
-# C4b-#80: the bare worktree also self-heals the main lefthook.yml skeleton, so
-# lefthook finds config there and prints no sync-hooks failure.
-[ -f "$WTB/lefthook.yml" ] && pass "bare worktree self-healed lefthook.yml from the snapshot (#80)" || fail "bare worktree missing lefthook.yml — lefthook would print a sync-hooks failure"
-# C4b-#80 never-overwrite: a worktree's own edited lefthook.yml survives a re-run.
-printf 'MY WORKTREE LEFTHOOK EDIT\n' > "$WTB/lefthook.yml"
-( cd "$WTB" && bash "$COMMON/omakase/ensure-present.sh" )
-grep -q 'MY WORKTREE LEFTHOOK EDIT' "$WTB/lefthook.yml" && pass "ensure-present never overwrites a worktree's own lefthook.yml (#80)" || fail "ensure-present clobbered a worktree lefthook.yml edit"
+[ -x "$WTB/.omakase/gates/example.sh" ] && pass "bare 'git worktree add' self-healed the gate (no manual heal)" || fail "bare worktree did NOT self-heal — harness incomplete"
+[ -f "$WTB/lefthook-local.yml" ] && pass "bare worktree self-healed the wiring too" || fail "bare worktree missing lefthook-local.yml after self-heal"
 ( cd "$REPO" && git worktree remove --force "$WTB" ) 2>/dev/null; ( cd "$REPO" && git worktree prune ) 2>/dev/null
 
 # C5: remove tears the harness snapshot down too.
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 [ ! -e "$COMMON/omakase" ] && pass "remove deleted the shared snapshot" || fail "remove left the snapshot"
 [ ! -e "$REPO/.worktreeinclude" ] && pass "remove deleted the .worktreeinclude block" || fail "remove left .worktreeinclude"
-grep -qF "omakase-harness worktree-bootstrap" "$COMMON/hooks/post-checkout" 2>/dev/null && fail "remove left the worktree-bootstrap block in post-checkout" || pass "remove stripped the worktree-bootstrap block from post-checkout"
+[ ! -e "$COMMON/hooks/post-checkout" ] && pass "remove deleted the post-checkout dispatcher" || fail "remove left the post-checkout hook"
 
 # ---------- Scenario D: payload symlinks are carried (CLAUDE.md -> AGENTS.md) ----------
 # A payload symlink must land AS a symlink (cp -P), be snapshotted, and self-heal into

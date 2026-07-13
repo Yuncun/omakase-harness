@@ -1,12 +1,11 @@
-// Package templates embeds the three hook-time sh scripts (ensure-present.sh,
-// verify-overlay.sh, install-guards.sh) plus the payload's gate primitive
-// (omakase-gate.sh) and installs them atomically. They live under
-// internal/templates/files/ as byte-identical duplicates of their bin/ (or
-// payload/) originals — go:embed cannot reference a path outside its own
+// Package templates embeds the payload's gate primitive (omakase-gate.sh)
+// and installs it atomically (the gate-script heal in overlay/toggle.go).
+// It lives under internal/templates/files/ as a byte-identical duplicate of
+// the payload original — go:embed cannot reference a path outside its own
 // package directory, so they cannot be the same file on disk.
-// TestEmbeddedMatchesBin and TestEmbeddedGateMatchesPayload read each original
-// at test time and assert equality; keep every copy in lockstep by hand
-// whenever a bin/ or payload gate original changes.
+// TestEmbeddedGateMatchesPayload reads the original at test time and asserts
+// equality; keep the two copies in lockstep by hand whenever the payload
+// gate original changes.
 package templates
 
 import (
@@ -15,10 +14,10 @@ import (
 	"os"
 )
 
-//go:embed files/ensure-present.sh files/verify-overlay.sh files/install-guards.sh files/omakase-gate.sh
+//go:embed files/omakase-gate.sh
 var files embed.FS
 
-// Install writes the embedded script `name` (e.g. "ensure-present.sh") to
+// Install writes the embedded script `name` (e.g. "omakase-gate.sh") to
 // dest atomically: embedded bytes -> dest+".tmp" -> chmod 0755 -> rename. On
 // any failure the ".tmp" is removed and an error is returned; the caller owns
 // the stderr stream and exit code.

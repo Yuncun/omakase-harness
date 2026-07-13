@@ -35,11 +35,7 @@ pre-commit:
 #     - name: review
 #       run: bash .omakase/bin/omakase-gate.sh review --cacheable --glob 'src/*' --step 'echo "BLOCKED: run review, then: omakase-gate.sh review --record" >&2; exit 1'
 
-# Worktree auto-install: on every checkout (including `git worktree add`), copy any
-# MISSING injected file into this worktree from the shared snapshot. Never overwrites a
-# local edit, never touches a tracked path. The script lives in the shared git dir, so it
-# is reachable from any worktree. Written by init.sh.
-post-checkout:
-  jobs:
-    - name: omakase-ensure-present
-      run: bash "$(git rev-parse --git-common-dir)/omakase/ensure-present.sh"
+# Worktree auto-install happens outside this file: on every checkout (including
+# `git worktree add`), omakase itself copies any MISSING injected file into the worktree
+# from the shared snapshot - never overwriting a local edit, never touching a tracked
+# path. Wire post-checkout jobs here only for extra work of your own.

@@ -196,8 +196,8 @@ func TestSameFile(t *testing.T) {
 //
 // DerivePrefixes dedups owned top dirs to their bare first segment, keeps .github
 // (the one HARNESS_SHARED_TOPDIRS entry) as full placed paths, appends the
-// lefthook.yml / .worktreeinclude wiring entries unless tracked, then gives every
-// entry a trailing "/" iff it names a directory on the live repo.
+// .worktreeinclude wiring entry unless tracked, then gives every entry a
+// trailing "/" iff it names a directory on the live repo.
 
 func TestDerivePrefixes(t *testing.T) {
 	sharedTopdirs := []string{".github"}
@@ -206,7 +206,6 @@ func TestDerivePrefixes(t *testing.T) {
 		".claude":                 true,
 		".omakase":                true,
 		".github/workflows":       false, // it's a file in this fixture
-		"lefthook.yml":            false,
 		".worktreeinclude":        false,
 		"AGENTS.md":               false,
 		"top-level-dir-no-nested": true,
@@ -214,70 +213,56 @@ func TestDerivePrefixes(t *testing.T) {
 	isDir := func(p string) bool { return dirSet[p] }
 
 	cases := []struct {
-		name            string
-		placed          []string
-		lefthookTracked bool
-		wtincTracked    bool
-		want            []string
+		name         string
+		placed       []string
+		wtincTracked bool
+		want         []string
 	}{
 		{
-			name: "owned topdirs deduped to bare segment; .github kept as full path; both wiring entries appended with trailing slash logic",
+			name: "owned topdirs deduped to bare segment; .github kept as full path; wiring entry appended with trailing slash logic",
 			placed: []string{
 				".claude/rules/a.md",
 				".claude/skills/b/SKILL.md", // second .claude/* entry: deduped to the same bare "claude" prefix, not re-added
 				".github/workflows/ci.yml",
 				"AGENTS.md",
 			},
-			lefthookTracked: false,
-			wtincTracked:    false,
+			wtincTracked: false,
 			want: []string{
 				".claude/",                 // owned topdir, isDir(".claude")=true
 				".github/workflows/ci.yml", // shared topdir: full placed path, not a dir here
 				"AGENTS.md",                // root file, no "/", not a dir
-				"lefthook.yml",             // wiring entry 1
-				".worktreeinclude",         // wiring entry 2
+				".worktreeinclude",         // wiring entry
 			},
 		},
 		{
-			name:            "lefthook.yml tracked: no wiring entry for it; .worktreeinclude still appended",
-			placed:          []string{".omakase/foo.sh"},
-			lefthookTracked: true,
-			wtincTracked:    false,
-			want:            []string{".omakase/", ".worktreeinclude"},
+			name:         ".worktreeinclude tracked: not appended",
+			placed:       []string{".omakase/foo.sh"},
+			wtincTracked: true,
+			want:         []string{".omakase/"},
 		},
 		{
-			name:            "both wiring entries tracked: neither appended",
-			placed:          []string{".omakase/foo.sh"},
-			lefthookTracked: true,
-			wtincTracked:    true,
-			want:            []string{".omakase/"},
+			name:         "root-level single-segment path with no nested content: bare rel used verbatim, trailing slash iff isDir",
+			placed:       []string{"top-level-dir-no-nested"},
+			wtincTracked: true,
+			want:         []string{"top-level-dir-no-nested/"},
 		},
 		{
-			name:            "root-level single-segment path with no nested content: bare rel used verbatim, trailing slash iff isDir",
-			placed:          []string{"top-level-dir-no-nested"},
-			lefthookTracked: true,
-			wtincTracked:    true,
-			want:            []string{"top-level-dir-no-nested/"},
+			name:         "empty placed set still gets the wiring entry",
+			placed:       nil,
+			wtincTracked: false,
+			want:         []string{".worktreeinclude"},
 		},
 		{
-			name:            "empty placed set still gets both wiring entries",
-			placed:          nil,
-			lefthookTracked: false,
-			wtincTracked:    false,
-			want:            []string{"lefthook.yml", ".worktreeinclude"},
-		},
-		{
-			name:            "empty rel entries in placed are skipped",
-			placed:          []string{"", ".claude/x", ""},
-			lefthookTracked: true,
-			wtincTracked:    true,
-			want:            []string{".claude/"},
+			name:         "empty rel entries in placed are skipped",
+			placed:       []string{"", ".claude/x", ""},
+			wtincTracked: true,
+			want:         []string{".claude/"},
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := DerivePrefixes(tc.placed, sharedTopdirs, isDir, tc.lefthookTracked, tc.wtincTracked)
+			got := DerivePrefixes(tc.placed, sharedTopdirs, isDir, tc.wtincTracked)
 			if !equalStrings(got, tc.want) {
 				t.Errorf("DerivePrefixes(%v) = %v, want %v", tc.placed, got, tc.want)
 			}

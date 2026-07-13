@@ -9,6 +9,9 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
 REMOVE="$HERE/../bin/remove.sh"
+OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
+[ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
+heal(){ ( cd "$1" && "$OMAKASE" hook post-checkout ); }
 LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 TMP="${TMPDIR:-/tmp}/omakase-safety-test.$$"
 FAILED=0
@@ -135,14 +138,24 @@ mklfs(){ # $1 = hooks dir — write the four stock hooks `git lfs install` creat
     chmod +x "$d/$h"
   done
 }
-# H10a: a clean Git-LFS repo installs; the LFS events lefthook does not own stay intact.
+# H10a: a clean Git-LFS repo installs; the LFS events omakase does not dispatch stay
+# intact, and a displaced stock LFS pre-push loses nothing — `omakase hook pre-push`
+# (via lefthook) forwards `git lfs pre-push` itself at fire time.
 REPO="$TMP/repoH10a"; newrepo "$REPO"; mklfs "$REPO/.git/hooks"
 OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
 [ "$rc" -eq 0 ] && pass "Git-LFS repo installs (LFS hooks not misclassified as a rival manager)" || fail "init refused a Git-LFS repo ($OUT)"
-grep -q 'git lfs pre-push'   "$REPO/.git/hooks/pre-push"   2>/dev/null && pass "LFS pre-push left intact (lefthook owns no pre-push job)" || fail "LFS pre-push was clobbered ($OUT)"
-grep -q 'git lfs post-merge' "$REPO/.git/hooks/post-merge" 2>/dev/null && pass "LFS post-merge left intact" || fail "LFS post-merge was clobbered"
+grep -q 'omakase dispatcher' "$REPO/.git/hooks/pre-push" 2>/dev/null && pass "LFS pre-push displaced by the dispatcher (LFS forwarded at fire time)" || fail "pre-push is not the dispatcher ($OUT)"
+grep -q 'git lfs post-merge' "$REPO/.git/hooks/post-merge" 2>/dev/null && pass "LFS post-merge left intact (not a dispatched hook)" || fail "LFS post-merge was clobbered"
 OUT2=$( cd "$REPO" && echo x > x.txt && git add x.txt && git commit -m x 2>&1 )
 echo "$OUT2" | grep -q 'omakase-example-gate-ran' && pass "harness gates actually run in a Git-LFS repo" || fail "harness gates dead in a Git-LFS repo ($OUT2)"
+# The e2e proof of the forward: a logging git-lfs on PATH; a real hook run must reach it
+# with the hook's own args (lefthook forwards `git lfs pre-push <args>` before jobs).
+FAKELFS="$TMP/fakelfs"; mkdir -p "$FAKELFS"
+printf '#!/bin/sh\necho "git-lfs-called: $*" >> "%s/lfs.log"\nexit 0\n' "$TMP" > "$FAKELFS/git-lfs"
+chmod +x "$FAKELFS/git-lfs"
+rm -f "$TMP/lfs.log"
+( cd "$REPO" && PATH="$FAKELFS:$PATH" "$OMAKASE" hook pre-push origin https://example.com/r.git </dev/null ) >/dev/null 2>&1
+grep -q 'pre-push origin' "$TMP/lfs.log" 2>/dev/null && pass "hook run forwards 'git lfs pre-push <args>'" || fail "git-lfs never invoked by the pre-push hook run ($(cat "$TMP/lfs.log" 2>/dev/null))"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
 # H10b: a genuine foreign hook ALONGSIDE the LFS hooks still refuses, and names only it.
@@ -218,9 +231,9 @@ COMMON="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 ( cd "$REPO" && printf 'UPSTREAM CONTENT\n' > .omakase/gates/example.sh && git add -f .omakase/gates/example.sh && LEFTHOOK=0 git commit -q -m upstream )
 
 # J1: the post-checkout self-heal warns (the timely surface) and never touches the tracked file
-ERR=$( cd "$REPO" && bash "$COMMON/omakase/ensure-present.sh" 2>&1 )
-echo "$ERR" | grep -qi 'WARNING' && pass "ensure-present warns on the tracked collision" || fail "ensure-present silent on collision ($ERR)"
-echo "$ERR" | grep -q '.omakase/gates/example.sh' && pass "ensure-present warning names the file" || fail "warning does not name the file ($ERR)"
+ERR=$( heal "$REPO" 2>&1 )
+echo "$ERR" | grep -qi 'WARNING' && pass "the heal warns on the tracked collision" || fail "the heal is silent on collision ($ERR)"
+echo "$ERR" | grep -q '.omakase/gates/example.sh' && pass "the heal warning names the file" || fail "warning does not name the file ($ERR)"
 echo "$ERR" | grep -qi 'clobber' && pass "warning says the personal copy was likely clobbered" || fail "warning missing the clobber explanation ($ERR)"
 grep -q 'UPSTREAM CONTENT' "$REPO/.omakase/gates/example.sh" && pass "tracked file left untouched" || fail "self-heal touched a tracked file"
 
@@ -245,8 +258,8 @@ PAY="$TMP/payK"; mkpayload "$PAY"
 REPO="$TMP/repoK"; newrepo "$REPO"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 COMMON="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
-grep -q 'omakase-harness fail-closed' "$REPO/.git/hooks/pre-commit" && pass "guard block inserted into the pre-commit stub" || fail "no guard block in the pre-commit stub"
-[ -x "$COMMON/omakase/verify-overlay.sh" ] && pass "verify-overlay.sh written (executable)" || fail "verify-overlay.sh missing"
+grep -q 'omakase dispatcher' "$REPO/.git/hooks/pre-commit" && pass "pre-commit is the omakase dispatcher" || fail "pre-commit is not the dispatcher"
+[ -x "$REPO/.git/hooks/pre-commit" ] && pass "dispatcher is executable" || fail "dispatcher not executable"
 
 # K1: intact overlay — commit passes and the gate fires
 OUT=$( cd "$REPO" && echo a > a.txt && git add a.txt && git commit -m a 2>&1 ); rc=$?
@@ -260,24 +273,25 @@ echo "$OUT" | grep -qi 'restore' && pass "block message carries a restore instru
 echo "$OUT" | grep -q 'missing:' && pass "block message names the missing file(s)" || fail "missing files not named ($OUT)"
 
 # K3: the advertised restore unblocks; the gate fires again
-( cd "$REPO" && bash "$COMMON/omakase/ensure-present.sh" )
+heal "$REPO" >/dev/null 2>&1
 OUT=$( cd "$REPO" && git commit -m b2 2>&1 ); rc=$?
-{ [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'omakase-example-gate-ran'; } && pass "after ensure-present restore: commit passes, gate fires" || fail "restore did not unblock ($OUT)"
+{ [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'omakase-example-gate-ran'; } && pass "after the heal restore: commit passes, gate fires" || fail "restore did not unblock ($OUT)"
 
-# K4: re-init keeps exactly one guard block (idempotent strip-then-insert)
+# K4: re-init rewrites identical dispatcher bytes (write-once content, idempotent)
+BEFORE_BYTES="$(cat "$REPO/.git/hooks/pre-commit")"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
-n=$(grep -c 'omakase-harness fail-closed >>>' "$REPO/.git/hooks/pre-commit")
-[ "$n" -eq 1 ] && pass "re-init keeps exactly one guard block" || fail "guard blocks duplicated ($n)"
+[ "$(cat "$REPO/.git/hooks/pre-commit")" = "$BEFORE_BYTES" ] && pass "re-init leaves identical dispatcher bytes" || fail "re-init changed the dispatcher content"
 
 # K4b: lefthook's npm postinstall runs `lefthook install -f` on every npm/yarn install,
-# regenerating the stubs and stripping the guard; the next checkout re-arms it
-# (ensure-present calls install-guards.sh from the post-checkout job).
+# clobbering the dispatchers. Nothing re-arms from hook time — ever (the pre-#98 arms
+# race is over): a checkout must NOT rewrite the hook; the next explicit init repairs.
 ( cd "$REPO" && "$LEFTHOOK" install -f ) >/dev/null 2>&1
-n=$(grep -c 'omakase-harness fail-closed >>>' "$REPO/.git/hooks/pre-commit")
-[ "$n" -eq 0 ] && pass "lefthook install -f strips the guard (the reviewer's repro)" || fail "expected a stripped guard after install -f ($n)"
+grep -q 'omakase dispatcher' "$REPO/.git/hooks/pre-commit" && fail "expected lefthook install -f to clobber the dispatcher" || pass "lefthook install -f clobbers the dispatcher (the residual external writer)"
+CLOBBERED_BYTES="$(cat "$REPO/.git/hooks/pre-commit")"
 ( cd "$REPO" && git checkout -q -b rearm ) 2>/dev/null
-n=$(grep -c 'omakase-harness fail-closed >>>' "$REPO/.git/hooks/pre-commit")
-[ "$n" -eq 1 ] && pass "post-checkout re-arms the guard after stub regeneration" || fail "guard not re-armed by checkout ($n)"
+[ "$(cat "$REPO/.git/hooks/pre-commit")" = "$CLOBBERED_BYTES" ] && pass "checkout does NOT rewrite the hook (nothing re-arms from hook time)" || fail "hook rewritten from hook time — the arms race is back"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+grep -q 'omakase dispatcher' "$REPO/.git/hooks/pre-commit" && pass "the next explicit init repairs the clobbered hook" || fail "init did not restore the dispatcher"
 
 # K5: the fail-closed guard blocks a commit when the overlay is WIPED (e.g. `git clean
 # -fdx`) — before this guard, gates silently did not run; the block's restore command
@@ -292,9 +306,9 @@ WT="$TMP/repoK2-wt"
 rm -rf "$WT/.omakase" "$WT/lefthook-local.yml"   # simulate `git clean -fdx` wiping the gitignored overlay
 OUT=$( cd "$WT" && echo w > w.txt && git add w.txt && git commit -m w 2>&1 ); rc=$?
 [ "$rc" -ne 0 ] && pass "wiped overlay: commit BLOCKED instead of gates silently not running" || fail "wiped-overlay worktree committed without gates ($OUT)"
-( cd "$WT" && bash "$COMMON2/omakase/ensure-present.sh" )
+heal "$WT" >/dev/null 2>&1
 OUT=$( cd "$WT" && git commit -m w2 2>&1 ); rc=$?
-{ [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'omakase-example-gate-ran'; } && pass "ensure-present heals the worktree; commit passes with the gate firing" || fail "worktree heal did not unblock ($OUT)"
+{ [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'omakase-example-gate-ran'; } && pass "the heal restores the worktree; commit passes with the gate firing" || fail "worktree heal did not unblock ($OUT)"
 ( cd "$REPO2" && git worktree remove --force "$WT" ) 2>/dev/null; ( cd "$REPO2" && git worktree prune ) 2>/dev/null
 
 # K6: after remove, commits are not blocked (guard gone or inert)

@@ -1,5 +1,6 @@
 // Command omakase is the install-time binary: one static executable that
-// dispatches the verbs (status, init, remove, mcp, statusline, stop-notice).
+// dispatches the verbs (status, init, remove, mcp, statusline, stop-notice,
+// hook).
 package main
 
 import (
@@ -76,6 +77,9 @@ var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 	},
 	"mcp": func(argv []string, stdout, stderr io.Writer) int {
 		return mcpserver.Run(argv[2:], stdout, stderr)
+	},
+	"hook": func(argv []string, stdout, stderr io.Writer) int {
+		return overlay.RunHook(argv[2:], os.Stdin, stdout, stderr)
 	},
 	"statusline": func(argv []string, stdout, stderr io.Writer) int {
 		return runStatusline(os.Stdin, stdout)

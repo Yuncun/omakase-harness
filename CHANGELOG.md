@@ -6,6 +6,46 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 ## [Unreleased]
 
 ### Changed
+- **omakase owns `.git/hooks`: permanent dispatcher hooks, lefthook demoted to
+  gate-runner** (#98). Each hook file (pre-commit, pre-push, post-checkout) is
+  now a permanent ~5-line dispatcher that execs the machine-wide binary copy
+  with `omakase hook <name>`; only `init` and `remove` ever write `.git/hooks`,
+  atomically, and nothing at hook time rewrites them — the entire #96 class
+  (hook files corrupted mid-run, worktree sessions racing each other's hooks)
+  is gone. At commit/push time the binary verifies the harness is complete
+  (fail closed, `LEFTHOOK=0` does not bypass it) and runs the wired gates
+  through the pinned lefthook with explicit config (`LEFTHOOK_CONFIG` +
+  `--no-auto-install`); a repo shipping its own `lefthook.yml` keeps lefthook's
+  default merge, so its jobs still run alongside the harness's. A missing
+  binary or lefthook blocks with a one-line fix; a checkout never fails.
+  `git lfs <hook>` is still forwarded where a displaced stock LFS hook would
+  have run it. The worktree self-heal is native Go inside
+  `omakase hook post-checkout` (same contract: fill missing enabled files,
+  never overwrite, never touch tracked paths, warn on drift and collisions).
+  The machine-wide copy at `~/.cache/omakase/bin/current/omakase` (#97) is now
+  load-bearing: `init` verifies it after writing dispatchers, and the status
+  probe checks it on every run.
+- **The hooks proof is byte-equality, with the cause pinned** — the status
+  probe accepts only a hook file byte-equal to the dispatcher (a substring
+  match would call a clobbered hook healthy) and distinguishes absent vs
+  clobbered-by-another-tool vs binary-missing as separate facts. An
+  `lefthook install -f` from an npm postinstall is detected, never silently
+  re-armed; the next explicit `omakase init` repairs it.
+- Migration is one `omakase init`: it replaces the old lefthook stubs + guard
+  blocks with dispatchers and deletes the retired per-repo machinery
+  ($OMK scripts, the lefthook.yml heal snapshot, `.git/info/lefthook.checksum`,
+  the untracked skeleton `lefthook.yml` in every worktree). Hooks live once in
+  the shared git dir, so one init converts all worktrees.
+
+### Removed
+- **The hook-time script trio and the lefthook install machinery** (#98):
+  `bin/ensure-present.sh`, `bin/install-guards.sh`, `bin/verify-overlay.sh`
+  (and their embedded template copies), every `lefthook install` / stub-sync /
+  `.git/info/lefthook.checksum` reliance, the `lefthook.yml` skeleton and its
+  heal, and the payload's post-checkout heal job (heal is native now). The
+  `/lefthook.yml` exclude entry is no longer written. Gate scripts
+  (`omakase-gate.sh`) stay sh, unchanged.
+
 - **`init`/`status`/`remove` shims fail closed when no omakase binary can be
   resolved** — recovery guidance on stderr (naming the `OMAKASE_BIN` escape
   hatch; `remove` never downloads, so it asks for a local or already-cached

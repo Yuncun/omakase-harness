@@ -5,12 +5,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Yuncun/omakase-harness/internal/hook"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
 func TestStableBinPathHonorsXDG(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", "/xdg-test")
-	if got, want := StableBinPath(), filepath.Join("/xdg-test", "omakase", "bin", "current", "omakase"); got != want {
+	if got, want := hook.StableBinPath(), filepath.Join("/xdg-test", "omakase", "bin", "current", "omakase"); got != want {
 		t.Fatalf("StableBinPath = %q, want %q", got, want)
 	}
 }
@@ -18,7 +19,7 @@ func TestStableBinPathHonorsXDG(t *testing.T) {
 func TestSelfInstallCurrent(t *testing.T) {
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
-	dest := StableBinPath()
+	dest := hook.StableBinPath()
 
 	SelfInstallCurrent()
 	info, err := os.Stat(dest)

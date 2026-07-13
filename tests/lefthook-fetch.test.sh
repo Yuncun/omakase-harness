@@ -140,15 +140,22 @@ grep -q 'omakase-harness' "$REPO/.git/info/exclude" 2>/dev/null && fail "exclude
 [ ! -e "$REPO/.git/omakase" ] && pass "no shared omakase dir created on failure" || fail "shared omakase dir created on failure"
 
 # ---------- Scenario L5: remove never fetches but uses a cached binary ----------
-echo "== Scenario L5: remove resolves via the cache (no fetch) =="
+echo "== Scenario L5: legacy remove resolves via the cache (no fetch) =="
 if [ "$ASSET" != "UNSUPPORTED" ]; then
   # Seed the cache with a stub lefthook so remove can resolve it; remove must NOT
   # need the network. The stub answers `uninstall` (and `install`) as a no-op.
+  # The repo carries a pre-#98 install's shape — an $OMK dir (the install-proof
+  # sentinel) plus a lefthook stub hook with omakase's guard marker — because only
+  # that marker evidence triggers remove's legacy `lefthook uninstall` path (a
+  # current-scheme remove never spawns lefthook at all).
   RMHOME="$TMP/home-rm"; RMCACHE="$TMP/cache-rm"; mkdir -p "$RMHOME"
   STUBDIR="$RMCACHE/omakase/lefthook/$VER"; mkdir -p "$STUBDIR"
   printf '#!/bin/sh\necho "stub-lefthook $*"\nexit 0\n' > "$STUBDIR/lefthook"; chmod +x "$STUBDIR/lefthook"
   RREPO="$TMP/repoL5"; rm -rf "$RREPO"; mkdir -p "$RREPO"
   ( cd "$RREPO" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init )
+  mkdir -p "$RREPO/.git/omakase" "$RREPO/.git/hooks"
+  printf '#!/bin/sh\n# >>> omakase-harness fail-closed >>>\n# guard\n# <<< omakase-harness fail-closed <<<\ncall_lefthook run "pre-commit" "$@"\n' > "$RREPO/.git/hooks/pre-commit"
+  chmod +x "$RREPO/.git/hooks/pre-commit"
   # No lefthook on PATH, no node_modules, no LEFTHOOK_BIN, no base URL (offline):
   # resolve must still find the cached stub and run `<cache>/lefthook uninstall`.
   OUT="$( cd "$RREPO" && \
