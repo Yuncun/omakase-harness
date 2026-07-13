@@ -98,7 +98,10 @@ fi
 
 echo "== A1: hook files are write-once — untouched by commits, checkouts, config edits =="
 HOOKSDIR="$(common_of "$REPOA")/hooks"
-snap_hooks(){ for h in pre-commit pre-push post-checkout; do ls -i "$HOOKSDIR/$h"; stat -f '%m' "$HOOKSDIR/$h" 2>/dev/null || stat -c '%Y' "$HOOKSDIR/$h"; cat "$HOOKSDIR/$h"; done; }
+# mtime: GNU stat (-c) first — on Linux, BSD-style `stat -f '%m'` half-succeeds
+# in filesystem mode and prints drifting free-block counts; on macOS `stat -c`
+# fails cleanly and the BSD form takes over.
+snap_hooks(){ for h in pre-commit pre-push post-checkout; do ls -i "$HOOKSDIR/$h"; stat -c '%Y' "$HOOKSDIR/$h" 2>/dev/null || stat -f '%m' "$HOOKSDIR/$h"; cat "$HOOKSDIR/$h"; done; }
 BEFORE="$(snap_hooks)"
 ( cd "$REPOA" && echo a1 > a1.txt && git add a1.txt && git commit -q -m a1 ) >/dev/null 2>&1
 ( cd "$REPOA" && git checkout -q -b hookstill ) 2>/dev/null
