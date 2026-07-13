@@ -430,6 +430,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 
 	// ---- place loop ----
 	var placed, skipped, overwrote []string
+	keptRefilled := map[string]bool{}
 	for _, rel := range payloadRels {
 		f := filepath.Join(payload, rel)
 		dest := filepath.Join(root, rel)
@@ -451,6 +452,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 				if code := placeFile(keptEntry(omk, rel), rel, root, umask, stderr); code != 0 {
 					return code
 				}
+				keptRefilled[rel] = true
 				fmt.Fprintf(stderr, "omakase: restored your kept version of %s (it was missing)\n", rel)
 			} else {
 				fmt.Fprintf(stderr, "omakase: SKIP (kept — yours) %s — see the difference: omakase diff %s; harness version back: omakase status --restore %s\n", rel, rel, rel)
@@ -502,6 +504,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		if code := placeFile(keptEntry(omk, rel), rel, root, umask, stderr); code != 0 {
 			return code
 		}
+		keptRefilled[rel] = true
 		fmt.Fprintf(stderr, "omakase: restored your kept version of %s (it was missing)\n", rel)
 	}
 
@@ -783,7 +786,11 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		}
 	}
 	for _, k := range keptOrder {
-		fmt.Fprintf(stdout, "  = kept (yours — left untouched): %s\n", k)
+		if keptRefilled[k] {
+			fmt.Fprintf(stdout, "  = kept (yours — was missing, your accepted version restored): %s\n", k)
+		} else {
+			fmt.Fprintf(stdout, "  = kept (yours — left untouched): %s\n", k)
+		}
 	}
 	for _, w := range swept {
 		if w != "" {

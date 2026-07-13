@@ -211,3 +211,45 @@ func TestDiffNotInstalled(t *testing.T) {
 		t.Errorf("stderr = %q, want the not-installed line", stderr.String())
 	}
 }
+
+// The diff output must never leak the mechanism paths its operands live at
+// (payload-snapshot, kept, the git dir) — the header is relabeled in the
+// user's vocabulary (review finding, PR #100).
+func TestDiffHidesMechanismPaths(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	rel := ".claude/rules/a.md"
+	editFile(t, filepath.Join(dir, rel))
+
+	var stdout, stderr strings.Builder
+	if code := RunDiff(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("diff exit = %d; stderr=%q", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, leak := range []string{"payload-snapshot", "kept/", repo.OMK, "diff --git", "\nindex "} {
+		if strings.Contains(out, leak) {
+			t.Errorf("mechanism leak %q in diff output:\n%s", leak, out)
+		}
+	}
+	if !strings.Contains(out, "--- "+rel+"  (the harness version)") {
+		t.Errorf("relabeled --- header missing:\n%s", out)
+	}
+	if !strings.Contains(out, "+++ "+rel+"  (yours, on disk)") {
+		t.Errorf("relabeled +++ header missing:\n%s", out)
+	}
+
+	// After a keep + second edit, the kept baseline label also stays clean.
+	if err := FileKeep(repo, rel); err != nil {
+		t.Fatalf("FileKeep: %v", err)
+	}
+	editFile(t, filepath.Join(dir, rel))
+	stdout.Reset()
+	if code := RunDiff(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("diff exit = %d; stderr=%q", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), repo.OMK) {
+		t.Errorf("kept baseline leaked the git-dir path:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "--- "+rel+"  (your accepted (kept) version)") {
+		t.Errorf("kept baseline label missing:\n%s", stdout.String())
+	}
+}

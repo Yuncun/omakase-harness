@@ -508,3 +508,34 @@ func TestRenderInjectedKeptRow(t *testing.T) {
 		t.Errorf("post-keep edit row wrong:\n%s", md2.String())
 	}
 }
+
+// A missing kept file and a disabled row with a saved kept copy both keep
+// their consent visible (review finding, PR #100): the MISSING row says the
+// kept version is saved; the disabled row says --enable brings it back.
+func TestRenderInjectedKeptMissingAndDisabled(t *testing.T) {
+	dir := newGitRepo(t)
+	repo, err := state.Discover(dir)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo.OMK, "kept"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo.OMK, "kept"), "gone.md", "accepted\n")
+	writeFile(t, filepath.Join(repo.OMK, "kept"), "off.md", "accepted\n")
+	rows := "gone.md\tdoc\tacme\t" + sha256Hex("accepted\n") + "\t1\n" +
+		"off.md\tdoc\tacme\t" + sha256Hex("accepted\n") + "\t0\n"
+	if err := os.WriteFile(filepath.Join(repo.OMK, "placed.tsv"), []byte(rows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var md bytes.Buffer
+	RenderInventory(&md, repo, t.TempDir(), true)
+	out := md.String()
+	if !strings.Contains(out, "`gone.md`") || !strings.Contains(out, "MISSING** (your kept version is saved") {
+		t.Errorf("missing kept row hides the saved copy:\n%s", out)
+	}
+	if !strings.Contains(out, "`off.md`") || !strings.Contains(out, "a kept version of yours is saved") {
+		t.Errorf("disabled kept row hides the saved copy:\n%s", out)
+	}
+}

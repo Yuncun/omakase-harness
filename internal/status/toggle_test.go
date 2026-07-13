@@ -212,3 +212,19 @@ func TestRunKeepGroupDirectory(t *testing.T) {
 		}
 	}
 }
+
+// On an uninstalled repo, --keep/--restore say "no harness installed" with
+// exit 1 (the diff verb's contract), never a confusing "unknown placed path".
+func TestRunKeepRestoreNotInstalled(t *testing.T) {
+	dir := newGitRepo(t)
+	t.Chdir(dir)
+	for _, keep := range []bool{true, false} {
+		var stdout, stderr bytes.Buffer
+		if code := runKeepRestore(keep, "AGENTS.md", &stdout, &stderr); code != 1 {
+			t.Errorf("keep=%v: exit = %d, want 1 (stderr=%q)", keep, code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "no harness installed") {
+			t.Errorf("keep=%v: stderr = %q, want the not-installed line", keep, stderr.String())
+		}
+	}
+}

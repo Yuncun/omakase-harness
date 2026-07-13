@@ -66,14 +66,19 @@ wiring, the run ledger, and the paths hidden via `.git/info/exclude`.
   changed. `--keep` accepts the on-disk version as yours: the accepted copy
   is stored under the git dir's `omakase/kept/`, the ledger hash moves to
   it, and everything reads green again — green means "matches what you've
-  consented to". `--restore` puts the harness's version back (it also clears
-  plain, un-kept drift). See the change first with `omakase diff`. Names
-  resolve like `--disable`; machinery and git-tracked paths refuse (exit 2).
+  consented to". `--restore` puts the harness's version back — it also clears
+  plain, un-kept drift, and on a disabled row it restores AND re-enables (the
+  harness's version, full stop), so a kept-then-disabled file is never a dead
+  end. `--enable` prefers the kept copy when one is saved, so a disable/enable
+  cycle round-trips the version you accepted. See the change first with
+  `omakase diff`. Names resolve like `--disable`; machinery and git-tracked
+  paths refuse (exit 2).
 - `--help` — usage.
 
 Consent survives re-init: a file toggled off stays off across `init` (its
 ledger row and snapshot refresh, so a later `--enable` restores the CURRENT
-payload copy), a disabled gate stays recorded, and a kept file is left
+payload copy — or your accepted, kept copy when one is saved), a disabled
+gate stays recorded, and a kept file is left
 untouched — by repair `init`, by `init <new-source>` (even when the new
 source no longer ships the path; `--restore` still works offline), by the
 checkout self-heal (which refills a missing kept file with the ACCEPTED

@@ -617,3 +617,32 @@ func TestFileOnPrefersKeptCopy(t *testing.T) {
 	idx := placedIndex(rows, rel)
 	eq(t, "Hash", rows[idx].Hash, state.HashOf(full))
 }
+
+// A kept-then-disabled file must never be a dead end (review finding, PR
+// #100): --restore on the disabled row restores the harness version,
+// re-enables it, and clears the kept mark — while --enable keeps preferring
+// the accepted copy (TestFileOnPrefersKeptCopy).
+func TestFileRestoreReenablesDisabledKeptRow(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	rel := ".claude/rules/a.md"
+	full := filepath.Join(dir, rel)
+	editFile(t, full)
+	if err := FileKeep(repo, rel); err != nil {
+		t.Fatalf("FileKeep: %v", err)
+	}
+	if err := FileOff(repo, rel); err != nil {
+		t.Fatalf("FileOff: %v", err)
+	}
+
+	if err := FileRestore(repo, rel); err != nil {
+		t.Fatalf("FileRestore on the disabled row: %v", err)
+	}
+	eq(t, "restored content", readFileT(t, full), "rule a\n")
+	if lexists(filepath.Join(repo.OMK, "kept", rel)) {
+		t.Errorf("kept mark survived the restore")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	idx := placedIndex(rows, rel)
+	eq(t, "Enabled", rows[idx].Enabled, "1")
+	eq(t, "Hash", rows[idx].Hash, state.HashOf(full))
+}

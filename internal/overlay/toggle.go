@@ -273,7 +273,10 @@ func FileKeep(repo *state.Repo, rel string) error {
 // FileRestore puts the harness's version back: the payload-snapshot copy is
 // restored to disk, any $OMK/kept/rel accepted copy is deleted (clearing the
 // kept mark), and the ledger hash resets to the restored copy — one verb for
-// both a kept file and plain drift.
+// a kept file, plain drift, AND a disabled row (which it re-enables:
+// "the harness's version, full stop" undoes both a keep and a disable, so a
+// kept-then-disabled file is never a dead end — --enable brings back the
+// accepted version, --restore the harness's).
 func FileRestore(repo *state.Repo, rel string) error {
 	ledger := filepath.Join(repo.OMK, "placed.tsv")
 	rows := state.ReadPlaced(ledger)
@@ -283,9 +286,6 @@ func FileRestore(repo *state.Repo, rel string) error {
 	}
 	if gitTracked(repo.Root, rel) {
 		return fmt.Errorf("%s: %w", rel, ErrTracked)
-	}
-	if rows[idx].Enabled != "1" {
-		return fmt.Errorf("%s: disabled — bring it back with  omakase status --enable %s", rel, rel)
 	}
 	snap := filepath.Join(repo.OMK, "payload-snapshot", rel)
 	if !lexists(snap) {
@@ -301,6 +301,7 @@ func FileRestore(repo *state.Repo, rel string) error {
 	if err := removeF(keptEntry(repo.OMK, rel)); err != nil {
 		return err
 	}
+	rows[idx].Enabled = "1"
 	rows[idx].Hash = state.HashOf(full)
 	return state.WritePlaced(ledger, rows)
 }

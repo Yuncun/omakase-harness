@@ -146,8 +146,15 @@ func runKeepRestore(keep bool, name string, stdout, stderr io.Writer) int {
 	if repo == nil {
 		return 1
 	}
+	ledger := filepath.Join(repo.OMK, "placed.tsv")
+	if _, err := os.Stat(ledger); err != nil {
+		// Same contract as `omakase diff`: an uninstalled repo is its own
+		// condition (exit 1), never a confusing "unknown placed path".
+		fmt.Fprintln(stderr, "omakase: no harness installed here (install one:  omakase init)")
+		return 1
+	}
 
-	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	rows := state.ReadPlaced(ledger)
 	targets := placedTargets(rows, name)
 	if refuseMachinery(targets, name, stderr) {
 		return 2

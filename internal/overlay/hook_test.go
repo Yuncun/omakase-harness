@@ -522,3 +522,27 @@ func TestHealRestoresKeptVersion(t *testing.T) {
 		t.Errorf("heal warned about drift on a healthy kept file: %q", warn.String())
 	}
 }
+
+// Heal's drift warning on a KEPT file must speak in kept terms and point at
+// the lifecycle verbs — the plain-drift cp suggestion would silently discard
+// the newest edit (review finding, PR #100).
+func TestHealWarnsKeptDriftWithoutCpFix(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	rel := ".claude/rules/a.md"
+	full := filepath.Join(dir, rel)
+	editFile(t, full)
+	if err := FileKeep(repo, rel); err != nil {
+		t.Fatalf("FileKeep: %v", err)
+	}
+	editFile(t, full) // drift past the accepted version
+
+	var warn strings.Builder
+	healWorktree(repo, &warn)
+	w := warn.String()
+	if !strings.Contains(w, "accepted (kept) version") || !strings.Contains(w, "omakase diff") {
+		t.Errorf("kept drift warning wrong: %q", w)
+	}
+	if strings.Contains(w, "cp -P") {
+		t.Errorf("kept drift warning still suggests the cp fix: %q", w)
+	}
+}

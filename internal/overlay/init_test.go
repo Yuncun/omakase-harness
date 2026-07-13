@@ -1623,4 +1623,12 @@ func TestReinitRefillsMissingKeptFile(t *testing.T) {
 		t.Fatalf("re-init exit = %d; stderr=%q", code, stderr.String())
 	}
 	eq(t, "refilled with accepted copy", readFileT(t, full), edited)
+	// The summary must not claim "left untouched" for a file init just
+	// refilled (review finding, PR #100).
+	if !strings.Contains(stdout.String(), "was missing, your accepted version restored") {
+		t.Errorf("summary wording for a refilled kept file:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "left untouched): "+rel) {
+		t.Errorf("summary claims the refilled file was left untouched:\n%s", stdout.String())
+	}
 }
