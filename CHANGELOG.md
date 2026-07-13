@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-07-13
+
 ### Added
 - **The edit lifecycle: `omakase diff` + keep/restore** (#98 Part 2). Editing
   a placed file is the expected lifecycle, not misuse: modified →
@@ -68,6 +70,11 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   ($OMK scripts, the lefthook.yml heal snapshot, `.git/info/lefthook.checksum`,
   the untracked skeleton `lefthook.yml` in every worktree). Hooks live once in
   the shared git dir, so one init converts all worktrees.
+- **`init`/`status`/`remove` shims fail closed when no omakase binary can be
+  resolved** — recovery guidance on stderr (naming the `OMAKASE_BIN` escape
+  hatch; `remove` never downloads, so it asks for a local or already-cached
+  binary) and exit 1, matching `mcp.sh`. A silent bash fallback would mask
+  binary-distribution failures.
 
 ### Removed
 - **The hook-time script trio and the lefthook install machinery** (#98):
@@ -77,14 +84,6 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   heal, and the payload's post-checkout heal job (heal is native now). The
   `/lefthook.yml` exclude entry is no longer written. Gate scripts
   (`omakase-gate.sh`) stay sh, unchanged.
-
-- **`init`/`status`/`remove` shims fail closed when no omakase binary can be
-  resolved** — recovery guidance on stderr (naming the `OMAKASE_BIN` escape
-  hatch; `remove` never downloads, so it asks for a local or already-cached
-  binary) and exit 1, matching `mcp.sh`. A silent bash fallback would mask
-  binary-distribution failures.
-
-### Removed
 - **The v1 bash fallback bodies (`bin/legacy/`)** — the Go binary has been the
   engine for every verb since the shim cutover, and 0.18.1's self-provisioning
   shims fetch the pinned, checksum-verified release binary when nothing
