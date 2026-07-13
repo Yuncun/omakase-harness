@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"runtime/debug"
+	"strings"
 	"testing"
 )
 
@@ -22,8 +23,40 @@ func TestRunNoArgs(t *testing.T) {
 	if got := stdout.String(); got != "" {
 		t.Errorf("stdout = %q, want empty", got)
 	}
-	if got, want := stderr.String(), "usage: omakase <command>\n"; got != want {
-		t.Errorf("stderr = %q, want %q", got, want)
+	if got := stderr.String(); !strings.HasPrefix(got, "usage: omakase <command>\n") {
+		t.Errorf("stderr = %q, want the usage block", got)
+	}
+}
+
+// TestRunHelp pins the two-tier help (issue #98 Part 2): the human verbs
+// listed first, the plumbing verbs grouped under a "used by your tools"
+// header — on stdout, exit 0, for --help / -h / help alike.
+func TestRunHelp(t *testing.T) {
+	for _, arg := range []string{"--help", "-h", "help"} {
+		var stdout, stderr bytes.Buffer
+
+		code := run([]string{"omakase", arg}, &stdout, &stderr)
+
+		if code != 0 {
+			t.Errorf("%s: exit code = %d, want 0", arg, code)
+		}
+		if got := stderr.String(); got != "" {
+			t.Errorf("%s: stderr = %q, want empty", arg, got)
+		}
+		out := stdout.String()
+		for _, want := range []string{"init", "status", "diff", "remove",
+			"commands used by your tools, not by you:", "hook", "statusline", "stop-notice", "mcp"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s: usage missing %q:\n%s", arg, want, out)
+			}
+		}
+		// Tier order: every human verb appears before the plumbing header.
+		tier := strings.Index(out, "commands used by your tools")
+		for _, human := range []string{"init", "status", "diff", "remove"} {
+			if i := strings.Index(out, human); i > tier {
+				t.Errorf("%s: human verb %q listed after the plumbing tier", arg, human)
+			}
+		}
 	}
 }
 
@@ -104,7 +137,7 @@ func TestPersonalVerbDeregistered(t *testing.T) {
 	if got := stdout.String(); got != "" {
 		t.Errorf("stdout = %q, want empty", got)
 	}
-	if got, want := stderr.String(), "omakase: unknown command \"personal\"\n"; got != want {
+	if got, want := stderr.String(), "omakase: unknown command \"personal\" (see omakase --help)\n"; got != want {
 		t.Errorf("stderr = %q, want %q", got, want)
 	}
 }
@@ -137,7 +170,7 @@ func TestRunVersion(t *testing.T) {
 			if code != 2 {
 				t.Errorf("exit code = %d, want 2 (unknown command)", code)
 			}
-			if got, want := stderr.String(), "omakase: unknown command \""+arg+"\"\n"; got != want {
+			if got, want := stderr.String(), "omakase: unknown command \""+arg+"\" (see omakase --help)\n"; got != want {
 				t.Errorf("stderr = %q, want %q", got, want)
 			}
 		})
@@ -204,7 +237,7 @@ func TestRunUnknownCommand(t *testing.T) {
 			if got := stdout.String(); got != "" {
 				t.Errorf("stdout = %q, want empty", got)
 			}
-			want := "omakase: unknown command \"" + tc.argv[1] + "\"\n"
+			want := "omakase: unknown command \"" + tc.argv[1] + "\" (see omakase --help)\n"
 			if got := stderr.String(); got != want {
 				t.Errorf("stderr = %q, want %q", got, want)
 			}
