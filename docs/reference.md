@@ -42,7 +42,7 @@ the payload no longer ships, unless it was edited locally.
   tracks, so the installed copy takes over. Guarded: refuses without
   `OMAKASE_CUTOVER_CONFIRM=1`.
 
-### `status.sh [--markdown | --plain | --disable <name> | --enable <name>]`
+### `status.sh [--markdown | --plain | --disable <name> | --enable <name> | --keep <path> | --restore <path>]`
 
 On a real terminal, `status` opens the interactive consent screen: every steering
 file and gate as a row (arrows to move, Enter/Space to toggle, q to quit).
@@ -61,11 +61,37 @@ wiring, the run ledger, and the paths hidden via `.git/info/exclude`.
   every run — a bypassed gate is never silent — until `--enable` clears it.
   Machinery (`.omakase/`, the lefthook wiring) refuses to toggle. A name that
   matches nothing errors (exit 2).
+- `--keep <path>` / `--restore <path>` — the edit lifecycle (#98). You edited
+  a placed file (or directory of them); the status surfaces show it as
+  changed. `--keep` accepts the on-disk version as yours: the accepted copy
+  is stored under the git dir's `omakase/kept/`, the ledger hash moves to
+  it, and everything reads green again — green means "matches what you've
+  consented to". `--restore` puts the harness's version back — it also clears
+  plain, un-kept drift, and on a disabled row it restores AND re-enables (the
+  harness's version, full stop), so a kept-then-disabled file is never a dead
+  end. `--enable` prefers the kept copy when one is saved, so a disable/enable
+  cycle round-trips the version you accepted. See the change first with
+  `omakase diff`. Names resolve like `--disable`; machinery and git-tracked
+  paths refuse (exit 2).
 - `--help` — usage.
 
 Consent survives re-init: a file toggled off stays off across `init` (its
 ledger row and snapshot refresh, so a later `--enable` restores the CURRENT
-payload copy), and a disabled gate stays recorded.
+payload copy — or your accepted, kept copy when one is saved), a disabled
+gate stays recorded, and a kept file is left
+untouched — by repair `init`, by `init <new-source>` (even when the new
+source no longer ships the path; `--restore` still works offline), by the
+checkout self-heal (which refills a missing kept file with the ACCEPTED
+copy), and by `remove` (a kept file is yours; it stays on disk, reported).
+
+### `omakase diff [path…]`
+
+Binary-only verb (no `.sh` shim), strictly read-only: shows what you changed
+in the placed files, in the forward direction (your edit renders as an
+addition), against the harness version — or against your accepted version
+once a file is kept. No paths = every changed enabled placed file; a path is
+a placed file or a directory of them (resolution as above). Exit 0 whether or
+not differences exist; unknown paths and any flag other than `--help` exit 2.
 
 ### `omakase mcp`
 

@@ -76,6 +76,12 @@ type State struct {
 	FilesPresent   Tri       // every enabled placed row exists in this worktree
 	HashesMatch    Tri       // no enabled row drifted from its ledger hash
 
+	// Kept counts the enabled rows whose $OMK/kept/<rel> accepted copy
+	// exists — files the user edited and consented to keep (#98 Part 2).
+	// A fact, not a problem: keep moved the ledger hash to the accepted
+	// version, so kept rows read green through the proofs above.
+	Kept int
+
 	LastRun *RunSummary // nil when the ledger records no sha-bearing run
 
 	// Paths, for callers that persist per-repo state (the stop-notice marker).
@@ -115,6 +121,7 @@ func Collect(cwd string) (*State, error) {
 	// Proofs.
 	st.HooksInstalled, st.HookIssue = hooksInstalled(repo.Root)
 	st.FilesPresent, st.HashesMatch = files(repo.Root, repo.OMK)
+	st.Kept = keptCount(repo.OMK)
 
 	st.LastRun = lastRun(filepath.Join(repo.OMK, "ledger.tsv"))
 	return st, nil
@@ -237,6 +244,22 @@ func files(root, omk string) (present, hashes Tri) {
 		hashes = Unknown
 	}
 	return present, hashes
+}
+
+// keptCount counts the enabled placed rows carrying a kept mark (the
+// $OMK/kept/<rel> accepted copy — a dangling symlink still counts, hence
+// Lstat).
+func keptCount(omk string) int {
+	n := 0
+	for _, r := range state.ReadPlaced(filepath.Join(omk, "placed.tsv")) {
+		if r.Enabled != "1" {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(omk, "kept", r.Rel)); err == nil {
+			n++
+		}
+	}
+	return n
 }
 
 // lastRun summarises the newest sha-bearing run in the ledger (see

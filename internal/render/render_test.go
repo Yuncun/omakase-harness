@@ -261,3 +261,20 @@ func TestStopNoticeBareInstallFallsBackToOmakase(t *testing.T) {
 		t.Fatalf("bare notice: %q", got)
 	}
 }
+
+// The verified init verdict names kept files (consent visible at rest);
+// zero kept adds nothing, and a problem verdict never carries the count.
+func TestInitVerdictKeptCount(t *testing.T) {
+	ok := &probe.State{Installed: true, HooksInstalled: probe.OK, FilesPresent: probe.OK, HashesMatch: probe.OK}
+	if got := InitVerdict(ok); strings.Contains(got, "kept") {
+		t.Errorf("zero kept rendered: %q", got)
+	}
+	ok.Kept = 2
+	if got := InitVerdict(ok); !strings.Contains(got, "2 kept (yours)") {
+		t.Errorf("kept count missing: %q", got)
+	}
+	bad := &probe.State{Installed: true, HooksInstalled: probe.Problem, Kept: 2}
+	if got := InitVerdict(bad); strings.Contains(got, "kept") {
+		t.Errorf("problem verdict carries the kept count: %q", got)
+	}
+}

@@ -113,10 +113,118 @@ func TestStatusHelp(t *testing.T) {
 		if !strings.HasPrefix(out, "usage: omakase status") {
 			t.Errorf("status %s: stdout = %q, want a usage block", flag, out)
 		}
-		for _, want := range []string{"--markdown", "--plain", "--disable NAME", "--enable NAME", "interactive"} {
+		for _, want := range []string{"--markdown", "--plain", "--disable NAME", "--enable NAME", "--keep PATH", "--restore PATH", "interactive"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("status %s usage missing %q:\n%s", flag, want, out)
 			}
+		}
+	}
+}
+
+// --keep then --restore round-trips an edited placed file: keep accepts the
+// on-disk version (ledger hash moves, kept copy recorded), restore puts the
+// snapshot version back and clears the kept mark.
+func TestRunKeepRestoreLifecycle(t *testing.T) {
+	orig := "guidance\n"
+	rows := "AGENTS.md\tdoc\tacme\t" + sha256Hex(orig) + "\t1\n"
+	dir, repo := installOne(t, rows, map[string]string{"AGENTS.md": "guidance\nmy edit\n"})
+	if err := os.MkdirAll(filepath.Join(repo.OMK, "payload-snapshot"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeOMK(t, filepath.Join(repo.OMK, "payload-snapshot"), "AGENTS.md", orig)
+
+	var stdout, stderr bytes.Buffer
+	if code := runKeepRestore(true, "AGENTS.md", &stdout, &stderr); code != 0 {
+		t.Fatalf("--keep: exit = %d, want 0 (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "kept AGENTS.md") {
+		t.Errorf("--keep stdout = %q, want a 'kept' line", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(repo.OMK, "kept", "AGENTS.md")); err != nil {
+		t.Errorf("kept copy missing: %v", err)
+	}
+	got := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	if got[0].Hash != sha256Hex("guidance\nmy edit\n") {
+		t.Errorf("ledger hash = %s, want the accepted (edited) hash", got[0].Hash)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runKeepRestore(false, "AGENTS.md", &stdout, &stderr); code != 0 {
+		t.Fatalf("--restore: exit = %d, want 0 (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "restored AGENTS.md") {
+		t.Errorf("--restore stdout = %q, want a 'restored' line", stdout.String())
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil || string(b) != orig {
+		t.Errorf("disk after restore = %q, want the harness version %q (err=%v)", b, orig, err)
+	}
+	if _, err := os.Stat(filepath.Join(repo.OMK, "kept", "AGENTS.md")); !os.IsNotExist(err) {
+		t.Errorf("kept mark survived --restore (err=%v)", err)
+	}
+}
+
+// --keep/--restore refuse machinery, tracked paths, and unknown names with
+// exit 2, like --disable — and a name matching no placed path is never
+// treated as a gate.
+func TestRunKeepRestoreRefusals(t *testing.T) {
+	gateRel := ".omakase/bin/omakase-gate.sh"
+	rows := gateRel + "\tgate\tacme\tdeadbeef\t1\nAGENTS.md\tdoc\tacme\t" + sha256Hex("b\n") + "\t1\n"
+	dir, _ := installOne(t, rows, map[string]string{gateRel: "#!/bin/sh\nexit 0\n", "AGENTS.md": "b\n"})
+
+	for _, keep := range []bool{true, false} {
+		var stdout, stderr bytes.Buffer
+		if code := runKeepRestore(keep, ".omakase", &stdout, &stderr); code != 2 {
+			t.Errorf("keep=%v machinery: exit = %d, want 2 (stderr=%q)", keep, code, stderr.String())
+		}
+		stderr.Reset()
+		if code := runKeepRestore(keep, "nope.md", &stdout, &stderr); code != 2 {
+			t.Errorf("keep=%v unknown: exit = %d, want 2", keep, code)
+		} else if !strings.Contains(stderr.String(), "unknown placed path") {
+			t.Errorf("keep=%v unknown: stderr = %q, want 'unknown placed path'", keep, stderr.String())
+		}
+	}
+
+	runGitT(t, dir, "add", "-f", "AGENTS.md")
+	runGitT(t, dir, "commit", "-q", "-m", "track it")
+	for _, keep := range []bool{true, false} {
+		var stdout, stderr bytes.Buffer
+		if code := runKeepRestore(keep, "AGENTS.md", &stdout, &stderr); code != 2 {
+			t.Errorf("keep=%v tracked: exit = %d, want 2 (stderr=%q)", keep, code, stderr.String())
+		}
+	}
+}
+
+// A group directory resolves to every placed child, exactly like --disable.
+func TestRunKeepGroupDirectory(t *testing.T) {
+	a, b := ".claude/rules/a.md", ".claude/rules/b.md"
+	rows := a + "\trule\tacme\t" + sha256Hex("a\n") + "\t1\n" + b + "\trule\tacme\t" + sha256Hex("b\n") + "\t1\n"
+	_, repo := installOne(t, rows, map[string]string{a: "a edited\n", b: "b edited\n"})
+
+	var stdout, stderr bytes.Buffer
+	if code := runKeepRestore(true, ".claude/rules", &stdout, &stderr); code != 0 {
+		t.Fatalf("--keep group: exit = %d, want 0 (stderr=%q)", code, stderr.String())
+	}
+	for _, rel := range []string{a, b} {
+		if _, err := os.Stat(filepath.Join(repo.OMK, "kept", rel)); err != nil {
+			t.Errorf("kept copy missing for %s: %v", rel, err)
+		}
+	}
+}
+
+// On an uninstalled repo, --keep/--restore say "no harness installed" with
+// exit 1 (the diff verb's contract), never a confusing "unknown placed path".
+func TestRunKeepRestoreNotInstalled(t *testing.T) {
+	dir := newGitRepo(t)
+	t.Chdir(dir)
+	for _, keep := range []bool{true, false} {
+		var stdout, stderr bytes.Buffer
+		if code := runKeepRestore(keep, "AGENTS.md", &stdout, &stderr); code != 1 {
+			t.Errorf("keep=%v: exit = %d, want 1 (stderr=%q)", keep, code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "no harness installed") {
+			t.Errorf("keep=%v: stderr = %q, want the not-installed line", keep, stderr.String())
 		}
 	}
 }

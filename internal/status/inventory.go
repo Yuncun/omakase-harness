@@ -162,7 +162,7 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 	placedPath := filepath.Join(repo.OMK, "placed.tsv")
 
 	if md {
-		fmt.Fprintln(w, "### Committed (this repo) — tracked harness files")
+		fmt.Fprintln(w, "### The project's harness (committed — managed by git, not omakase)")
 		if len(comm) > 0 {
 			for _, rel := range comm {
 				if rel == "" {
@@ -195,7 +195,7 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 		return
 	}
 
-	fmt.Fprintln(w, "COMMITTED (this repo) — tracked harness files")
+	fmt.Fprintln(w, "THE PROJECT'S HARNESS (committed — managed by git, not omakase)")
 	if len(comm) > 0 {
 		for _, rel := range comm {
 			if rel == "" {
@@ -278,10 +278,16 @@ func machineryNoteworthy(repo *state.Repo, row state.PlacedRow) bool {
 // if dangling); else the path exists (Stat) -> plain row; else -> missing
 // row. The drift suffix (state.IsDrifted) applies only to the arrow and plain
 // branches — disabled rows are never managed and missing rows have nothing to
-// diff.
+// diff. A kept row (the $OMK/kept accepted copy exists — the user accepted
+// their own edit, #98 Part 2) carries its own state marker: consent must be
+// visible at rest. Kept and drifted can coexist — an edit made after the
+// keep drifts from the ACCEPTED hash and renders both.
 func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, md bool) {
 	full := filepath.Join(repo.Root, row.Rel)
 	drifted := state.IsDrifted(repo.Root, row.Rel, row.Hash, row.Enabled)
+	_, kerr := os.Lstat(filepath.Join(repo.OMK, "kept", row.Rel))
+	keptMark := kerr == nil // the accepted copy exists, whatever the row state
+	kept := row.Enabled == "1" && keptMark
 
 	lstat, lerr := os.Lstat(full)
 	isSymlink := lerr == nil && lstat.Mode()&os.ModeSymlink != 0
@@ -289,37 +295,62 @@ func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, md boo
 	present := statErr == nil
 
 	if md {
-		dz := ""
+		dz, kz := "", ""
 		if drifted {
 			dz = " — **DRIFTED** (differs from canonical; `omakase init` to re-sync, or it may be an intentional local edit)"
+			if kept {
+				dz = " — **DRIFTED** (differs from your accepted version; see `omakase diff`)"
+			}
+		}
+		if kept {
+			kz = " — kept (yours)"
 		}
 		switch {
 		case row.Enabled == "0":
-			fmt.Fprintf(w, "- `%s` — %s, from %s — disabled (not restored, not verified)\n", row.Rel, row.Kind, row.Src)
+			note := ""
+			if keptMark {
+				note = "; a kept version of yours is saved — `omakase status --enable` brings it back"
+			}
+			fmt.Fprintf(w, "- `%s` — %s, from %s — disabled (not restored, not verified%s)\n", row.Rel, row.Kind, row.Src, note)
 		case isSymlink:
 			target, _ := os.Readlink(full)
-			fmt.Fprintf(w, "- `%s` → `%s` — %s, from %s%s\n", row.Rel, target, row.Kind, row.Src, dz)
+			fmt.Fprintf(w, "- `%s` → `%s` — %s, from %s%s%s\n", row.Rel, target, row.Kind, row.Src, kz, dz)
 		case present:
-			fmt.Fprintf(w, "- `%s` — %s, from %s%s\n", row.Rel, row.Kind, row.Src, dz)
+			fmt.Fprintf(w, "- `%s` — %s, from %s%s%s\n", row.Rel, row.Kind, row.Src, kz, dz)
+		case kept:
+			fmt.Fprintf(w, "- `%s` — %s, from %s — **MISSING** (your kept version is saved; restored on the next checkout, or run `omakase init`)\n", row.Rel, row.Kind, row.Src)
 		default:
 			fmt.Fprintf(w, "- `%s` — %s, from %s — **MISSING** (run `omakase init` to restore)\n", row.Rel, row.Kind, row.Src)
 		}
 		return
 	}
 
-	dz, mk := "", "+"
+	dz, kz, mk := "", "", "+"
+	if kept {
+		kz = "; kept (yours)"
+		mk = "="
+	}
 	if drifted {
 		dz = "; DRIFTED — differs from canonical, run omakase init to re-sync"
+		if kept {
+			dz = "; DRIFTED — differs from your accepted version, see omakase diff"
+		}
 		mk = "~"
 	}
 	switch {
 	case row.Enabled == "0":
-		fmt.Fprintf(w, "    - %s   (%s, from %s; disabled — not restored, not verified)\n", row.Rel, row.Kind, row.Src)
+		note := ""
+		if keptMark {
+			note = "; kept version of yours saved — omakase status --enable brings it back"
+		}
+		fmt.Fprintf(w, "    - %s   (%s, from %s; disabled — not restored, not verified%s)\n", row.Rel, row.Kind, row.Src, note)
 	case isSymlink:
 		target, _ := os.Readlink(full)
-		fmt.Fprintf(w, "    %s %s -> %s   (%s, from %s%s)\n", mk, row.Rel, target, row.Kind, row.Src, dz)
+		fmt.Fprintf(w, "    %s %s -> %s   (%s, from %s%s%s)\n", mk, row.Rel, target, row.Kind, row.Src, kz, dz)
 	case present:
-		fmt.Fprintf(w, "    %s %s   (%s, from %s%s)\n", mk, row.Rel, row.Kind, row.Src, dz)
+		fmt.Fprintf(w, "    %s %s   (%s, from %s%s%s)\n", mk, row.Rel, row.Kind, row.Src, kz, dz)
+	case kept:
+		fmt.Fprintf(w, "    ! %s   (%s, from %s; MISSING — your kept version is saved; restored on next checkout, or omakase init)\n", row.Rel, row.Kind, row.Src)
 	default:
 		fmt.Fprintf(w, "    ! %s   (%s, from %s; MISSING — run omakase init to restore)\n", row.Rel, row.Kind, row.Src)
 	}

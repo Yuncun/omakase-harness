@@ -283,7 +283,14 @@ func healWorktree(repo *state.Repo, stderr io.Writer) {
 		}
 		rel := row.Rel
 		dest := filepath.Join(root, rel)
+		// The accepted (kept) copy outranks the harness version: refilling a
+		// kept file must restore what the user consented to, and the drift
+		// warning below must speak in kept terms (issue #98 Part 2).
 		snapEntry := filepath.Join(snap, rel)
+		kept := false
+		if k := keptEntry(repo.OMK, rel); lexists(k) {
+			snapEntry, kept = k, true
+		}
 		// Tracked first — a tracked file exists in the working tree, so an
 		// existence-first order would skip the collision warning silently.
 		if gitTracked(root, rel) {
@@ -296,11 +303,19 @@ func healWorktree(repo *state.Repo, stderr io.Writer) {
 		if lexists(dest) {
 			if row.Hash != "" {
 				if actual := state.HashOf(dest); actual != "" && actual != row.Hash {
-					fix := "omakase init"
-					if lexists(snapEntry) {
-						fix = fmt.Sprintf("cp -P '%s' '%s'  (or omakase init to re-sync every file)", snapEntry, dest)
+					if kept {
+						// A kept file's baseline is the ACCEPTED version; the
+						// cp fix below would silently discard this newest
+						// edit, so the kept path points at the lifecycle
+						// verbs instead.
+						fmt.Fprintf(stderr, "omakase: WARNING — '%s' differs from your accepted (kept) version. Your copy is left as-is. See the change:  omakase diff %s  — then keep it (omakase status --keep %s) or go back (omakase status --restore %s).\n", rel, rel, rel, rel)
+					} else {
+						fix := "omakase init"
+						if lexists(snapEntry) {
+							fix = fmt.Sprintf("cp -P '%s' '%s'  (or omakase init to re-sync every file)", snapEntry, dest)
+						}
+						fmt.Fprintf(stderr, "omakase: WARNING — injected '%s' has DRIFTED from canonical (ledger %s…, on-disk %s…); a gate may be weakened or stale. Drift only surfaces — your copy is left as-is. Adopt canonical with: %s\n", rel, first12(row.Hash), first12(actual), fix)
 					}
-					fmt.Fprintf(stderr, "omakase: WARNING — injected '%s' has DRIFTED from canonical (ledger %s…, on-disk %s…); a gate may be weakened or stale. Drift only surfaces — your copy is left as-is. Adopt canonical with: %s\n", rel, first12(row.Hash), first12(actual), fix)
 				}
 			}
 			continue

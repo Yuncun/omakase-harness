@@ -403,6 +403,14 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// the file is not re-placed, but its snapshot + ledger row are refreshed so
 	// `omakase status --enable` can restore the current payload copy later.
 	declined := map[string]bool{}
+	// A row the user kept (accepted their own edit; the $OMK/kept copy is the
+	// mark) is skipped by the place loop and its ledger row carried verbatim:
+	// "make this repo match the harness" extends to "match what you've
+	// consented to", exactly like disabled rows (issue #98 Part 2). A kept
+	// path that is now git-tracked lost to the upstream commit (the collision
+	// guard above warned) and drops out like any other tracked row.
+	keptPrior := map[string]state.PlacedRow{}
+	var keptOrder []string
 	for _, row := range state.ReadPlaced(filepath.Join(omk, "placed.tsv")) {
 		// Machinery is never a consent item (the toggles refuse it), so an
 		// enabled=0 machinery row can only be a pre-guard binary's leftover —
@@ -411,6 +419,10 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		if row.Enabled == "0" && !harness.IsMachinery(row.Rel) {
 			declined[row.Rel] = true
 		}
+		if row.Enabled == "1" && lexists(keptEntry(omk, row.Rel)) && !gitTracked(root, row.Rel) {
+			keptPrior[row.Rel] = row
+			keptOrder = append(keptOrder, row.Rel)
+		}
 	}
 	var declinedKept []string
 
@@ -418,6 +430,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 
 	// ---- place loop ----
 	var placed, skipped, overwrote []string
+	keptRefilled := map[string]bool{}
 	for _, rel := range payloadRels {
 		f := filepath.Join(payload, rel)
 		dest := filepath.Join(root, rel)
@@ -430,6 +443,20 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		if declined[rel] {
 			declinedKept = append(declinedKept, rel)
 			fmt.Fprintf(stderr, "omakase: SKIP (toggled off) %s — re-enable: omakase status --enable %s\n", rel, rel)
+			continue
+		}
+		if _, ok := keptPrior[rel]; ok {
+			if !lexists(dest) {
+				// Repair refills a missing kept file with the ACCEPTED copy —
+				// "match what you've consented to", same as the checkout heal.
+				if code := placeFile(keptEntry(omk, rel), rel, root, umask, stderr); code != 0 {
+					return code
+				}
+				keptRefilled[rel] = true
+				fmt.Fprintf(stderr, "omakase: restored your kept version of %s (it was missing)\n", rel)
+			} else {
+				fmt.Fprintf(stderr, "omakase: SKIP (kept — yours) %s — see the difference: omakase diff %s; harness version back: omakase status --restore %s\n", rel, rel, rel)
+			}
 			continue
 		}
 		// Fresh placement: nothing there yet.
@@ -468,6 +495,19 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	// A kept path the payload no longer ships never enters the place loop;
+	// repair its missing-file case here the same way (accepted copy back).
+	for _, rel := range keptOrder {
+		if contains(payloadRels, rel) || lexists(filepath.Join(root, rel)) {
+			continue
+		}
+		if code := placeFile(keptEntry(omk, rel), rel, root, umask, stderr); code != 0 {
+			return code
+		}
+		keptRefilled[rel] = true
+		fmt.Fprintf(stderr, "omakase: restored your kept version of %s (it was missing)\n", rel)
+	}
+
 	// ---- orphan sweep ----
 	// Prior ledger rows in file order: a still-placed path is kept; a
 	// tracked or already-gone path is skipped; harness residue that still
@@ -482,6 +522,9 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			}
 			if contains(placed, rel) {
 				continue
+			}
+			if _, ok := keptPrior[rel]; ok {
+				continue // kept: the user's accepted file, never harness residue
 			}
 			if gitTracked(root, rel) {
 				continue // tracked: upstream owns it (collision guard warned above)
@@ -506,7 +549,8 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "omakase: .worktreeinclude is tracked — leaving it untouched (re-run omakase init inside a new manual worktree to install it there).")
 	}
 	isDirRoot := func(p string) bool { return isDir(filepath.Join(root, p)) }
-	prefixes := DerivePrefixes(append(append([]string{}, placed...), declinedKept...), harness.SharedTopdirs, isDirRoot, wtincTracked)
+	consented := append(append(append([]string{}, placed...), declinedKept...), keptOrder...)
+	prefixes := DerivePrefixes(consented, harness.SharedTopdirs, isDirRoot, wtincTracked)
 
 	if err := os.MkdirAll(filepath.Dir(exclude), 0o755); err != nil {
 		return 1
@@ -535,7 +579,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// the ".worktreeinclude" entry itself (compared with any trailing "/"
 	// trimmed), whether it came from the wiring append or from a placed
 	// path.
-	if !wtincTracked && len(placed)+len(declinedKept) > 0 {
+	if !wtincTracked && len(placed)+len(declinedKept)+len(keptOrder) > 0 {
 		wtinc := filepath.Join(root, ".worktreeinclude")
 		if err := touch(wtinc); err != nil {
 			return 1
@@ -555,6 +599,29 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 
 	// ---- snapshot + provenance ledger ----
+	// A kept path the new payload no longer ships still needs its harness
+	// version in the snapshot — that copy is what makes --restore always
+	// possible offline — so it is carried across the wholesale rebuild.
+	carry := filepath.Join(omk, "snapshot-carry")
+	if err := os.RemoveAll(carry); err != nil {
+		return 1
+	}
+	for _, rel := range keptOrder {
+		if contains(payloadRels, rel) {
+			continue // the new payload provides the harness version below
+		}
+		old := filepath.Join(omk, "payload-snapshot", rel)
+		if !lexists(old) {
+			continue
+		}
+		if err := safeMkdirAll(carry, filepath.Join(carry, filepath.Dir(rel))); err != nil {
+			fmt.Fprintf(stderr, "omakase: %v\n", err)
+			return 1
+		}
+		if err := CopyEntry(old, filepath.Join(carry, rel)); err != nil {
+			return 1
+		}
+	}
 	if err := os.RemoveAll(filepath.Join(omk, "payload-snapshot")); err != nil {
 		return 1
 	}
@@ -611,6 +678,30 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			Hash:    state.HashOf(src), // hash of what would be placed (the payload copy)
 			Enabled: "0",
 		})
+	}
+	// Kept rows: file untouched (skipped above), ledger row carried verbatim
+	// — the hash IS the accepted hash, so the kept file keeps reading green.
+	// The snapshot gets the new payload's harness version when it ships one
+	// (adopting it is --restore's job), else the carried-over prior version.
+	for _, rel := range keptOrder {
+		src := filepath.Join(payload, rel)
+		if !lexists(src) {
+			src = filepath.Join(carry, rel)
+		}
+		if lexists(src) {
+			snapRoot := filepath.Join(omk, "payload-snapshot")
+			if err := safeMkdirAll(snapRoot, filepath.Join(snapRoot, filepath.Dir(rel))); err != nil {
+				fmt.Fprintf(stderr, "omakase: %v\n", err)
+				return 1
+			}
+			if err := CopyEntry(src, filepath.Join(snapRoot, rel)); err != nil {
+				return 1
+			}
+		}
+		rows = append(rows, keptPrior[rel])
+	}
+	if err := os.RemoveAll(carry); err != nil {
+		return 1
 	}
 	if err := state.WritePlaced(filepath.Join(omk, "placed.tsv"), rows); err != nil {
 		return 1
@@ -692,6 +783,13 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	for _, o := range overwrote {
 		if o != "" {
 			fmt.Fprintf(stdout, "  ^ overwrote to match payload (any local edit replaced): %s\n", o)
+		}
+	}
+	for _, k := range keptOrder {
+		if keptRefilled[k] {
+			fmt.Fprintf(stdout, "  = kept (yours — was missing, your accepted version restored): %s\n", k)
+		} else {
+			fmt.Fprintf(stdout, "  = kept (yours — left untouched): %s\n", k)
 		}
 	}
 	for _, w := range swept {

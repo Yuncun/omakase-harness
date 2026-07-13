@@ -165,6 +165,18 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
+	// A kept file is the USER'S content (they accepted their own edit —
+	// issue #98 Part 2), so remove leaves it on disk and says so, the same
+	// spirit as the clobber backup: never destroy a user's content. The
+	// $OMK teardown below still deletes the kept/ copies with everything
+	// else — the on-disk file is the surviving original.
+	kept := map[string]bool{}
+	for _, rel := range rels {
+		if lexists(filepath.Join(omk, "kept", rel)) {
+			kept[rel] = true
+		}
+	}
+
 	// ---- per-worktree sweep ----
 	// Placed files, the skeleton lefthook.yml, and .worktreeinclude live
 	// per-checkout — heal copies them into every worktree — so remove sweeps
@@ -180,8 +192,11 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 		}
 		wtTracked := func(rel string) bool { return gitTracked(wtRoot, rel) }
 
-		// placed deletion
+		// placed deletion (kept files are the user's; left in place)
 		for _, rel := range rels {
+			if kept[rel] {
+				continue
+			}
 			if delErr := DeletePlaced(wtRoot, rel, wtTracked); delErr != nil {
 				return 1
 			}
@@ -230,6 +245,11 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	for _, rel := range rels {
+		if kept[rel] {
+			fmt.Fprintf(stdout, "omakase: %s is yours (kept) — left on disk; with the ignore rules gone, git now sees it as an untracked file.\n", rel)
+		}
+	}
 	fmt.Fprintln(stdout, "omakase: removed. Hooks uninstalled, placed files deleted, worktree snapshot + exclude block stripped.")
 	return 0
 }

@@ -99,7 +99,10 @@ stack. `remove` (no arguments) is a bare total teardown. `status [--markdown]` i
 read-only. `update`, `enable`, `disable` do not exist as verbs. *[2026-07
 correction: the consent-menu stack later rebuilt toggling as `status
 --disable/--enable` and the interactive/MCP menu — see `docs/reference.md`;
-`update` still does not exist.]*
+`update` still does not exist. Issue #98 Part 2 (2026-07) added the fourth
+human verb, `omakase diff` (read-only), and the edit-lifecycle plumbing
+`status --keep/--restore` backed by `$OMK/kept/` accepted copies — editing a
+placed file is the expected lifecycle now, not drift to be repaired.]*
 
 The two "deliberate v1 behavior change" paragraphs that followed this table in the
 locked design (a pin-based bare `init`, and a stacking second `init`) describe changes

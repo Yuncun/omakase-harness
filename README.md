@@ -43,7 +43,9 @@ check into a git hook).
 
 `init` fetches lefthook (the gate runner) if absent — a pinned, checksum-verified binary
 in a per-machine cache; the same mechanism self-provisions the omakase binary itself when
-a clone has no Go. `omakase mcp` serves the same status + consent menu inside Claude Code
+a clone has no Go. `omakase diff` shows what you changed in any placed file (read-only);
+keep your version with `omakase status --keep <path>` or put the harness's back with
+`--restore`. `omakase mcp` serves the same status + consent menu inside Claude Code
 and Copilot CLI. Flags and environment variables are in the
 [reference](docs/reference.md).
 
@@ -55,6 +57,11 @@ dispatcher per hook; at commit time it verifies the harness is complete (fail cl
 and runs the wired gates through a pinned lefthook. Nothing rewrites a hook file after
 init — not lefthook, not omakase itself. Installed files are never staged or committed,
 and `remove` reverses every step.
+
+Editing a placed file is expected, not an error: the status surfaces turn amber,
+`omakase diff` shows exactly what you changed, and you either keep your version or
+restore the harness's. To customize a whole harness, work at the source: fork the
+harness repo, edit there, and point `init` at your fork.
 
 ## Documentation
 
