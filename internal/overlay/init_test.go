@@ -1525,3 +1525,102 @@ func TestInitSkipsTrackedFileDifferingOnlyInCase(t *testing.T) {
 		t.Error("a clobbered/ backup exists — the overwrite path ran instead of the tracked skip")
 	}
 }
+
+// ------------------------------------------------------------ kept + init
+
+// A repair init leaves a kept file untouched: the file keeps the accepted
+// content, the ledger row (accepted hash) is carried verbatim, the kept mark
+// survives, the snapshot is refreshed from the payload, and both the summary
+// and the verdict say so.
+func TestReinitPreservesKept(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	rel := ".claude/rules/a.md"
+	full := filepath.Join(dir, rel)
+	edited := editFile(t, full)
+	if err := FileKeep(repo, rel); err != nil {
+		t.Fatalf("FileKeep: %v", err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("re-init exit = %d; stderr=%q", code, stderr.String())
+	}
+
+	eq(t, "kept file content", readFileT(t, full), edited)
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	idx := placedIndex(rows, rel)
+	if idx < 0 {
+		t.Fatalf("kept ledger row dropped by re-init")
+	}
+	eq(t, "carried Hash", rows[idx].Hash, state.HashOf(full))
+	eq(t, "carried Enabled", rows[idx].Enabled, "1")
+	if !lexists(filepath.Join(repo.OMK, "kept", rel)) {
+		t.Errorf("kept mark lost across re-init")
+	}
+	eq(t, "snapshot refreshed from payload", readFileT(t, filepath.Join(repo.OMK, "payload-snapshot", rel)), "rule a\n")
+	if !strings.Contains(stdout.String(), "kept (yours") {
+		t.Errorf("init summary missing the kept line:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "1 kept (yours)") {
+		t.Errorf("init verdict missing the kept count:\n%s", stdout.String())
+	}
+	if lexists(filepath.Join(repo.OMK, "snapshot-carry")) {
+		t.Errorf("snapshot-carry temp dir left behind")
+	}
+}
+
+// Consent survives a source switch, including a kept path the new source no
+// longer ships: file, row, kept mark, and a carried-over snapshot (so
+// --restore still works offline) all persist.
+func TestInitNewSourceKeepsDroppedKeptPath(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	rel := ".claude/rules/a.md"
+	full := filepath.Join(dir, rel)
+	edited := editFile(t, full)
+	if err := FileKeep(repo, rel); err != nil {
+		t.Fatalf("FileKeep: %v", err)
+	}
+
+	// The "new source": a payload that no longer ships a.md.
+	p2 := t.TempDir()
+	writeFile(t, filepath.Join(p2, ".claude", "rules", "b.md"), "rule b v2\n")
+	t.Setenv("OMAKASE_PAYLOAD", p2)
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("re-init exit = %d; stderr=%q", code, stderr.String())
+	}
+
+	eq(t, "kept file survives the payload drop", readFileT(t, full), edited)
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	if placedIndex(rows, rel) < 0 {
+		t.Fatalf("kept row dropped with the payload")
+	}
+	// The prior snapshot copy was carried, so restore still works offline.
+	eq(t, "carried snapshot", readFileT(t, filepath.Join(repo.OMK, "payload-snapshot", rel)), "rule a\n")
+	if err := FileRestore(repo, rel); err != nil {
+		t.Fatalf("FileRestore after source switch: %v", err)
+	}
+	eq(t, "restored content", readFileT(t, full), "rule a\n")
+}
+
+// A missing kept file is repaired with the ACCEPTED copy, not the harness
+// version — init means "match what you've consented to".
+func TestReinitRefillsMissingKeptFile(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	rel := ".claude/rules/a.md"
+	full := filepath.Join(dir, rel)
+	edited := editFile(t, full)
+	if err := FileKeep(repo, rel); err != nil {
+		t.Fatalf("FileKeep: %v", err)
+	}
+	if err := os.Remove(full); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("re-init exit = %d; stderr=%q", code, stderr.String())
+	}
+	eq(t, "refilled with accepted copy", readFileT(t, full), edited)
+}

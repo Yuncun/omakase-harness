@@ -283,7 +283,13 @@ func healWorktree(repo *state.Repo, stderr io.Writer) {
 		}
 		rel := row.Rel
 		dest := filepath.Join(root, rel)
+		// The accepted (kept) copy outranks the harness version: refilling a
+		// kept file must restore what the user consented to, and the drift
+		// fix below must point at that same copy (issue #98 Part 2).
 		snapEntry := filepath.Join(snap, rel)
+		if k := keptEntry(repo.OMK, rel); lexists(k) {
+			snapEntry = k
+		}
 		// Tracked first — a tracked file exists in the working tree, so an
 		// existence-first order would skip the collision warning silently.
 		if gitTracked(root, rel) {

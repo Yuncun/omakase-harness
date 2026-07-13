@@ -400,3 +400,40 @@ func TestCollectLastRunNilWithoutRealRuns(t *testing.T) {
 		t.Fatalf("LastRun = %+v, want nil when every row lacks a sha", *st.LastRun)
 	}
 }
+
+// A kept row (an $OMK/kept accepted copy behind an enabled row) is a fact,
+// not a problem: Kept counts it, and because keep moved the ledger hash to
+// the accepted version, the proofs stay green. Disabled rows and rows
+// without a kept copy don't count.
+func TestCollectKeptCount(t *testing.T) {
+	dir := newTestRepo(t)
+	omk := installHarness(t, dir)
+
+	// Edit + keep .omakase/VERSION: accepted copy recorded, ledger hash moved.
+	writeFile(t, dir, ".omakase/VERSION", "0.18.1\nedited\n")
+	writeFile(t, filepath.Join(omk, "kept"), ".omakase/VERSION", "0.18.1\nedited\n")
+	ledger := filepath.Join(omk, "placed.tsv")
+	rows := state.ReadPlaced(ledger)
+	rows[0].Hash = state.HashOf(filepath.Join(dir, ".omakase/VERSION"))
+	if err := state.WritePlaced(ledger, rows); err != nil {
+		t.Fatal(err)
+	}
+
+	st := collect(t, dir)
+	if st.Kept != 1 {
+		t.Errorf("Kept = %d, want 1", st.Kept)
+	}
+	if st.FilesPresent != OK || st.HashesMatch != OK {
+		t.Errorf("kept row broke the proofs: present=%v hashes=%v", st.FilesPresent, st.HashesMatch)
+	}
+
+	// A kept copy behind a DISABLED row does not count.
+	rows = state.ReadPlaced(ledger)
+	rows[0].Enabled = "0"
+	if err := state.WritePlaced(ledger, rows); err != nil {
+		t.Fatal(err)
+	}
+	if st := collect(t, dir); st.Kept != 0 {
+		t.Errorf("disabled row counted as kept: Kept = %d, want 0", st.Kept)
+	}
+}

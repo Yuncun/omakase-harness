@@ -787,3 +787,32 @@ func TestRemoveSkipsTrackedFileDifferingOnlyInCase(t *testing.T) {
 	}
 	eq(t, "tracked file survives", readFileT(t, filepath.Join(dir, "CLAUDE.md")), "tracked\n")
 }
+
+// remove leaves a kept file on disk (it is the user's content) and says so;
+// everything else — the sibling placed file, $OMK including kept/, the
+// exclude block — is torn down as usual.
+func TestRemoveLeavesKeptFileOnDisk(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	a, b := ".claude/rules/a.md", ".claude/rules/b.md"
+	fullA := filepath.Join(dir, a)
+	edited := editFile(t, fullA)
+	if err := FileKeep(repo, a); err != nil {
+		t.Fatalf("FileKeep: %v", err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("remove exit = %d; stderr=%q", code, stderr.String())
+	}
+
+	eq(t, "kept file survives remove", readFileT(t, fullA), edited)
+	if lexists(filepath.Join(dir, b)) {
+		t.Errorf("non-kept placed file survived remove")
+	}
+	if lexists(repo.OMK) {
+		t.Errorf("$OMK survived remove")
+	}
+	if !strings.Contains(stdout.String(), a) || !strings.Contains(stdout.String(), "kept") {
+		t.Errorf("remove did not report the kept file:\n%s", stdout.String())
+	}
+}

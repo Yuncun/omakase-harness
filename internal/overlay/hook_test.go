@@ -499,3 +499,26 @@ func TestHookPostCheckoutIgnoresJobFailure(t *testing.T) {
 		t.Fatalf("exit = %d, want 0 (post-checkout is best-effort)", code)
 	}
 }
+
+// A deleted kept file heals back to the ACCEPTED version, not the harness
+// snapshot: the kept copy is what the user consented to (#98 Part 2).
+func TestHealRestoresKeptVersion(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	rel := ".claude/rules/a.md"
+	full := filepath.Join(dir, rel)
+	edited := editFile(t, full)
+	if err := FileKeep(repo, rel); err != nil {
+		t.Fatalf("FileKeep: %v", err)
+	}
+	if err := os.Remove(full); err != nil {
+		t.Fatal(err)
+	}
+
+	var warn strings.Builder
+	healWorktree(repo, &warn)
+
+	eq(t, "healed content", readFileT(t, full), edited)
+	if strings.Contains(warn.String(), "DRIFTED") {
+		t.Errorf("heal warned about drift on a healthy kept file: %q", warn.String())
+	}
+}
