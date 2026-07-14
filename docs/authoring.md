@@ -1,9 +1,9 @@
 # Authoring a custom harness
 
-A custom harness is a git repository with a `payload/` tree. `payload/` is copied onto a target
-on install; everything else in the repo (README, tests, `bin/`) stays in the custom harness. To
-install one from a URL or path with `--source`, it also needs an `omakase.manifest` at the root
-(see [Reference](reference.md#manifest)).
+A custom harness is a `payload/` tree with an `omakase.manifest` beside it
+(see [Reference](reference.md#manifest)), kept in a git repository — at the repo root, or in a
+subfolder of a repo that holds other things too. `payload/` is copied onto a target on install;
+everything else (README, tests, `bin/`) stays in the custom harness.
 
 A `--source` install layers the omakase **base harness's payload** under your `payload/` (your
 delta wins on overlap), so you ship only your delta and **rely on base machinery without keeping
@@ -14,7 +14,8 @@ wiring references a `.omakase/*.sh` neither you nor the base harness ships,
 
 Start from the base harness repo or an existing custom harness, edit `payload/`, and publish. The
 smallest worked example is [`examples/sample-harness/`](../examples/sample-harness/) — one rule,
-one gate, and the wiring; copy it and edit the three files under `payload/`. There is no capture
+one gate, and the wiring; try it with `omakase init Yuncun/omakase-harness/examples/sample-harness`,
+then copy it and edit the three files under `payload/`. There is no capture
 tool: build `payload/` and `omakase.manifest` by hand, moving in whatever files a project already
 has in place.
 
@@ -107,6 +108,14 @@ everything else omakase places is owned.
 A harness installs from any git URL:
 
     init.sh --source https://github.com/you/your-harness
+
+It does not need a repository of its own — a subfolder of a repo you already have works:
+
+    init.sh you/your-repo/path/to/harness
+    init.sh --source https://github.com/you/your-repo//path/to/harness
+
+The `//` marks where the repo ends and the subfolder begins; the `omakase.manifest` sits next
+to `payload/` inside that subfolder.
 
 The manifest needs a `name`; `version` is optional. Distributing as a Claude Code plugin
 adds the `omakase` skills over the same scripts; the install commands are in the

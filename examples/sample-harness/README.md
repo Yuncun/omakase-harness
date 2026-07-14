@@ -17,17 +17,18 @@ directory is so small.
 
 ## Try it
 
-These files are the *contents* of a harness repo. omakase installs a harness from a git
-repo, so put them in one first:
+This directory is a complete harness, and a harness can live in a **subfolder** of a git
+repo — so it is adoptable straight from GitHub. From any project:
 
-    cp -R <path-to>/omakase-harness/examples/sample-harness /tmp/sample-harness
-    cd /tmp/sample-harness && git init -q && git add -A && git commit -qm "sample harness"
-
-Then, from any project:
-
-    omakase init --source /tmp/sample-harness          # Claude Code or Copilot CLI
+    omakase init Yuncun/omakase-harness/examples/sample-harness    # Claude Code or Copilot CLI
     # or, in a plain shell:
-    bash <path-to>/omakase-harness/bin/init.sh --source /tmp/sample-harness
+    bash <path-to>/omakase-harness/bin/init.sh Yuncun/omakase-harness/examples/sample-harness
+
+From a local clone of this repo, the same install is
+
+    omakase init --source <path-to-clone>//examples/sample-harness
+
+where the `//` marks where the repo ends and the subfolder begins.
 
 Now:
 
@@ -38,5 +39,6 @@ Now:
 
 ## Make your own
 
-Copy this directory, edit the three files under `payload/`, push it to a git repo, and
-share the URL. People adopt it with `omakase init --source <your-repo>`.
+Copy this directory into a git repo of your own — its own repo, or a subfolder of one you
+already have — edit the three files under `payload/`, push, and share. People adopt it with
+`omakase init you/your-repo` (add `/path/to/harness` when it lives in a subfolder).
