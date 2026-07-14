@@ -27,15 +27,15 @@
 # Pinned omakase release. Re-pinning: bump this, replace the four archive hashes
 # from that release's checksums.txt, and regenerate the four binary hashes
 # (docs/releasing.md has the loop).
-OMAKASE_PIN_VERSION="0.19.0"
+OMAKASE_PIN_VERSION="0.19.1"
 
 # Baked SHA256 of each release ARCHIVE (verbatim from the published checksums.txt).
 omakase_archive_sha256_for() {  # $1 = asset file name; echoes expected sha256, empty if unknown
   case "$1" in
-    omakase_0.19.0_darwin_amd64.tar.gz) echo "1bad04ed3c3af32db57480beb25f48f51506b6bbf57687311e689ef7feb830a7";;
-    omakase_0.19.0_darwin_arm64.tar.gz) echo "81fe236994688329dda2e278a3b08b1ba79c4beafc6a5b93b9de23bfdc2415f9";;
-    omakase_0.19.0_linux_amd64.tar.gz)  echo "3b9a0be7efe63cc166206cdda2d09912351e71a74694817cdbd53a9f3da264a4";;
-    omakase_0.19.0_linux_arm64.tar.gz)  echo "8965829795246dace7b3588216b626711bf7c64600965fbb2fc3ce853af26b05";;
+    omakase_0.19.1_darwin_amd64.tar.gz) echo "54edfb8299bffd8c7a118948b41b7aee2a161abe96b57116ca09c010f1696642";;
+    omakase_0.19.1_darwin_arm64.tar.gz) echo "77b101ee868ddb9c0d00bf352ebebe4094b6423bd452d74037cc520cd20e9827";;
+    omakase_0.19.1_linux_amd64.tar.gz)  echo "e6b6e3a17d1065cba47d56f87848315395e0a8c4d4fc2494af12670ce5575b67";;
+    omakase_0.19.1_linux_arm64.tar.gz)  echo "fbb5776ab1e79b3a44b77fffb0439612534a33e50e1389f1c89256a62214d575";;
     *) echo "";;
   esac
 }
@@ -45,10 +45,10 @@ omakase_archive_sha256_for() {  # $1 = asset file name; echoes expected sha256, 
 # re-verified against a repo-held digest before reuse in fetch_omakase.
 omakase_bin_sha256_for() {  # $1 = asset stem; echoes expected sha256, empty if unknown
   case "$1" in
-    omakase_0.19.0_darwin_amd64) echo "f8519f349e36087382deec11c14be63e00b7de1561efceec722217ea8ba60661";;
-    omakase_0.19.0_darwin_arm64) echo "4641069c650d3929f2248af2fb58cc615e4601b3feb3878e8e1e8e41c9f92f74";;
-    omakase_0.19.0_linux_amd64)  echo "2f46cd9356f1a5a6b5fe5ab0267d00142314e5c685e68c8751172ad45bc408a4";;
-    omakase_0.19.0_linux_arm64)  echo "2b9a46df7e9a613bae8f76eed7992f082e62d23e109d00104d0806cc01dcb6a2";;
+    omakase_0.19.1_darwin_amd64) echo "51cb03bba1e0cd04cf4106f176974dd103d9a10710d670a864a6ddff25b8aceb";;
+    omakase_0.19.1_darwin_arm64) echo "cb4e96314e35ed9e381fc0feb35b00acb3bccabef6d5e8fdc4f6c3a1caed29c0";;
+    omakase_0.19.1_linux_amd64)  echo "1c4faa1ccbd968bd8dbfcfb6084cc06b60febcdaa6017bc7bf943e24155eb907";;
+    omakase_0.19.1_linux_arm64)  echo "d6171ea7a794caef479cae3706c58cdb673332d32d6461fd4a622083f95d3567";;
     *) echo "";;
   esac
 }
