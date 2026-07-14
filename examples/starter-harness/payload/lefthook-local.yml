@@ -1,0 +1,27 @@
+# starter-harness hook wiring (gitignored via .git/info/exclude - never committed).
+# This one file IS the harness - read it top to bottom to see everything that runs.
+# Every job is one omakase-gate.sh call (the base-harness primitive, layered in
+# underneath at install): it runs the --step, records the run in the scorecard
+# (`omakase status`), and passes the exit code through - non-zero blocks the
+# commit or push. The audited per-gate bypass is OMAKASE_SKIP_<NAME>=1.
+
+pre-commit:
+  jobs:
+    # Refuse a staged scratch/secret-in-progress marker (see the gate script).
+    - name: block-marker
+      run: bash .omakase/bin/omakase-gate.sh block-marker --step 'bash .omakase/gates/block-marker.sh'
+    # gofmt + go vet. The script itself exits 0 instantly when no .go file is
+    # staged, so this costs nothing on docs-only commits and non-Go repos.
+    - name: go-checks
+      run: bash .omakase/bin/omakase-gate.sh go-checks --step 'bash .omakase/gates/go-checks.sh'
+
+pre-push:
+  jobs:
+    # The whole test suite, once per commit: --cacheable reuses a PASS until HEAD
+    # moves; --glob skips the run when the push changes no Go file.
+    - name: go-test
+      run: bash .omakase/bin/omakase-gate.sh go-test --cacheable --glob '*.go go.mod go.sum' --step 'go test ./...'
+
+# Worktree auto-install happens outside this file: on every checkout omakase itself
+# copies any MISSING injected file into the worktree - never overwriting a local
+# edit, never touching a tracked path.

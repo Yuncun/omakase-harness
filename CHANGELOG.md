@@ -5,6 +5,14 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Changed
+- **`examples/sample-harness` replaced by `examples/starter-harness`** — the worked
+  example is no longer a toy: it is the harness omakase development itself uses
+  (self-hosted via the subfolder-source install). It places agent rules for
+  Claude Code and Copilot and wires three real gates: `block-marker` (refuse a
+  staged scratch marker) and `go-checks` (gofmt + go vet on staged Go files) on
+  pre-commit, and a cached `go-test` on pre-push.
+
 ## [0.19.1] — 2026-07-14
 
 ### Added

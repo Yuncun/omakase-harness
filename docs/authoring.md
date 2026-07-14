@@ -13,9 +13,11 @@ wiring references a `.omakase/*.sh` neither you nor the base harness ships,
 `init` refuses and places nothing — so a typo surfaces at install, not as an exit-127 on commit.
 
 Start from the base harness repo or an existing custom harness, edit `payload/`, and publish. The
-smallest worked example is [`examples/sample-harness/`](../examples/sample-harness/) — one rule,
-one gate, and the wiring; try it with `omakase init Yuncun/omakase-harness/examples/sample-harness`,
-then copy it and edit the three files under `payload/`. There is no capture
+worked example is [`examples/starter-harness/`](../examples/starter-harness/) — the harness
+omakase's own development runs: placed agent rules, two pre-commit gates, a cached pre-push
+test gate, and the wiring. Try it with
+`omakase init Yuncun/omakase-harness/examples/starter-harness`, then copy it and swap in your
+own rules and gates. There is no capture
 tool: build `payload/` and `omakase.manifest` by hand, moving in whatever files a project already
 has in place.
 
