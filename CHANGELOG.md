@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.19.1] — 2026-07-14
+
 ### Added
 - **Adopt a harness from a subfolder of a repo** (#103):
   `omakase init owner/repo/subpath[#ref]` (GitHub Actions' `uses:` shape) and a
