@@ -5,6 +5,18 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added
+- **Adopt a harness from a subfolder of a repo** (#103):
+  `omakase init owner/repo/subpath[#ref]` (GitHub Actions' `uses:` shape) and a
+  `//subpath` suffix on any `--source` url or local path
+  (`--source https://host/x/hub//tools`, `--source /clones/hub//tools`). The
+  fail-closed manifest/payload validation runs at the subfolder, never the repo
+  root; the canonical `root//subpath` string is remembered so a bare `init`
+  refreshes the hub and re-injects the same subfolder; a subpath can never
+  point outside the clone (`..`/absolute refused up front); distinct subfolders
+  of one hub get distinct source-cache clones. One hub repo can now publish
+  several harnesses — no dedicated repo per harness.
+
 ## [0.19.0] — 2026-07-13
 
 ### Added

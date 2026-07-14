@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -34,16 +35,18 @@ import (
 )
 
 // usageText is the `omakase init` usage text; tests pin the exact bytes.
-const usageText = "usage: init.sh [<owner/repo[#ref]> | --source <git-url|path>] [--cut-over] [--help]\n" +
+const usageText = "usage: init.sh [<owner/repo[/subpath][#ref]> | --source <git-url|path>] [--cut-over] [--help]\n" +
 	"\n" +
 	"Overlay payload/ into the current repo additively (zero committed footprint) and\n" +
 	"install its git hooks. A payload path the repo already COMMITS is never touched:\n" +
 	"it is skipped and reported.\n" +
 	"\n" +
-	"  <owner/repo[#ref]>\n" +
+	"  <owner/repo[/subpath][#ref]>\n" +
 	"               shorthand for --source https://github.com/owner/repo (optionally pinned to a\n" +
 	"               branch or tag with #ref). This is the shareable install line: a harness\n" +
 	"               published at github.com/you/harness installs with `init you/harness`.\n" +
+	"               Extra segments name a harness directory INSIDE the repo — `init you/hub/tools`\n" +
+	"               adopts the harness at hub's tools/ — so one hub repo can publish many harnesses.\n" +
 	"  --source <git-url|path>\n" +
 	"               pull a harness SOURCE — a git repo carrying a payload/ tree plus an\n" +
 	"               omakase.manifest (flat key: value; name required, version + recommends optional) —\n" +
@@ -52,6 +55,8 @@ const usageText = "usage: init.sh [<owner/repo[#ref]> | --source <git-url|path>]
 	"               machinery underneath, source wins on overlap), so a source ships only its\n" +
 	"               delta and relies on base machinery without keeping its own copy. The source is\n" +
 	"               remembered; a later bare init.sh refreshes and re-injects the same source.\n" +
+	"               A `//subpath` suffix on the url or path adopts a harness directory inside\n" +
+	"               the repo: --source https://host/x/hub//tools, --source /clones/hub//tools.\n" +
 	"  --cut-over   also untrack (git rm --cached) every payload path the repo currently\n" +
 	"               commits, so the injected copies take over. With --source this is the MERGED\n" +
 	"               base+source set, not only the source delta (a --source install equals a\n" +
@@ -157,15 +162,27 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			source = first
 		}
 	}
-	// ---- shorthand / ref / local-dir absolutize ----
+	// ---- shorthand / ref / subpath / local-dir absolutize ----
 	// Applies to both a freshly given source and a remembered one, so a bare
-	// re-run round-trips a pinned ref; skipped when source is empty or
-	// already names an existing local path. The #ref split can leave source
-	// empty (a pathological "#ref"), so the install-arm decision below tests
-	// the post-expansion value.
-	sourceRef := ""
+	// re-run round-trips a pinned ref and a subpath; skipped when source is
+	// empty or already names an existing local path. The #ref split can
+	// leave source empty (a pathological "#ref"), so the install-arm
+	// decision below tests the post-expansion value.
+	sourceRef, sourceSub := "", ""
 	if source != "" {
-		source, sourceRef = expandSource(source)
+		source, sourceRef, sourceSub = expandSource(source)
+	}
+	// A subpath can never point outside the clone: fail closed on any form
+	// that escapes or degenerates ("..", absolute) before the fetch runs.
+	// path.Clean normalizes the benign forms ("sub/", "a/./b") so the
+	// canonical remembered string stays stable.
+	if sourceSub != "" {
+		clean := path.Clean(sourceSub)
+		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/") {
+			fmt.Fprintf(stderr, "omakase: source subpath '%s' must stay inside the source repo (relative, no '..')\n", sourceSub)
+			return 2
+		}
+		sourceSub = clean
 	}
 
 	// ---- payload resolution: --source merge, or the plain default ----
@@ -179,7 +196,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	recommends := ""
 	var payload string
 	if source != "" {
-		res, code := runSource(source, sourceRef, defaultPayload(), stdout, stderr)
+		res, code := runSource(source, sourceRef, sourceSub, defaultPayload(), stdout, stderr)
 		if code != 0 {
 			return code // runSource printed the message + cleaned any staging dir
 		}

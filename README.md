@@ -35,7 +35,7 @@ check into a git hook).
 
 ## Commands
 
-    init.sh [<owner/repo[#ref]> | --source <git-url|path>] [--cut-over]
+    init.sh [<owner/repo[/subpath][#ref]> | --source <git-url|path>] [--cut-over]
                               overlay the harness, exclude it from git, install hooks
     status.sh                 the menu: see and toggle every steering file and gate
                               (interactive on a terminal; static page when piped)
