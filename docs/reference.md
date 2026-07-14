@@ -13,19 +13,28 @@ reuses an already-cached binary, keeping uninstall offline. When nothing resolve
 shim fails closed: recovery guidance on stderr (install a binary, or point
 `OMAKASE_BIN=/path/to/omakase` at one) and exit 1 — there is no bash fallback.
 
-### `init.sh [<owner/repo[#ref]> | --source <git-url|path>] [--cut-over] [--help]`
+### `init.sh [<owner/repo[/subpath][#ref]> | --source <git-url|path>] [--cut-over] [--help]`
 
 Overlays `payload/` onto the current repo, records placed paths in `.git/info/exclude`,
 and installs hooks through lefthook. Skips paths the repo tracks. Overwrites a divergent
 installed (untracked) file to match payload and warns. Removes a previously placed file
 the payload no longer ships, unless it was edited locally.
 
-- `<owner/repo[#ref]>` — positional shorthand for `--source https://github.com/owner/repo`,
-  optionally pinned to a branch or tag with `#ref`. This is the install line for a custom
-  harness a repo publishes: `omakase init you/harness`. A real local path with the same
-  shape wins over the shorthand.
+- `<owner/repo[/subpath][#ref]>` — positional shorthand for
+  `--source https://github.com/owner/repo`, optionally pinned to a branch or tag with
+  `#ref`. This is the install line for a custom harness a repo publishes:
+  `omakase init you/harness`. Segments past `owner/repo` name a harness directory INSIDE
+  the repo — `omakase init you/hub/tools` adopts the harness at the hub repo's `tools/` —
+  so one hub repo can publish several harnesses without a dedicated repo each. A real
+  local path with the same shape wins over the shorthand.
 - `--source <git-url|path>` — install ONE harness (a `payload/` tree plus an
-  `omakase.manifest`) at a time. No harness installed yet: the omakase base harness's
+  `omakase.manifest`) at a time. A `//subpath` suffix on the url or path adopts a
+  harness directory inside the repo (`--source https://host/x/hub//tools`,
+  `--source /clones/hub//tools`); the manifest and `payload/` must live under that
+  directory, the validation runs there (never at the repo root), and the subpath is
+  remembered so a bare `init` refreshes the hub and re-injects the same subfolder.
+  The root — the part before `//` — is what gets cloned, so it must be a git repo,
+  as with every source. No harness installed yet: the omakase base harness's
   payload is layered UNDER the custom harness's payload (base machinery underneath, the
   custom harness's delta winning on overlap), so a custom harness ships only its delta
   and relies on base machinery without keeping its own copy. This source names the

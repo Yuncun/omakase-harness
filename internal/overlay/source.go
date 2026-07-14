@@ -30,6 +30,11 @@ import (
 // starting alnum then [A-Za-z0-9._-].
 var reOwnerRepo = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
+// reOwnerRepoSub extends the shorthand with a subpath: owner/repo (same
+// charset) plus at least one more segment naming a directory inside the repo
+// (`owner/repo/sub/dir`, GitHub Actions' `uses:` shape).
+var reOwnerRepoSub = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*)/([A-Za-z0-9][A-Za-z0-9._-]*)/(.+)$`)
+
 // basePayloadOverride is a test seam for the binary-relative base payload.
 // It is "" in production; tests set it because os.Executable points at the
 // test binary, not a deployed omakase.
@@ -54,23 +59,57 @@ func defaultPayload() string {
 	return ""
 }
 
-// expandSource applies the shorthand / ref / local-dir-absolutize rewrites,
-// returning the resolved source string and the pinned ref ("" if none).
-// Applied to both a freshly given source and a remembered one, so a bare
-// re-run round-trips a pinned ref; skipped when source is empty or already
-// names an existing local path. The #ref split can leave source empty (a
-// pathological "#ref"), which the caller's branch honors.
-func expandSource(source string) (string, string) {
-	ref := ""
-	// Shorthand + #ref only when source is non-empty and not an existing path.
-	if source != "" && !pathExists(source) {
+// expandSource applies the shorthand / ref / subpath / local-dir-absolutize
+// rewrites, returning the clone root, the pinned ref ("" if none), and the
+// subpath naming a harness directory inside the source repo ("" for a
+// root-level source, i.e. every pre-subpath form). Applied to both a freshly
+// given source and a remembered one, so a bare re-run round-trips a pinned
+// ref and a subpath; the #ref split can leave source empty (a pathological
+// "#ref"), which the caller's branch honors.
+//
+// Subpath forms (canonical remembered shape: `root//subpath#ref`):
+//   - an explicit "//" marker after any scheme — "https://h/x/y//sub#ref",
+//     "git@h:x/y//sub", "/local/hub//sub". The marker's presence opts out of
+//     the whole-string path-existence guard: the OS collapses "//" in a
+//     stat, so an existing /hub/sub would otherwise swallow the marker.
+//   - the extended shorthand "owner/repo/sub/dir[#ref]" (GitHub Actions'
+//     `uses:` shape) — everything past the second segment is the subpath.
+func expandSource(source string) (string, string, string) {
+	ref, subpath := "", ""
+	if source == "" {
+		return source, ref, subpath
+	}
+	scan := 0
+	if i := strings.Index(source, "://"); i >= 0 {
+		scan = i + 3 // never read a scheme's own "//" as the marker
+	}
+	if j := strings.Index(source[scan:], "//"); j >= 0 {
+		rest := source[scan+j+2:]
+		source = source[:scan+j]
+		if k := strings.IndexByte(rest, '#'); k >= 0 { // the first '#' splits
+			ref = rest[k+1:]
+			rest = rest[:k]
+		}
+		subpath = strings.Trim(rest, "/")
+		// The root still takes the shorthand rewrite ("owner/repo//sub").
+		if !pathExists(source) && !isURLish(source) && reOwnerRepo.MatchString(source) {
+			source = "https://github.com/" + source
+		}
+	} else if !pathExists(source) {
+		// Shorthand + #ref only when source is not an existing path.
 		if i := strings.IndexByte(source, '#'); i >= 0 { // the first '#' splits
 			ref = source[i+1:]
 			source = source[:i]
 		}
-		// owner/repo -> a GitHub URL, unless it already looks like a URL/scp path.
-		if !isURLish(source) && reOwnerRepo.MatchString(source) {
-			source = "https://github.com/" + source
+		// owner/repo -> a GitHub URL, unless it already looks like a URL/scp
+		// path; owner/repo/sub/dir additionally splits off the subpath.
+		if !isURLish(source) {
+			if reOwnerRepo.MatchString(source) {
+				source = "https://github.com/" + source
+			} else if m := reOwnerRepoSub.FindStringSubmatch(source); m != nil {
+				source = "https://github.com/" + m[1] + "/" + m[2]
+				subpath = strings.Trim(m[3], "/")
+			}
 		}
 	}
 	// A local directory source becomes absolute before it is cached,
@@ -82,7 +121,7 @@ func expandSource(source string) (string, string) {
 			source = abs
 		}
 	}
-	return source, ref
+	return source, ref, subpath
 }
 
 // isURLish reports whether s already contains a scheme ("://") or is an
@@ -113,7 +152,7 @@ type sourceResult struct {
 // message and cleaned up any staging dir it created; the caller returns the
 // code. On success the caller must `defer os.RemoveAll(result.merged)` so
 // the staging dir is removed on every subsequent exit path.
-func runSource(source, sourceRef, basePayload string, stdout, stderr io.Writer) (sourceResult, int) {
+func runSource(source, sourceRef, sourceSub, basePayload string, stdout, stderr io.Writer) (sourceResult, int) {
 	// Fail before any clone/fetch when the merge base is absent: a missing
 	// base means the shim handoff (OMAKASE_BASE_PAYLOAD, see defaultPayload)
 	// never happened. The message names the path so a bad handoff is
@@ -123,14 +162,20 @@ func runSource(source, sourceRef, basePayload string, stdout, stderr io.Writer) 
 		return sourceResult{}, 1
 	}
 
-	payloadDir, recommends, code := fetchSource(source, sourceRef, stdout, stderr)
+	payloadDir, recommends, code := fetchSource(source, sourceSub, sourceRef, stdout, stderr)
 	if code != 0 {
 		return sourceResult{}, code // nothing staged yet
 	}
 
+	// The label is the canonical source string (root//subpath#ref) — it is
+	// what placed.tsv column 3 shows and what $OMK/source remembers, and
+	// expandSource round-trips it on a bare re-run.
 	label := source
+	if sourceSub != "" {
+		label += "//" + sourceSub
+	}
 	if sourceRef != "" {
-		label = source + "#" + sourceRef
+		label += "#" + sourceRef
 	}
 
 	// The staging dir lands under ${TMPDIR:-/tmp}; its random suffix never
@@ -192,11 +237,25 @@ func runSource(source, sourceRef, basePayload string, stdout, stderr io.Writer) 
 // fetchSource resolves the disposable cache dir from the source slug,
 // refreshes an existing clone (or discards and reclones a stale/corrupt
 // one), pins an optional #ref, then validates the manifest fail-closed
-// before anything is placed. On success it prints the "cached at" line and
-// returns the cache's payload/ dir and the manifest's recommends value; on
-// failure it writes the message and returns a non-zero code.
-func fetchSource(src, sourceRef string, stdout, stderr io.Writer) (payloadDir, recommends string, code int) {
-	cache := sourceCacheDir(src)
+// before anything is placed. With a subpath, the source root — where the
+// manifest and payload/ must live — is that directory inside the clone, and
+// the validation runs there, never at the repo root. On success it prints
+// the "cached at" line and returns the source root's payload/ dir and the
+// manifest's recommends value; on failure it writes the message and returns
+// a non-zero code.
+func fetchSource(src, subpath, sourceRef string, stdout, stderr io.Writer) (payloadDir, recommends string, code int) {
+	// canonical names THIS harness (root + subfolder) in messages and keys
+	// the cache, so distinct subfolders of one hub repo get distinct clones —
+	// two consumers never contend over one checkout's #ref state.
+	canonical := src
+	if subpath != "" {
+		canonical += "//" + subpath
+	}
+	cache := sourceCacheDir(canonical)
+	srcRoot := cache
+	if subpath != "" {
+		srcRoot = filepath.Join(cache, filepath.FromSlash(subpath))
+	}
 
 	// An existing clone is refreshed to the remote default branch (never
 	// merged — cache state has no standing). The refresh runs before the
@@ -215,8 +274,8 @@ func fetchSource(src, sourceRef string, stdout, stderr io.Writer) (payloadDir, r
 			// healthy, reusable checkout: HEAD resolves locally and it still
 			// carries a manifest + payload/.
 			if cacheGitHealthy(cache) &&
-				fileRegular(filepath.Join(cache, "omakase.manifest")) &&
-				isDir(filepath.Join(cache, "payload")) {
+				fileRegular(filepath.Join(srcRoot, "omakase.manifest")) &&
+				isDir(filepath.Join(srcRoot, "payload")) {
 				fmt.Fprintf(stderr, "omakase: could not refresh source cache at %s — reusing the cached copy (offline?)\n", cache)
 			} else {
 				fmt.Fprintf(stderr, "omakase: source cache at %s is stale or corrupt — discarding and re-cloning (a cache is disposable)\n", cache)
@@ -247,21 +306,28 @@ func fetchSource(src, sourceRef string, stdout, stderr io.Writer) (payloadDir, r
 		}
 	}
 
+	// A subpath must name a real directory inside the clone, fail closed
+	// before any of the manifest checks name it as "the source".
+	if subpath != "" && !isDir(srcRoot) {
+		fmt.Fprintf(stderr, "omakase: source '%s' has no directory '%s' — nothing to adopt\n", src, subpath)
+		return "", "", 1
+	}
+
 	// Fail-closed manifest validation, before anything is placed.
-	manifestPath := filepath.Join(cache, "omakase.manifest")
+	manifestPath := filepath.Join(srcRoot, "omakase.manifest")
 	if !fileRegular(manifestPath) {
-		fmt.Fprintf(stderr, "omakase: source '%s' has no omakase.manifest at its root — not an omakase source\n", src)
+		fmt.Fprintf(stderr, "omakase: source '%s' has no omakase.manifest at its root — not an omakase source\n", canonical)
 		return "", "", 1
 	}
 	manifest, _ := os.ReadFile(manifestPath)
 	name := manifestField(manifest, "name")
 	if name == "" {
-		fmt.Fprintf(stderr, "omakase: source '%s' manifest is missing the required 'name:' line\n", src)
+		fmt.Fprintf(stderr, "omakase: source '%s' manifest is missing the required 'name:' line\n", canonical)
 		return "", "", 1
 	}
-	payloadDir = filepath.Join(cache, "payload")
+	payloadDir = filepath.Join(srcRoot, "payload")
 	if !isDir(payloadDir) || !dirNonEmpty(payloadDir) {
-		fmt.Fprintf(stderr, "omakase: source '%s' has no non-empty payload/ tree — nothing to inject\n", src)
+		fmt.Fprintf(stderr, "omakase: source '%s' has no non-empty payload/ tree — nothing to inject\n", canonical)
 		return "", "", 1
 	}
 	ver := manifestField(manifest, "version")
@@ -271,7 +337,7 @@ func fetchSource(src, sourceRef string, stdout, stderr io.Writer) (payloadDir, r
 	if ver != "" {
 		verPart = ", version: " + ver
 	}
-	fmt.Fprintf(stdout, "omakase: source '%s' (name: %s%s) cached at %s\n", src, name, verPart, cache)
+	fmt.Fprintf(stdout, "omakase: source '%s' (name: %s%s) cached at %s\n", canonical, name, verPart, cache)
 	return payloadDir, recommends, 0
 }
 

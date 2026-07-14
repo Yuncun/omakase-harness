@@ -312,6 +312,32 @@ OUT="$( cd "$REPOWG" && OMAKASE_PAYLOAD="$PAYWG" bash "$INIT" 2>&1 )"; RC=$?
 { [ "$RC" -ne 0 ] && echo "$OUT" | grep -q 'does-not-ship.sh'; } && pass "guard refuses a script named after a # inside a --step (plain path)" || fail "guard missed the non-shipping script ($RC: $OUT)"
 [ ! -d "$REPOWG/.omakase" ] && pass "guard refused before placing anything" || fail "guard placed files despite refusing"
 
+# ---------- Scenario S10: a harness adopted from a SUBFOLDER of a hub repo ----------
+echo "== Scenario S10: --source <hub>//subpath adopts a harness from inside a repo =="
+HUB="$TMP/hub"; REPOSUB="$TMP/repoS10"
+rm -rf "$HUB"; mkdir -p "$HUB/tools/harness/payload/.claude/rules"
+( cd "$HUB" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
+printf 'name: hub-harness\n' > "$HUB/tools/harness/omakase.manifest"
+printf 'sub rule\n' > "$HUB/tools/harness/payload/.claude/rules/sub.md"
+printf 'name: decoy\n' > "$HUB/omakase.manifest"   # root-level decoys: a subpath install must never read these
+mkdir -p "$HUB/payload"; printf 'never\n' > "$HUB/payload/decoy.txt"
+( cd "$HUB" && git add -A && git commit -q -m hub )
+HUB="$(cd "$HUB" && pwd)"
+newrepo "$REPOSUB"
+( cd "$REPOSUB" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$HUB//tools/harness" ) >/dev/null 2>&1
+COMMONSUB="$(cd "$REPOSUB" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+[ -f "$REPOSUB/.claude/rules/sub.md" ] && pass "subfolder harness placed" || fail "subfolder harness not placed"
+[ ! -f "$REPOSUB/decoy.txt" ] && pass "hub-root decoy payload ignored (validation ran at the subfolder)" || fail "hub-root decoy placed"
+[ "$(head -n1 "$COMMONSUB/omakase/source" 2>/dev/null)" = "$HUB//tools/harness" ] && pass "remembered source is the canonical root//subpath string" || fail "remembered source wrong: $(head -n1 "$COMMONSUB/omakase/source" 2>/dev/null)"
+printf 'sub rule v2\n' > "$HUB/tools/harness/payload/.claude/rules/sub.md"
+( cd "$HUB" && git add -A && git commit -q -m v2 )
+( cd "$REPOSUB" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" ) >/dev/null 2>&1
+grep -q 'sub rule v2' "$REPOSUB/.claude/rules/sub.md" && pass "bare init refreshed the hub and re-injected the same subfolder" || fail "subfolder refresh did not apply"
+REPOSUBX="$TMP/repoS10x"; newrepo "$REPOSUBX"
+OUT="$( cd "$REPOSUBX" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$HUB//no/such" 2>&1 )"; RC=$?
+{ [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "has no directory 'no/such'"; } && pass "a subpath naming no directory is refused" || fail "missing subfolder not refused ($RC: $OUT)"
+[ ! -d "$REPOSUBX/.claude" ] && pass "the refusal placed nothing" || fail "refusal placed files"
+
 rm -rf "$TMP"
 echo ""
 [ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }

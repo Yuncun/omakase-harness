@@ -509,7 +509,7 @@ func TestFetchSourceReusesCacheWhenRefreshFails(t *testing.T) {
 
 	// Prime a real, healthy cache via the normal fetch path.
 	var o1, e1 strings.Builder
-	payloadDir1, _, code1 := fetchSource(src, "", &o1, &e1)
+	payloadDir1, _, code1 := fetchSource(src, "", "", &o1, &e1)
 	if code1 != 0 {
 		t.Fatalf("priming fetch failed: code=%d stderr=%q", code1, e1.String())
 	}
@@ -529,7 +529,7 @@ func TestFetchSourceReusesCacheWhenRefreshFails(t *testing.T) {
 	}
 
 	var o2, e2 strings.Builder
-	payloadDir2, _, code2 := fetchSource(src, "", &o2, &e2)
+	payloadDir2, _, code2 := fetchSource(src, "", "", &o2, &e2)
 	if code2 != 0 {
 		t.Fatalf("fetchSource with a dead remote must still succeed from the retained cache; code=%d stdout=%q stderr=%q", code2, o2.String(), e2.String())
 	}
@@ -760,27 +760,50 @@ func TestSanitizeBase(t *testing.T) {
 }
 
 // TestExpandSource: shorthand -> GitHub URL, #ref split, URL/scp passthrough,
-// and local-dir absolutize.
+// subpath split (the "//" marker and the owner/repo/subpath shorthand), and
+// local-dir absolutize.
 func TestExpandSource(t *testing.T) {
-	type sr struct{ src, ref string }
+	type sr struct{ src, ref, sub string }
 	cases := map[string]sr{
-		"you/harness":             {"https://github.com/you/harness", ""},
-		"you/harness#v1":          {"https://github.com/you/harness", "v1"},
-		"https://x.com/a/b":       {"https://x.com/a/b", ""},
-		"https://x.com/a/b#dev":   {"https://x.com/a/b", "dev"},
-		"git@github.com:a/b.git":  {"git@github.com:a/b.git", ""},
-		"single-segment-no-slash": {"single-segment-no-slash", ""},
+		"you/harness":             {"https://github.com/you/harness", "", ""},
+		"you/harness#v1":          {"https://github.com/you/harness", "v1", ""},
+		"https://x.com/a/b":       {"https://x.com/a/b", "", ""},
+		"https://x.com/a/b#dev":   {"https://x.com/a/b", "dev", ""},
+		"git@github.com:a/b.git":  {"git@github.com:a/b.git", "", ""},
+		"single-segment-no-slash": {"single-segment-no-slash", "", ""},
+		// The extended shorthand: segments past owner/repo are the subpath.
+		"you/hub/tools":          {"https://github.com/you/hub", "", "tools"},
+		"you/hub/tools/gates#v2": {"https://github.com/you/hub", "v2", "tools/gates"},
+		// The explicit "//" marker: after the scheme, on scp paths, with a ref,
+		// on the shorthand root, and degenerate (trailing, empty) forms.
+		"https://x.com/a/b//sub":      {"https://x.com/a/b", "", "sub"},
+		"https://x.com/a/b//sub#main": {"https://x.com/a/b", "main", "sub"},
+		"git@github.com:a/b//s/t":     {"git@github.com:a/b", "", "s/t"},
+		"you/hub//tools":              {"https://github.com/you/hub", "", "tools"},
+		"https://x.com/a/b//":         {"https://x.com/a/b", "", ""},
+		"https://x.com/a/b///sub/":    {"https://x.com/a/b", "", "sub"},
+		// The canonical remembered shape round-trips through expandSource.
+		"https://x.com/a/b//sub#v1": {"https://x.com/a/b", "v1", "sub"},
 	}
 	for in, want := range cases {
-		gs, gr := expandSource(in)
-		if gs != want.src || gr != want.ref {
-			t.Errorf("expandSource(%q) = (%q,%q), want (%q,%q)", in, gs, gr, want.src, want.ref)
+		gs, gr, gp := expandSource(in)
+		if gs != want.src || gr != want.ref || gp != want.sub {
+			t.Errorf("expandSource(%q) = (%q,%q,%q), want (%q,%q,%q)", in, gs, gr, gp, want.src, want.ref, want.sub)
 		}
 	}
 	// A local directory is absolutized; no ref is split from an existing path.
 	d := t.TempDir()
-	if gs, gr := expandSource(d); gs != d || gr != "" {
-		t.Errorf("expandSource(localdir %q) = (%q,%q), want (%q,\"\")", d, gs, gr, d)
+	if gs, gr, gp := expandSource(d); gs != d || gr != "" || gp != "" {
+		t.Errorf("expandSource(localdir %q) = (%q,%q,%q), want (%q,\"\",\"\")", d, gs, gr, gp, d)
+	}
+	// A local hub with the "//" marker: the marker survives even though the OS
+	// would collapse "//" in a stat (an existing d/sub must not swallow it),
+	// and the ROOT is what gets absolutized.
+	if err := os.MkdirAll(filepath.Join(d, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if gs, gr, gp := expandSource(d + "//sub"); gs != d || gr != "" || gp != "sub" {
+		t.Errorf("expandSource(%q) = (%q,%q,%q), want (%q,\"\",\"sub\")", d+"//sub", gs, gr, gp, d)
 	}
 }
 
@@ -921,5 +944,187 @@ func TestBareRunRememberedSourceSurvivesBasePayloadEnv(t *testing.T) {
 	// source rather than doing a plain install off OMAKASE_BASE_PAYLOAD.
 	if !strings.Contains(o2.String(), "omakase: source '"+src+"' (name: remembered) cached at ") {
 		t.Errorf("bare re-run did not take the remembered-source merge path:\n%s", o2.String())
+	}
+}
+
+// ---------------------------------------------------------------- subpath sources
+
+// TestSourceSubpathMerge: a `root//subpath` source adopts the harness at that
+// directory inside the clone — validation and payload/ resolve at the
+// subpath, decoy manifest/payload at the repo ROOT are ignored, and the
+// canonical string lands in placed.tsv column 3, $OMK/source, the "cached
+// at" line, and the cache slug.
+func TestSourceSubpathMerge(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	base := useBasePayloadDir(t)
+	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
+
+	src := newSourceRepo(t)
+	// Decoys at the clone root: a subpath install must never read these.
+	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: decoy\n")
+	writeFile(t, filepath.Join(src, "payload", "decoy.txt"), "never placed\n")
+	// The real harness lives two levels down, next to other hub content.
+	writeFile(t, filepath.Join(src, "tools", "harness", "omakase.manifest"), "name: hubbed\nversion: 0.1\n")
+	writeFile(t, filepath.Join(src, "tools", "harness", "payload", ".omakase", "gates", "src.sh"), "src gate\n")
+	writeFile(t, filepath.Join(src, "tools", "harness", "payload", ".claude", "rules", "r.md"), "rule\n")
+	commitAll(t, src, "hub")
+
+	canonical := src + "//tools/harness"
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", canonical}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	cache := sourceCacheDir(canonical)
+	wantOut := "omakase: source '" + canonical + "' (name: hubbed, version: 0.1) cached at " + cache + "\n" +
+		"omakase: placed 3 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
+		"  + .claude/rules/r.md\n" +
+		"  + .omakase/bin/base.sh\n" +
+		"  + .omakase/gates/src.sh\n" +
+		"omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.\n" +
+		"omakase: see the whole harness any time with  omakase status\n" +
+		"omakase: to customize, fork the harness source (clone -> edit -> publish) and\n" +
+		"         init from your copy; do not edit injected files in place (overwritten on re-init).\n" +
+		uxStanzas() + verifiedLine
+	eq(t, "stdout", stdout.String(), wantOut)
+	eq(t, "stderr", stderr.String(), "")
+
+	eq(t, "delta gate", readFileT(t, filepath.Join(dir, ".omakase", "gates", "src.sh")), "src gate\n")
+	eq(t, "base file", readFileT(t, filepath.Join(dir, ".omakase", "bin", "base.sh")), "base\n")
+	if pathExists(filepath.Join(dir, "decoy.txt")) {
+		t.Error("root-level decoy payload was placed; subpath validation leaked to the clone root")
+	}
+	for _, row := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
+		if row.Src != canonical {
+			t.Errorf("placed.tsv col3 = %q for %q, want %q", row.Src, row.Rel, canonical)
+		}
+	}
+	eq(t, "OMK/source", readFileT(t, filepath.Join(repo.OMK, "source")), canonical+"\n")
+	// The slug carries the harness directory's basename, not the hub repo's.
+	if !strings.HasPrefix(filepath.Base(cache), "harness-") {
+		t.Errorf("cache slug %q does not carry the subpath basename", filepath.Base(cache))
+	}
+}
+
+// TestSourceSubpathMissingDir: a subpath that names no directory in the clone
+// fails closed (exit 1) before any manifest check, placing nothing.
+func TestSourceSubpathMissingDir(t *testing.T) {
+	dir, _ := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: hub\n")
+	writeFile(t, filepath.Join(src, "payload", "x.txt"), "x\n")
+	commitAll(t, src, "hub")
+
+	var stdout, stderr strings.Builder
+	code := RunInit([]string{"--source", src + "//no/such/dir"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stderr", stderr.String(), "omakase: source '"+src+"' has no directory 'no/such/dir' — nothing to adopt\n")
+	if pathExists(filepath.Join(dir, "x.txt")) {
+		t.Error("payload placed despite the missing subpath")
+	}
+}
+
+// TestSourceSubpathManifestValidatedAtSubroot: the fail-closed manifest check
+// runs at the SUBPATH root — a valid manifest at the clone root must not
+// stand in for a missing one under the subpath.
+func TestSourceSubpathManifestValidatedAtSubroot(t *testing.T) {
+	_, _ = initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: root-ok\n")
+	writeFile(t, filepath.Join(src, "payload", "x.txt"), "x\n")
+	writeFile(t, filepath.Join(src, "sub", "payload", "y.txt"), "y\n") // no manifest here
+	commitAll(t, src, "hub")
+
+	var stdout, stderr strings.Builder
+	code := RunInit([]string{"--source", src + "//sub"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stderr", stderr.String(), "omakase: source '"+src+"//sub' has no omakase.manifest at its root — not an omakase source\n")
+}
+
+// TestSourceSubpathTraversalRefused: a subpath that escapes (or degenerates
+// to) the clone root is refused up front, exit 2, before any fetch.
+func TestSourceSubpathTraversalRefused(t *testing.T) {
+	_, _ = initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: hub\n")
+	writeFile(t, filepath.Join(src, "payload", "x.txt"), "x\n")
+	commitAll(t, src, "hub")
+
+	for _, sub := range []string{"../evil", "a/../..", ".."} {
+		var stdout, stderr strings.Builder
+		code := RunInit([]string{"--source", src + "//" + sub}, &stdout, &stderr)
+		if code != 2 {
+			t.Fatalf("subpath %q: exit = %d, want 2; stderr=%q", sub, code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "must stay inside the source repo") {
+			t.Errorf("subpath %q: refusal message missing; stderr=%q", sub, stderr.String())
+		}
+	}
+
+	// A subpath with no repo before the marker is explicit intent that must
+	// never collapse silently into a plain install.
+	for _, in := range []string{"//sub", "//sub#ref"} {
+		var stdout, stderr strings.Builder
+		code := RunInit([]string{"--source", in}, &stdout, &stderr)
+		if code != 2 {
+			t.Fatalf("source %q: exit = %d, want 2; stderr=%q", in, code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "missing the repo part before the '//' subpath marker") {
+			t.Errorf("source %q: refusal message missing; stderr=%q", in, stderr.String())
+		}
+	}
+}
+
+// TestSourceSubpathRememberedRoundTrip: the canonical root//subpath string is
+// remembered, and a bare re-run re-fetches the hub and re-injects the same
+// subfolder — including content the hub's default branch gained since.
+func TestSourceSubpathRememberedRoundTrip(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	stubLefthook(t)
+	useBasePayloadDir(t)
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "sub", "omakase.manifest"), "name: rt-sub\n")
+	writeFile(t, filepath.Join(src, "sub", "payload", ".omakase", "gates", "g.sh"), "V1\n")
+	commitAll(t, src, "v1")
+
+	canonical := src + "//sub"
+	var o1, e1 strings.Builder
+	if code := RunInit([]string{"--source", canonical}, &o1, &e1); code != 0 {
+		t.Fatalf("init 1 exit = %d; stderr=%q", code, e1.String())
+	}
+	eq(t, "init1 content", readFileT(t, filepath.Join(dir, ".omakase", "gates", "g.sh")), "V1\n")
+
+	// The hub advances; a bare re-run must re-fetch and re-inject the subfolder.
+	writeFile(t, filepath.Join(src, "sub", "payload", ".omakase", "gates", "g.sh"), "V2\n")
+	commitAll(t, src, "v2")
+
+	var o2, e2 strings.Builder
+	if code := RunInit(nil, &o2, &e2); code != 0 {
+		t.Fatalf("bare re-run exit = %d; stderr=%q", code, e2.String())
+	}
+	eq(t, "roundtrip content", readFileT(t, filepath.Join(dir, ".omakase", "gates", "g.sh")), "V2\n")
+	eq(t, "roundtrip remembered", readFileT(t, filepath.Join(repo.OMK, "source")), canonical+"\n")
+	if !strings.Contains(o2.String(), "omakase: source '"+canonical+"' (name: rt-sub) cached at ") {
+		t.Errorf("bare re-run did not re-fetch the remembered subpath source:\n%s", o2.String())
 	}
 }
