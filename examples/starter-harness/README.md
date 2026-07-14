@@ -20,11 +20,12 @@ run ledger, the status surfaces) is layered in underneath at install:
 | Gate | When | What |
 |---|---|---|
 | `block-marker` | pre-commit | refuses any staged file carrying the scratch marker — the words `DO NOT` + `COMMIT`, in capitals, together |
-| `go-checks` | pre-commit | staged `.go` files must be `gofmt`-clean and the module must pass `go vet`; exits instantly when no `.go` file is staged |
+| `go-checks` | pre-commit | staged `.go` files must be `gofmt`-clean and their packages must pass `go vet`; exits instantly when no `.go` file is staged |
 | `go-test` | pre-push | `go test ./...`, cached per commit (`--cacheable`): runs once per HEAD, then reuses the pass; skipped when the push changes no Go file |
 
-Every run lands in the scorecard (`omakase status` and the status line); the audited
-per-gate bypass is `OMAKASE_SKIP_<NAME>=1`.
+Every run lands in the scorecard (`omakase status` and the status line). The audited
+per-gate bypass is `OMAKASE_SKIP_<NAME>=1` with the name upper-cased and `-` mapped to
+`_`: `OMAKASE_SKIP_BLOCK_MARKER=1`, `OMAKASE_SKIP_GO_CHECKS=1`, `OMAKASE_SKIP_GO_TEST=1`.
 
 ## Try it
 

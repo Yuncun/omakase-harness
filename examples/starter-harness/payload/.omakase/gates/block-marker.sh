@@ -10,15 +10,17 @@ set -euo pipefail
 # the gate never trips on its own source when a harness dogfoods it on itself.
 marker="DO NOT ""COMMIT"
 
+# -z: NUL-delimited raw filenames, so a non-ASCII or quoted name can never be
+# octal-escaped into a string that silently fails the -f test (fail-open).
 fail=0
-while IFS= read -r f; do
+while IFS= read -r -d '' f; do
   [ -f "$f" ] || continue
-  if grep -nF "$marker" "$f" >/dev/null 2>&1; then
+  if grep -nF "$marker" -- "$f" >/dev/null 2>&1; then
     echo "omakase: '$marker' marker found in $f" >&2
-    grep -nF "$marker" "$f" | sed 's/^/    /' >&2
+    grep -nF "$marker" -- "$f" | sed 's/^/    /' >&2
     fail=1
   fi
-done < <(git diff --cached --name-only --diff-filter=ACM)
+done < <(git diff --cached --name-only --diff-filter=ACM -z)
 
 if [ "$fail" -ne 0 ]; then
   echo "omakase: block-marker BLOCKED the commit - remove the marker above first." >&2

@@ -76,6 +76,12 @@ OUT=$(cd "$REPO" && printf '%s\n' "$MARK" > bad.txt && git add bad.txt && git co
 echo "$OUT" | grep -qi 'marker found\|BLOCKED' && pass "block message shown" || { fail "no block message"; echo "$OUT" | sed 's/^/      /'; }
 ( cd "$REPO" && git reset -q bad.txt && rm -f bad.txt )
 
+# 6b) The marker is caught in a non-ASCII filename too (git octal-quotes such names in
+#     porcelain output; the gate reads them NUL-delimited so it must not fail open).
+OUT=$(cd "$REPO" && printf '%s\n' "$MARK" > "café.txt" && git add "café.txt" && git commit -m bad 2>&1); rc=$?
+[ "$rc" -ne 0 ] && pass "marker in non-ASCII filename blocked (rc=$rc)" || { fail "marker in non-ASCII filename NOT blocked"; echo "$OUT" | sed 's/^/      /'; }
+( cd "$REPO" && git reset -q -- "café.txt" && rm -f "café.txt" )
+
 # 7) Go gates, only where a toolchain exists (CI's main matrix has one; tests-no-go doesn't
 #    run this suite).
 if command -v go >/dev/null 2>&1; then
