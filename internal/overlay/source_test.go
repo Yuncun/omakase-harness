@@ -1078,6 +1078,19 @@ func TestSourceSubpathTraversalRefused(t *testing.T) {
 			t.Errorf("subpath %q: refusal message missing; stderr=%q", sub, stderr.String())
 		}
 	}
+
+	// A subpath with no repo before the marker is explicit intent that must
+	// never collapse silently into a plain install.
+	for _, in := range []string{"//sub", "//sub#ref"} {
+		var stdout, stderr strings.Builder
+		code := RunInit([]string{"--source", in}, &stdout, &stderr)
+		if code != 2 {
+			t.Fatalf("source %q: exit = %d, want 2; stderr=%q", in, code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "missing the repo part before the '//' subpath marker") {
+			t.Errorf("source %q: refusal message missing; stderr=%q", in, stderr.String())
+		}
+	}
 }
 
 // TestSourceSubpathRememberedRoundTrip: the canonical root//subpath string is

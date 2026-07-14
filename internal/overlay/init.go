@@ -175,8 +175,15 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// A subpath can never point outside the clone: fail closed on any form
 	// that escapes or degenerates ("..", absolute) before the fetch runs.
 	// path.Clean normalizes the benign forms ("sub/", "a/./b") so the
-	// canonical remembered string stays stable.
+	// canonical remembered string stays stable. A subpath with no repo in
+	// front of the marker ("--source //sub") refuses too — the pathological
+	// bare "#ref" collapses to a plain install, but a parsed subpath is
+	// explicit intent and must never be dropped silently.
 	if sourceSub != "" {
+		if source == "" {
+			fmt.Fprintf(stderr, "omakase: source '//%s' is missing the repo part before the '//' subpath marker\n", sourceSub)
+			return 2
+		}
 		clean := path.Clean(sourceSub)
 		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/") {
 			fmt.Fprintf(stderr, "omakase: source subpath '%s' must stay inside the source repo (relative, no '..')\n", sourceSub)
