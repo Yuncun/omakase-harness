@@ -4,7 +4,7 @@
 # cache, validates it, and injects its payload through the normal flow.
 #   S1. install from a local source repo — cache under XDG_CACHE_HOME, files
 #       placed, ledger source column = the user's source string, remembered
-#       source written, verify-overlay passes, a real commit fires the gate
+#       source written, the gate verify passes, a real commit fires the gate
 #   S2. show renders the source string on the Injected rows
 #   S3. update flow — commit a payload change in the source; a bare init.sh
 #       re-uses the remembered source, refreshes the cache, places new content
@@ -15,6 +15,9 @@
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
+OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
+[ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
+verify(){ ( cd "$1" && LEFTHOOK=0 "$OMAKASE" hook pre-commit ); }   # verify-only gate run
 REMOVE="$HERE/../bin/remove.sh"
 SHOW="$HERE/../bin/status.sh"
 LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
@@ -43,10 +46,6 @@ pre-commit:
   jobs:
     - name: omakase-example
       run: bash .omakase/gates/example.sh
-post-checkout:
-  jobs:
-    - name: omakase-ensure-present
-      run: bash "$(git rev-parse --git-common-dir)/omakase/ensure-present.sh"
 YML
   printf 'a rule\n' > "$r/payload/.claude/rules/style.md"
   cat > "$r/omakase.manifest" <<'MAN'
@@ -75,7 +74,7 @@ echo "$CACHE_DIR" | grep -q 'src-harness' && pass "cache slug carries the source
 [ -f "$REPO/.claude/rules/style.md" ] && pass "payload rule placed" || fail "rule not placed"
 awk -F'\t' -v s="$SRC" '$3!=s{bad=1} END{exit bad?1:0}' "$LEDGER" 2>/dev/null && pass "ledger source column is the user's source string on every row" || fail "ledger source column wrong"
 [ "$(head -n1 "$COMMON/omakase/source" 2>/dev/null)" = "$SRC" ] && pass "remembered source written to \$COMMON/omakase/source" || fail "remembered source missing/wrong"
-( cd "$REPO" && sh "$COMMON/omakase/verify-overlay.sh" ) >/dev/null 2>&1 && pass "verify-overlay exits 0" || fail "verify-overlay blocked a complete overlay"
+verify "$REPO" >/dev/null 2>&1 && pass "the gate verify exits 0" || fail "the gate verify blocked a complete overlay"
 [ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status clean (zero footprint)" || { fail "git status NOT clean"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
 OUT=$(cd "$REPO" && echo x > f.txt && git add f.txt 2>/dev/null; git commit -m t 2>&1); echo "$OUT" | grep -q "omakase-example-gate-ran" && pass "gate fired on a real commit" || { fail "gate did not fire"; echo "$OUT" | sed 's/^/      /'; }
 
@@ -208,10 +207,6 @@ pre-commit:
       run: bash .omakase/bin/omakase-banner.sh pre-commit
     - name: source-discipline
       run: bash .omakase/bin/omakase-gate.sh source-discipline --step 'bash .omakase/gates/discipline.sh'
-post-checkout:
-  jobs:
-    - name: omakase-ensure-present
-      run: bash "$(git rev-parse --git-common-dir)/omakase/ensure-present.sh"
 YML
 printf 'name: needs-base\nversion: 0.1.0\n' > "$SRC6/omakase.manifest"
 ( cd "$SRC6" && git add -A && git commit -q -m harness )
@@ -233,7 +228,7 @@ grep -q 'SOURCE-OVERRODE-EXAMPLE' "$REPO6/.omakase/gates/example.sh" 2>/dev/null
 # the source's lefthook WINS over the base's (it is the overlay)
 grep -q 'source-discipline' "$REPO6/lefthook-local.yml" 2>/dev/null && pass "source lefthook-local.yml overlays the base one" || fail "source wiring did not win"
 COMMON6="$(cd "$REPO6" && cd "$(git rev-parse --git-common-dir)" && pwd)"
-( cd "$REPO6" && sh "$COMMON6/omakase/verify-overlay.sh" ) >/dev/null 2>&1 && pass "verify-overlay passes over the merged overlay" || fail "verify-overlay blocked the merged overlay"
+verify "$REPO6" >/dev/null 2>&1 && pass "the gate verify passes over the merged overlay" || fail "the gate verify blocked the merged overlay"
 # the real bite: a commit must FIRE the wired gate with no exit-127 from missing machinery
 OUT=$(cd "$REPO6" && echo x > f.txt && git add f.txt 2>/dev/null; git commit -m t 2>&1); rc=$?
 echo "$OUT" | grep -q "source-discipline-gate-ran" && pass "wired gate fired on a real commit (base machinery resolved)" || { fail "gate did not fire — base machinery unresolved"; echo "$OUT" | sed 's/^/      /'; }
@@ -316,6 +311,32 @@ newrepo "$REPOWG"
 OUT="$( cd "$REPOWG" && OMAKASE_PAYLOAD="$PAYWG" bash "$INIT" 2>&1 )"; RC=$?
 { [ "$RC" -ne 0 ] && echo "$OUT" | grep -q 'does-not-ship.sh'; } && pass "guard refuses a script named after a # inside a --step (plain path)" || fail "guard missed the non-shipping script ($RC: $OUT)"
 [ ! -d "$REPOWG/.omakase" ] && pass "guard refused before placing anything" || fail "guard placed files despite refusing"
+
+# ---------- Scenario S10: a harness adopted from a SUBFOLDER of a hub repo ----------
+echo "== Scenario S10: --source <hub>//subpath adopts a harness from inside a repo =="
+HUB="$TMP/hub"; REPOSUB="$TMP/repoS10"
+rm -rf "$HUB"; mkdir -p "$HUB/tools/harness/payload/.claude/rules"
+( cd "$HUB" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
+printf 'name: hub-harness\n' > "$HUB/tools/harness/omakase.manifest"
+printf 'sub rule\n' > "$HUB/tools/harness/payload/.claude/rules/sub.md"
+printf 'name: decoy\n' > "$HUB/omakase.manifest"   # root-level decoys: a subpath install must never read these
+mkdir -p "$HUB/payload"; printf 'never\n' > "$HUB/payload/decoy.txt"
+( cd "$HUB" && git add -A && git commit -q -m hub )
+HUB="$(cd "$HUB" && pwd)"
+newrepo "$REPOSUB"
+( cd "$REPOSUB" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$HUB//tools/harness" ) >/dev/null 2>&1
+COMMONSUB="$(cd "$REPOSUB" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+[ -f "$REPOSUB/.claude/rules/sub.md" ] && pass "subfolder harness placed" || fail "subfolder harness not placed"
+[ ! -f "$REPOSUB/decoy.txt" ] && pass "hub-root decoy payload ignored (validation ran at the subfolder)" || fail "hub-root decoy placed"
+[ "$(head -n1 "$COMMONSUB/omakase/source" 2>/dev/null)" = "$HUB//tools/harness" ] && pass "remembered source is the canonical root//subpath string" || fail "remembered source wrong: $(head -n1 "$COMMONSUB/omakase/source" 2>/dev/null)"
+printf 'sub rule v2\n' > "$HUB/tools/harness/payload/.claude/rules/sub.md"
+( cd "$HUB" && git add -A && git commit -q -m v2 )
+( cd "$REPOSUB" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" ) >/dev/null 2>&1
+grep -q 'sub rule v2' "$REPOSUB/.claude/rules/sub.md" && pass "bare init refreshed the hub and re-injected the same subfolder" || fail "subfolder refresh did not apply"
+REPOSUBX="$TMP/repoS10x"; newrepo "$REPOSUBX"
+OUT="$( cd "$REPOSUBX" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$HUB//no/such" 2>&1 )"; RC=$?
+{ [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "has no directory 'no/such'"; } && pass "a subpath naming no directory is refused" || fail "missing subfolder not refused ($RC: $OUT)"
+[ ! -d "$REPOSUBX/.claude" ] && pass "the refusal placed nothing" || fail "refusal placed files"
 
 rm -rf "$TMP"
 echo ""

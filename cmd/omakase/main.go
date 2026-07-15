@@ -1,5 +1,6 @@
 // Command omakase is the install-time binary: one static executable that
-// dispatches the verbs (status, init, remove, mcp).
+// dispatches the human verbs (init, status, diff, remove) and the plumbing
+// verbs run by wired-up tools (hook, statusline, stop-notice, mcp).
 package main
 
 import (
@@ -74,17 +75,51 @@ var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 	"remove": func(argv []string, stdout, stderr io.Writer) int {
 		return overlay.RunRemove(argv[2:], stdout, stderr)
 	},
+	"diff": func(argv []string, stdout, stderr io.Writer) int {
+		return overlay.RunDiff(argv[2:], stdout, stderr)
+	},
 	"mcp": func(argv []string, stdout, stderr io.Writer) int {
 		return mcpserver.Run(argv[2:], stdout, stderr)
 	},
+	"hook": func(argv []string, stdout, stderr io.Writer) int {
+		return overlay.RunHook(argv[2:], os.Stdin, stdout, stderr)
+	},
+	"statusline": func(argv []string, stdout, stderr io.Writer) int {
+		return runStatusline(os.Stdin, stdout)
+	},
+	"stop-notice": func(argv []string, stdout, stderr io.Writer) int {
+		return runStopNotice(os.Stdin, stdout)
+	},
 }
+
+// usage is the two-tier command list (issue #98 Part 2; chezmoi's grouped
+// --help is the precedent): the four human verbs first, then the plumbing
+// verbs your tools call — grouped so a human scanning for what to type never
+// wades through them.
+const usage = `usage: omakase <command>
+
+  init [source]    install or repair the harness in this repo (idempotent)
+  status           what's installed here; per-item switches (--help for flags)
+  diff [path…]     what you changed vs the harness (read-only)
+  remove           undo everything omakase placed
+
+commands used by your tools, not by you:
+  hook <name>      run the git-hook logic (called by the hooks init installs)
+  statusline       one-line status segment (wire into your status bar)
+  stop-notice      end-of-turn notice (wire as a Claude Code Stop hook)
+  mcp              menu server (wire into your agent's MCP config)
+`
 
 // run dispatches argv to a verb and returns the exit code, writing only to
 // the given writers.
 func run(argv []string, stdout, stderr io.Writer) int {
 	if len(argv) < 2 {
-		fmt.Fprintln(stderr, "usage: omakase <command>")
+		fmt.Fprint(stderr, usage)
 		return 2
+	}
+	if argv[1] == "--help" || argv[1] == "-h" || argv[1] == "help" {
+		fmt.Fprint(stdout, usage)
+		return 0
 	}
 
 	// The only spelling: "-v" is reserved for a future verbose flag, and a
@@ -98,7 +133,7 @@ func run(argv []string, stdout, stderr io.Writer) int {
 
 	cmd, ok := verbs[argv[1]]
 	if !ok {
-		fmt.Fprintf(stderr, "omakase: unknown command %q\n", argv[1])
+		fmt.Fprintf(stderr, "omakase: unknown command %q (see omakase --help)\n", argv[1])
 		return 2
 	}
 
@@ -106,5 +141,12 @@ func run(argv []string, stdout, stderr io.Writer) int {
 }
 
 func main() {
+	// Every real init refreshes the machine-wide binary copy the status-bar
+	// wiring points at. Done here and not inside RunInit so unit tests that
+	// call RunInit directly can never overwrite a developer's cached binary
+	// with a test binary.
+	if len(os.Args) > 1 && os.Args[1] == "init" {
+		overlay.SelfInstallCurrent()
+	}
 	os.Exit(run(os.Args, os.Stdout, os.Stderr))
 }

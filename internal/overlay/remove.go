@@ -1,7 +1,9 @@
 // This file implements the `omakase remove` verb, the reverse of init. In
-// order: payload default resolution, repo discovery, the lefthook uninstall
-// (never fetching), the hook-stub marked-block strip, the per-worktree
-// sweep — placed-path deletion (ledger-driven, or the pre-0.10
+// order: payload default resolution, repo discovery, the hook teardown — a
+// dispatcher is deleted only when byte-equal to what init writes, a foreign
+// hook is reported and never deleted, and a pre-#98 install additionally
+// gets its lefthook uninstall (never fetching) and guard-block strip — the
+// per-worktree sweep — placed-path deletion (ledger-driven, or the pre-0.10
 // payload-enumeration fallback behind an install-proof sentinel) plus the
 // skeleton lefthook.yml and .worktreeinclude teardown, applied to every
 // worktree git lists — the $OMK wipe, the exclude-block strip, and the
@@ -17,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Yuncun/omakase-harness/internal/hook"
 	"github.com/Yuncun/omakase-harness/internal/lefthook"
 	"github.com/Yuncun/omakase-harness/internal/state"
 	"github.com/Yuncun/omakase-harness/internal/textblock"
@@ -61,21 +64,24 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	exclude := filepath.Join(common, "info", "exclude")
 	hooksDir := filepath.Join(common, "hooks")
 
-	// ---- lefthook uninstall, never fetching ----
-	// ResolveForRemove walks the same tiers init uses, minus self-fetch, and
-	// is silent on failure: the hook-stub strip below removes both spliced
-	// fail-closed legs whether or not lefthook resolved, so remove works
-	// from a blocked machine.
-	if prefix, ok := lefthook.ResolveForRemove(root); ok {
-		args := append(append([]string{}, prefix...), "uninstall")
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = root
-		cmd.Stdout = stdout
-		cmd.Stderr = stderr
-		cmd.Run() // failure ignored entirely, no exit-code propagation
+	// ---- pre-#98 hook teardown ----
+	// A repo last initialized under the old scheme carries lefthook stubs
+	// with omakase's guard blocks spliced in. Only that marker evidence
+	// triggers the legacy path: `lefthook uninstall` (never fetching, silent
+	// on failure — remove works from a blocked machine) followed by the
+	// guard-block strip for any stub the uninstall could not remove. A
+	// project's own lefthook hooks carry no omakase markers and are never
+	// uninstalled.
+	if legacy := hooksWithGuardMarkers(hooksDir); legacy {
+		if prefix, ok := lefthook.ResolveForRemove(root); ok {
+			args := append(append([]string{}, prefix...), "uninstall")
+			cmd := exec.Command(args[0], args[1:]...)
+			cmd.Dir = root
+			cmd.Stdout = stdout
+			cmd.Stderr = stderr
+			cmd.Run() // failure ignored entirely, no exit-code propagation
+		}
 	}
-
-	// ---- hook-stub marked-block strip ----
 	umask := currentUmask()
 	for _, hf := range sortedHookFiles(hooksDir) {
 		if !fileRegular(hf) {
@@ -114,6 +120,25 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	// ---- dispatcher deletion (issue #98) ----
+	// remove is the only deleter of .git/hooks files, and it deletes a hook
+	// only after proving the content is byte-equal to the dispatcher init
+	// writes for that name. Anything else at those names was written by
+	// another tool — reported, never deleted.
+	for _, name := range hook.Names() {
+		hf := filepath.Join(hooksDir, name)
+		if !lexists(hf) {
+			continue
+		}
+		if hook.Matches(hf, name) {
+			if err := removeF(hf); err != nil {
+				return 1
+			}
+			continue
+		}
+		fmt.Fprintf(stderr, "omakase: NOTE — %s is not omakase's dispatcher (another tool wrote it); left in place.\n", hf)
+	}
+
 	// ---- placed-path list ----
 	// The provenance ledger (placed.tsv) is authoritative when present: all
 	// its rows are deleted, enabled or not — remove is a total teardown; the
@@ -140,6 +165,18 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
+	// A kept file is the USER'S content (they accepted their own edit —
+	// issue #98 Part 2), so remove leaves it on disk and says so, the same
+	// spirit as the clobber backup: never destroy a user's content. The
+	// $OMK teardown below still deletes the kept/ copies with everything
+	// else — the on-disk file is the surviving original.
+	kept := map[string]bool{}
+	for _, rel := range rels {
+		if lexists(filepath.Join(omk, "kept", rel)) {
+			kept[rel] = true
+		}
+	}
+
 	// ---- per-worktree sweep ----
 	// Placed files, the skeleton lefthook.yml, and .worktreeinclude live
 	// per-checkout — heal copies them into every worktree — so remove sweeps
@@ -155,8 +192,11 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 		}
 		wtTracked := func(rel string) bool { return gitTracked(wtRoot, rel) }
 
-		// placed deletion
+		// placed deletion (kept files are the user's; left in place)
 		for _, rel := range rels {
+			if kept[rel] {
+				continue
+			}
 			if delErr := DeletePlaced(wtRoot, rel, wtTracked); delErr != nil {
 				return 1
 			}
@@ -205,6 +245,11 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	for _, rel := range rels {
+		if kept[rel] {
+			fmt.Fprintf(stdout, "omakase: %s is yours (kept) — left on disk; with the ignore rules gone, git now sees it as an untracked file.\n", rel)
+		}
+	}
 	fmt.Fprintln(stdout, "omakase: removed. Hooks uninstalled, placed files deleted, worktree snapshot + exclude block stripped.")
 	return 0
 }
@@ -217,4 +262,15 @@ func fileContains(path, substr string) bool {
 		return false
 	}
 	return bytes.Contains(content, []byte(substr))
+}
+
+// hooksWithGuardMarkers reports whether any hook file carries an omakase
+// guard-block marker — the evidence of a pre-#98 install.
+func hooksWithGuardMarkers(hooksDir string) bool {
+	for _, hf := range sortedHookFiles(hooksDir) {
+		if fileContains(hf, "# >>> omakase-harness") {
+			return true
+		}
+	}
+	return false
 }

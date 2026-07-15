@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# Phase 0 compat contract: the HOOK-TIME READERS — the two scripts init.sh generates
-# into $OMK ($(git rev-parse --git-common-dir)/omakase): ensure-present.sh (self-heal;
-# bash, 3.2 floor) and verify-overlay.sh (fail-closed guard; POSIX sh). These stay
-# shell forever (never the Go binary) and READ the state the future Go writer will
-# WRITE, so this file pins their reading/healing contract — exercised today with
-# bash-written state (docs/v2-design.md §1, §5, §10, §13).
-# Every "contract capture" note below freezes OBSERVED v1 behavior deliberately: it
-# records what the readers do today, not new policy.
+# The HOOK-TIME READERS' contract — since issue #98 both jobs live in the binary:
+# `omakase hook post-checkout` is the self-heal (the retired ensure-present.sh) and
+# the fail-closed presence verify runs inside `omakase hook pre-commit` (the retired
+# verify-overlay.sh); LEFTHOOK=0 skips the gate run but NEVER the verify, giving this
+# suite a verify-only invocation. The reading/healing contract itself is unchanged —
+# every "contract capture" note below freezes the OBSERVED v1 behavior the Go port
+# preserves, not new policy.
 # Scenarios:
 #   V1/H heal + intact — verify-overlay exits 0 on the intact overlay; a DELETED
 #      placed file heals back (content = the ledgered sha256, *.sh executable again);
@@ -29,6 +28,11 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
 LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
+# The binary that carries the hook-time readers (heal + verify).
+OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
+[ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
+verify(){ ( cd "$1" && LEFTHOOK=0 "$OMAKASE" hook pre-commit ); }   # verify-only gate run
+heal(){ ( cd "$1" && "$OMAKASE" hook post-checkout ); }
 TMP="${TMPDIR:-/tmp}/omakase-state-readers-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
@@ -56,13 +60,13 @@ REL="$(awk -F'\t' '$1 ~ /\.sh$/{print $1; exit}' "$PLACED" 2>/dev/null)"
 REL2="$(awk -F'\t' -v skip="$REL" '$1!=skip{print $1; exit}' "$PLACED" 2>/dev/null)"
 { [ -n "$REL" ] && [ -n "$REL2" ]; } || fail "setup: could not pick two placed rows from $PLACED"
 
-echo "== V1: verify-overlay exits 0 on the intact overlay =="
-OUT="$( cd "$REPO" && "$OMK/verify-overlay.sh" 2>&1 )"; RC=$?
+echo "== V1: the gate verify exits 0 on the intact overlay =="
+OUT="$( verify "$REPO" 2>&1 )"; RC=$?
 [ "$RC" -eq 0 ] && pass "V1: intact overlay -> exit 0" || fail "V1: intact overlay exited $RC ($OUT)"
 
 echo "== H1: a DELETED placed file heals back from the snapshot =="
 rm "$REPO/$REL"
-OUT="$( cd "$REPO" && "$OMK/ensure-present.sh" 2>&1 )"; RC=$?
+OUT="$( heal "$REPO" 2>&1 )"; RC=$?
 [ "$RC" -eq 0 ] && pass "H1: heal run exits 0" || fail "H1: heal run exited $RC ($OUT)"
 if [ -f "$REPO/$REL" ]; then
   pass "H1: deleted file restored ($REL)"
@@ -81,7 +85,7 @@ fi
 echo "== H2: a MODIFIED placed file is left as-is, drift is warn-only (contract capture) =="
 printf 'extra local edit\n' >> "$REPO/$REL"
 cp "$REPO/$REL" "$TMP/H2.before"
-OUT="$( cd "$REPO" && "$OMK/ensure-present.sh" 2>&1 )"; RC=$?
+OUT="$( heal "$REPO" 2>&1 )"; RC=$?
 # contract capture (observed on v1 bash, 2026-07): a present-but-MODIFIED placed file
 # is NEVER overwritten — the heal fills MISSING files only (never-clobber). The run
 # still exits 0, and the drift is SURFACED as exactly one stderr WARNING line per
@@ -97,7 +101,7 @@ printf '%s\n' "$OUT" | grep 'DRIFTED' | grep -qF "'$REL'" \
 [ "$(printf '%s\n' "$OUT" | grep -c 'DRIFTED')" -eq 1 ] \
   && pass "H2: exactly one DRIFTED line for the one drifted path" \
   || fail "H2: expected exactly 1 DRIFTED line ($OUT)"
-OUT="$( cd "$REPO" && "$OMK/ensure-present.sh" 2>&1 )"
+OUT="$( heal "$REPO" 2>&1 )"
 printf '%s\n' "$OUT" | grep -q 'DRIFTED' \
   && pass "H2: the warning repeats on the next run (not once-only)" \
   || fail "H2: second run stayed silent about the persisting drift"
@@ -106,19 +110,19 @@ echo "== V2: a drifted-but-PRESENT file never blocks (contract capture) =="
 # contract capture (v1 bash): verify-overlay is PRESENCE-only — it blocks on a
 # missing enabled path, never on content drift. Drift surfaces exclusively through
 # ensure-present's warning above (H2); the fail-closed gate does not consume sha256.
-OUT="$( cd "$REPO" && "$OMK/verify-overlay.sh" 2>&1 )"; RC=$?
+OUT="$( verify "$REPO" 2>&1 )"; RC=$?
 [ "$RC" -eq 0 ] && pass "V2: exit 0 with $REL still drifted on disk" || fail "V2: drift blocked ($RC: $OUT)"
 
 echo "== V3: a missing unhealed file fails closed, naming the path =="
 rm "$REPO/$REL2"
-OUT="$( cd "$REPO" && "$OMK/verify-overlay.sh" 2>&1 )"; RC=$?
+OUT="$( verify "$REPO" 2>&1 )"; RC=$?
 # Observed exit code is 1; the frozen contract is non-zero = block.
-[ "$RC" -ne 0 ] && pass "V3: missing placed file -> non-zero exit (fail-closed)" || fail "V3: verify-overlay passed with $REL2 missing"
+[ "$RC" -ne 0 ] && pass "V3: missing placed file -> non-zero exit (fail-closed)" || fail "V3: the verify passed with $REL2 missing"
 printf '%s\n' "$OUT" | grep -qF "missing: $REL2" \
   && pass "V3: message names the missing path ('missing: $REL2')" \
   || fail "V3: message does not name the path (output: $OUT)"
-printf '%s\n' "$OUT" | grep -q 'ensure-present.sh' \
-  && pass "V3: message gives the restore instruction (ensure-present.sh)" \
+printf '%s\n' "$OUT" | grep -q 'omakase init' \
+  && pass "V3: message gives the restore instruction (omakase init)" \
   || fail "V3: no restore instruction in the block message (output: $OUT)"
 
 # ---------- S: symlink heal through a --source install ----------
@@ -139,7 +143,7 @@ OMKS="$(common_of "$REPOS")/omakase"
   || fail "S: init did not place CLAUDE.md as a symlink"
 TARGET="$(readlink "$REPOS/CLAUDE.md" 2>/dev/null)"
 rm -f "$REPOS/CLAUDE.md"
-OUT="$( cd "$REPOS" && "$OMKS/ensure-present.sh" 2>&1 )"; RC=$?
+OUT="$( heal "$REPOS" 2>&1 )"; RC=$?
 [ "$RC" -eq 0 ] && pass "S: heal run exits 0" || fail "S: heal run exited $RC ($OUT)"
 [ -L "$REPOS/CLAUDE.md" ] \
   && pass "S: healed back AS a symlink (never a dereferenced regular file)" \

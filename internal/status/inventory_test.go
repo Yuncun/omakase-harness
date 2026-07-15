@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Yuncun/omakase-harness/internal/state"
@@ -170,7 +171,7 @@ func buildNotInstalledFixture(t *testing.T) (*state.Repo, string) {
 // Terminal-mode inventory for the installed fixture: the RenderInventory slice,
 // everything from "COMMITTED..." through the last GLOBAL row, no leading or
 // trailing blank line.
-const wantInventoryTermInstalled = `COMMITTED (this repo) — tracked harness files
+const wantInventoryTermInstalled = `THE PROJECT'S HARNESS (committed — managed by git, not omakase)
     + .claude/rules/team.md   (rule)
     + CLAUDE.md   (doc)
 INJECTED (omakase) — placed by omakase init, gitignored
@@ -194,7 +195,7 @@ GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, appl
 `
 
 // Markdown-mode inventory for the installed fixture: the RenderInventory slice.
-const wantInventoryMDInstalled = "### Committed (this repo) — tracked harness files\n" +
+const wantInventoryMDInstalled = "### The project's harness (committed — managed by git, not omakase)\n" +
 	"- `.claude/rules/team.md` — rule\n" +
 	"- `CLAUDE.md` — doc\n" +
 	"\n" +
@@ -241,7 +242,7 @@ func TestRenderInventoryMDInstalled(t *testing.T) {
 const wantNotInstalledTerm = `No omakase harness is installed in this repo.
 Run  omakase init  to inject one.
 
-COMMITTED (this repo) — tracked harness files
+THE PROJECT'S HARNESS (committed — managed by git, not omakase)
     + .claude/rules/team.md   (rule)
 INJECTED (omakase) — placed by omakase init, gitignored
     (none)
@@ -259,7 +260,7 @@ GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, appl
 // Markdown-mode output for the not-installed fixture.
 const wantNotInstalledMD = "**No omakase harness is installed in this repo.** Run `omakase init` to inject one.\n" +
 	"\n" +
-	"### Committed (this repo) — tracked harness files\n" +
+	"### The project's harness (committed — managed by git, not omakase)\n" +
 	"- `.claude/rules/team.md` — rule\n" +
 	"\n" +
 	"### Injected (omakase) — placed by `omakase init`, gitignored\n" +
@@ -464,5 +465,77 @@ func TestPersonalListGlobSemantics(t *testing.T) {
 	}
 	if _, ok := byPath["~/.claude/skills/.hiddenskill/"]; ok {
 		t.Errorf("dot-directory under skills/: want no row (bash glob without dotglob never matches it), got one")
+	}
+}
+
+// A kept row renders its own state — kept (yours) — in both output modes;
+// an edit made after the keep adds the DRIFTED suffix measured against the
+// accepted version (pointing at omakase diff, not init).
+func TestRenderInjectedKeptRow(t *testing.T) {
+	dir := newGitRepo(t)
+	repo, err := state.Discover(dir)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo.OMK, "kept"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "AGENTS.md", "accepted\n")
+	writeFile(t, filepath.Join(repo.OMK, "kept"), "AGENTS.md", "accepted\n")
+	rows := "AGENTS.md\tdoc\tacme\t" + sha256Hex("accepted\n") + "\t1\n"
+	if err := os.WriteFile(filepath.Join(repo.OMK, "placed.tsv"), []byte(rows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var md, term bytes.Buffer
+	RenderInventory(&md, repo, t.TempDir(), true)
+	RenderInventory(&term, repo, t.TempDir(), false)
+	if !strings.Contains(md.String(), "`AGENTS.md` — doc, from acme — kept (yours)") {
+		t.Errorf("md kept row wrong:\n%s", md.String())
+	}
+	if !strings.Contains(term.String(), "= AGENTS.md   (doc, from acme; kept (yours))") {
+		t.Errorf("term kept row wrong:\n%s", term.String())
+	}
+	if strings.Contains(md.String(), "DRIFTED") {
+		t.Errorf("healthy kept row rendered as drifted:\n%s", md.String())
+	}
+
+	// Edit after keep: drift returns, measured against the accepted hash.
+	writeFile(t, dir, "AGENTS.md", "accepted\nsecond edit\n")
+	var md2 bytes.Buffer
+	RenderInventory(&md2, repo, t.TempDir(), true)
+	if !strings.Contains(md2.String(), "kept (yours)") || !strings.Contains(md2.String(), "differs from your accepted version") {
+		t.Errorf("post-keep edit row wrong:\n%s", md2.String())
+	}
+}
+
+// A missing kept file and a disabled row with a saved kept copy both keep
+// their consent visible (review finding, PR #100): the MISSING row says the
+// kept version is saved; the disabled row says --enable brings it back.
+func TestRenderInjectedKeptMissingAndDisabled(t *testing.T) {
+	dir := newGitRepo(t)
+	repo, err := state.Discover(dir)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo.OMK, "kept"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo.OMK, "kept"), "gone.md", "accepted\n")
+	writeFile(t, filepath.Join(repo.OMK, "kept"), "off.md", "accepted\n")
+	rows := "gone.md\tdoc\tacme\t" + sha256Hex("accepted\n") + "\t1\n" +
+		"off.md\tdoc\tacme\t" + sha256Hex("accepted\n") + "\t0\n"
+	if err := os.WriteFile(filepath.Join(repo.OMK, "placed.tsv"), []byte(rows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var md bytes.Buffer
+	RenderInventory(&md, repo, t.TempDir(), true)
+	out := md.String()
+	if !strings.Contains(out, "`gone.md`") || !strings.Contains(out, "MISSING** (your kept version is saved") {
+		t.Errorf("missing kept row hides the saved copy:\n%s", out)
+	}
+	if !strings.Contains(out, "`off.md`") || !strings.Contains(out, "a kept version of yours is saved") {
+		t.Errorf("disabled kept row hides the saved copy:\n%s", out)
 	}
 }

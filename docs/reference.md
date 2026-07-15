@@ -13,19 +13,28 @@ reuses an already-cached binary, keeping uninstall offline. When nothing resolve
 shim fails closed: recovery guidance on stderr (install a binary, or point
 `OMAKASE_BIN=/path/to/omakase` at one) and exit 1 — there is no bash fallback.
 
-### `init.sh [<owner/repo[#ref]> | --source <git-url|path>] [--cut-over] [--help]`
+### `init.sh [<owner/repo[/subpath][#ref]> | --source <git-url|path>] [--cut-over] [--help]`
 
 Overlays `payload/` onto the current repo, records placed paths in `.git/info/exclude`,
 and installs hooks through lefthook. Skips paths the repo tracks. Overwrites a divergent
 installed (untracked) file to match payload and warns. Removes a previously placed file
 the payload no longer ships, unless it was edited locally.
 
-- `<owner/repo[#ref]>` — positional shorthand for `--source https://github.com/owner/repo`,
-  optionally pinned to a branch or tag with `#ref`. This is the install line for a custom
-  harness a repo publishes: `omakase init you/harness`. A real local path with the same
-  shape wins over the shorthand.
+- `<owner/repo[/subpath][#ref]>` — positional shorthand for
+  `--source https://github.com/owner/repo`, optionally pinned to a branch or tag with
+  `#ref`. This is the install line for a custom harness a repo publishes:
+  `omakase init you/harness`. Segments past `owner/repo` name a harness directory INSIDE
+  the repo — `omakase init you/hub/tools` adopts the harness at the hub repo's `tools/` —
+  so one hub repo can publish several harnesses without a dedicated repo each. A real
+  local path with the same shape wins over the shorthand.
 - `--source <git-url|path>` — install ONE harness (a `payload/` tree plus an
-  `omakase.manifest`) at a time. No harness installed yet: the omakase base harness's
+  `omakase.manifest`) at a time. A `//subpath` suffix on the url or path adopts a
+  harness directory inside the repo (`--source https://host/x/hub//tools`,
+  `--source /clones/hub//tools`); the manifest and `payload/` must live under that
+  directory, the validation runs there (never at the repo root), and the subpath is
+  remembered so a bare `init` refreshes the hub and re-injects the same subfolder.
+  The root — the part before `//` — is what gets cloned, so it must be a git repo,
+  as with every source. No harness installed yet: the omakase base harness's
   payload is layered UNDER the custom harness's payload (base machinery underneath, the
   custom harness's delta winning on overlap), so a custom harness ships only its delta
   and relies on base machinery without keeping its own copy. This source names the
@@ -42,7 +51,7 @@ the payload no longer ships, unless it was edited locally.
   tracks, so the installed copy takes over. Guarded: refuses without
   `OMAKASE_CUTOVER_CONFIRM=1`.
 
-### `status.sh [--markdown | --plain | --disable <name> | --enable <name>]`
+### `status.sh [--markdown | --plain | --disable <name> | --enable <name> | --keep <path> | --restore <path>]`
 
 On a real terminal, `status` opens the interactive consent screen: every steering
 file and gate as a row (arrows to move, Enter/Space to toggle, q to quit).
@@ -61,11 +70,37 @@ wiring, the run ledger, and the paths hidden via `.git/info/exclude`.
   every run — a bypassed gate is never silent — until `--enable` clears it.
   Machinery (`.omakase/`, the lefthook wiring) refuses to toggle. A name that
   matches nothing errors (exit 2).
+- `--keep <path>` / `--restore <path>` — the edit lifecycle (#98). You edited
+  a placed file (or directory of them); the status surfaces show it as
+  changed. `--keep` accepts the on-disk version as yours: the accepted copy
+  is stored under the git dir's `omakase/kept/`, the ledger hash moves to
+  it, and everything reads green again — green means "matches what you've
+  consented to". `--restore` puts the harness's version back — it also clears
+  plain, un-kept drift, and on a disabled row it restores AND re-enables (the
+  harness's version, full stop), so a kept-then-disabled file is never a dead
+  end. `--enable` prefers the kept copy when one is saved, so a disable/enable
+  cycle round-trips the version you accepted. See the change first with
+  `omakase diff`. Names resolve like `--disable`; machinery and git-tracked
+  paths refuse (exit 2).
 - `--help` — usage.
 
 Consent survives re-init: a file toggled off stays off across `init` (its
 ledger row and snapshot refresh, so a later `--enable` restores the CURRENT
-payload copy), and a disabled gate stays recorded.
+payload copy — or your accepted, kept copy when one is saved), a disabled
+gate stays recorded, and a kept file is left
+untouched — by repair `init`, by `init <new-source>` (even when the new
+source no longer ships the path; `--restore` still works offline), by the
+checkout self-heal (which refills a missing kept file with the ACCEPTED
+copy), and by `remove` (a kept file is yours; it stays on disk, reported).
+
+### `omakase diff [path…]`
+
+Binary-only verb (no `.sh` shim), strictly read-only: shows what you changed
+in the placed files, in the forward direction (your edit renders as an
+addition), against the harness version — or against your accepted version
+once a file is kept. No paths = every changed enabled placed file; a path is
+a placed file or a directory of them (resolution as above). Exit 0 whether or
+not differences exist; unknown paths and any flag other than `--help` exit 2.
 
 ### `omakase mcp`
 

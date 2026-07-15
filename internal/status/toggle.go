@@ -20,44 +20,67 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/tui"
 )
 
-func runToggle(off bool, name string, stdout, stderr io.Writer) int {
+// discoverRepo is the shared cwd->repo resolution of the scriptable consent
+// flags; a failure prints the one-liner and returns nil.
+func discoverRepo(stderr io.Writer) *state.Repo {
 	wd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(stderr, "omakase: not inside a git repo")
-		return 1
+		return nil
 	}
 	repo, err := state.Discover(wd)
 	if err != nil {
 		fmt.Fprintln(stderr, "omakase: not inside a git repo")
+		return nil
+	}
+	return repo
+}
+
+// placedTargets resolves name against the ledger the way every consent flag
+// does: an exact placed rel, else every placed rel under name as a group
+// directory. Empty means name matched no placed path.
+func placedTargets(rows []state.PlacedRow, name string) []string {
+	for _, r := range rows {
+		if r.Rel == name {
+			return []string{name}
+		}
+	}
+	var targets []string
+	p := strings.TrimSuffix(name, "/") + "/"
+	for _, r := range rows {
+		if strings.HasPrefix(r.Rel, p) {
+			targets = append(targets, r.Rel)
+		}
+	}
+	return targets
+}
+
+// refuseMachinery rejects any target that is harness machinery. Machinery
+// keeps the harness running and is never a consent item — the TUI and MCP
+// menu filter it out (tui.IsMachinery), so the scriptable surface must too.
+// Deleting the .omakase/ tree or lefthook wiring via --disable would brick
+// every commit with a raw hook error; --keep/--restore on it would bless or
+// revert gate plumbing behind the same one-word name. Refuse before any write.
+func refuseMachinery(targets []string, name string, stderr io.Writer) bool {
+	for _, rel := range targets {
+		if tui.IsMachinery(rel) {
+			fmt.Fprintf(stderr, "omakase: %s is harness machinery — it keeps the harness running; remove the harness with omakase remove\n", name)
+			return true
+		}
+	}
+	return false
+}
+
+func runToggle(off bool, name string, stdout, stderr io.Writer) int {
+	repo := discoverRepo(stderr)
+	if repo == nil {
 		return 1
 	}
 
 	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
-	var targets []string // placed rels; empty -> treat name as a gate
-	for _, r := range rows {
-		if r.Rel == name {
-			targets = []string{name}
-			break
-		}
-	}
-	if len(targets) == 0 { // group directory: every placed rel under it
-		p := strings.TrimSuffix(name, "/") + "/"
-		for _, r := range rows {
-			if strings.HasPrefix(r.Rel, p) {
-				targets = append(targets, r.Rel)
-			}
-		}
-	}
-
-	// Machinery keeps the harness running and is never a consent item — the TUI
-	// and MCP menu filter it out (tui.IsMachinery), so the scriptable surface
-	// must too. Deleting the .omakase/ tree or lefthook wiring via --disable
-	// would brick every commit with a raw hook error. Refuse before any write.
-	for _, rel := range targets {
-		if tui.IsMachinery(rel) {
-			fmt.Fprintf(stderr, "omakase: %s is harness machinery — it keeps the harness running; remove the harness with omakase remove\n", name)
-			return 2
-		}
+	targets := placedTargets(rows, name) // empty -> treat name as a gate
+	if refuseMachinery(targets, name, stderr) {
+		return 2
 	}
 
 	if len(targets) == 0 { // gate
@@ -107,6 +130,61 @@ func runToggle(off bool, name string, stdout, stderr io.Writer) int {
 		default:
 			fmt.Fprintf(stderr, "omakase: %v\n", terr)
 			code = 1
+		}
+	}
+	return code
+}
+
+// runKeepRestore is `omakase status --keep <path>` / `--restore <path>` —
+// the plumbing half of the edit lifecycle (issue #98 Part 2: modified ->
+// omakase diff -> keep / restore). Names resolve exactly like --disable
+// (placed path or group directory); machinery and tracked paths are refused
+// with exit 2. Gates are files-only territory: a name matching no placed
+// path is unknown here, never a gate.
+func runKeepRestore(keep bool, name string, stdout, stderr io.Writer) int {
+	repo := discoverRepo(stderr)
+	if repo == nil {
+		return 1
+	}
+	ledger := filepath.Join(repo.OMK, "placed.tsv")
+	if _, err := os.Stat(ledger); err != nil {
+		// Same contract as `omakase diff`: an uninstalled repo is its own
+		// condition (exit 1), never a confusing "unknown placed path".
+		fmt.Fprintln(stderr, "omakase: no harness installed here (install one:  omakase init)")
+		return 1
+	}
+
+	rows := state.ReadPlaced(ledger)
+	targets := placedTargets(rows, name)
+	if refuseMachinery(targets, name, stderr) {
+		return 2
+	}
+	if len(targets) == 0 {
+		fmt.Fprintf(stderr, "omakase: unknown placed path: %s\n", name)
+		return 2
+	}
+
+	code := 0
+	for _, rel := range targets {
+		var err error
+		if keep {
+			err = overlay.FileKeep(repo, rel)
+		} else {
+			err = overlay.FileRestore(repo, rel)
+		}
+		switch {
+		case err == nil && keep:
+			fmt.Fprintf(stdout, "omakase: kept %s — your version is the accepted one now (put the harness version back any time: omakase status --restore %s)\n", rel, rel)
+		case err == nil:
+			fmt.Fprintf(stdout, "omakase: restored %s to the harness version\n", rel)
+		case errors.Is(err, overlay.ErrTracked):
+			fmt.Fprintf(stderr, "omakase: REFUSING: %v\n", err)
+			code = 2
+		default:
+			fmt.Fprintf(stderr, "omakase: %v\n", err)
+			if code == 0 {
+				code = 1
+			}
 		}
 	}
 	return code

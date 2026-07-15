@@ -28,9 +28,9 @@ enable `superpowers@superpowers-marketplace`:
 ## How it works
 
 omakase only **overlays files**. The host tool (Claude Code or Copilot CLI) reads its own
-settings file at startup and installs the plugin itself. `omakase init --source <this>` places
-both files as a gitignored overlay; the rest of an install (banner, ledger, status-line) comes
-from the omakase base harness, layered in underneath.
+settings file at startup and installs the plugin itself. `omakase init` places both files as
+a gitignored overlay; the rest of an install (banner, ledger, status-line) comes from the
+omakase base harness, layered in underneath.
 
 Two tools, two files, because they read different paths — Copilot never reads `.claude/`.
 
@@ -50,19 +50,20 @@ init prints it once so you can install by hand:
 
 ## Try it
 
-These files are the contents of a harness repo, so put them in one first:
+This directory is a complete harness, and a harness can live in a **subfolder** of a git
+repo — so it is adoptable straight from GitHub. From any project:
 
-    cp -R <path-to>/omakase-harness/examples/superpowers-harness /tmp/superpowers-harness
-    cd /tmp/superpowers-harness && git init -q && git add -A && git commit -qm "superpowers harness"
+    omakase init Yuncun/omakase-harness/examples/superpowers-harness    # Claude Code or Copilot CLI
 
-Then, from any project:
-
-    omakase init --source /tmp/superpowers-harness         # Claude Code or Copilot CLI
+(From a local clone of this repo, the same install is
+`omakase init --source <path-to-clone>//examples/superpowers-harness` — the `//` marks where
+the repo ends and the subfolder begins.)
 
 `omakase status` lists what it placed; `omakase remove` deletes it all and restores the repo.
 
 ## Make your own
 
-Copy this directory, point both settings files + the manifest's `recommends:` at the plugin you
-pair with, push it to a git repo, and share the URL. People adopt it with
-`omakase init --source <your-repo>`.
+Copy this directory into a git repo of your own — its own repo, or a subfolder of one you
+already have — point both settings files + the manifest's `recommends:` at the plugin you
+pair with, push, and share. People adopt it with `omakase init you/your-repo` (add
+`/path/to/harness` when it lives in a subfolder).

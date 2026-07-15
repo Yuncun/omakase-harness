@@ -35,6 +35,7 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 	known := map[string]bool{
 		"--markdown": true, "-m": true, "--plain": true,
 		"--disable": true, "--enable": true,
+		"--keep": true, "--restore": true,
 	}
 	for _, a := range argv {
 		if a == "--help" || a == "-h" {
@@ -50,7 +51,8 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 	md := len(argv) > 0 && (argv[0] == "--markdown" || argv[0] == "-m" || argv[0] == "md")
 
 	// --plain forces the static page; --disable/--enable are the scriptable
-	// twins of the interactive screen's Enter (agents cannot drive a TUI).
+	// twins of the interactive screen's Enter (agents cannot drive a TUI);
+	// --keep/--restore are their edit-lifecycle siblings (issue #98 Part 2).
 	plain := false
 	for i := 0; i < len(argv); i++ {
 		switch argv[i] {
@@ -62,6 +64,12 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 				return 2
 			}
 			return runToggle(argv[i] == "--disable", argv[i+1], stdout, stderr)
+		case "--keep", "--restore":
+			if i+1 >= len(argv) {
+				fmt.Fprintf(stderr, "omakase: %s needs a placed path\n", argv[i])
+				return 2
+			}
+			return runKeepRestore(argv[i] == "--keep", argv[i+1], stdout, stderr)
 		}
 	}
 	// OMAKASE_ICON: default 🥡, used only in the md installed header.
@@ -150,6 +158,7 @@ func toggledOffSuffix(nToggledOff int) string {
 // printStatusUsage prints the `omakase status` flag surface.
 func printStatusUsage(w io.Writer) {
 	fmt.Fprint(w, `usage: omakase status [--markdown|--plain] [--disable NAME | --enable NAME]
+                      [--keep PATH | --restore PATH]
 
   (no flags)      on a real terminal, open the interactive consent screen;
                   otherwise print the status page
@@ -158,7 +167,11 @@ func printStatusUsage(w io.Writer) {
   --disable NAME  turn a gate off, or remove a placed file/dir; NAME is a wired
                   gate name or a placed path. Recorded so commits/pushes skip it
                   until re-enabled.
-  --enable NAME   undo a --disable: restore the file/dir or re-arm the gate
+  --enable NAME   undo a --disable: restore the file/dir or turn the gate back on
+  --keep PATH     you edited a placed file/dir: accept the on-disk version as
+                  yours (status goes green; see the change first: omakase diff)
+  --restore PATH  put the harness's version of a placed file/dir back — undoes
+                  a --keep or a local edit
   --help, -h      show this help
 `)
 }
@@ -209,8 +222,8 @@ func renderTerminal(w io.Writer, repo *state.Repo, home, hname, srcdisp, basever
 	fmt.Fprintln(w)
 	RenderInventory(w, repo, home, false)
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Update to the latest harness (syncs files; removes dropped ones):   omakase init")
-	fmt.Fprintln(w, "Undo everything:                                                    omakase remove")
+	fmt.Fprintln(w, "Restore the harness (replaces missing or changed files; removes dropped ones):   omakase init")
+	fmt.Fprintln(w, "Undo everything:                                                                 omakase remove")
 }
 
 // harnessName derives the harness display name from the remembered source:

@@ -113,7 +113,7 @@ func TestGateOffHealsOldGateScript(t *testing.T) {
 // A bare re-init from a stale payload must not leave the placed gate script
 // stale: init re-heals it after the place loop, so a gate the human disabled
 // stays honored across the documented refresh flow rather than the gate silently
-// re-arming while the consent surfaces still show it off.
+// re-enabling while the consent surfaces still show it off.
 func TestReinitHealsStaleGateScript(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
@@ -484,4 +484,165 @@ func TestReinitAllDeclinedStillWritesWorktreeinclude(t *testing.T) {
 	if !strings.Contains(string(content), ".claude") {
 		t.Errorf(".worktreeinclude missing .claude entry: %q", string(content))
 	}
+}
+
+// ------------------------------------------------------------ kept edits
+
+// editFile appends a line to a placed file, returning the new content — the
+// canonical "user edited a placed file" fixture (issue #98 Part 2).
+func editFile(t *testing.T, full string) string {
+	t.Helper()
+	f, err := os.OpenFile(full, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("# my edit\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	return readFileT(t, full)
+}
+
+// FileKeep accepts the on-disk edit: the accepted copy lands in $OMK/kept,
+// the ledger hash moves to the disk hash (drift reads green again), and the
+// payload snapshot keeps the untouched harness version so restore stays
+// possible offline.
+func TestFileKeepAcceptsEdit(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	rel := ".claude/rules/a.md"
+	full := filepath.Join(dir, rel)
+	edited := editFile(t, full)
+
+	// sanity: the edit must register as drift before the keep
+	pre := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	if !state.IsDrifted(dir, rel, pre[placedIndex(pre, rel)].Hash, "1") {
+		t.Fatalf("fixture: edit not drifted")
+	}
+
+	if err := FileKeep(repo, rel); err != nil {
+		t.Fatalf("FileKeep: %v", err)
+	}
+
+	eq(t, "kept copy", readFileT(t, filepath.Join(repo.OMK, "kept", rel)), edited)
+	eq(t, "snapshot untouched", readFileT(t, filepath.Join(repo.OMK, "payload-snapshot", rel)), "rule a\n")
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	idx := placedIndex(rows, rel)
+	eq(t, "ledger Hash", rows[idx].Hash, state.HashOf(full))
+	eq(t, "Enabled", rows[idx].Enabled, "1")
+	if state.IsDrifted(dir, rel, rows[idx].Hash, rows[idx].Enabled) {
+		t.Errorf("kept file still reads as drifted")
+	}
+
+	// Edit again after keep: drift returns, now measured against the
+	// accepted hash — the lifecycle is self-similar.
+	editFile(t, full)
+	if !state.IsDrifted(dir, rel, rows[idx].Hash, rows[idx].Enabled) {
+		t.Errorf("second edit after keep does not read as drifted")
+	}
+}
+
+func TestFileKeepRefusals(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	rel := ".claude/rules/a.md"
+
+	if err := FileKeep(repo, "nope.md"); !errors.Is(err, ErrNotPlaced) {
+		t.Errorf("FileKeep(unplaced): got %v, want ErrNotPlaced", err)
+	}
+
+	if err := FileOff(repo, rel); err != nil {
+		t.Fatalf("FileOff: %v", err)
+	}
+	if err := FileKeep(repo, rel); !errors.Is(err, ErrNothingToKeep) {
+		t.Errorf("FileKeep(missing): got %v, want ErrNothingToKeep", err)
+	}
+
+	b := ".claude/rules/b.md"
+	runGitT(t, dir, "add", "-f", b)
+	runGitT(t, dir, "commit", "-q", "-m", "track b")
+	if err := FileKeep(repo, b); !errors.Is(err, ErrTracked) {
+		t.Errorf("FileKeep(tracked): got %v, want ErrTracked", err)
+	}
+}
+
+// FileRestore clears a keep: harness version back on disk, kept mark gone,
+// ledger hash reset — and works on plain (un-kept) drift the same way.
+func TestFileRestoreClearsKeptAndPlainDrift(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	a, b := ".claude/rules/a.md", ".claude/rules/b.md"
+	fullA, fullB := filepath.Join(dir, a), filepath.Join(dir, b)
+
+	editFile(t, fullA)
+	if err := FileKeep(repo, a); err != nil {
+		t.Fatalf("FileKeep: %v", err)
+	}
+	editFile(t, fullB) // plain drift, never kept
+
+	for _, rel := range []string{a, b} {
+		if err := FileRestore(repo, rel); err != nil {
+			t.Fatalf("FileRestore(%s): %v", rel, err)
+		}
+	}
+	eq(t, "a restored", readFileT(t, fullA), "rule a\n")
+	eq(t, "b restored", readFileT(t, fullB), "rule b\n")
+	if lexists(filepath.Join(repo.OMK, "kept", a)) {
+		t.Errorf("kept mark survived FileRestore")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	for _, rel := range []string{a, b} {
+		idx := placedIndex(rows, rel)
+		eq(t, rel+" Hash", rows[idx].Hash, state.HashOf(filepath.Join(dir, rel)))
+	}
+}
+
+// A disable/enable cycle must round-trip the ACCEPTED version, not silently
+// swap back to the harness version the user already replaced: FileOn prefers
+// the kept copy.
+func TestFileOnPrefersKeptCopy(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	rel := ".claude/rules/a.md"
+	full := filepath.Join(dir, rel)
+	edited := editFile(t, full)
+
+	if err := FileKeep(repo, rel); err != nil {
+		t.Fatalf("FileKeep: %v", err)
+	}
+	if err := FileOff(repo, rel); err != nil {
+		t.Fatalf("FileOff after keep: %v", err) // accepted hash matches disk, so the delete guard passes
+	}
+	if err := FileOn(repo, rel); err != nil {
+		t.Fatalf("FileOn: %v", err)
+	}
+	eq(t, "re-enabled content", readFileT(t, full), edited)
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	idx := placedIndex(rows, rel)
+	eq(t, "Hash", rows[idx].Hash, state.HashOf(full))
+}
+
+// A kept-then-disabled file must never be a dead end (review finding, PR
+// #100): --restore on the disabled row restores the harness version,
+// re-enables it, and clears the kept mark — while --enable keeps preferring
+// the accepted copy (TestFileOnPrefersKeptCopy).
+func TestFileRestoreReenablesDisabledKeptRow(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	rel := ".claude/rules/a.md"
+	full := filepath.Join(dir, rel)
+	editFile(t, full)
+	if err := FileKeep(repo, rel); err != nil {
+		t.Fatalf("FileKeep: %v", err)
+	}
+	if err := FileOff(repo, rel); err != nil {
+		t.Fatalf("FileOff: %v", err)
+	}
+
+	if err := FileRestore(repo, rel); err != nil {
+		t.Fatalf("FileRestore on the disabled row: %v", err)
+	}
+	eq(t, "restored content", readFileT(t, full), "rule a\n")
+	if lexists(filepath.Join(repo.OMK, "kept", rel)) {
+		t.Errorf("kept mark survived the restore")
+	}
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	idx := placedIndex(rows, rel)
+	eq(t, "Enabled", rows[idx].Enabled, "1")
+	eq(t, "Hash", rows[idx].Hash, state.HashOf(full))
 }

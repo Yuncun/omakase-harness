@@ -6,6 +6,92 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 ## [Unreleased]
 
 ### Changed
+- **`examples/sample-harness` replaced by `examples/starter-harness`** — the worked
+  example is no longer a toy: it is the harness omakase development itself uses
+  (self-hosted via the subfolder-source install). It places agent rules for
+  Claude Code and Copilot and wires three real gates: `block-marker` (refuse a
+  staged scratch marker) and `go-checks` (gofmt + go vet on staged Go files) on
+  pre-commit, and a cached `go-test` on pre-push.
+
+## [0.19.1] — 2026-07-14
+
+### Added
+- **Adopt a harness from a subfolder of a repo** (#103):
+  `omakase init owner/repo/subpath[#ref]` (GitHub Actions' `uses:` shape) and a
+  `//subpath` suffix on any `--source` url or local path
+  (`--source https://host/x/hub//tools`, `--source /clones/hub//tools`). The
+  fail-closed manifest/payload validation runs at the subfolder, never the repo
+  root; the canonical `root//subpath` string is remembered so a bare `init`
+  refreshes the hub and re-injects the same subfolder; a subpath can never
+  point outside the clone (`..`/absolute refused up front); distinct subfolders
+  of one hub get distinct source-cache clones. One hub repo can now publish
+  several harnesses — no dedicated repo per harness.
+
+## [0.19.0] — 2026-07-13
+
+### Added
+- **The edit lifecycle: `omakase diff` + keep/restore** (#98 Part 2). Editing
+  a placed file is the expected lifecycle, not misuse: modified →
+  `omakase diff` → keep or restore. `omakase diff [path…]` is a new, strictly
+  read-only human verb showing what YOU changed, in the forward direction
+  (your edit renders as an addition), against the harness version — or
+  against your accepted version once you've kept a file. The plumbing
+  actions live on status, siblings of `--disable`:
+  `omakase status --keep <path>` accepts the on-disk version as yours (the
+  accepted copy is stored under `$OMK/kept/`, the ledger hash moves to it,
+  and everything — status, statusline, stop-notice — reads green again:
+  green means "matches what you've consented to");
+  `omakase status --restore <path>` puts the harness's version back and
+  clears the mark, and works on plain drift too. Both resolve names exactly
+  like `--disable` and refuse machinery and tracked paths with exit 2.
+- **Kept files survive every lifecycle verb**: repair `init` and
+  `init <new-source>` leave them untouched (a missing kept file is refilled
+  with the ACCEPTED copy; the harness version of a kept path the new source
+  no longer ships is carried across the snapshot rebuild so `--restore`
+  keeps working offline); the checkout heal refills from the accepted copy;
+  a disable/enable cycle round-trips the accepted version; `remove` leaves
+  kept files on disk (they are yours) and reports them. Kept rows render as
+  their own state — `kept (yours)` — on the status page, and the verified
+  init verdict counts them.
+- **Two-tier help**: `omakase --help` lists the four human verbs (init,
+  status, diff, remove) first and groups hook/statusline/stop-notice/mcp
+  under "commands used by your tools, not by you".
+
+### Changed
+- **The status page's committed section is retitled** "The project's harness
+  (committed — managed by git, not omakase)" — the two-layer naming: the
+  project's harness (committed, git-managed, omakase lists but never
+  touches) vs your harness (injected, omakase-managed).
+- **omakase owns `.git/hooks`: permanent dispatcher hooks, lefthook demoted to
+  gate-runner** (#98). Each hook file (pre-commit, pre-push, post-checkout) is
+  now a permanent ~5-line dispatcher that execs the machine-wide binary copy
+  with `omakase hook <name>`; only `init` and `remove` ever write `.git/hooks`,
+  atomically, and nothing at hook time rewrites them — the entire #96 class
+  (hook files corrupted mid-run, worktree sessions racing each other's hooks)
+  is gone. At commit/push time the binary verifies the harness is complete
+  (fail closed, `LEFTHOOK=0` does not bypass it) and runs the wired gates
+  through the pinned lefthook with explicit config (`LEFTHOOK_CONFIG` +
+  `--no-auto-install`); a repo shipping its own `lefthook.yml` keeps lefthook's
+  default merge, so its jobs still run alongside the harness's. A missing
+  binary or lefthook blocks with a one-line fix; a checkout never fails.
+  `git lfs <hook>` is still forwarded where a displaced stock LFS hook would
+  have run it. The worktree self-heal is native Go inside
+  `omakase hook post-checkout` (same contract: fill missing enabled files,
+  never overwrite, never touch tracked paths, warn on drift and collisions).
+  The machine-wide copy at `~/.cache/omakase/bin/current/omakase` (#97) is now
+  load-bearing: `init` verifies it after writing dispatchers, and the status
+  probe checks it on every run.
+- **The hooks proof is byte-equality, with the cause pinned** — the status
+  probe accepts only a hook file byte-equal to the dispatcher (a substring
+  match would call a clobbered hook healthy) and distinguishes absent vs
+  clobbered-by-another-tool vs binary-missing as separate facts. An
+  `lefthook install -f` from an npm postinstall is detected, never silently
+  re-armed; the next explicit `omakase init` repairs it.
+- Migration is one `omakase init`: it replaces the old lefthook stubs + guard
+  blocks with dispatchers and deletes the retired per-repo machinery
+  ($OMK scripts, the lefthook.yml heal snapshot, `.git/info/lefthook.checksum`,
+  the untracked skeleton `lefthook.yml` in every worktree). Hooks live once in
+  the shared git dir, so one init converts all worktrees.
 - **`init`/`status`/`remove` shims fail closed when no omakase binary can be
   resolved** — recovery guidance on stderr (naming the `OMAKASE_BIN` escape
   hatch; `remove` never downloads, so it asks for a local or already-cached
@@ -13,6 +99,13 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   binary-distribution failures.
 
 ### Removed
+- **The hook-time script trio and the lefthook install machinery** (#98):
+  `bin/ensure-present.sh`, `bin/install-guards.sh`, `bin/verify-overlay.sh`
+  (and their embedded template copies), every `lefthook install` / stub-sync /
+  `.git/info/lefthook.checksum` reliance, the `lefthook.yml` skeleton and its
+  heal, and the payload's post-checkout heal job (heal is native now). The
+  `/lefthook.yml` exclude entry is no longer written. Gate scripts
+  (`omakase-gate.sh`) stay sh, unchanged.
 - **The v1 bash fallback bodies (`bin/legacy/`)** — the Go binary has been the
   engine for every verb since the shim cutover, and 0.18.1's self-provisioning
   shims fetch the pinned, checksum-verified release binary when nothing

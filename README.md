@@ -61,6 +61,7 @@ Inside Claude Code or GitHub Copilot CLI, the plugin wraps the same commands:
 ```
 omakase init owner/repo   place that repo's harness here: files in, gates wired, all of it excluded
 omakase status            the menu — see every item, toggle any of them off (plain text when piped)
+omakase diff              see what you changed in any placed file
 omakase init              bare: repair or refresh from the remembered source
 omakase remove            delete everything placed, unwire the hooks
 omakase mcp               the same menu, served inside Claude Code and Copilot CLI
@@ -83,12 +84,19 @@ correctness do not.
 
 Placing works differently for each half. Steering files are copied to where the
 agent reads them and excluded from git. Gates are also excluded, and wired to
-git hooks through [lefthook](https://github.com/evilmartians/lefthook), fetched
-as a pinned, checksum-verified binary if absent. Hooks fire on commit and push
-regardless of what made the change: an agent, an IDE, or plain `git`. The source
-repo is remembered, so a bare `omakase init` repairs or refreshes the overlay,
-and anything you turned off stays off. A skipped gate prints that it was
-skipped.
+git hooks: `init` writes one permanent dispatcher per hook, and at commit time
+the dispatcher checks the harness is complete (fail closed) and runs the wired
+gates through [lefthook](https://github.com/evilmartians/lefthook), fetched as
+a pinned, checksum-verified binary if absent. Nothing rewrites a hook file
+after init. Hooks fire on commit and push regardless of what made the change:
+an agent, an IDE, or plain `git`. The source repo is remembered, so a bare
+`omakase init` repairs or refreshes the overlay, and anything you turned off
+stays off. A skipped gate prints that it was skipped.
+
+Editing a placed file is expected, not an error: the status surfaces turn
+amber, `omakase diff` shows exactly what you changed, and you either keep your
+version or restore the harness's. To customize a whole harness, work at the
+source: fork the harness repo, edit there, and point `init` at your fork.
 
 For scripts and agents, `omakase status --plain` prints a stable text page, and
 `--disable` / `--enable` do what the menu does.
@@ -111,8 +119,9 @@ The short version — the manifesto has the full argument with sources:
 
 ## Share your harness
 
-A harness is a repo with a `payload/` directory and an `omakase.manifest`.
-Publish it and anyone can install it with `omakase init you/your-harness`.
+A harness is a repo — or a subfolder of one — with a `payload/` directory and
+an `omakase.manifest`. Publish it and anyone can install it with
+`omakase init you/your-harness` (or `omakase init you/your-repo/path/to/harness`).
 See [authoring](docs/authoring.md).
 
 ## Documentation

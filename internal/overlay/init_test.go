@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Yuncun/omakase-harness/internal/hook"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
@@ -23,12 +24,38 @@ import (
 
 // summaryTail is the fixed stdout block every successful init prints after its
 // +/^/~/- lines.
-const summaryTail = "omakase: ignores -> .git/info/exclude; hooks installed; new worktrees auto-install the harness. Nothing to commit.\n" +
+const summaryTail = "omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.\n" +
 	"omakase: see the whole harness any time with  omakase status\n" +
 	"omakase: to customize, fork the harness source (clone -> edit -> publish) and\n" +
 	"         init from your copy; do not edit injected files in place (overwritten on re-init).\n"
 
+// verifiedLine is init's closing verdict — the three probes run fresh after
+// the install. All-OK here, because stubLefthook writes a real pre-commit
+// stub on `install` and init just placed every file.
+const verifiedLine = "omakase: verified — hooks installed ✓ · files present ✓ · files match ✓\n"
+
 const gateContent = "#!/usr/bin/env bash\necho hi\n"
+
+// uxStanzas is the status-bar + stop-notice wiring block every successful
+// init appends after summaryTail (the features live in the binary, not the
+// payload, so the stanzas are unconditional). The path comes from
+// hook.StableBinPath() at call time, matching what RunInit printed under the
+// test's environment.
+func uxStanzas() string {
+	stable := hook.StableBinPath()
+	if stable == "" {
+		stable = "omakase"
+	}
+	return "omakase: status bar (optional) — one machine-wide segment for every omakase repo; it\n" +
+		"         shows this harness's verified state and goes dark elsewhere. Wire your status\n" +
+		"         line to run:\n" +
+		"           " + stable + " statusline\n" +
+		"         Claude Code: statusLine.command in ~/.claude/settings.json. ccstatusline: a\n" +
+		"         custom-command widget. Copilot CLI: statusLine in ~/.copilot/settings.json.\n" +
+		"omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line harness status when\n" +
+		"         a turn ends. Enable by adding a Stop hook to .claude/settings.json:\n" +
+		"           " + stable + " stop-notice\n"
+}
 
 func sha256hex(b []byte) string {
 	sum := sha256.Sum256(b)
@@ -52,7 +79,11 @@ func chdir(t *testing.T, dir string) {
 
 // initRepo builds an empty-committed git repo in a temp dir, chdirs into it,
 // and returns the dir plus the discovered Repo (root/common/OMK) — the same
-// discovery RunInit performs, so on-disk assertions use matching paths.
+// discovery RunInit performs, so on-disk assertions use matching paths. It
+// also isolates XDG_CACHE_HOME and plants an executable stable binary copy
+// there (stubStableBin): init verifies the dispatchers' exec target and the
+// closing verdict's hook proof checks it, so without one every init would
+// warn and report NOT verified.
 func initRepo(t *testing.T) (string, *state.Repo) {
 	t.Helper()
 	dir := t.TempDir()
@@ -62,11 +93,33 @@ func initRepo(t *testing.T) (string, *state.Repo) {
 	runGitT(t, dir, "config", "commit.gpgsign", "false")
 	runGitT(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
 	chdir(t, dir)
+	stubStableBin(t)
 	repo, err := state.Discover(dir)
 	if err != nil {
 		t.Fatalf("discover: %v", err)
 	}
 	return dir, repo
+}
+
+// stubStableBin points XDG_CACHE_HOME at a temp dir holding an executable
+// file at hook.StableBinPath — the dispatchers' exec target.
+func stubStableBin(t *testing.T) {
+	t.Helper()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	plantStableBin(t)
+}
+
+// plantStableBin writes an executable file at hook.StableBinPath under the
+// CURRENT environment — for tests that set their own XDG_CACHE_HOME.
+func plantStableBin(t *testing.T) {
+	t.Helper()
+	stable := hook.StableBinPath()
+	if err := os.MkdirAll(filepath.Dir(stable), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stable, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // stubLefthook writes a lefthook stub that appends its argv to a log file and
@@ -78,7 +131,14 @@ func stubLefthook(t *testing.T) string {
 	dir := t.TempDir()
 	stub := filepath.Join(dir, "lefthook")
 	log := filepath.Join(dir, "argv.log")
-	writeFile(t, stub, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$LEFTHOOK_STUB_LOG\"\nexit 0\n")
+	// `install` mimics the one side effect init later probes for its closing
+	// verdict: a lefthook-managed pre-commit stub in git's effective hooks dir.
+	writeFile(t, stub, "#!/bin/sh\n"+
+		"printf '%s\\n' \"$*\" >> \"$LEFTHOOK_STUB_LOG\"\n"+
+		"if [ \"$1\" = install ]; then\n"+
+		"  d=\"$(git rev-parse --git-path hooks)\" && mkdir -p \"$d\" && printf '#!/bin/sh\\n# lefthook\\n' > \"$d/pre-commit\"\n"+
+		"fi\n"+
+		"exit 0\n")
 	if err := os.Chmod(stub, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +190,7 @@ func TestFreshInit(t *testing.T) {
 	}
 
 	wantOut := "omakase: placed 1 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
-		"  + .omakase/gates/example.sh\n" + summaryTail
+		"  + .omakase/gates/example.sh\n" + summaryTail + uxStanzas() + verifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "")
 
@@ -139,11 +199,11 @@ func TestFreshInit(t *testing.T) {
 	// is a gitignore pattern that matches at any depth and would hide a
 	// project's own "payload/.omakase" too.
 	wantExclude := "scratch/\n*.tmp\n" +
-		"# >>> omakase-harness >>>\n/.omakase/\n/lefthook.yml\n/.worktreeinclude\n# <<< omakase-harness <<<\n"
+		"# >>> omakase-harness >>>\n/.omakase/\n/.worktreeinclude\n# <<< omakase-harness <<<\n"
 	eq(t, "exclude", readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude")), wantExclude)
 
 	// .worktreeinclude = same block minus .worktreeinclude itself, fresh file.
-	wantWtinc := "# >>> omakase-harness >>>\n.omakase/\nlefthook.yml\n# <<< omakase-harness <<<\n"
+	wantWtinc := "# >>> omakase-harness >>>\n.omakase/\n# <<< omakase-harness <<<\n"
 	eq(t, "wtinc", readFileT(t, filepath.Join(dir, ".worktreeinclude")), wantWtinc)
 
 	// placed.tsv: one row (rel, kind, source label, sha256, 1).
@@ -157,10 +217,14 @@ func TestFreshInit(t *testing.T) {
 		t.Errorf("placed .sh not executable: %v", err)
 	}
 
-	// the three hook-time scripts installed + executable; ledger set clean.
-	for _, name := range []string{"ensure-present.sh", "verify-overlay.sh", "install-guards.sh"} {
-		if info, err := os.Stat(filepath.Join(repo.OMK, name)); err != nil || info.Mode().Perm()&0o100 == 0 {
-			t.Errorf("%s not installed/executable: %v", name, err)
+	// the three dispatchers installed, byte-equal and executable (#98).
+	for _, name := range hook.Names() {
+		hf := filepath.Join(repo.CommonDir, "hooks", name)
+		if !hook.Matches(hf, name) {
+			t.Errorf("%s hook is not the omakase dispatcher", name)
+		}
+		if info, err := os.Stat(hf); err != nil || info.Mode().Perm()&0o100 == 0 {
+			t.Errorf("%s hook not executable: %v", name, err)
 		}
 	}
 	// zero committed footprint.
@@ -169,8 +233,11 @@ func TestFreshInit(t *testing.T) {
 	}
 }
 
-func TestFreshInitInvokesLefthookInstall(t *testing.T) {
-	initRepo(t)
+// lefthook is provisioned (resolved, self-fetching on a miss) but never run
+// at init time: the dispatchers exec `omakase hook`, which runs it at fire
+// time. LEFTHOOK_BIN resolves at tier 1, so the stub must never be spawned.
+func TestInitProvisionsLefthookWithoutRunningIt(t *testing.T) {
+	_, repo := initRepo(t)
 	log := stubLefthook(t)
 	singleGatePayload(t)
 
@@ -178,7 +245,14 @@ func TestFreshInitInvokesLefthookInstall(t *testing.T) {
 	if code := RunInit(nil, &out, &errb); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, errb.String())
 	}
-	eq(t, "lefthook argv", readFileT(t, log), "install\n")
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Errorf("lefthook was spawned at init time: %q", readFileT(t, log))
+	}
+	for _, name := range hook.Names() {
+		if !hook.Matches(filepath.Join(repo.CommonDir, "hooks", name), name) {
+			t.Errorf("%s dispatcher missing after init", name)
+		}
+	}
 }
 
 // ---------------------------------------------------------------- idempotency
@@ -227,7 +301,7 @@ func TestTrackedSkip(t *testing.T) {
 	wantOut := "omakase: placed 1 file(s), overwrote 0 to match payload, skipped 1 committed path(s).\n" +
 		"  + .omakase/gates/example.sh\n" +
 		"  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see init.sh --help): AGENTS.md\n" +
-		summaryTail
+		summaryTail + uxStanzas() + verifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "omakase: SKIP (already tracked) AGENTS.md\n")
 	// committed file left untouched.
@@ -583,7 +657,7 @@ func TestRedundantHooksPathCleared(t *testing.T) {
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "omakase: cleared redundant core.hooksPath (it named the repo's own hooks dir; lefthook refuses to install while it is set — the effective hooks dir is unchanged).\n") {
+	if !strings.Contains(stdout.String(), "omakase: cleared redundant core.hooksPath (it named the repo's own hooks dir; the effective hooks dir is unchanged).\n") {
 		t.Errorf("stdout missing cleared-hooksPath notice:\n%s", stdout.String())
 	}
 	if v := gitOutTrim(dir, "config", "--get", "core.hooksPath"); v != "" {
@@ -826,7 +900,6 @@ func TestMultiFilePlacedTsv(t *testing.T) {
 		"/.github/skills/foo/SKILL.md\n" +
 		"/.omakase/\n" +
 		"/AGENTS.md\n" +
-		"/lefthook.yml\n" +
 		"/.worktreeinclude\n" +
 		"# <<< omakase-harness <<<\n"
 	excl := readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude"))
@@ -1138,7 +1211,7 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 
 	wantOut := "omakase: placed 2 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
 		"  + .omakase/gates/example.sh\n" +
-		"  + .worktreeinclude\n" + summaryTail
+		"  + .worktreeinclude\n" + summaryTail + uxStanzas() + verifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
 
 	// exclude block: lists .worktreeinclude.
@@ -1146,7 +1219,6 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 	wantExcludeBlock := "# >>> omakase-harness >>>\n" +
 		"/.omakase/\n" +
 		"/.worktreeinclude\n" +
-		"/lefthook.yml\n" +
 		"# <<< omakase-harness <<<\n"
 	excl := readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude"))
 	if !strings.Contains(excl, wantExcludeBlock) {
@@ -1159,7 +1231,6 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 	wantWtinc := "custom-pattern\n" +
 		"# >>> omakase-harness >>>\n" +
 		".omakase/\n" +
-		"lefthook.yml\n" +
 		"# <<< omakase-harness <<<\n"
 	eq(t, "wtinc", readFileT(t, filepath.Join(dir, ".worktreeinclude")), wantWtinc)
 
@@ -1168,40 +1239,39 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 	}
 }
 
-// TestStatuslineAndStopNoticeStanzas: the closing summary appends the statusline
-// + stop-notice + worktree-guard wire-up stanzas iff those files exist in the
-// repo after placement, including the repo-root path line.
-func TestStatuslineAndStopNoticeStanzas(t *testing.T) {
-	_, repo := initRepo(t)
+// TestUXStanzas: the closing summary always appends the status-bar and
+// stop-notice wiring stanzas (those features live in the binary), with a
+// deterministic stable path under a pinned XDG_CACHE_HOME, and appends the
+// worktree-guard stanza iff that script exists in the repo after placement.
+func TestUXStanzas(t *testing.T) {
+	_, _ = initRepo(t)
 	stubLefthook(t)
 	p := t.TempDir()
 	t.Setenv("OMAKASE_PAYLOAD", p)
-	writeFile(t, filepath.Join(p, ".omakase", "bin", "omakase-statusline.sh"), "#!/bin/sh\n")
-	writeFile(t, filepath.Join(p, ".omakase", "bin", "omakase-stop-notice.sh"), "#!/bin/sh\n")
 	writeFile(t, filepath.Join(p, ".omakase", "bin", "omakase-worktree-guard.sh"), "#!/bin/sh\n")
 
 	var stdout, stderr strings.Builder
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	// WalkDir lexical: statusline < stop-notice < worktree-guard. The path line
-	// prints repo.Root (git's normalized toplevel), not the temp dir.
-	wantOut := "omakase: placed 3 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
-		"  + .omakase/bin/omakase-statusline.sh\n" +
-		"  + .omakase/bin/omakase-stop-notice.sh\n" +
+	stable := hook.StableBinPath()
+	wantOut := "omakase: placed 1 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
 		"  + .omakase/bin/omakase-worktree-guard.sh\n" +
 		summaryTail +
-		"omakase: status line — compose the scorecard into your existing bar (it never\n" +
-		"         takes over the bar). Add this command to your status-line script:\n" +
-		"           bash " + repo.Root + "/.omakase/bin/omakase-statusline.sh\n" +
-		"         Claude Code: your ~/.claude statusLine script. Copilot CLI: ~/.copilot. tmux: status-right.\n" +
-		"omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line 'harness active'\n" +
-		"         status when a turn ends. Enable by adding a Stop hook to .claude/settings.json:\n" +
-		"           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-stop-notice.sh\n" +
+		"omakase: status bar (optional) — one machine-wide segment for every omakase repo; it\n" +
+		"         shows this harness's verified state and goes dark elsewhere. Wire your status\n" +
+		"         line to run:\n" +
+		"           " + stable + " statusline\n" +
+		"         Claude Code: statusLine.command in ~/.claude/settings.json. ccstatusline: a\n" +
+		"         custom-command widget. Copilot CLI: statusLine in ~/.copilot/settings.json.\n" +
+		"omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line harness status when\n" +
+		"         a turn ends. Enable by adding a Stop hook to .claude/settings.json:\n" +
+		"           " + stable + " stop-notice\n" +
 		"omakase: worktree guard (Claude Code only, opt-in) — while other worktrees are active,\n" +
 		"         denies edits to product files in the MAIN checkout before they happen. Enable by\n" +
 		"         adding a PreToolUse hook (matcher \"Edit|Write\") to .claude/settings.json:\n" +
-		"           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh\n"
+		"           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh\n" +
+		verifiedLine
 	eq(t, "summary with stanzas", stdout.String(), wantOut)
 }
 
@@ -1271,84 +1341,89 @@ func TestWtincWriteModeMatchesBashFreshInode(t *testing.T) {
 	}
 }
 
-// -------------------------------------------------- lefthook.yml heal snapshot
+// -------------------------------------------------- pre-#98 scheme migration
 //
-// `lefthook install` writes an example lefthook.yml skeleton when the repo
-// ships no config. It lives outside placed.tsv, so init snapshots it to
-// $OMK/lefthook.yml as the worktree heal source (issue #80). The stub lefthook
-// does not write the skeleton, so these tests seed the untracked lefthook.yml
-// directly; the snapshot step reads it after the install call regardless.
+// A repo initialized under the old scheme carries lefthook stubs (with
+// spliced guard blocks) in .git/hooks, per-repo hook-time scripts under
+// $OMK, the lefthook.yml heal snapshot, lefthook's stub-sync checksum, and
+// the untracked skeleton lefthook.yml. One init converts it: dispatchers
+// replace the stubs, every leftover is deleted.
 
-// TestLefthookSkeletonSnapshotted: an untracked lefthook.yml present after
-// install is copied byte-for-byte to $OMK/lefthook.yml, gitignored (clean
-// status).
-func TestLefthookSkeletonSnapshotted(t *testing.T) {
+func TestMigrationRetiresOldScheme(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
 	singleGatePayload(t)
-	skeleton := "# EXAMPLE USAGE:\n#   see https://lefthook.dev\n"
-	writeFile(t, filepath.Join(dir, "lefthook.yml"), skeleton)
+
+	// Old-scheme hooks: lefthook stubs with the guard blocks spliced in.
+	oldStub := "#!/bin/sh\n# >>> omakase-harness fail-closed >>>\n# guard\n# <<< omakase-harness fail-closed <<<\ncall_lefthook run \"pre-commit\" \"$@\"\n"
+	writeFile(t, filepath.Join(repo.CommonDir, "hooks", "pre-commit"), oldStub)
+	// Old-scheme per-repo machinery.
+	for _, name := range []string{"ensure-present.sh", "install-guards.sh", "verify-overlay.sh", "lefthook.yml"} {
+		writeFile(t, filepath.Join(repo.OMK, name), "# old machinery\n")
+	}
+	writeFile(t, filepath.Join(repo.CommonDir, "info", "lefthook.checksum"), "abc123\n")
+	writeFile(t, filepath.Join(dir, "lefthook.yml"), "# EXAMPLE USAGE:\n#   see https://lefthook.dev\n")
 
 	var stdout, stderr strings.Builder
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	eq(t, "lefthook.yml snapshot", readFileT(t, filepath.Join(repo.OMK, "lefthook.yml")), skeleton)
-	if out := gitStdout(repo.Root, "status", "--porcelain"); out != "" {
-		t.Errorf("git status not clean: %q", out)
+	for _, name := range hook.Names() {
+		if !hook.Matches(filepath.Join(repo.CommonDir, "hooks", name), name) {
+			t.Errorf("%s hook is not the dispatcher after migration", name)
+		}
+	}
+	for _, gone := range []string{
+		filepath.Join(repo.OMK, "ensure-present.sh"),
+		filepath.Join(repo.OMK, "install-guards.sh"),
+		filepath.Join(repo.OMK, "verify-overlay.sh"),
+		filepath.Join(repo.OMK, "lefthook.yml"),
+		filepath.Join(repo.CommonDir, "info", "lefthook.checksum"),
+		filepath.Join(dir, "lefthook.yml"),
+	} {
+		if _, err := os.Lstat(gone); !os.IsNotExist(err) {
+			t.Errorf("old-scheme leftover survived migration: %s", gone)
+		}
 	}
 }
 
-// TestLefthookSnapshotRefreshedOnReinit: a later init overwrites the snapshot
-// with the current untracked lefthook.yml, so a user's edited config becomes
-// the heal source.
-func TestLefthookSnapshotRefreshedOnReinit(t *testing.T) {
+// A tracked lefthook.yml is the project's own config, never the skeleton:
+// migration leaves it untouched (and the runner will merge it at hook time).
+func TestMigrationKeepsTrackedLefthookYml(t *testing.T) {
 	dir, repo := initRepo(t)
 	stubLefthook(t)
 	singleGatePayload(t)
-	writeFile(t, filepath.Join(dir, "lefthook.yml"), "# EXAMPLE USAGE: v1\n")
-
-	var o1, e1 strings.Builder
-	if code := RunInit(nil, &o1, &e1); code != 0 {
-		t.Fatalf("first init exit = %d; stderr=%q", code, e1.String())
-	}
-	eq(t, "snapshot v1", readFileT(t, filepath.Join(repo.OMK, "lefthook.yml")), "# EXAMPLE USAGE: v1\n")
-
-	edited := "pre-commit:\n  jobs:\n    - run: echo edited\n"
-	writeFile(t, filepath.Join(dir, "lefthook.yml"), edited)
-
-	var o2, e2 strings.Builder
-	if code := RunInit(nil, &o2, &e2); code != 0 {
-		t.Fatalf("second init exit = %d; stderr=%q", code, e2.String())
-	}
-	eq(t, "snapshot refreshed", readFileT(t, filepath.Join(repo.OMK, "lefthook.yml")), edited)
-}
-
-// TestLefthookSnapshotDeletedWhenTracked: when the repo commits its own
-// lefthook.yml, init deletes any stale snapshot (the heal source must never go
-// stale) and leaves the tracked file untouched.
-func TestLefthookSnapshotDeletedWhenTracked(t *testing.T) {
-	dir, repo := initRepo(t)
-	stubLefthook(t)
-	singleGatePayload(t)
-	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(repo.OMK, "lefthook.yml"), "# stale skeleton\n")
-
 	tracked := "pre-commit:\n  jobs:\n    - run: true\n"
 	writeFile(t, filepath.Join(dir, "lefthook.yml"), tracked)
 	runGitT(t, dir, "add", "lefthook.yml")
 	runGitT(t, dir, "commit", "-q", "-m", "track lefthook.yml")
+	writeFile(t, filepath.Join(repo.OMK, "lefthook.yml"), "# stale skeleton snapshot\n")
 
 	var stdout, stderr strings.Builder
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	if _, err := os.Lstat(filepath.Join(repo.OMK, "lefthook.yml")); !os.IsNotExist(err) {
-		t.Errorf("stale lefthook.yml snapshot not deleted for a tracked config: %v", err)
-	}
 	eq(t, "tracked lefthook.yml untouched", readFileT(t, filepath.Join(dir, "lefthook.yml")), tracked)
+	if _, err := os.Lstat(filepath.Join(repo.OMK, "lefthook.yml")); !os.IsNotExist(err) {
+		t.Errorf("stale $OMK/lefthook.yml snapshot not deleted: %v", err)
+	}
+}
+
+// An untracked lefthook.yml WITHOUT the skeleton marker is a user's own
+// personal config — migration must not delete it.
+func TestMigrationKeepsUserLefthookYml(t *testing.T) {
+	dir, repo := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+	own := "pre-commit:\n  jobs:\n    - run: echo mine\n"
+	writeFile(t, filepath.Join(dir, "lefthook.yml"), own)
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	_ = repo
+	eq(t, "user lefthook.yml untouched", readFileT(t, filepath.Join(dir, "lefthook.yml")), own)
 }
 
 // ---------------------------------------------------------------- case-fold collisions (issue #84 gap 2)
@@ -1448,5 +1523,112 @@ func TestInitSkipsTrackedFileDifferingOnlyInCase(t *testing.T) {
 	}
 	if lexists(filepath.Join(repo.OMK, "clobbered", "claude.md")) {
 		t.Error("a clobbered/ backup exists — the overwrite path ran instead of the tracked skip")
+	}
+}
+
+// ------------------------------------------------------------ kept + init
+
+// A repair init leaves a kept file untouched: the file keeps the accepted
+// content, the ledger row (accepted hash) is carried verbatim, the kept mark
+// survives, the snapshot is refreshed from the payload, and both the summary
+// and the verdict say so.
+func TestReinitPreservesKept(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	rel := ".claude/rules/a.md"
+	full := filepath.Join(dir, rel)
+	edited := editFile(t, full)
+	if err := FileKeep(repo, rel); err != nil {
+		t.Fatalf("FileKeep: %v", err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("re-init exit = %d; stderr=%q", code, stderr.String())
+	}
+
+	eq(t, "kept file content", readFileT(t, full), edited)
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	idx := placedIndex(rows, rel)
+	if idx < 0 {
+		t.Fatalf("kept ledger row dropped by re-init")
+	}
+	eq(t, "carried Hash", rows[idx].Hash, state.HashOf(full))
+	eq(t, "carried Enabled", rows[idx].Enabled, "1")
+	if !lexists(filepath.Join(repo.OMK, "kept", rel)) {
+		t.Errorf("kept mark lost across re-init")
+	}
+	eq(t, "snapshot refreshed from payload", readFileT(t, filepath.Join(repo.OMK, "payload-snapshot", rel)), "rule a\n")
+	if !strings.Contains(stdout.String(), "kept (yours") {
+		t.Errorf("init summary missing the kept line:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "1 kept (yours)") {
+		t.Errorf("init verdict missing the kept count:\n%s", stdout.String())
+	}
+	if lexists(filepath.Join(repo.OMK, "snapshot-carry")) {
+		t.Errorf("snapshot-carry temp dir left behind")
+	}
+}
+
+// Consent survives a source switch, including a kept path the new source no
+// longer ships: file, row, kept mark, and a carried-over snapshot (so
+// --restore still works offline) all persist.
+func TestInitNewSourceKeepsDroppedKeptPath(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	rel := ".claude/rules/a.md"
+	full := filepath.Join(dir, rel)
+	edited := editFile(t, full)
+	if err := FileKeep(repo, rel); err != nil {
+		t.Fatalf("FileKeep: %v", err)
+	}
+
+	// The "new source": a payload that no longer ships a.md.
+	p2 := t.TempDir()
+	writeFile(t, filepath.Join(p2, ".claude", "rules", "b.md"), "rule b v2\n")
+	t.Setenv("OMAKASE_PAYLOAD", p2)
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("re-init exit = %d; stderr=%q", code, stderr.String())
+	}
+
+	eq(t, "kept file survives the payload drop", readFileT(t, full), edited)
+	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
+	if placedIndex(rows, rel) < 0 {
+		t.Fatalf("kept row dropped with the payload")
+	}
+	// The prior snapshot copy was carried, so restore still works offline.
+	eq(t, "carried snapshot", readFileT(t, filepath.Join(repo.OMK, "payload-snapshot", rel)), "rule a\n")
+	if err := FileRestore(repo, rel); err != nil {
+		t.Fatalf("FileRestore after source switch: %v", err)
+	}
+	eq(t, "restored content", readFileT(t, full), "rule a\n")
+}
+
+// A missing kept file is repaired with the ACCEPTED copy, not the harness
+// version — init means "match what you've consented to".
+func TestReinitRefillsMissingKeptFile(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	rel := ".claude/rules/a.md"
+	full := filepath.Join(dir, rel)
+	edited := editFile(t, full)
+	if err := FileKeep(repo, rel); err != nil {
+		t.Fatalf("FileKeep: %v", err)
+	}
+	if err := os.Remove(full); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("re-init exit = %d; stderr=%q", code, stderr.String())
+	}
+	eq(t, "refilled with accepted copy", readFileT(t, full), edited)
+	// The summary must not claim "left untouched" for a file init just
+	// refilled (review finding, PR #100).
+	if !strings.Contains(stdout.String(), "was missing, your accepted version restored") {
+		t.Errorf("summary wording for a refilled kept file:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "left untouched): "+rel) {
+		t.Errorf("summary claims the refilled file was left untouched:\n%s", stdout.String())
 	}
 }

@@ -6,30 +6,7 @@ import (
 	"testing"
 )
 
-var embeddedNames = []string{"ensure-present.sh", "verify-overlay.sh", "install-guards.sh"}
-
-// TestEmbeddedMatchesBin checks that internal/templates/files/*.sh stay
-// duplicates of bin/*.sh: go:embed cannot reach a path outside its own package
-// directory, so they cannot be the same file on disk. This reads both at test
-// time and asserts byte equality; keep the two copies in lockstep by hand
-// whenever a bin/ original changes.
-func TestEmbeddedMatchesBin(t *testing.T) {
-	for _, name := range embeddedNames {
-		t.Run(name, func(t *testing.T) {
-			got, err := files.ReadFile("files/" + name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			want, err := os.ReadFile(filepath.Join("..", "..", "bin", name))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(got) != string(want) {
-				t.Errorf("internal/templates/files/%s has drifted from bin/%s -- keep them in lockstep", name, name)
-			}
-		})
-	}
-}
+var embeddedNames = []string{"omakase-gate.sh"}
 
 // TestEmbeddedGateMatchesPayload checks that
 // internal/templates/files/omakase-gate.sh stays a duplicate of
@@ -95,18 +72,18 @@ func TestInstallAtomic(t *testing.T) {
 // script (the re-run case hit on every `omakase init`).
 func TestInstallOverwritesExisting(t *testing.T) {
 	dir := t.TempDir()
-	dest := filepath.Join(dir, "ensure-present.sh")
+	dest := filepath.Join(dir, "omakase-gate.sh")
 	if err := os.WriteFile(dest, []byte("stale content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := Install("ensure-present.sh", dest); err != nil {
+	if err := Install("omakase-gate.sh", dest); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 	got, err := os.ReadFile(dest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := files.ReadFile("files/ensure-present.sh")
+	want, err := files.ReadFile("files/omakase-gate.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,13 +119,13 @@ func TestInstallFailureLeavesNothingBehind(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(roDir, 0o755) })
-	dest := filepath.Join(roDir, "ensure-present.sh")
+	dest := filepath.Join(roDir, "omakase-gate.sh")
 
-	err := Install("ensure-present.sh", dest)
+	err := Install("omakase-gate.sh", dest)
 	if err == nil {
 		t.Fatal("Install into a read-only dir succeeded, want an error")
 	}
-	want := "omakase: failed to install ensure-present.sh -> " + dest
+	want := "omakase: failed to install omakase-gate.sh -> " + dest
 	if err.Error() != want {
 		t.Errorf("Install error = %q, want %q", err.Error(), want)
 	}

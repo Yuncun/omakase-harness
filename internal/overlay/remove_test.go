@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Yuncun/omakase-harness/internal/hook"
 )
 
 // RunRemove integration tests. Shared helpers (initRepo, stubLefthook,
@@ -32,17 +34,99 @@ const removedLine = "omakase: removed. Hooks uninstalled, placed files deleted, 
 // ---------------------------------------------------------------- full teardown
 
 // TestFullTeardownAfterInit is the round-trip proof: everything a real RunInit
-// placed or wrote is gone or restored afterward. The two hook-stub fixtures are
-// hand-seeded in the shape internal/templates/files/install-guards.sh writes, at
-// mode 644 (non-executable) so the chmod-restoration step is meaningfully
-// exercised rather than a silent no-op — forcing the "before" state to
-// non-executable proves the chmod actually ran instead of the file merely
-// staying as it was.
+// placed or wrote is gone or restored afterward — the three dispatchers
+// deleted (byte-equality proven before each delete), placed files pruned,
+// $OMK wiped, exclude and .worktreeinclude blocks stripped. lefthook is
+// never spawned in either direction on a current-scheme repo: init only
+// provisions it, and remove's uninstall path needs pre-#98 guard-marker
+// evidence.
 func TestFullTeardownAfterInit(t *testing.T) {
 	dir, repo := initRepo(t)
 	log := stubLefthook(t)
 	singleGatePayload(t)
 	writeFile(t, filepath.Join(repo.CommonDir, "info", "exclude"), "scratch/\n*.tmp\n")
+	mustInit(t)
+	for _, name := range hook.Names() {
+		if !hook.Matches(filepath.Join(repo.CommonDir, "hooks", name), name) {
+			t.Fatalf("precondition: %s dispatcher missing after init", name)
+		}
+	}
+
+	var stdout, stderr strings.Builder
+	code := RunRemove(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(), removedLine)
+	eq(t, "stderr", stderr.String(), "")
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Errorf("lefthook was spawned during a current-scheme remove: %q", readFileT(t, log))
+	}
+
+	// All three dispatchers deleted.
+	for _, name := range hook.Names() {
+		if _, err := os.Lstat(filepath.Join(repo.CommonDir, "hooks", name)); !os.IsNotExist(err) {
+			t.Errorf("%s dispatcher survived remove: %v", name, err)
+		}
+	}
+
+	// Placed file gone, empty parent dirs pruned all the way to repo root.
+	if _, err := os.Lstat(filepath.Join(dir, ".omakase")); !os.IsNotExist(err) {
+		t.Errorf(".omakase not pruned away: %v", err)
+	}
+
+	// exclude restored to the pre-init seeded bytes.
+	eq(t, "exclude restored", readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude")), "scratch/\n*.tmp\n")
+
+	// wtinc: init's only content was the derived block, so stripping it
+	// leaves zero bytes -- the file must be deleted.
+	if _, err := os.Lstat(filepath.Join(dir, ".worktreeinclude")); !os.IsNotExist(err) {
+		t.Errorf(".worktreeinclude not deleted (should be empty after strip): %v", err)
+	}
+
+	// $OMK gone.
+	if _, err := os.Lstat(repo.OMK); !os.IsNotExist(err) {
+		t.Errorf("$OMK still exists: %v", err)
+	}
+}
+
+// A foreign hook at a dispatcher name — clobbered by `lefthook install -f`,
+// or any other tool's — is reported and left in place, never deleted.
+func TestRemoveLeavesForeignHook(t *testing.T) {
+	_, repo := initRepo(t)
+	stubLefthook(t)
+	singleGatePayload(t)
+	mustInit(t)
+	foreign := "#!/bin/sh\n# somebody else's hook\n"
+	preCommit := filepath.Join(repo.CommonDir, "hooks", "pre-commit")
+	writeFile(t, preCommit, foreign)
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "foreign hook untouched", readFileT(t, preCommit), foreign)
+	if !strings.Contains(stderr.String(), "not omakase's dispatcher") {
+		t.Errorf("stderr = %q, want the left-in-place note", stderr.String())
+	}
+	// The other two, still byte-equal, are deleted.
+	for _, name := range []string{"pre-push", "post-checkout"} {
+		if _, err := os.Lstat(filepath.Join(repo.CommonDir, "hooks", name)); !os.IsNotExist(err) {
+			t.Errorf("%s dispatcher survived remove: %v", name, err)
+		}
+	}
+}
+
+// A pre-#98 install (lefthook stubs carrying omakase's guard blocks) still
+// tears down: the marker evidence triggers `lefthook uninstall`, and the
+// guard blocks are stripped from any stub the uninstall left behind, with
+// exec bits restored. The fixtures are hand-seeded in the shape the retired
+// install-guards.sh wrote, at mode 644 so the chmod restoration is
+// meaningfully exercised.
+func TestRemoveLegacySchemeStripsGuards(t *testing.T) {
+	_, repo := initRepo(t)
+	log := stubLefthook(t)
+	singleGatePayload(t)
 	mustInit(t)
 
 	preCommit := filepath.Join(repo.CommonDir, "hooks", "pre-commit")
@@ -79,30 +163,11 @@ func TestFullTeardownAfterInit(t *testing.T) {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
 	eq(t, "stdout", stdout.String(), removedLine)
-	eq(t, "stderr", stderr.String(), "")
-	eq(t, "lefthook argv (install then uninstall)", readFileT(t, log), "install\nuninstall\n")
+	// The guard markers are the evidence that gates the uninstall.
+	eq(t, "lefthook argv (uninstall only)", readFileT(t, log), "uninstall\n")
 
-	// Placed file gone, empty parent dirs pruned all the way to repo root.
-	if _, err := os.Lstat(filepath.Join(dir, ".omakase")); !os.IsNotExist(err) {
-		t.Errorf(".omakase not pruned away: %v", err)
-	}
-
-	// exclude restored to the pre-init seeded bytes.
-	eq(t, "exclude restored", readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude")), "scratch/\n*.tmp\n")
-
-	// wtinc: init's only content was the derived block, so stripping it
-	// leaves zero bytes -- the file must be deleted.
-	if _, err := os.Lstat(filepath.Join(dir, ".worktreeinclude")); !os.IsNotExist(err) {
-		t.Errorf(".worktreeinclude not deleted (should be empty after strip): %v", err)
-	}
-
-	// $OMK gone.
-	if _, err := os.Lstat(repo.OMK); !os.IsNotExist(err) {
-		t.Errorf("$OMK still exists: %v", err)
-	}
-
-	// hook stubs: block stripped (only the non-block lines survive), file
-	// restored executable.
+	// The stub lefthook's uninstall deletes nothing, so the strip handles
+	// the stubs: block gone, non-block lines survive, exec bits restored.
 	eq(t, "pre-commit stripped", readFileT(t, preCommit), "#!/bin/sh\ncall_lefthook run \"pre-commit\" \"$@\"\n")
 	eq(t, "post-checkout stripped", readFileT(t, postCheckout), "#!/bin/sh\ncall_lefthook run \"post-checkout\" \"$@\"\n")
 	for _, hf := range []string{preCommit, postCheckout} {
@@ -110,6 +175,10 @@ func TestFullTeardownAfterInit(t *testing.T) {
 		if err != nil || info.Mode().Perm()&0o100 == 0 {
 			t.Errorf("%s not executable after remove: %v", hf, err)
 		}
+	}
+	// Leftover stubs are not dispatchers: reported, never deleted.
+	if !strings.Contains(stderr.String(), "not omakase's dispatcher") {
+		t.Errorf("stderr = %q, want the left-in-place note for the stripped stubs", stderr.String())
 	}
 }
 
@@ -483,17 +552,15 @@ func TestWtincStripModeMatchesBashFreshInode(t *testing.T) {
 // TestLefthookSnapshotGoneAfterRemove: init snapshots the untracked lefthook.yml
 // skeleton to $OMK/lefthook.yml (issue #80); remove's whole-$OMK wipe takes it
 // with the rest of the shared dir, so no dedicated teardown is needed.
+// A stale $OMK/lefthook.yml heal snapshot from a pre-#98 install goes with
+// the rest of the $OMK wipe.
 func TestLefthookSnapshotGoneAfterRemove(t *testing.T) {
-	dir, repo := initRepo(t)
+	_, repo := initRepo(t)
 	stubLefthook(t)
 	singleGatePayload(t)
-	writeFile(t, filepath.Join(dir, "lefthook.yml"), "# EXAMPLE USAGE:\n#   skeleton\n")
 	mustInit(t)
-
 	snap := filepath.Join(repo.OMK, "lefthook.yml")
-	if _, err := os.Stat(snap); err != nil {
-		t.Fatalf("precondition: init did not snapshot lefthook.yml: %v", err)
-	}
+	writeFile(t, snap, "# EXAMPLE USAGE:\n#   stale pre-#98 snapshot\n")
 
 	var stdout, stderr strings.Builder
 	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
@@ -719,4 +786,33 @@ func TestRemoveSkipsTrackedFileDifferingOnlyInCase(t *testing.T) {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
 	eq(t, "tracked file survives", readFileT(t, filepath.Join(dir, "CLAUDE.md")), "tracked\n")
+}
+
+// remove leaves a kept file on disk (it is the user's content) and says so;
+// everything else — the sibling placed file, $OMK including kept/, the
+// exclude block — is torn down as usual.
+func TestRemoveLeavesKeptFileOnDisk(t *testing.T) {
+	dir, repo := placeTwoRules(t)
+	a, b := ".claude/rules/a.md", ".claude/rules/b.md"
+	fullA := filepath.Join(dir, a)
+	edited := editFile(t, fullA)
+	if err := FileKeep(repo, a); err != nil {
+		t.Fatalf("FileKeep: %v", err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("remove exit = %d; stderr=%q", code, stderr.String())
+	}
+
+	eq(t, "kept file survives remove", readFileT(t, fullA), edited)
+	if lexists(filepath.Join(dir, b)) {
+		t.Errorf("non-kept placed file survived remove")
+	}
+	if lexists(repo.OMK) {
+		t.Errorf("$OMK survived remove")
+	}
+	if !strings.Contains(stdout.String(), a) || !strings.Contains(stdout.String(), "kept") {
+		t.Errorf("remove did not report the kept file:\n%s", stdout.String())
+	}
 }

@@ -157,13 +157,12 @@ func filesEqual(a, b string) bool {
 //     shared dir like ".github" is excluded file-by-file, never wholesale);
 //     otherwise the bare top-level segment is added (an omakase-owned dir
 //     is excluded wholesale).
-//  2. "lefthook.yml", unless lefthookTracked.
-//  3. ".worktreeinclude", unless wtincTracked.
+//  2. ".worktreeinclude", unless wtincTracked.
 //
 // Each entry is then suffixed with a trailing "/" iff isDir reports true
 // for it. isDir receives the bare entry string and resolves it against the
 // repo root itself; DerivePrefixes has no notion of a repo root.
-func DerivePrefixes(placed []string, sharedTopdirs []string, isDir func(string) bool, lefthookTracked, wtincTracked bool) []string {
+func DerivePrefixes(placed []string, sharedTopdirs []string, isDir func(string) bool, wtincTracked bool) []string {
 	var entries []string
 	seen := make(map[string]bool)
 	add := func(p string) {
@@ -196,9 +195,6 @@ func DerivePrefixes(placed []string, sharedTopdirs []string, isDir func(string) 
 		} else {
 			add(top)
 		}
-	}
-	if !lefthookTracked {
-		add("lefthook.yml")
 	}
 	if !wtincTracked {
 		add(".worktreeinclude")

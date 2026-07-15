@@ -1,9 +1,9 @@
 # Authoring a custom harness
 
-A custom harness is a git repository with a `payload/` tree. `payload/` is copied onto a target
-on install; everything else in the repo (README, tests, `bin/`) stays in the custom harness. To
-install one from a URL or path with `--source`, it also needs an `omakase.manifest` at the root
-(see [Reference](reference.md#manifest)).
+A custom harness is a `payload/` tree with an `omakase.manifest` beside it
+(see [Reference](reference.md#manifest)), kept in a git repository — at the repo root, or in a
+subfolder of a repo that holds other things too. `payload/` is copied onto a target on install;
+everything else (README, tests, `bin/`) stays in the custom harness.
 
 A `--source` install layers the omakase **base harness's payload** under your `payload/` (your
 delta wins on overlap), so you ship only your delta and **rely on base machinery without keeping
@@ -13,8 +13,11 @@ wiring references a `.omakase/*.sh` neither you nor the base harness ships,
 `init` refuses and places nothing — so a typo surfaces at install, not as an exit-127 on commit.
 
 Start from the base harness repo or an existing custom harness, edit `payload/`, and publish. The
-smallest worked example is [`examples/sample-harness/`](../examples/sample-harness/) — one rule,
-one gate, and the wiring; copy it and edit the three files under `payload/`. There is no capture
+worked example is [`examples/starter-harness/`](../examples/starter-harness/) — the harness
+omakase's own development runs: placed agent rules, two pre-commit gates, a cached pre-push
+test gate, and the wiring. Try it with
+`omakase init Yuncun/omakase-harness/examples/starter-harness`, then copy it and swap in your
+own rules and gates. There is no capture
 tool: build `payload/` and `omakase.manifest` by hand, moving in whatever files a project already
 has in place.
 
@@ -26,12 +29,14 @@ The base harness exposes exactly **one stable primitive a custom harness may ref
 or repurposed out from under your wiring; anything else is an internal refactor you never see.
 
 The other base scripts are **optional UX, opt-in, and not part of the contract**:
-`omakase-banner.sh` (the branded box), `omakase-statusline.sh` (the status-line segment),
-`omakase-stop-notice.sh` (the Stop-hook notice), and `omakase-worktree-guard.sh` (a Claude
-Code PreToolUse hook that denies edits to product files in the main checkout while other
+`omakase-banner.sh` (the branded box) and `omakase-worktree-guard.sh` (a Claude Code
+PreToolUse hook that denies edits to product files in the main checkout while other
 worktrees are active — the pre-edit half of worktree discipline; a commit-time allowlist
 gate is the fail-closed half). Wire them only if you want them — skip them and your
 harness still works. Do not build wiring that depends on their names being stable.
+The status-bar segment and the Stop-hook notice are **binary subcommands**, not placed
+scripts: `omakase statusline` and `omakase stop-notice` (init prints the wiring). They
+probe the shared ledger and hooks, so a custom harness gets them for free.
 
 The install- and build-time wiring guard rejects any wiring that references a `.omakase/*.sh`
 the surface does not ship, so a drift between your wiring and the surface **fails closed at
@@ -105,6 +110,14 @@ everything else omakase places is owned.
 A harness installs from any git URL:
 
     init.sh --source https://github.com/you/your-harness
+
+It does not need a repository of its own — a subfolder of a repo you already have works:
+
+    init.sh you/your-repo/path/to/harness
+    init.sh --source https://github.com/you/your-repo//path/to/harness
+
+The `//` marks where the repo ends and the subfolder begins; the `omakase.manifest` sits next
+to `payload/` inside that subfolder.
 
 The manifest needs a `name`; `version` is optional. Distributing as a Claude Code plugin
 adds the `omakase` skills over the same scripts; the install commands are in the
