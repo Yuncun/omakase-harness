@@ -5,7 +5,17 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added
+- **First-class Copilot CLI wiring** — `stop-notice` accepts `--host copilot`
+  and emits Copilot's non-blocking warning contract; `init` prints concrete
+  Copilot status-line and `Stop` hook wiring.
+
 ### Changed
+- **Copilot repository settings classify as harness config** —
+  `.github/copilot/settings*.json` is included in the ledger and committed
+  harness audit instead of falling through to `other`.
+- **The obsolete Claude-only worktree guard is removed from the base payload**;
+  custom harnesses keep worktree policy in their portable commit-time gate.
 - **`examples/sample-harness` replaced by `examples/starter-harness`** — the worked
   example is no longer a toy: it is the harness omakase development itself uses
   (self-hosted via the subfolder-source install). It places agent rules for

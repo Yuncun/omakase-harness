@@ -15,6 +15,7 @@ Anything not listed falls to `other` and is left to the project — that boundar
 | `.claude/agents/*` | Claude | `agent` ⬅ |
 | `.claude/hooks/*` | Claude | `gate` ⬅ |
 | `.github/copilot-instructions.md` | Copilot | `doc` |
+| `.github/copilot/settings*.json` | Copilot | `config` |
 | `.github/instructions/*` | Copilot | `rule` |
 | `.github/skills/*` | Copilot | `skill` |
 | `.github/prompts/*` | Copilot | `prompt` ⬅ |

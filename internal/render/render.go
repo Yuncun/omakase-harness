@@ -57,9 +57,8 @@ var schemeRe = regexp.MustCompile(`^[a-z][a-z]*://`)
 // The bar answers exactly one question — is the harness verifiably running
 // here — and carries no workflow advice: worktree discipline (don't edit
 // the main checkout while agent sessions run in worktrees) is harness
-// POLICY, enforced by a custom harness's commit gate and the opt-in
-// pre-edit guard, not by the base bar (#85 discussion; retired the #86
-// soft layer).
+// POLICY, enforced by a custom harness's commit gate, not by the base bar
+// (#85 discussion; retired the #86 soft layer).
 func Statusline(st *probe.State, o Opts) string {
 	if st == nil || !st.Installed {
 		return ""

@@ -1,7 +1,6 @@
 // The `omakase stop-notice` verb: the end-of-turn status line for the
-// developer driving a Claude Code session, emitted as a Stop-hook
-// systemMessage. Deterministic — no LLM, no API tokens — and it never
-// blocks the turn: every failure path exits 0 silently.
+// developer driving a Claude Code or Copilot CLI session. Deterministic —
+// no LLM, no API tokens — and it never blocks the turn.
 //
 // It speaks only when something changed since the last turn: a new session,
 // a hook run that finished this turn (the ledger's newest run epoch
@@ -23,7 +22,20 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/render"
 )
 
-func runStopNotice(stdin io.Reader, stdout io.Writer) int {
+type stopNoticeHost string
+
+const (
+	stopNoticeClaude  stopNoticeHost = "claude"
+	stopNoticeCopilot stopNoticeHost = "copilot"
+)
+
+func runStopNotice(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	hostMode, err := resolveStopNoticeHost(args)
+	if err != nil {
+		fmt.Fprintf(stderr, "omakase: stop-notice: %v\n", err)
+		return 2
+	}
+
 	scrubGitEnv()
 	host := readHostJSON(stdin)
 	cwd := cwdFromHostJSON(host)
@@ -69,12 +81,35 @@ func runStopNotice(stdin io.Reader, stdout io.Writer) int {
 	if msg == "" {
 		return 0
 	}
+	if hostMode == stopNoticeCopilot {
+		fmt.Fprintln(stderr, msg)
+		return 2
+	}
 	out, err := json.Marshal(map[string]string{"systemMessage": msg})
 	if err != nil {
 		return 0
 	}
 	fmt.Fprintln(stdout, string(out))
 	return 0
+}
+
+func resolveStopNoticeHost(args []string) (stopNoticeHost, error) {
+	value := os.Getenv("OMAKASE_HOOK_HOST")
+	if len(args) > 0 {
+		if len(args) != 2 || args[0] != "--host" {
+			return "", fmt.Errorf("usage: omakase stop-notice [--host claude|copilot]")
+		}
+		value = args[1]
+	}
+	if value == "" {
+		value = string(stopNoticeClaude)
+	}
+	switch stopNoticeHost(value) {
+	case stopNoticeClaude, stopNoticeCopilot:
+		return stopNoticeHost(value), nil
+	default:
+		return "", fmt.Errorf("unknown host %q (want claude or copilot)", value)
+	}
 }
 
 // readMarker reads the announce marker: session \t epoch \t signature.

@@ -32,6 +32,8 @@ eq ".github/chatmodes/coach.chatmode.md"     prompt
 eq ".github/hooks/check-verify-gate.py"      gate
 eq ".github/hooks/check-verify-gate.json"    gate
 eq ".github/copilot-instructions.md"         doc
+eq ".github/copilot/settings.json"           config
+eq ".github/copilot/settings.local.json"     config
 # Boundary that protects the project's OWN .github content: a non-harness .github file
 # must fall through to 'other', never be mistaken for an injected harness artifact.
 eq ".github/workflows/ci.yml"                other
@@ -52,12 +54,16 @@ has ".github/hooks"                   "${HARNESS_LOC_DIRS[@]}"
 has ".github/prompts"                 "${HARNESS_LOC_DIRS[@]}"
 has ".github/chatmodes"               "${HARNESS_LOC_DIRS[@]}"
 has ".github/copilot-instructions.md" "${HARNESS_LOC_FILES[@]}"
+has ".github/copilot/settings.json"   "${HARNESS_LOC_FILES[@]}"
+has ".github/copilot/settings.local.json" "${HARNESS_LOC_FILES[@]}"
 has ".github/skills"                  "${HARNESS_COMMITTED_GLOBS[@]}"
 has ".github/instructions"            "${HARNESS_COMMITTED_GLOBS[@]}"
 has ".github/hooks"                   "${HARNESS_COMMITTED_GLOBS[@]}"
 has ".github/prompts"                 "${HARNESS_COMMITTED_GLOBS[@]}"
 has ".github/chatmodes"               "${HARNESS_COMMITTED_GLOBS[@]}"
 has ".github/copilot-instructions.md" "${HARNESS_COMMITTED_GLOBS[@]}"
+has ".github/copilot/settings.json"   "${HARNESS_COMMITTED_GLOBS[@]}"
+has ".github/copilot/settings.local.json" "${HARNESS_COMMITTED_GLOBS[@]}"
 
 # Anti-drift lock: every dir omakase IMPORTS (HARNESS_LOC_DIRS) must classify to a real kind.
 # This catches a new capture-dir added without a matching kind_of case — the exact bug where

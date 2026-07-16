@@ -88,7 +88,7 @@ var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 		return runStatusline(os.Stdin, stdout)
 	},
 	"stop-notice": func(argv []string, stdout, stderr io.Writer) int {
-		return runStopNotice(os.Stdin, stdout)
+		return runStopNotice(argv[2:], os.Stdin, stdout, stderr)
 	},
 }
 
@@ -106,7 +106,7 @@ const usage = `usage: omakase <command>
 commands used by your tools, not by you:
   hook <name>      run the git-hook logic (called by the hooks init installs)
   statusline       one-line status segment (wire into your status bar)
-  stop-notice      end-of-turn notice (wire as a Claude Code Stop hook)
+  stop-notice      end-of-turn notice (wire as a Claude or Copilot Stop hook)
   mcp              menu server (wire into your agent's MCP config)
 `
 

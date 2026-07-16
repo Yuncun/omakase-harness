@@ -46,15 +46,22 @@ func uxStanzas() string {
 	if stable == "" {
 		stable = "omakase"
 	}
+	stableCommand := shellQuote(stable)
 	return "omakase: status bar (optional) — one machine-wide segment for every omakase repo; it\n" +
 		"         shows this harness's verified state and goes dark elsewhere. Wire your status\n" +
 		"         line to run:\n" +
-		"           " + stable + " statusline\n" +
+		"           " + stableCommand + " statusline\n" +
 		"         Claude Code: statusLine.command in ~/.claude/settings.json. ccstatusline: a\n" +
-		"         custom-command widget. Copilot CLI: statusLine in ~/.copilot/settings.json.\n" +
-		"omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line harness status when\n" +
-		"         a turn ends. Enable by adding a Stop hook to .claude/settings.json:\n" +
-		"           " + stable + " stop-notice\n"
+		"         custom-command widget.\n" +
+		"         Copilot CLI (~/.copilot/settings.json; user-level only):\n" +
+		"           {\"statusLine\":{\"type\":\"command\",\"command\":\"" + stableCommand +
+		" statusline\"},\"footer\":{\"showCustom\":true}}\n" +
+		"omakase: end-of-turn notice (opt-in) — a one-line harness status when a turn ends.\n" +
+		"         Claude Code: add a Stop hook to .claude/settings.json that runs:\n" +
+		"           " + stableCommand + " stop-notice\n" +
+		"         Copilot CLI: add .github/hooks/omakase-stop.json:\n" +
+		"           {\"version\":1,\"hooks\":{\"Stop\":[{\"type\":\"command\",\"bash\":\"" +
+		stableCommand + " stop-notice --host copilot\",\"timeoutSec\":10}]}}\n"
 }
 
 func sha256hex(b []byte) string {
@@ -1240,39 +1247,34 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 }
 
 // TestUXStanzas: the closing summary always appends the status-bar and
-// stop-notice wiring stanzas (those features live in the binary), with a
-// deterministic stable path under a pinned XDG_CACHE_HOME, and appends the
-// worktree-guard stanza iff that script exists in the repo after placement.
+// stop-notice wiring stanzas for both hosts (those features live in the
+// binary), with a deterministic stable path under a pinned XDG_CACHE_HOME.
 func TestUXStanzas(t *testing.T) {
 	_, _ = initRepo(t)
 	stubLefthook(t)
 	p := t.TempDir()
 	t.Setenv("OMAKASE_PAYLOAD", p)
-	writeFile(t, filepath.Join(p, ".omakase", "bin", "omakase-worktree-guard.sh"), "#!/bin/sh\n")
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache with space"))
+	plantStableBin(t)
 
 	var stdout, stderr strings.Builder
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
 	stable := hook.StableBinPath()
-	wantOut := "omakase: placed 1 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
-		"  + .omakase/bin/omakase-worktree-guard.sh\n" +
-		summaryTail +
-		"omakase: status bar (optional) — one machine-wide segment for every omakase repo; it\n" +
-		"         shows this harness's verified state and goes dark elsewhere. Wire your status\n" +
-		"         line to run:\n" +
-		"           " + stable + " statusline\n" +
-		"         Claude Code: statusLine.command in ~/.claude/settings.json. ccstatusline: a\n" +
-		"         custom-command widget. Copilot CLI: statusLine in ~/.copilot/settings.json.\n" +
-		"omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line harness status when\n" +
-		"         a turn ends. Enable by adding a Stop hook to .claude/settings.json:\n" +
-		"           " + stable + " stop-notice\n" +
-		"omakase: worktree guard (Claude Code only, opt-in) — while other worktrees are active,\n" +
-		"         denies edits to product files in the MAIN checkout before they happen. Enable by\n" +
-		"         adding a PreToolUse hook (matcher \"Edit|Write\") to .claude/settings.json:\n" +
-		"           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh\n" +
-		verifiedLine
+	stableCommand := shellQuote(stable)
+	wantOut := "omakase: placed 0 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
+		summaryTail + uxStanzas() + verifiedLine
 	eq(t, "summary with stanzas", stdout.String(), wantOut)
+	if strings.Contains(stdout.String(), "worktree guard") {
+		t.Fatal("retired worktree-guard wiring still printed")
+	}
+	if !strings.Contains(stdout.String(), stableCommand+" stop-notice --host copilot") {
+		t.Fatal("Copilot stop-notice wiring missing")
+	}
+	if !strings.Contains(stdout.String(), `"statusLine":{"type":"command","command":"`+stableCommand+` statusline"}`) {
+		t.Fatal("complete Copilot statusLine wiring missing")
+	}
 }
 
 // ------------------------------------------------------------ exclude/wtinc write mode

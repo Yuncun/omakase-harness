@@ -18,6 +18,7 @@ var CommittedGlobs = []string{
 	"AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", ".claude",
 	"lefthook.yml", "lefthook-local.yml", ".lefthook", ".omakase",
 	".husky", ".githooks", ".github/copilot-instructions.md",
+	".github/copilot/settings.json", ".github/copilot/settings.local.json",
 	".github/instructions", ".github/skills", ".github/prompts",
 	".github/chatmodes", ".github/hooks",
 }
@@ -52,6 +53,9 @@ func KindOf(path string) string {
 		return "gate"
 	case bashGlobMatch(".github/copilot-instructions.md", path):
 		return "doc"
+	case bashGlobMatch(".github/copilot/settings.json", path),
+		bashGlobMatch(".github/copilot/settings.*.json", path):
+		return "config"
 	// --- host-agnostic ---
 	case bashGlobMatch("lefthook-local.yml", path), bashGlobMatch("lefthook.yml", path), bashGlobMatch(".omakase/gates/*", path):
 		return "gate"
