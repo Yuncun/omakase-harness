@@ -41,7 +41,7 @@ func Run(repo *state.Repo, header, footprint string) int {
 }
 
 // LiveItems re-derives the Item list and machinery count from the repo on disk:
-// the placed ledger, the resolved lefthook gate rows, the disabled-gates set,
+// the placed ledger, the declared gate rows, the disabled-gates set,
 // and the repo's tracked harness files (so a committed harness file shows as a
 // view-only row). It is called both to seed the model and, via the reload
 // closure, after every successful toggle so the screen reflects the new state.

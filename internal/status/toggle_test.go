@@ -31,7 +31,7 @@ func installOne(t *testing.T, rows string, files map[string]string) (string, *st
 	return dir, repo
 }
 
-// --disable/--enable on harness machinery (.omakase/, lefthook wiring) must
+// --disable/--enable on harness machinery (.omakase/, omakase.manifest) must
 // refuse with exit 2 and delete nothing — the CLI surface classifies machinery
 // the same way the TUI and MCP menu do, so `--disable .omakase` can no longer
 // wipe the gate primitive and brick every commit.

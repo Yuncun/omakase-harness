@@ -31,7 +31,7 @@ type Toggler interface {
 const keyHint = "↑↓ move · →← expand · enter/space toggle · q quit"
 
 // machineryLine is the fixed, non-selectable summary shown when machinery > 0.
-const machineryLine = "· machinery: .omakase/ + lefthook wiring (omakase remove)"
+const machineryLine = "· machinery: .omakase/ + omakase.manifest (omakase remove)"
 
 // Styles. AdaptiveColor lets lipgloss pick the light/dark variant and degrade
 // to plain text when the terminal has no color — never hardcode raw ANSI.
@@ -346,8 +346,8 @@ func (m *Model) afterToggle() {
 	m.clampCursor()
 }
 
-// viewOnlyNote explains why a non-toggleable row can't be toggled: a lefthook
-// job that just runs, or a git-tracked file omakase won't delete.
+// viewOnlyNote explains why a non-toggleable row can't be toggled: a gate that
+// just runs at a hook, or a git-tracked file omakase won't delete.
 func viewOnlyNote(it Item) string {
 	if it.Stage == StagePreCommit || it.Stage == StagePrePush {
 		return "· " + it.Rel + " runs at every commit/push — no omakase consent toggle"
