@@ -228,10 +228,10 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 // renderInjected writes the Injected group's rows and reports whether
 // anything was shown. The group is "empty" — the caller prints the (none)
 // placeholder — when placed.tsv is missing, zero-size, or every row was
-// skipped ($rel empty, or healthy .omakase/ machinery — noise the reader
-// didn't place by hand). An UNHEALTHY machinery row (drifted, or enabled
-// but missing) still renders: a weakened or stale gate must never be
-// invisible at rest.
+// skipped ($rel empty, or healthy machinery — the .omakase/ tree and the
+// omakase.manifest gate declaration, noise the reader didn't place by hand).
+// An UNHEALTHY machinery row (drifted, or enabled but missing) still renders:
+// a weakened or stale gate must never be invisible at rest.
 func renderInjected(w io.Writer, repo *state.Repo, placedPath string, md bool) bool {
 	info, err := os.Stat(placedPath)
 	if err != nil || info.Size() == 0 {
@@ -243,7 +243,7 @@ func renderInjected(w io.Writer, repo *state.Repo, placedPath string, md bool) b
 		if row.Rel == "" {
 			continue
 		}
-		if strings.HasPrefix(row.Rel, ".omakase/") && !machineryNoteworthy(repo, row) {
+		if harness.IsMachinery(row.Rel) && !machineryNoteworthy(repo, row) {
 			continue
 		}
 		shown = true
@@ -252,10 +252,10 @@ func renderInjected(w io.Writer, repo *state.Repo, placedPath string, md bool) b
 	return shown
 }
 
-// machineryNoteworthy reports whether a .omakase/ machinery row deserves a
-// line in the Injected group: drifted from canonical, or enabled but missing
-// from this checkout. A dangling symlink counts as present (writeInjectedRow
-// renders it as an arrow row, not a missing one).
+// machineryNoteworthy reports whether a machinery row deserves a line in the
+// Injected group: drifted from canonical, or enabled but missing from this
+// checkout. A dangling symlink counts as present (writeInjectedRow renders it
+// as an arrow row, not a missing one).
 func machineryNoteworthy(repo *state.Repo, row state.PlacedRow) bool {
 	if state.IsDrifted(repo.Root, row.Rel, row.Hash, row.Enabled) {
 		return true

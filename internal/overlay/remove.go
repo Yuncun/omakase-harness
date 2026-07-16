@@ -2,12 +2,11 @@
 // order: payload default resolution, repo discovery, the hook teardown — a
 // dispatcher is deleted only when byte-equal to what init writes, a foreign
 // hook is reported and never deleted, and a pre-#98 install additionally
-// gets its lefthook uninstall (never fetching) and guard-block strip — the
-// per-worktree sweep — placed-path deletion (ledger-driven, or the pre-0.10
-// payload-enumeration fallback behind an install-proof sentinel) plus the
-// skeleton lefthook.yml and .worktreeinclude teardown, applied to every
-// worktree git lists — the $OMK wipe, the exclude-block strip, and the
-// closing summary line.
+// gets its guard-block strip — the per-worktree sweep — placed-path deletion
+// (ledger-driven, or the pre-0.10 payload-enumeration fallback behind an
+// install-proof sentinel) plus the skeleton lefthook.yml and .worktreeinclude
+// teardown, applied to every worktree git lists — the $OMK wipe, the
+// exclude-block strip, and the closing summary line.
 package overlay
 
 import (
@@ -15,12 +14,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/Yuncun/omakase-harness/internal/hook"
-	"github.com/Yuncun/omakase-harness/internal/lefthook"
 	"github.com/Yuncun/omakase-harness/internal/state"
 	"github.com/Yuncun/omakase-harness/internal/textblock"
 )
@@ -65,23 +62,11 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	hooksDir := filepath.Join(common, "hooks")
 
 	// ---- pre-#98 hook teardown ----
-	// A repo last initialized under the old scheme carries lefthook stubs
-	// with omakase's guard blocks spliced in. Only that marker evidence
-	// triggers the legacy path: `lefthook uninstall` (never fetching, silent
-	// on failure — remove works from a blocked machine) followed by the
-	// guard-block strip for any stub the uninstall could not remove. A
-	// project's own lefthook hooks carry no omakase markers and are never
-	// uninstalled.
-	if legacy := hooksWithGuardMarkers(hooksDir); legacy {
-		if prefix, ok := lefthook.ResolveForRemove(root); ok {
-			args := append(append([]string{}, prefix...), "uninstall")
-			cmd := exec.Command(args[0], args[1:]...)
-			cmd.Dir = root
-			cmd.Stdout = stdout
-			cmd.Stderr = stderr
-			cmd.Run() // failure ignored entirely, no exit-code propagation
-		}
-	}
+	// A repo last initialized under the old scheme carries hook stubs with
+	// omakase's guard blocks spliced in. The guard-block strip below
+	// de-omakases any such stub; omakase no longer bundles a runner, so there
+	// is nothing to `uninstall`. A project's own hooks carry no omakase markers
+	// and are left untouched.
 	umask := currentUmask()
 	for _, hf := range sortedHookFiles(hooksDir) {
 		if !fileRegular(hf) {
@@ -262,15 +247,4 @@ func fileContains(path, substr string) bool {
 		return false
 	}
 	return bytes.Contains(content, []byte(substr))
-}
-
-// hooksWithGuardMarkers reports whether any hook file carries an omakase
-// guard-block marker — the evidence of a pre-#98 install.
-func hooksWithGuardMarkers(hooksDir string) bool {
-	for _, hf := range sortedHookFiles(hooksDir) {
-		if fileContains(hf, "# >>> omakase-harness") {
-			return true
-		}
-	}
-	return false
 }

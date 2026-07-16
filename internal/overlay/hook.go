@@ -1,18 +1,20 @@
 // This file implements the `omakase hook <name>` plumbing verb — what the
 // permanent .git/hooks dispatchers exec (issue #98). In order: env scrub,
 // repo discovery from cwd, the not-installed refusal, then per hook kind:
-// gate hooks (pre-commit, pre-push) verify the harness is complete and run
-// the wired gates through the pinned lefthook, fail-closed at every step;
-// post-checkout heals missing placed files natively (the ensure-present.sh
-// port) and runs any wired post-checkout jobs best-effort, always exit 0.
+// gate hooks (pre-commit, pre-push) verify the harness is complete, forward
+// any stock git-lfs hook, and run the manifest-declared gates through
+// internal/gate, fail-closed at every step; post-checkout heals missing
+// placed files natively (the ensure-present.sh port) and forwards git-lfs
+// best-effort, always exit 0.
 //
 // Write rules (the #98 boundary): this code never writes anything under the
-// shared git dir — hooks, config, and state stay init/remove-only. The only
-// writes here are heal's file placements into the working tree.
+// shared git dir — hooks and dispatcher config stay init/remove-only. The
+// gate ledger under the shared git dir is the one exception (a hook run
+// records verdicts, exactly as omakase-gate.sh did); heal's writes land in
+// the working tree.
 package overlay
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -20,16 +22,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Yuncun/omakase-harness/internal/gate"
 	"github.com/Yuncun/omakase-harness/internal/hook"
-	"github.com/Yuncun/omakase-harness/internal/lefthook"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
-// lfsHooks are the hooks git-lfs installs stubs for. When lefthook runs it
-// forwards `git lfs <hook>` itself (with our forwarded args and stdin); the
-// direct runGitLFS path below covers only the invocations that skip
-// lefthook, so displacing a stock git-lfs hook with a dispatcher loses
-// nothing.
+// lfsHooks are the hooks git-lfs installs stubs for. `omakase hook` forwards
+// `git lfs <hook>` itself for these (with our forwarded args and stdin), so
+// displacing a stock git-lfs hook with a dispatcher loses nothing.
 var lfsHooks = map[string]bool{
 	"pre-push": true, "post-checkout": true, "post-commit": true, "post-merge": true,
 }
@@ -45,7 +45,7 @@ func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	name := argv[0]
 	hookArgs := argv[1:]
-	gate := hook.IsGate(name)
+	isGate := hook.IsGate(name)
 
 	// A leaked GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR (exported for ANOTHER
 	// repo by a wrapper or a parent hook) would misdirect every git call
@@ -63,7 +63,7 @@ func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		repo, err = state.Discover(wd)
 	}
 	if err != nil {
-		if !gate {
+		if !isGate {
 			return 0
 		}
 		fmt.Fprintf(stderr, "omakase: BLOCKING — %s: not inside a git repository; the harness cannot be verified.\n", name)
@@ -74,7 +74,7 @@ func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// init wrote it, so this is a torn state (state wiped without `omakase
 	// remove`) — gate hooks refuse rather than silently running nothing.
 	if !fileRegular(filepath.Join(repo.OMK, "placed.tsv")) {
-		if !gate {
+		if !isGate {
 			return 0
 		}
 		fmt.Fprintf(stderr, "omakase: BLOCKING — %s: omakase hooks are installed but no harness state exists in this repo.\n", name)
@@ -82,133 +82,42 @@ func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	if gate {
+	if isGate {
 		return runGateHook(name, hookArgs, repo, stdin, stdout, stderr)
 	}
 
-	// post-checkout: heal, then wired jobs best-effort. Never fails the
+	// post-checkout: heal, then forward git-lfs best-effort. Never fails the
 	// checkout.
 	healWorktree(repo, stderr)
-	runPostJobs(name, hookArgs, repo.Root, stdin, stdout, stderr)
+	runGitLFS(name, hookArgs, repo.Root, stdin, stdout, stderr, false)
 	return 0
 }
 
-// runGateHook verifies the harness and runs the wired gates for a
-// pre-commit/pre-push fire, fail-closed at every step.
+// runGateHook verifies the harness, forwards any stock git-lfs hook, and runs
+// the manifest-declared gates for a pre-commit/pre-push fire, fail-closed at
+// every step.
 func runGateHook(name string, hookArgs []string, repo *state.Repo, stdin io.Reader, stdout, stderr io.Writer) int {
 	root := repo.Root
 
 	// Fail-closed verify (the verify-overlay.sh port): a wiped or partial
-	// harness must block, not silently skip its gates. LEFTHOOK=0 does NOT
-	// bypass this — the only escape is git's own --no-verify.
+	// harness must block, not silently skip its gates. OMAKASE_SKIP_GATES does
+	// NOT bypass this — the only escape is git's own --no-verify.
 	if code := verifyPresent(root, repo.OMK, stderr); code != 0 {
 		return code
 	}
 
-	// LEFTHOOK=0/false skips the gates by explicit choice (lefthook's own
-	// documented switch) — nothing is SILENTLY skipped.
-	if lefthookDisabled() {
-		return 0
+	// A displaced stock git-lfs hook still owes its LFS run (pre-push): forward
+	// it, fail closed on its failure like the stock stub did. This is not a
+	// gate, so OMAKASE_SKIP_GATES never reaches it. No-op for pre-commit
+	// (which git-lfs does not stub).
+	if code := runGitLFS(name, hookArgs, root, stdin, stdout, stderr, true); code != 0 {
+		return code
 	}
 
-	hasLocal := fileRegular(filepath.Join(root, "lefthook-local.yml"))
-	hasMain := fileRegular(filepath.Join(root, "lefthook.yml"))
-	if !hasLocal && !hasMain {
-		// No wiring at all (a harness that ships no lefthook-local.yml):
-		// nothing gated, but a displaced stock git-lfs hook still owes its
-		// LFS run — fail closed on its failure like the stock stub did.
-		return runGitLFS(name, hookArgs, root, stdin, stdout, stderr, true)
-	}
-
-	// The pinned lefthook, resolved but NEVER fetched — no network at
-	// commit time; init provisioned the cache.
-	lh, ok := lefthook.ResolveForHook(root)
-	if !ok {
-		fmt.Fprintln(stderr, "omakase: BLOCKING — no lefthook found (LEFTHOOK_BIN, PATH, node_modules/.bin, or the omakase cache): the wired gates cannot run.")
-		fmt.Fprintln(stderr, "omakase: restore it with a bare  omakase init  (self-fetches lefthook), or install lefthook / set LEFTHOOK_BIN. Skip once with LEFTHOOK=0; git --no-verify bypasses hooks entirely.")
-		return 1
-	}
-
-	// lefthook forwards `git lfs <hook>` natively ONLY for a hook its config
-	// defines jobs for (verified against the pinned 2.1.9); a gate the
-	// wiring does not name — the base harness ships pre-push commented out —
-	// would silently lose the displaced stock git-lfs hook's job. Forward it
-	// here first, fail closed like the stock stub. (A hook defined only via
-	// lefthook `extends:` escapes the key scan and gets both this forward
-	// and lefthook's; git-lfs runs are idempotent, so the double forward is
-	// spend, not breakage.)
-	wired := (hasLocal && wiringDefinesHook(filepath.Join(root, "lefthook-local.yml"), name)) ||
-		(hasMain && wiringDefinesHook(filepath.Join(root, "lefthook.yml"), name))
-	if !wired {
-		if code := runGitLFS(name, hookArgs, root, stdin, stdout, stderr, true); code != 0 {
-			return code
-		}
-	}
-	return runLefthook(lh, name, hookArgs, root, !hasMain, stdin, stdout, stderr)
-}
-
-// runPostJobs runs a post-checkout's wired jobs and LFS forward,
-// best-effort: every failure is swallowed (heal already warned about
-// anything actionable). lefthook is spawned only when the wiring names this
-// hook — a jobless spawn would print its run header on every checkout. The
-// line-anchored key scan cannot see a hook defined only through lefthook's
-// `extends:`, an accepted miss on this best-effort path (gate hooks always
-// spawn lefthook, so no gate can be skipped that way).
-func runPostJobs(name string, hookArgs []string, root string, stdin io.Reader, stdout, stderr io.Writer) {
-	if lefthookDisabled() {
-		return
-	}
-	hasLocal := fileRegular(filepath.Join(root, "lefthook-local.yml"))
-	hasMain := fileRegular(filepath.Join(root, "lefthook.yml"))
-	wired := (hasLocal && wiringDefinesHook(filepath.Join(root, "lefthook-local.yml"), name)) ||
-		(hasMain && wiringDefinesHook(filepath.Join(root, "lefthook.yml"), name))
-	if wired {
-		if lh, ok := lefthook.ResolveForHook(root); ok {
-			runLefthook(lh, name, hookArgs, root, !hasMain, stdin, stdout, stderr)
-			return // lefthook forwarded `git lfs <hook>` itself
-		}
-	}
-	runGitLFS(name, hookArgs, root, stdin, stdout, stderr, false)
-}
-
-// runLefthook spawns `lefthook run <name> <hook args> --no-auto-install`
-// from the worktree root and returns its exit code. --no-auto-install is
-// load-bearing: without it lefthook's run-time hook sync rewrites
-// .git/hooks mid-run — the #96 corruption — and would clobber the
-// dispatchers. When the repo has no lefthook.yml of its own, LEFTHOOK_CONFIG
-// points lefthook straight at the placed wiring, so no skeleton main config
-// ever needs to exist; a repo that ships its own lefthook.yml keeps
-// lefthook's default resolution (main config + lefthook-local.yml merged),
-// so the project's own jobs still run alongside the harness's.
-func runLefthook(lh, name string, hookArgs []string, root string, useLocalConfig bool, stdin io.Reader, stdout, stderr io.Writer) int {
-	args := append([]string{"run", name}, hookArgs...)
-	args = append(args, "--no-auto-install")
-	cmd := exec.Command(lh, args...)
-	cmd.Dir = root
-	env := make([]string, 0, len(os.Environ())+1)
-	for _, kv := range os.Environ() {
-		// Drop any inherited LEFTHOOK_CONFIG unconditionally: a value leaked
-		// for another repo would run that repo's gates here (same class as
-		// the GIT_DIR scrub above) — including when this repo has its own
-		// lefthook.yml, where the leak would displace the project's config.
-		// The append below (or lefthook's default resolution) is the only
-		// config source.
-		if strings.HasPrefix(kv, "LEFTHOOK_CONFIG=") {
-			continue
-		}
-		env = append(env, kv)
-	}
-	if useLocalConfig {
-		env = append(env, "LEFTHOOK_CONFIG="+filepath.Join(root, "lefthook-local.yml"))
-	}
-	cmd.Env = env
-	cmd.Stdin = stdin
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
-		return exitCode(err)
-	}
-	return 0
+	// Run the manifest-declared gates. gate.RunHook reads the gate list from
+	// the init-written snapshot manifest only (the one-writer invariant on
+	// wiring), records verdicts, and passes a blocking gate's exit code through.
+	return gate.RunHook(name, root, repo.OMK, stdin, stdout, stderr)
 }
 
 // runGitLFS forwards `git lfs <name> <args>` the way a stock git-lfs hook
@@ -336,32 +245,6 @@ func healWorktree(repo *state.Repo, stderr io.Writer) {
 			}
 		}
 	}
-}
-
-// lefthookDisabled reports lefthook's own documented off switch: LEFTHOOK
-// set to "0" or "false".
-func lefthookDisabled() bool {
-	v := os.Getenv("LEFTHOOK")
-	return v == "0" || v == "false"
-}
-
-// wiringDefinesHook reports whether the config file at path has a top-level
-// `<name>:` key — a cheap line-anchored scan, not a YAML parse (a top-level
-// key starts at column 0, so a comment or nested key can never match).
-func wiringDefinesHook(path, name string) bool {
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	for sc.Scan() {
-		if strings.HasPrefix(sc.Text(), name+":") {
-			return true
-		}
-	}
-	return false
 }
 
 // first12 is the sh scripts' ${hash:0:12} — the digest prefix the drift

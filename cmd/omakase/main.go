@@ -84,6 +84,9 @@ var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 	"hook": func(argv []string, stdout, stderr io.Writer) int {
 		return overlay.RunHook(argv[2:], os.Stdin, stdout, stderr)
 	},
+	"record": func(argv []string, stdout, stderr io.Writer) int {
+		return overlay.RunRecord(argv[2:], stdout, stderr)
+	},
 	"statusline": func(argv []string, stdout, stderr io.Writer) int {
 		return runStatusline(os.Stdin, stdout)
 	},
@@ -105,6 +108,7 @@ const usage = `usage: omakase <command>
 
 commands used by your tools, not by you:
   hook <name>      run the git-hook logic (called by the hooks init installs)
+  record <name>    record a PASS for HEAD for a deferred gate (out-of-band)
   statusline       one-line status segment (wire into your status bar)
   stop-notice      end-of-turn notice (wire as a Claude Code Stop hook)
   mcp              menu server (wire into your agent's MCP config)

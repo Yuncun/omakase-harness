@@ -47,7 +47,7 @@ func Run(repo *state.Repo, header, footprint string) int {
 // closure, after every successful toggle so the screen reflects the new state.
 func LiveItems(repo *state.Repo) ([]Item, int) {
 	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
-	gates := GateRows(repo.Root)
+	gates := GateRows(repo.OMK)
 	disabled := overlay.DisabledGates(repo.OMK)
 	tracked := trackedHarness(repo.Root)
 	return BuildItems(rows, gates, disabled, tracked)
@@ -92,7 +92,7 @@ func splitNUL(b []byte) []string {
 // operations against one repo.
 type repoToggler struct{ repo *state.Repo }
 
-func (t *repoToggler) GateOff(name string) error { return overlay.GateOff(t.repo, name, os.Stderr) }
+func (t *repoToggler) GateOff(name string) error { return overlay.GateOff(t.repo, name) }
 func (t *repoToggler) GateOn(name string) error  { return overlay.GateOn(t.repo, name) }
 func (t *repoToggler) FileOff(rel string) error  { return overlay.FileOff(t.repo, rel) }
 

@@ -40,7 +40,7 @@ func TestKindOf(t *testing.T) {
 		{".github/dependabot.yml", "other"},
 
 		// == kind_of: host-agnostic + catch-alls ==
-		{"lefthook-local.yml", "gate"},
+		{"omakase.manifest", "gate"},
 		{".omakase/gates/example.sh", "gate"},
 		{".husky/pre-commit", "gate"},
 		{".githooks/pre-commit", "gate"},
@@ -117,7 +117,7 @@ func TestSharedTopdirs(t *testing.T) {
 func TestCommittedGlobs(t *testing.T) {
 	want := []string{
 		"AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", ".claude",
-		"lefthook.yml", "lefthook-local.yml", ".lefthook", ".omakase",
+		"omakase.manifest", "lefthook.yml", "lefthook-local.yml", ".lefthook", ".omakase",
 		".husky", ".githooks", ".github/copilot-instructions.md",
 		".github/instructions", ".github/skills", ".github/prompts",
 		".github/chatmodes", ".github/hooks",
