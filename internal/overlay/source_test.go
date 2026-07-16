@@ -212,6 +212,20 @@ func TestSourceMissingName(t *testing.T) {
 		"omakase: source '"+src+"' manifest is missing the required 'name:' line\n")
 }
 
+// TestSourceGatesInRootManifest: gates declared in the harness-ROOT
+// omakase.manifest never run (gates live in payload/omakase.manifest), so the
+// install is refused with a pointer there — a doc-following author's gates must
+// not be silently substituted by the base's.
+func TestSourceGatesInRootManifest(t *testing.T) {
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "omakase.manifest"),
+		"name: rooter\n\ngate: block-marker\n  hook: pre-commit\n  run: .omakase/gates/x.sh\n")
+	writeFile(t, filepath.Join(src, "payload", "rule.md"), "a rule\n")
+	commitAll(t, src, "gates-in-root")
+	assertSourceRefusal(t, src,
+		"omakase: source '"+src+"' declares gate: blocks in its root omakase.manifest, which omakase never runs — gates belong in payload/omakase.manifest (placed and snapshotted at init). Move the gate: blocks there and re-run. Nothing was changed.\n")
+}
+
 // TestSourceEmptyPayload: a manifest but no non-empty payload/ tree is refused.
 // git cannot track an empty dir, so payload/ is absent in the clone.
 func TestSourceEmptyPayload(t *testing.T) {

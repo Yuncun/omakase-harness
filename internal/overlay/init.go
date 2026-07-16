@@ -305,11 +305,20 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// lefthook, so installing its dispatchers would displace lefthook's hooks
 	// and silently disable the project's gates. A placed (gitignored)
 	// lefthook-local.yml from a harness is caught earlier by the manifest
-	// guard, not here — this looks only at tracked files.
-	for _, cfg := range []string{"lefthook.yml", "lefthook-local.yml"} {
-		if gitTracked(root, cfg) {
-			incumbent = append(incumbent, cfg+" is git-tracked (the project's own lefthook config)")
+	// guard, not here — this looks only at tracked files. lefthook loads config
+	// under several root names — lefthook.{yml,yaml,toml,json}, the dotted
+	// .lefthook.*, and the -local overlay variants — so the scan covers the
+	// whole set, not just the two .yml names (a repo committing lefthook.yaml
+	// but not yet lefthook-installed would otherwise slip past). The `:(glob)`
+	// pathspec keeps `*` from crossing '/', so it matches only root-level config.
+	cfgOut := gitStdout(root, "ls-files", "--",
+		":(glob)lefthook.*", ":(glob)lefthook-local.*",
+		":(glob).lefthook.*", ":(glob).lefthook-local.*")
+	for _, cfg := range strings.Split(strings.TrimRight(cfgOut, "\n"), "\n") {
+		if cfg == "" {
+			continue
 		}
+		incumbent = append(incumbent, cfg+" is git-tracked (the project's own lefthook config)")
 	}
 	if strings.TrimRight(gitStdout(root, "ls-files", "--", ".lefthook"), "\n") != "" {
 		incumbent = append(incumbent, ".lefthook/ content is git-tracked (the project's own lefthook config)")

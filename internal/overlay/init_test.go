@@ -1371,6 +1371,25 @@ func TestNativeLefthookRefusal(t *testing.T) {
 	eq(t, "tracked lefthook.yml untouched", readFileT(t, filepath.Join(dir, "lefthook.yml")), tracked)
 }
 
+// lefthook loads config under several names beyond lefthook.yml; a tracked
+// lefthook.yaml (committed but not yet `lefthook install`ed) must be caught
+// too, or omakase would install over the empty hooks dir and a later `lefthook
+// install` would collide with its dispatchers.
+func TestNativeLefthookYamlRefusal(t *testing.T) {
+	dir, _ := initRepo(t)
+	singleGatePayload(t)
+	tracked := "pre-commit:\n  jobs:\n    - run: true\n"
+	writeFile(t, filepath.Join(dir, "lefthook.yaml"), tracked)
+	runGitT(t, dir, "add", "lefthook.yaml")
+	runGitT(t, dir, "commit", "-q", "-m", "track lefthook.yaml")
+
+	var stdout, stderr strings.Builder
+	code := RunInit(nil, &stdout, &stderr)
+	assertIncumbentRefusal(t, dir, stderr.String(), code,
+		"  - lefthook.yaml is git-tracked (the project's own lefthook config)\n")
+	eq(t, "tracked lefthook.yaml untouched", readFileT(t, filepath.Join(dir, "lefthook.yaml")), tracked)
+}
+
 // An untracked lefthook.yml WITHOUT the skeleton marker is a user's own
 // personal config — migration must not delete it.
 func TestMigrationKeepsUserLefthookYml(t *testing.T) {
