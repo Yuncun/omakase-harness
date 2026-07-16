@@ -33,6 +33,8 @@ func TestKindOf(t *testing.T) {
 		{".github/hooks/check-verify-gate.py", "gate"},
 		{".github/hooks/check-verify-gate.json", "gate"},
 		{".github/copilot-instructions.md", "doc"},
+		{".github/copilot/settings.json", "config"},
+		{".github/copilot/settings.local.json", "config"},
 		// Boundary that protects the project's OWN .github content: a
 		// non-harness .github file must fall through to 'other', never be
 		// mistaken for an injected harness artifact.
@@ -119,6 +121,7 @@ func TestCommittedGlobs(t *testing.T) {
 		"AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", ".claude",
 		"lefthook.yml", "lefthook-local.yml", ".lefthook", ".omakase",
 		".husky", ".githooks", ".github/copilot-instructions.md",
+		".github/copilot/settings.json", ".github/copilot/settings.local.json",
 		".github/instructions", ".github/skills", ".github/prompts",
 		".github/chatmodes", ".github/hooks",
 	}

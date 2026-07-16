@@ -841,21 +841,22 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	if stable == "" {
 		stable = "omakase" // no resolvable home: fall back to PATH wiring
 	}
+	stableCommand := shellQuote(stable)
 	fmt.Fprintln(stdout, "omakase: status bar (optional) — one machine-wide segment for every omakase repo; it")
 	fmt.Fprintln(stdout, "         shows this harness's verified state and goes dark elsewhere. Wire your status")
 	fmt.Fprintln(stdout, "         line to run:")
-	fmt.Fprintf(stdout, "           %s statusline\n", stable)
+	fmt.Fprintf(stdout, "           %s statusline\n", stableCommand)
 	fmt.Fprintln(stdout, "         Claude Code: statusLine.command in ~/.claude/settings.json. ccstatusline: a")
-	fmt.Fprintln(stdout, "         custom-command widget. Copilot CLI: statusLine in ~/.copilot/settings.json.")
-	fmt.Fprintln(stdout, "omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line harness status when")
-	fmt.Fprintln(stdout, "         a turn ends. Enable by adding a Stop hook to .claude/settings.json:")
-	fmt.Fprintf(stdout, "           %s stop-notice\n", stable)
-	if fileRegular(filepath.Join(root, ".omakase", "bin", "omakase-worktree-guard.sh")) {
-		fmt.Fprintln(stdout, "omakase: worktree guard (Claude Code only, opt-in) — while other worktrees are active,")
-		fmt.Fprintln(stdout, "         denies edits to product files in the MAIN checkout before they happen. Enable by")
-		fmt.Fprintln(stdout, "         adding a PreToolUse hook (matcher \"Edit|Write\") to .claude/settings.json:")
-		fmt.Fprintln(stdout, "           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh")
-	}
+	fmt.Fprintln(stdout, "         custom-command widget.")
+	fmt.Fprintln(stdout, "         Copilot CLI (~/.copilot/settings.json; user-level only):")
+	fmt.Fprintf(stdout, "           {\"statusLine\":{\"type\":\"command\",\"command\":%q},\"footer\":{\"showCustom\":true}}\n",
+		stableCommand+" statusline")
+	fmt.Fprintln(stdout, "omakase: end-of-turn notice (opt-in) — a one-line harness status when a turn ends.")
+	fmt.Fprintln(stdout, "         Claude Code: add a Stop hook to .claude/settings.json that runs:")
+	fmt.Fprintf(stdout, "           %s stop-notice\n", stableCommand)
+	fmt.Fprintln(stdout, "         Copilot CLI: add .github/hooks/omakase-stop.json:")
+	fmt.Fprintf(stdout, "           {\"version\":1,\"hooks\":{\"Stop\":[{\"type\":\"command\",\"bash\":%q,\"timeoutSec\":10}]}}\n",
+		stableCommand+" stop-notice --host copilot")
 
 	// ---- prove, don't assert ----
 	// The closing line is the three status-bar proofs run fresh against what
@@ -865,8 +866,13 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		verdict = nil
 	}
+
 	fmt.Fprintln(stdout, render.InitVerdict(verdict))
 	return 0
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
 // placeFile places one payload file at root/rel: creates the dest parent,
