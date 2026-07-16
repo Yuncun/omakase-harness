@@ -2,8 +2,8 @@
 # The HOOK-TIME READERS' contract — since issue #98 both jobs live in the binary:
 # `omakase hook post-checkout` is the self-heal (the retired ensure-present.sh) and
 # the fail-closed presence verify runs inside `omakase hook pre-commit` (the retired
-# verify-overlay.sh); LEFTHOOK=0 skips the gate run but NEVER the verify, giving this
-# suite a verify-only invocation. The reading/healing contract itself is unchanged —
+# verify-overlay.sh); OMAKASE_SKIP_GATES=1 skips the gate run but NEVER the verify, giving
+# this suite a verify-only invocation. The reading/healing contract itself is unchanged —
 # every "contract capture" note below freezes the OBSERVED v1 behavior the Go port
 # preserves, not new policy.
 # Scenarios:
@@ -27,11 +27,10 @@
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
-LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 # The binary that carries the hook-time readers (heal + verify).
 OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
 [ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
-verify(){ ( cd "$1" && LEFTHOOK=0 "$OMAKASE" hook pre-commit ); }   # verify-only gate run
+verify(){ ( cd "$1" && OMAKASE_SKIP_GATES=1 "$OMAKASE" hook pre-commit ); }   # verify-only gate run
 heal(){ ( cd "$1" && "$OMAKASE" hook post-checkout ); }
 TMP="${TMPDIR:-/tmp}/omakase-state-readers-test.$$"
 FAILED=0
@@ -46,7 +45,6 @@ newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config us
 common_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)"; }
 col(){ awk -F'\t' -v p="$2" -v c="$3" '$1==p{print $c; exit}' "$1"; }   # $1=placed.tsv $2=path $3=column
 
-export PATH="$(dirname "$LEFTHOOK"):$PATH"
 mkdir -p "$TMP"
 
 # ---------- shared plain-init fixture for V (fail-closed) + H (heal) ----------

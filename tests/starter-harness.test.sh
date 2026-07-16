@@ -34,7 +34,7 @@ if command -v go >/dev/null 2>&1; then
   export GOCACHE="$(go env GOCACHE)"
 fi
 
-newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }
+newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init && git branch -M main ); }
 
 echo "== starter-harness: copy into a repo, install via --source, gates fire =="
 
@@ -101,24 +101,40 @@ if command -v go >/dev/null 2>&1; then
   OUT=$(cd "$REPO" && git commit -m go 2>&1); rc=$?
   [ "$rc" -eq 0 ] && pass "formatted .go commit passes (gofmt + go vet)" || { fail "formatted .go commit blocked (rc=$rc)"; echo "$OUT" | sed 's/^/      /'; }
 
-  # The pre-push go-test gate, exercised through a real push to a bare remote: a failing
-  # test blocks the push, and a passing one is cached (the second push at the same HEAD
-  # reuses the PASS).
+  # The pre-push go-test gate, against a bare remote. newrepo put the repo on
+  # `main` and the push below creates origin/main, so the gate resolves a base ref
+  # and its glob (*.go go.mod go.sum) is exercised IN SCOPE, not via the unscoped
+  # fallback. origin/main stays behind the commits below, so base...HEAD carries a
+  # .go change and a re-fired gate at the same HEAD can actually reach the cache.
+  OMK_BIN="$XDG_CACHE_HOME/omakase/bin/current/omakase"
   REMOTE="$TMP/remote.git"; rm -rf "$REMOTE"; git init -q --bare "$REMOTE"
-  ( cd "$REPO" && git remote add origin "$REMOTE" 2>/dev/null; git push -q -u origin HEAD 2>/dev/null )
-  # gofmt-clean so the pre-commit go-checks gate lets it through; the pre-push
-  # go-test gate is what must fail on it.
+  ( cd "$REPO" && git remote add origin "$REMOTE" 2>/dev/null; git push -q -u origin main 2>/dev/null )
+
+  # A failing test blocks the push (gofmt-clean so the pre-commit go-checks gate
+  # lets it through; the pre-push go-test gate is what must fail on it).
   printf 'package main\n\nimport "testing"\n\nfunc TestFails(t *testing.T) {\n\tt.Fatal("boom")\n}\n' > "$REPO/main_test.go"
   ( cd "$REPO" && git add main_test.go && git commit -q -m "failing test" )
   OUT=$(cd "$REPO" && git push origin HEAD 2>&1); rc=$?
   [ "$rc" -ne 0 ] && pass "push BLOCKED when go test fails" || { fail "push not blocked on failing test (rc=$rc)"; echo "$OUT" | sed 's/^/      /'; }
 
+  # A passing test at a new HEAD — committed but NOT pushed, so origin/main still
+  # trails it and the glob range stays non-empty.
   ( cd "$REPO" && printf 'package main\n\nimport "testing"\n\nfunc TestOK(t *testing.T) {}\n' > main_test.go && git add main_test.go && git commit -q -m "passing test" )
+
+  # Fire the pre-push gate directly (a git push would advance origin/main and empty
+  # the glob range): the first fire runs go test in scope and records the PASS.
+  OUT=$(cd "$REPO" && printf '' | "$OMK_BIN" hook pre-push origin "$REMOTE" 2>&1); rc=$?
+  [ "$rc" -eq 0 ] && pass "go-test gate ran in glob scope and passed (recorded)" || { fail "go-test gate failed on a passing test (rc=$rc)"; echo "$OUT" | sed 's/^/      /'; }
+
+  # Second fire at the SAME HEAD MUST short-circuit on the cached PASS. This is a
+  # HARD assertion (the old both-branches-pass check could never fail): if caching
+  # regressed, the 'cached' note is absent and this fails.
+  OUT=$(cd "$REPO" && printf '' | "$OMK_BIN" hook pre-push origin "$REMOTE" 2>&1); rc=$?
+  { [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'cached'; } && pass "go-test PASS reused (cached) at the same HEAD" || { fail "cached PASS not reused on a re-fired pre-push (rc=$rc)"; echo "$OUT" | sed 's/^/      /'; }
+
+  # The real push at that HEAD is allowed — the cached PASS short-circuits the gate.
   OUT=$(cd "$REPO" && git push origin HEAD 2>&1); rc=$?
-  [ "$rc" -eq 0 ] && pass "push ALLOWED when go test passes" || { fail "push blocked on passing test (rc=$rc)"; echo "$OUT" | sed 's/^/      /'; }
-  # Re-push at the SAME commit: the cached PASS short-circuits (no re-run).
-  OUT=$(cd "$REPO" && git push origin HEAD 2>&1); rc=$?
-  { [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'cached'; } && pass "go-test PASS reused (cached) at the same commit" || pass "go-test re-push allowed (cache note optional)"
+  [ "$rc" -eq 0 ] && pass "push ALLOWED when go test passes (cached)" || { fail "push blocked on passing test (rc=$rc)"; echo "$OUT" | sed 's/^/      /'; }
 else
   echo "  SKIP: no Go toolchain — go-checks/go-test scenarios not run"
 fi

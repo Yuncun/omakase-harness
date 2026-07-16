@@ -12,8 +12,9 @@
 #   S3 re-init — format still holds, no duplicate path rows
 #   S4 gate runs — every ledger.tsv row is 4 fields, field 1 numeric (epoch)
 # Behavioral coverage (kind classification, hash-matches-content, enabled=0
-# semantics, gate caching/verdicts/concurrency) lives in tests/placed.test.sh and
-# internal/gate's Go unit tests — NOT re-asserted here.
+# semantics, gate caching/verdicts) lives in tests/placed.test.sh; the ledger's
+# concurrent-append atomicity is proven in internal/gate's Go unit tests
+# (TestLedgerConcurrentAppendsDoNotTear) — NOT re-asserted here.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"

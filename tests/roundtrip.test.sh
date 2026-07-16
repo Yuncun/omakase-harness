@@ -6,7 +6,7 @@
 # omakase invocation and compared after:
 #   .git/info/exclude byte-identical (cmp), working-tree listing identical (the
 #   untracked user file survives with its bytes, every placed file gone), the
-#   .git/hooks state identical (lefthook stubs gone, pre-existing hook files
+#   .git/hooks state identical (omakase dispatchers gone, pre-existing hook files
 #   untouched byte-for-byte), and $OMK ($(git rev-parse --git-common-dir)/omakase)
 #   deleted.
 # Scenarios:
@@ -23,7 +23,6 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
 REMOVE="$HERE/../bin/remove.sh"
-LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 TMP="${TMPDIR:-/tmp}/omakase-roundtrip-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
@@ -36,7 +35,6 @@ else sha_file(){ sha256sum "$1" | awk '{print $1}'; }; fi
 newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }
 common_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)"; }
 
-export PATH="$(dirname "$LEFTHOOK"):$PATH"
 mkdir -p "$TMP"
 
 # Sorted listing of every working-tree path (files, dirs, symlinks), .git excluded.
