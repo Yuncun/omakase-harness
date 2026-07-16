@@ -41,9 +41,9 @@ check into a git hook).
                               (interactive on a terminal; static page when piped)
     remove.sh                 delete the placed files, uninstall hooks, restore the repo
 
-`init` fetches lefthook (the gate runner) if absent — a pinned, checksum-verified binary
-in a per-machine cache; the same mechanism self-provisions the omakase binary itself when
-a clone has no Go. `omakase diff` shows what you changed in any placed file (read-only);
+`init` self-provisions the omakase binary itself when a clone has no Go — a pinned,
+checksum-verified binary fetched once into a per-machine cache. `omakase diff` shows what
+you changed in any placed file (read-only);
 keep your version with `omakase status --keep <path>` or put the harness's back with
 `--restore`. `omakase mcp` serves the same status + consent menu inside Claude Code
 and Copilot CLI. Flags and environment variables are in the
@@ -54,9 +54,24 @@ and Copilot CLI. Flags and environment variables are in the
 Gates run through git hooks, so they fire on commit and push whatever produced the
 change: an agent, an IDE, or a plain `git` command. `init` writes one permanent
 dispatcher per hook; at commit time it verifies the harness is complete (fail closed)
-and runs the wired gates through a pinned lefthook. Nothing rewrites a hook file after
-init — not lefthook, not omakase itself. Installed files are never staged or committed,
-and `remove` reverses every step.
+and runs the gates the harness declares in `omakase.manifest`. Nothing rewrites a hook
+file after init. Installed files are never staged or committed, and `remove` reverses
+every step.
+
+A harness declares its gates in `omakase.manifest` — one `gate:` block per check:
+
+```
+gate: go-test
+  hook: pre-push
+  run: go test ./...
+  glob: *.go go.mod go.sum
+  cacheable: true
+```
+
+`hook:` is `pre-commit` or `pre-push`; `run:` is any command (run via `sh` from the repo
+root; non-zero blocks the commit or push); `glob:` scopes the gate to matching changed
+files; `cacheable:` reuses a PASS until HEAD moves. Skip one gate once with
+`OMAKASE_SKIP_<NAME>=1`, or every gate once with `OMAKASE_SKIP_GATES=1` (both audited).
 
 Editing a placed file is expected, not an error: the status surfaces turn amber,
 `omakase diff` shows exactly what you changed, and you either keep your version or
