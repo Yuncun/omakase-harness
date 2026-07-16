@@ -84,7 +84,6 @@ func commitAll(t *testing.T, dir, msg string) {
 func TestSourceFlagBasicMerge(t *testing.T) {
 	dir, repo := initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	base := useBasePayloadDir(t)
 	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
 
@@ -142,7 +141,6 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 func TestSourceNoRecommendsNoLine(t *testing.T) {
 	_, repo := initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	useBasePayloadDir(t) // empty base
 
 	src := newSourceRepo(t)
@@ -230,7 +228,6 @@ func TestSourceEmptyPayload(t *testing.T) {
 func TestSourceCRLFManifest(t *testing.T) {
 	_, repo := initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
@@ -261,7 +258,6 @@ func TestSourceCRLFManifest(t *testing.T) {
 func TestSourceRefPinBranch(t *testing.T) {
 	dir, repo := initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
@@ -292,7 +288,6 @@ func TestSourceRefPinBranch(t *testing.T) {
 func TestSourceRefPinTag(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
@@ -348,7 +343,6 @@ func TestSourceRefNotFound(t *testing.T) {
 func TestRememberedSourceRoundTrip(t *testing.T) {
 	dir, repo := initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
@@ -385,7 +379,6 @@ func TestRememberedSourceRoundTrip(t *testing.T) {
 func TestBranchPinNotPreserved(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
@@ -419,7 +412,6 @@ func TestBranchPinNotPreserved(t *testing.T) {
 func TestSourceCacheRefreshPicksUpNewCommit(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
@@ -455,7 +447,6 @@ func TestSourceCacheRefreshPicksUpNewCommit(t *testing.T) {
 func TestSourceCorruptCacheReclone(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
@@ -556,7 +547,6 @@ func TestFetchSourceReusesCacheWhenRefreshFails(t *testing.T) {
 func TestMergeSourceWinsOverlap(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	base := useBasePayloadDir(t)
 	writeFile(t, filepath.Join(base, ".omakase", "gates", "example.sh"), "BASE\n")
 
@@ -577,7 +567,6 @@ func TestMergeSourceWinsOverlap(t *testing.T) {
 func TestMergeSymlinkOverFile(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	base := useBasePayloadDir(t)
 	writeFile(t, filepath.Join(base, "CLAUDE.md"), "base regular doc\n")
 
@@ -605,7 +594,6 @@ func TestMergeSymlinkOverFile(t *testing.T) {
 func TestMergeFileOverSymlink(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	base := useBasePayloadDir(t)
 	writeFile(t, filepath.Join(base, "target.md"), "base target untouched\n")
 	if err := os.Symlink("target.md", filepath.Join(base, "link.md")); err != nil {
@@ -635,7 +623,6 @@ func TestMergeFileOverSymlink(t *testing.T) {
 func TestMergeStagingCleaned(t *testing.T) {
 	initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	useBasePayloadDir(t)
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
@@ -660,18 +647,18 @@ func TestMergeStagingCleaned(t *testing.T) {
 	}
 }
 
-// TestSourceWiringGuardPostMerge: the fail-closed wiring guard runs on the merged
-// payload — a source wiring a .omakase/*.sh that neither it nor the base ships is
-// refused after the merge, with nothing placed.
-func TestSourceWiringGuardPostMerge(t *testing.T) {
+// TestSourceLefthookLocalRefusalPostMerge: the manifest guard runs on the merged
+// payload — a source that still ships lefthook-local.yml is refused after the
+// merge with the migration message, and nothing is placed.
+func TestSourceLefthookLocalRefusalPostMerge(t *testing.T) {
 	dir, repo := initRepo(t)
 	srcTestEnv(t)
-	useBasePayloadDir(t) // base ships no such script either
+	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: bad-wiring\n")
+	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: legacy-wiring\n")
 	writeFile(t, filepath.Join(src, "payload", "lefthook-local.yml"),
-		"pre-commit:\n  jobs:\n    - name: ghost\n      run: bash .omakase/gates/this-script-does-not-exist.sh\n")
+		"pre-commit:\n  jobs:\n    - name: ghost\n      run: bash .omakase/gates/example.sh\n")
 	commitAll(t, src, "src")
 
 	var stdout, stderr strings.Builder
@@ -679,8 +666,8 @@ func TestSourceWiringGuardPostMerge(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "this-script-does-not-exist.sh") {
-		t.Errorf("wiring refusal did not name the missing script:\n%s", stderr.String())
+	if !strings.Contains(stderr.String(), "lefthook-local.yml, which omakase no longer reads") {
+		t.Errorf("refusal did not carry the migration message:\n%s", stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".omakase")); err == nil {
 		t.Error("placed files despite the wiring refusal")
@@ -854,7 +841,6 @@ func TestDefaultPayloadHonorsBasePayloadEnv(t *testing.T) {
 func TestSourceMergeBaseFromEnv(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t) // OMAKASE_PAYLOAD="" among others
-	stubLefthook(t)
 	clearBasePayloadOverride(t)
 
 	base := t.TempDir()
@@ -915,7 +901,6 @@ func TestSourceMergeBaseMissing(t *testing.T) {
 func TestBareRunRememberedSourceSurvivesBasePayloadEnv(t *testing.T) {
 	dir, repo := initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	clearBasePayloadOverride(t)
 
 	base := t.TempDir()
@@ -957,7 +942,6 @@ func TestBareRunRememberedSourceSurvivesBasePayloadEnv(t *testing.T) {
 func TestSourceSubpathMerge(t *testing.T) {
 	dir, repo := initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	base := useBasePayloadDir(t)
 	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
 
@@ -1013,7 +997,6 @@ func TestSourceSubpathMerge(t *testing.T) {
 func TestSourceSubpathMissingDir(t *testing.T) {
 	dir, _ := initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
@@ -1038,7 +1021,6 @@ func TestSourceSubpathMissingDir(t *testing.T) {
 func TestSourceSubpathManifestValidatedAtSubroot(t *testing.T) {
 	_, _ = initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
@@ -1060,7 +1042,6 @@ func TestSourceSubpathManifestValidatedAtSubroot(t *testing.T) {
 func TestSourceSubpathTraversalRefused(t *testing.T) {
 	_, _ = initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
@@ -1099,7 +1080,6 @@ func TestSourceSubpathTraversalRefused(t *testing.T) {
 func TestSourceSubpathRememberedRoundTrip(t *testing.T) {
 	dir, repo := initRepo(t)
 	srcTestEnv(t)
-	stubLefthook(t)
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)

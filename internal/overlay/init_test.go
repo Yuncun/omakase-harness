@@ -30,8 +30,8 @@ const summaryTail = "omakase: ignores -> .git/info/exclude; new worktrees auto-i
 	"         init from your copy; do not edit injected files in place (overwritten on re-init).\n"
 
 // verifiedLine is init's closing verdict — the three probes run fresh after
-// the install. All-OK here, because stubLefthook writes a real pre-commit
-// stub on `install` and init just placed every file.
+// the install. All-OK here, because init writes the dispatchers directly and
+// plants the stable binary (initRepo) and just placed every file.
 const verifiedLine = "omakase: verified — hooks installed ✓ · files present ✓ · files match ✓\n"
 
 const gateContent = "#!/usr/bin/env bash\necho hi\n"
@@ -122,31 +122,6 @@ func plantStableBin(t *testing.T) {
 	}
 }
 
-// stubLefthook writes a lefthook stub that appends its argv to a log file and
-// exits 0, points LEFTHOOK_BIN at it, and returns the log path. Lets tests
-// assert the `install` invocation without a real lefthook, and confirm a
-// refusal never reached `lefthook install` (empty log).
-func stubLefthook(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	stub := filepath.Join(dir, "lefthook")
-	log := filepath.Join(dir, "argv.log")
-	// `install` mimics the one side effect init later probes for its closing
-	// verdict: a lefthook-managed pre-commit stub in git's effective hooks dir.
-	writeFile(t, stub, "#!/bin/sh\n"+
-		"printf '%s\\n' \"$*\" >> \"$LEFTHOOK_STUB_LOG\"\n"+
-		"if [ \"$1\" = install ]; then\n"+
-		"  d=\"$(git rev-parse --git-path hooks)\" && mkdir -p \"$d\" && printf '#!/bin/sh\\n# lefthook\\n' > \"$d/pre-commit\"\n"+
-		"fi\n"+
-		"exit 0\n")
-	if err := os.Chmod(stub, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("LEFTHOOK_BIN", stub)
-	t.Setenv("LEFTHOOK_STUB_LOG", log)
-	return log
-}
-
 // singleGatePayload returns a payload dir shipping exactly one file,
 // .omakase/gates/example.sh, and points OMAKASE_PAYLOAD at it.
 func singleGatePayload(t *testing.T) string {
@@ -177,7 +152,6 @@ func eq(t *testing.T, label, got, want string) {
 
 func TestFreshInit(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	// Seed a known exclude so the whole-file assertion does not depend on git's
 	// version-specific default template.
@@ -233,20 +207,15 @@ func TestFreshInit(t *testing.T) {
 	}
 }
 
-// lefthook is provisioned (resolved, self-fetching on a miss) but never run
-// at init time: the dispatchers exec `omakase hook`, which runs it at fire
-// time. LEFTHOOK_BIN resolves at tier 1, so the stub must never be spawned.
-func TestInitProvisionsLefthookWithoutRunningIt(t *testing.T) {
+// init writes the permanent dispatchers directly (no runner to provision):
+// each gate hook is byte-equal to what hook.Dispatcher produces.
+func TestInitWritesDispatchers(t *testing.T) {
 	_, repo := initRepo(t)
-	log := stubLefthook(t)
 	singleGatePayload(t)
 
 	var out, errb strings.Builder
 	if code := RunInit(nil, &out, &errb); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, errb.String())
-	}
-	if _, err := os.Stat(log); !os.IsNotExist(err) {
-		t.Errorf("lefthook was spawned at init time: %q", readFileT(t, log))
 	}
 	for _, name := range hook.Names() {
 		if !hook.Matches(filepath.Join(repo.CommonDir, "hooks", name), name) {
@@ -259,7 +228,6 @@ func TestInitProvisionsLefthookWithoutRunningIt(t *testing.T) {
 
 func TestIdempotentRerun(t *testing.T) {
 	_, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 
 	var o1, e1 strings.Builder
@@ -284,7 +252,6 @@ func TestIdempotentRerun(t *testing.T) {
 
 func TestTrackedSkip(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	p := singleGatePayload(t)
 	writeFile(t, filepath.Join(p, "AGENTS.md"), "payload agents\n")
 	// repo commits its own AGENTS.md (a payload path).
@@ -312,7 +279,6 @@ func TestTrackedSkip(t *testing.T) {
 
 func TestOverwriteClobbered(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 
 	var o1, e1 strings.Builder
@@ -345,7 +311,6 @@ func TestOverwriteClobbered(t *testing.T) {
 // is the only thing preserving a user's own untracked file at a payload path.
 func TestFirstInstallBacksUpUserFile(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	writeFile(t, filepath.Join(dir, ".omakase", "gates", "example.sh"), "MY OWN FILE\n")
 
@@ -365,7 +330,6 @@ func TestFirstInstallBacksUpUserFile(t *testing.T) {
 
 func TestSweepDeletesUnchangedOrphan(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	p := singleGatePayload(t)
 	extra := filepath.Join(p, ".omakase", "gates", "extra.sh")
 	writeFile(t, extra, "#!/bin/sh\necho extra\n")
@@ -394,7 +358,6 @@ func TestSweepDeletesUnchangedOrphan(t *testing.T) {
 
 func TestSweepWarnsEditedOrphan(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	p := singleGatePayload(t)
 	extra := filepath.Join(p, ".omakase", "gates", "extra.sh")
 	writeFile(t, extra, "#!/bin/sh\necho extra\n")
@@ -426,8 +389,6 @@ func TestSweepWarnsEditedOrphan(t *testing.T) {
 
 func TestCutoverRefusalWithoutConfirm(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
-	log := os.Getenv("LEFTHOOK_STUB_LOG")
 	p := singleGatePayload(t)
 	writeFile(t, filepath.Join(p, "AGENTS.md"), "payload agents\n")
 	writeFile(t, filepath.Join(dir, "AGENTS.md"), "COMMITTED\n")
@@ -457,14 +418,10 @@ func TestCutoverRefusalWithoutConfirm(t *testing.T) {
 	if out := gitStdout(dir, "status", "--porcelain"); out != "" {
 		t.Errorf("refusal left changes: %q", out)
 	}
-	if _, err := os.Stat(log); err == nil {
-		t.Error("lefthook install ran despite the cut-over refusal")
-	}
 }
 
 func TestCutoverConfirmed(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	p := singleGatePayload(t)
 	writeFile(t, filepath.Join(p, "AGENTS.md"), "payload agents\n")
 	writeFile(t, filepath.Join(dir, "AGENTS.md"), "COMMITTED\n")
@@ -491,7 +448,6 @@ func TestCutoverConfirmed(t *testing.T) {
 
 func TestCutoverNothingTracked(t *testing.T) {
 	initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 
 	var stdout, stderr strings.Builder
@@ -507,7 +463,6 @@ func TestCutoverNothingTracked(t *testing.T) {
 
 func TestCollisionWarning(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 
 	var o1, e1 strings.Builder
@@ -561,7 +516,6 @@ func assertIncumbentRefusal(t *testing.T, dir string, stderr string, code int, m
 
 func TestIncumbentHuskyDir(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	if err := os.MkdirAll(filepath.Join(dir, ".husky"), 0o755); err != nil {
 		t.Fatal(err)
@@ -573,7 +527,6 @@ func TestIncumbentHuskyDir(t *testing.T) {
 
 func TestIncumbentTrackedHusky(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	// payload also ships .husky: a git-tracked .husky still refuses (the exemption
 	// is for untracked payload-matching content only).
 	p := singleGatePayload(t)
@@ -589,19 +542,17 @@ func TestIncumbentTrackedHusky(t *testing.T) {
 
 func TestIncumbentPrepareScript(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	writeFile(t, filepath.Join(dir, "package.json"), "{ \"scripts\": { \"prepare\": \"husky\" } }\n")
 
 	var out, errb strings.Builder
 	code := RunInit(nil, &out, &errb)
 	assertIncumbentRefusal(t, dir, errb.String(), code,
-		"  - package.json \"prepare\" script wires a hook manager (husky / simple-git-hooks) — npm install would overwrite lefthook's hooks\n")
+		"  - package.json \"prepare\" script wires a hook manager (husky / simple-git-hooks) — npm install would overwrite omakase's hooks\n")
 }
 
 func TestIncumbentForeignHook(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	hook := filepath.Join(repo.CommonDir, "hooks", "pre-push")
 	writeFile(t, hook, "#!/bin/sh\necho team-gate\nexit 1\n")
@@ -611,14 +562,13 @@ func TestIncumbentForeignHook(t *testing.T) {
 	var out, errb strings.Builder
 	code := RunInit(nil, &out, &errb)
 	assertIncumbentRefusal(t, dir, errb.String(), code,
-		"  - pre-push: existing non-lefthook hook in "+filepath.Join(repo.CommonDir, "hooks")+"\n")
+		"  - pre-push: existing hook in "+filepath.Join(repo.CommonDir, "hooks")+"\n")
 	// the foreign hook is left exactly in place (not displaced).
 	eq(t, "foreign hook untouched", readFileT(t, hook), "#!/bin/sh\necho team-gate\nexit 1\n")
 }
 
 func TestIncumbentPrecommitStub(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	writeFile(t, filepath.Join(dir, ".pre-commit-config.yaml"), "repos: []\n")
 	hook := filepath.Join(repo.CommonDir, "hooks", "pre-commit")
@@ -634,7 +584,6 @@ func TestIncumbentPrecommitStub(t *testing.T) {
 
 func TestIncumbentForeignHooksPath(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	runGitT(t, dir, "config", "core.hooksPath", ".husky/_")
 
@@ -649,7 +598,6 @@ func TestIncumbentForeignHooksPath(t *testing.T) {
 // succeeds.
 func TestRedundantHooksPathCleared(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	runGitT(t, dir, "config", "core.hooksPath", ".git/hooks")
 
@@ -669,7 +617,6 @@ func TestRedundantHooksPathCleared(t *testing.T) {
 // lefthook, not treated as a rival manager — init installs cleanly.
 func TestStockLFSAccepted(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	for _, h := range []string{"post-checkout", "post-commit", "post-merge", "pre-push"} {
 		hf := filepath.Join(repo.CommonDir, "hooks", h)
@@ -691,7 +638,6 @@ func TestStockLFSAccepted(t *testing.T) {
 // and names only it, never an exempt LFS event.
 func TestForeignHookAlongsideLFS(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	for _, h := range []string{"post-checkout", "post-commit", "post-merge", "pre-push"} {
 		hf := filepath.Join(repo.CommonDir, "hooks", h)
@@ -707,7 +653,7 @@ func TestForeignHookAlongsideLFS(t *testing.T) {
 	}
 	var out, errb strings.Builder
 	code := RunInit(nil, &out, &errb)
-	assertIncumbentRefusal(t, dir, errb.String(), code, "  - pre-commit: existing non-lefthook hook in ")
+	assertIncumbentRefusal(t, dir, errb.String(), code, "  - pre-commit: existing hook in ")
 	for _, exempt := range []string{"post-checkout", "post-commit", "post-merge", "pre-push"} {
 		if strings.Contains(errb.String(), "  - "+exempt+":") {
 			t.Errorf("refusal wrongly named exempt LFS hook %q:\n%s", exempt, errb.String())
@@ -715,32 +661,70 @@ func TestForeignHookAlongsideLFS(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------- wiring guard
+// ---------------------------------------------------------------- manifest guard
 
-func TestWiringRefusal(t *testing.T) {
+// A payload that still ships lefthook-local.yml is from before the gate module;
+// init refuses with migration instructions and places nothing.
+func TestLefthookLocalRefusal(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
-	log := os.Getenv("LEFTHOOK_STUB_LOG")
 	p := singleGatePayload(t)
-	// A lefthook-local.yml that wires a script the payload does not ship.
 	writeFile(t, filepath.Join(p, "lefthook-local.yml"),
-		"pre-commit:\n  jobs:\n    - name: x\n      run: bash .omakase/bin/missing-script.sh\n")
+		"pre-commit:\n  jobs:\n    - name: x\n      run: bash .omakase/gates/example.sh\n")
 
 	var stdout, stderr strings.Builder
 	code := RunInit(nil, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
-	wantErr := "omakase: hook wiring references script(s) the payload does not ship: .omakase/bin/missing-script.sh\n" +
-		"  These would fail at commit time (exit 127). Fix lefthook-local.yml or ship the script(s). Nothing was placed.\n"
-	eq(t, "wiring refusal stderr", stderr.String(), wantErr)
-	eq(t, "wiring refusal stdout", stdout.String(), "")
-	// Nothing placed; lefthook never resolved/ran (wiring guard precedes it).
-	if _, err := os.Stat(filepath.Join(dir, ".omakase")); err == nil {
-		t.Error("placed files despite wiring refusal")
+	if !strings.Contains(stderr.String(), "lefthook-local.yml, which omakase no longer reads") ||
+		!strings.Contains(stderr.String(), "gate: blocks in omakase.manifest") {
+		t.Errorf("stderr = %q, want the migration message", stderr.String())
 	}
-	if _, err := os.Stat(log); err == nil {
-		t.Error("lefthook install ran despite wiring refusal")
+	eq(t, "refusal stdout", stdout.String(), "")
+	if _, err := os.Stat(filepath.Join(dir, ".omakase")); err == nil {
+		t.Error("placed files despite the refusal")
+	}
+}
+
+// The "nothing runs undeclared" check moved to the manifest: a gate whose run:
+// names a payload script the harness does not ship refuses the whole harness.
+func TestManifestMissingRunScriptRefusal(t *testing.T) {
+	dir, _ := initRepo(t)
+	p := singleGatePayload(t)
+	writeFile(t, filepath.Join(p, "omakase.manifest"),
+		"name: h\nversion: 1\n\ngate: x\n  hook: pre-commit\n  run: .omakase/gates/missing.sh\n")
+
+	var stdout, stderr strings.Builder
+	code := RunInit(nil, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "does not ship") || !strings.Contains(stderr.String(), "Nothing was changed") {
+		t.Errorf("stderr = %q, want the missing-script refusal", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".omakase")); err == nil {
+		t.Error("placed files despite the refusal")
+	}
+}
+
+// A malformed gate block (unknown key, bad hook, duplicate name) refuses the
+// whole harness before placing anything.
+func TestManifestBadGateRefusal(t *testing.T) {
+	dir, _ := initRepo(t)
+	p := singleGatePayload(t)
+	writeFile(t, filepath.Join(p, "omakase.manifest"),
+		"name: h\nversion: 1\n\ngate: x\n  hook: post-merge\n  run: true\n")
+
+	var stdout, stderr strings.Builder
+	code := RunInit(nil, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "invalid gate declaration") {
+		t.Errorf("stderr = %q, want the invalid-declaration refusal", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".omakase")); err == nil {
+		t.Error("placed files despite the refusal")
 	}
 }
 
@@ -748,7 +732,6 @@ func TestWiringRefusal(t *testing.T) {
 
 func TestLedgerRotation(t *testing.T) {
 	_, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	// Seed a pre-v2 6-column ledger row.
 	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
@@ -777,7 +760,6 @@ func TestLedgerRotation(t *testing.T) {
 // TestLedgerNoRotationFor5Columns).
 func TestLedgerNoRotationFor4Columns(t *testing.T) {
 	_, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
 		t.Fatal(err)
@@ -800,7 +782,6 @@ func TestLedgerNoRotationFor4Columns(t *testing.T) {
 // trigger) must also not rotate — pins the boundary from the other side.
 func TestLedgerNoRotationFor5Columns(t *testing.T) {
 	_, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
 		t.Fatal(err)
@@ -826,7 +807,6 @@ func TestLedgerNoRotationFor5Columns(t *testing.T) {
 // exactly where it was because the rename never happened.
 func TestLedgerRotationFailureContinues(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
 		t.Fatal(err)
@@ -868,7 +848,6 @@ func TestLedgerRotationFailureContinues(t *testing.T) {
 // owned-wholesale exclude derivation.
 func TestMultiFilePlacedTsv(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	p := t.TempDir()
 	t.Setenv("OMAKASE_PAYLOAD", p)
 	writeFile(t, filepath.Join(p, ".claude", "rules", "a.md"), "rule a\n")
@@ -916,7 +895,6 @@ func TestMultiFilePlacedTsv(t *testing.T) {
 // target string's sha256 (not the dereferenced content).
 func TestSymlinkPayloadCarried(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	p := t.TempDir()
 	t.Setenv("OMAKASE_PAYLOAD", p)
 	writeFile(t, filepath.Join(p, "AGENTS.md"), "doctrine\n")
@@ -1010,7 +988,6 @@ func TestNotAGitRepo(t *testing.T) {
 
 func TestPayloadNotFound(t *testing.T) {
 	initRepo(t)
-	stubLefthook(t)
 	missing := filepath.Join(t.TempDir(), "no-such-payload")
 	t.Setenv("OMAKASE_PAYLOAD", missing)
 
@@ -1032,7 +1009,6 @@ func TestPayloadNotFound(t *testing.T) {
 // env > remembered).
 func TestOmakasePayloadOverridesRememberedSource(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t) // sets OMAKASE_PAYLOAD
 	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
 		t.Fatal(err)
@@ -1054,7 +1030,6 @@ func TestOmakasePayloadOverridesRememberedSource(t *testing.T) {
 // path even when set. Two distinct fixtures prove which one is placed.
 func TestPlainInstallPayloadEnvPrecedence(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	clearBasePayloadOverride(t)
 
 	payloadDir := t.TempDir()
@@ -1080,7 +1055,6 @@ func TestPlainInstallPayloadEnvPrecedence(t *testing.T) {
 // only flagged when the payload does not ship one.
 func TestUntrackedHuskyExemptWhenPayloadShips(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	p := singleGatePayload(t)
 	writeFile(t, filepath.Join(p, ".husky", "pre-commit"), "#!/bin/sh\ntrue\n")
 	writeFile(t, filepath.Join(dir, ".husky", "pre-commit"), "#!/bin/sh\ntrue\n") // untracked
@@ -1095,7 +1069,6 @@ func TestUntrackedHuskyExemptWhenPayloadShips(t *testing.T) {
 // work is not the pristine stub — it still refuses.
 func TestCustomizedGitLfsHookRefuses(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	hf := filepath.Join(repo.CommonDir, "hooks", "pre-push")
 	writeFile(t, hf, "#!/bin/sh\nnpm run lint || exit 1\ncommand -v git-lfs >/dev/null 2>&1 || exit 2\ngit lfs pre-push \"$@\"\n")
@@ -1104,7 +1077,7 @@ func TestCustomizedGitLfsHookRefuses(t *testing.T) {
 	}
 	var out, errb strings.Builder
 	code := RunInit(nil, &out, &errb)
-	assertIncumbentRefusal(t, dir, errb.String(), code, "  - pre-push: existing non-lefthook hook in ")
+	assertIncumbentRefusal(t, dir, errb.String(), code, "  - pre-push: existing hook in ")
 	eq(t, "customized hook untouched", readFileT(t, hf), "#!/bin/sh\nnpm run lint || exit 1\ncommand -v git-lfs >/dev/null 2>&1 || exit 2\ngit lfs pre-push \"$@\"\n")
 }
 
@@ -1113,7 +1086,6 @@ func TestCustomizedGitLfsHookRefuses(t *testing.T) {
 // untouched.
 func TestPlaceFileRefusesRealDir(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	// A real directory sitting exactly where the payload's example.sh must land.
 	if err := os.MkdirAll(filepath.Join(dir, ".omakase", "gates", "example.sh"), 0o755); err != nil {
@@ -1146,7 +1118,6 @@ func TestPlaceFileRefusesRealDir(t *testing.T) {
 // must refuse before that write happens.
 func TestPlaceFileRefusesSymlinkedParentInRepo(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 
 	outside := t.TempDir()
 	if err := os.Symlink(outside, filepath.Join(dir, "evil")); err != nil {
@@ -1176,7 +1147,6 @@ func TestPlaceFileRefusesSymlinkedParentInRepo(t *testing.T) {
 // to stderr and writes no wtinc block.
 func TestTrackedWorktreeincludeNotice(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	writeFile(t, filepath.Join(dir, ".worktreeinclude"), "manual\n")
 	runGitT(t, dir, "add", ".worktreeinclude")
@@ -1199,7 +1169,6 @@ func TestTrackedWorktreeincludeNotice(t *testing.T) {
 // placed path. The exclude block, by contrast, does list it.
 func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	p := singleGatePayload(t)
 	writeFile(t, filepath.Join(p, ".worktreeinclude"), "custom-pattern\n")
 
@@ -1245,7 +1214,6 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 // worktree-guard stanza iff that script exists in the repo after placement.
 func TestUXStanzas(t *testing.T) {
 	_, _ = initRepo(t)
-	stubLefthook(t)
 	p := t.TempDir()
 	t.Setenv("OMAKASE_PAYLOAD", p)
 	writeFile(t, filepath.Join(p, ".omakase", "bin", "omakase-worktree-guard.sh"), "#!/bin/sh\n")
@@ -1287,7 +1255,6 @@ func TestUXStanzas(t *testing.T) {
 // end up at `0666 &^ umask` after init's strip+append.
 func TestExcludeWriteModeMatchesBashFreshInode(t *testing.T) {
 	_, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 
 	exclude := filepath.Join(repo.CommonDir, "info", "exclude")
@@ -1317,7 +1284,6 @@ func TestExcludeWriteModeMatchesBashFreshInode(t *testing.T) {
 // all.
 func TestWtincWriteModeMatchesBashFreshInode(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 
 	wtinc := filepath.Join(dir, ".worktreeinclude")
@@ -1351,7 +1317,6 @@ func TestWtincWriteModeMatchesBashFreshInode(t *testing.T) {
 
 func TestMigrationRetiresOldScheme(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 
 	// Old-scheme hooks: lefthook stubs with the guard blocks spliced in.
@@ -1387,33 +1352,29 @@ func TestMigrationRetiresOldScheme(t *testing.T) {
 	}
 }
 
-// A tracked lefthook.yml is the project's own config, never the skeleton:
-// migration leaves it untouched (and the runner will merge it at hook time).
-func TestMigrationKeepsTrackedLefthookYml(t *testing.T) {
-	dir, repo := initRepo(t)
-	stubLefthook(t)
+// A tracked lefthook.yml is the project's own native lefthook config. omakase
+// no longer runs lefthook, so installing its dispatchers would displace the
+// project's own hooks — these repos now join the incumbent refusal (the gate
+// module's one regression). The tracked config is left exactly in place.
+func TestNativeLefthookRefusal(t *testing.T) {
+	dir, _ := initRepo(t)
 	singleGatePayload(t)
 	tracked := "pre-commit:\n  jobs:\n    - run: true\n"
 	writeFile(t, filepath.Join(dir, "lefthook.yml"), tracked)
 	runGitT(t, dir, "add", "lefthook.yml")
 	runGitT(t, dir, "commit", "-q", "-m", "track lefthook.yml")
-	writeFile(t, filepath.Join(repo.OMK, "lefthook.yml"), "# stale skeleton snapshot\n")
 
 	var stdout, stderr strings.Builder
-	if code := RunInit(nil, &stdout, &stderr); code != 0 {
-		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
-	}
+	code := RunInit(nil, &stdout, &stderr)
+	assertIncumbentRefusal(t, dir, stderr.String(), code,
+		"  - lefthook.yml is git-tracked (the project's own lefthook config)\n")
 	eq(t, "tracked lefthook.yml untouched", readFileT(t, filepath.Join(dir, "lefthook.yml")), tracked)
-	if _, err := os.Lstat(filepath.Join(repo.OMK, "lefthook.yml")); !os.IsNotExist(err) {
-		t.Errorf("stale $OMK/lefthook.yml snapshot not deleted: %v", err)
-	}
 }
 
 // An untracked lefthook.yml WITHOUT the skeleton marker is a user's own
 // personal config — migration must not delete it.
 func TestMigrationKeepsUserLefthookYml(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	own := "pre-commit:\n  jobs:\n    - run: echo mine\n"
 	writeFile(t, filepath.Join(dir, "lefthook.yml"), own)
@@ -1504,7 +1465,6 @@ func TestInitSkipsTrackedFileDifferingOnlyInCase(t *testing.T) {
 		t.Skip("needs a case-insensitive filesystem")
 	}
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	writeFile(t, filepath.Join(dir, "CLAUDE.md"), "the repo's own tracked instructions\n")
 	runGitT(t, dir, "add", "CLAUDE.md")
 	runGitT(t, dir, "commit", "-q", "-m", "track CLAUDE.md")

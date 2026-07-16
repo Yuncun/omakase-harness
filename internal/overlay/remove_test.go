@@ -9,9 +9,9 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/hook"
 )
 
-// RunRemove integration tests. Shared helpers (initRepo, stubLefthook,
-// singleGatePayload, writeFile, readFileT, eq, chdir, runGitT, gitStdout,
-// gateContent, summaryTail) live in init_test.go / overlay_test.go.
+// RunRemove integration tests. Shared helpers (initRepo, singleGatePayload,
+// writeFile, readFileT, eq, chdir, runGitT, gitStdout, gateContent,
+// summaryTail) live in init_test.go / overlay_test.go.
 //
 // Walk order matters only for the pre-0.10 payload-enumeration fallback; every
 // other loop in remove.go walks existing state (a ledger, a hooks dir listing)
@@ -19,8 +19,8 @@ import (
 
 // mustInit runs a fresh RunInit and fails the test immediately if it does
 // not exit 0 -- the "a real install already happened" precondition several
-// scenarios below need. Callers already set up stubLefthook + a payload
-// (singleGatePayload or equivalent).
+// scenarios below need. Callers already set up a payload (singleGatePayload
+// or equivalent).
 func mustInit(t *testing.T) {
 	t.Helper()
 	var stdout, stderr strings.Builder
@@ -36,13 +36,9 @@ const removedLine = "omakase: removed. Hooks uninstalled, placed files deleted, 
 // TestFullTeardownAfterInit is the round-trip proof: everything a real RunInit
 // placed or wrote is gone or restored afterward — the three dispatchers
 // deleted (byte-equality proven before each delete), placed files pruned,
-// $OMK wiped, exclude and .worktreeinclude blocks stripped. lefthook is
-// never spawned in either direction on a current-scheme repo: init only
-// provisions it, and remove's uninstall path needs pre-#98 guard-marker
-// evidence.
+// $OMK wiped, exclude and .worktreeinclude blocks stripped.
 func TestFullTeardownAfterInit(t *testing.T) {
 	dir, repo := initRepo(t)
-	log := stubLefthook(t)
 	singleGatePayload(t)
 	writeFile(t, filepath.Join(repo.CommonDir, "info", "exclude"), "scratch/\n*.tmp\n")
 	mustInit(t)
@@ -59,9 +55,6 @@ func TestFullTeardownAfterInit(t *testing.T) {
 	}
 	eq(t, "stdout", stdout.String(), removedLine)
 	eq(t, "stderr", stderr.String(), "")
-	if _, err := os.Stat(log); !os.IsNotExist(err) {
-		t.Errorf("lefthook was spawned during a current-scheme remove: %q", readFileT(t, log))
-	}
 
 	// All three dispatchers deleted.
 	for _, name := range hook.Names() {
@@ -94,7 +87,6 @@ func TestFullTeardownAfterInit(t *testing.T) {
 // or any other tool's — is reported and left in place, never deleted.
 func TestRemoveLeavesForeignHook(t *testing.T) {
 	_, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 	foreign := "#!/bin/sh\n# somebody else's hook\n"
@@ -117,15 +109,13 @@ func TestRemoveLeavesForeignHook(t *testing.T) {
 	}
 }
 
-// A pre-#98 install (lefthook stubs carrying omakase's guard blocks) still
-// tears down: the marker evidence triggers `lefthook uninstall`, and the
-// guard blocks are stripped from any stub the uninstall left behind, with
-// exec bits restored. The fixtures are hand-seeded in the shape the retired
-// install-guards.sh wrote, at mode 644 so the chmod restoration is
-// meaningfully exercised.
+// A pre-#98 install (hook stubs carrying omakase's guard blocks) still tears
+// down: the guard blocks are stripped from the stubs, with exec bits restored.
+// omakase no longer bundles a runner, so there is no `lefthook uninstall` step.
+// The fixtures are hand-seeded in the shape the retired install-guards.sh
+// wrote, at mode 644 so the chmod restoration is meaningfully exercised.
 func TestRemoveLegacySchemeStripsGuards(t *testing.T) {
 	_, repo := initRepo(t)
-	log := stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 
@@ -163,11 +153,9 @@ func TestRemoveLegacySchemeStripsGuards(t *testing.T) {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
 	eq(t, "stdout", stdout.String(), removedLine)
-	// The guard markers are the evidence that gates the uninstall.
-	eq(t, "lefthook argv (uninstall only)", readFileT(t, log), "uninstall\n")
 
-	// The stub lefthook's uninstall deletes nothing, so the strip handles
-	// the stubs: block gone, non-block lines survive, exec bits restored.
+	// The strip handles the stubs: guard block gone, non-block lines survive,
+	// exec bits restored.
 	eq(t, "pre-commit stripped", readFileT(t, preCommit), "#!/bin/sh\ncall_lefthook run \"pre-commit\" \"$@\"\n")
 	eq(t, "post-checkout stripped", readFileT(t, postCheckout), "#!/bin/sh\ncall_lefthook run \"post-checkout\" \"$@\"\n")
 	for _, hf := range []string{preCommit, postCheckout} {
@@ -190,7 +178,6 @@ func TestRemoveLegacySchemeStripsGuards(t *testing.T) {
 // marker).
 func TestHookStubSubstringGateQuirk(t *testing.T) {
 	_, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 
@@ -222,7 +209,6 @@ func TestHookStubSubstringGateQuirk(t *testing.T) {
 // also passed here to pin that RunRemove ignores its argv entirely.
 func TestNeverInstalledNoSentinelIsANoOp(t *testing.T) {
 	initRepo(t)
-	stubLefthook(t)
 
 	var stdout, stderr strings.Builder
 	code := RunRemove([]string{"stray", "--args", "ignored"}, &stdout, &stderr)
@@ -239,7 +225,6 @@ func TestNeverInstalledNoSentinelIsANoOp(t *testing.T) {
 // nothing further.
 func TestDoubleRemoveIsANoOp(t *testing.T) {
 	_, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 
@@ -271,7 +256,6 @@ func TestDoubleRemoveIsANoOp(t *testing.T) {
 // since there is no ledger to drive deletion from.
 func TestPre010FallbackPayloadEnumeration(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	p := t.TempDir()
 	writeFile(t, filepath.Join(p, "foo", "a.txt"), "a\n")
 	writeFile(t, filepath.Join(p, "b.txt"), "b\n")
@@ -304,7 +288,6 @@ func TestPre010FallbackPayloadEnumeration(t *testing.T) {
 // payload-enumeration fallback.
 func TestSentinelViaOmkDirWithoutExcludeBlock(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	p := t.TempDir()
 	writeFile(t, filepath.Join(p, "c.txt"), "c\n")
 	t.Setenv("OMAKASE_PAYLOAD", p)
@@ -334,7 +317,6 @@ func TestSentinelViaOmkDirWithoutExcludeBlock(t *testing.T) {
 // marker -- trackedness is checked first.
 func TestTrackedLefthookYmlPreserved(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 
@@ -357,7 +339,6 @@ func TestTrackedLefthookYmlPreserved(t *testing.T) {
 // survive -- remove only deletes the auto-created skeleton.
 func TestUntrackedLefthookYmlWithoutMarkerPreserved(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 
@@ -376,7 +357,6 @@ func TestUntrackedLefthookYmlWithoutMarkerPreserved(t *testing.T) {
 // install` when no config existed) is what remove deletes.
 func TestUntrackedSkeletonLefthookYmlDeleted(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 
@@ -398,7 +378,6 @@ func TestUntrackedSkeletonLefthookYmlDeleted(t *testing.T) {
 // it is not empty afterward.
 func TestWtincUserContentSurvivesBlockStripped(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 
@@ -420,7 +399,6 @@ func TestWtincUserContentSurvivesBlockStripped(t *testing.T) {
 // every row regardless.
 func TestDisabledPlacedRowStillDeleted(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 
@@ -456,7 +434,6 @@ func TestDisabledPlacedRowStillDeleted(t *testing.T) {
 // top.
 func TestHookStubModeMatchesBashFreshInode(t *testing.T) {
 	_, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 
@@ -491,7 +468,6 @@ func TestHookStubModeMatchesBashFreshInode(t *testing.T) {
 // strip (no chmod +x -- exclude is never executable).
 func TestExcludeStripModeMatchesBashFreshInode(t *testing.T) {
 	_, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 
@@ -520,7 +496,6 @@ func TestExcludeStripModeMatchesBashFreshInode(t *testing.T) {
 // the file isn't deleted for being empty).
 func TestWtincStripModeMatchesBashFreshInode(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 
@@ -556,7 +531,6 @@ func TestWtincStripModeMatchesBashFreshInode(t *testing.T) {
 // the rest of the $OMK wipe.
 func TestLefthookSnapshotGoneAfterRemove(t *testing.T) {
 	_, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 	snap := filepath.Join(repo.OMK, "lefthook.yml")
@@ -596,7 +570,6 @@ func TestSkeletonLefthookYmlRemovalFailurePropagates(t *testing.T) {
 		t.Skip("root ignores directory write permission; this fixture needs a non-root unlink to fail")
 	}
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	t.Setenv("OMAKASE_PAYLOAD", t.TempDir()) // empty: nothing placed
 	mustInit(t)
 
@@ -638,7 +611,6 @@ func addWorktree(t *testing.T, dir, name string) string {
 
 func TestRemoveFromMainSweepsLinkedWorktrees(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 	wt := addWorktree(t, dir, "wt-sibling")
@@ -677,7 +649,6 @@ func TestRemoveFromMainSweepsLinkedWorktrees(t *testing.T) {
 // checkout's placed files orphaned and un-ignored.
 func TestRemoveFromLinkedWorktreeSweepsMain(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 	wt := addWorktree(t, dir, "wt-remove-here")
@@ -709,7 +680,6 @@ func TestRemoveFromLinkedWorktreeSweepsMain(t *testing.T) {
 // must leave it alone while still deleting the untracked copy in main.
 func TestRemoveSweepSkipsTrackedInSiblingWorktree(t *testing.T) {
 	dir, _ := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 	wt := addWorktree(t, dir, "wt-tracked")
@@ -734,7 +704,6 @@ func TestRemoveSweepSkipsTrackedInSiblingWorktree(t *testing.T) {
 // say so on stderr and still finish the full teardown, exit 0.
 func TestRemoveWarnsUnreachableWorktreeAndContinues(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	mustInit(t)
 	wt := addWorktree(t, dir, "wt-vanished")
@@ -769,7 +738,6 @@ func TestRemoveSkipsTrackedFileDifferingOnlyInCase(t *testing.T) {
 		t.Skip("needs a case-insensitive filesystem")
 	}
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	writeFile(t, filepath.Join(dir, "CLAUDE.md"), "tracked\n")
 	runGitT(t, dir, "add", "CLAUDE.md")

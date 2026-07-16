@@ -38,12 +38,11 @@ func placedIndex(rows []state.PlacedRow, rel string) int {
 
 // placedFixture builds a git repo with one placed rule file (AGENTS.md), two
 // placed skill files under .claude/skills/ (a.md, b.md — >= 2 path separators,
-// so internal/tui/items.go groups them under "dir:.claude/skills"), and a
-// lefthook stub whose `dump` output declares one omakase pre-commit gate
-// (smoke) — the minimal repo where LiveItems yields a toggleable file, a
-// toggleable group, and a toggleable gate. It chdirs into the repo
-// (status.Run resolves the repo from the working directory) and returns the
-// dir plus discovered Repo.
+// so internal/tui/items.go groups them under "dir:.claude/skills"), and an
+// omakase.manifest declaring one pre-commit gate (smoke) — the minimal repo
+// where LiveItems yields a toggleable file, a toggleable group, and a
+// toggleable gate. It chdirs into the repo (status.Run resolves the repo from
+// the working directory) and returns the dir plus discovered Repo.
 func placedFixture(t *testing.T) (string, *state.Repo) {
 	t.Helper()
 	dir := t.TempDir()
@@ -65,18 +64,14 @@ func placedFixture(t *testing.T) (string, *state.Repo) {
 	}
 	t.Cleanup(func() { os.Chdir(orig) })
 
-	stubDir := t.TempDir()
-	stub := filepath.Join(stubDir, "lefthook")
-	dump := "pre-commit:\n  jobs:\n    - name: smoke\n      run: bash .omakase/bin/omakase-gate.sh smoke --step 'true'\n"
-	script := "#!/bin/sh\nif [ \"$1\" = dump ]; then printf '%s' \"$LEFTHOOK_STUB_DUMP\"; fi\nexit 0\n"
-	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("LEFTHOOK_BIN", stub)
-	t.Setenv("LEFTHOOK_STUB_DUMP", dump)
-
 	payload := t.TempDir()
 	if err := os.MkdirAll(payload, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The manifest declares the smoke gate the menu itemizes; run: true is a
+	// plain command (no payload script to ship).
+	if err := os.WriteFile(filepath.Join(payload, "omakase.manifest"),
+		[]byte("name: fix\nversion: 1\n\ngate: smoke\n  hook: pre-commit\n  run: true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(payload, "AGENTS.md"), []byte("# agents\n"), 0o644); err != nil {
