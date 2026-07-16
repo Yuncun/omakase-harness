@@ -12,9 +12,11 @@ import (
 // RunHook runs every gate declared for the given hook stage, from repo root,
 // reading the gate list from the init-written snapshot manifest under omk. It
 // is the port of one omakase-gate.sh invocation per declared gate, in manifest
-// order, fail-fast: the first gate whose check exits non-zero returns that exit
-// code and stops the stage (the commit/push blocks). A load error fails closed
-// (returns 1) — a corrupt snapshot must not silently run nothing.
+// order — every gate runs (as lefthook's non-piped default did), and the stage
+// returns the FIRST failing gate's exit code, so a single gate's code still
+// passes through unchanged while a multi-gate stage surfaces every failure. A
+// load error fails closed (returns 1) — a corrupt snapshot must not silently
+// run nothing.
 //
 // The caller (omakase hook) has already scrubbed GIT_DIR/GIT_WORK_TREE/
 // GIT_COMMON_DIR and forwarded any stock git-lfs hook, so this concerns itself
@@ -39,12 +41,13 @@ func RunHook(hook, root, omk string, stdin io.Reader, stdout, stderr io.Writer) 
 
 	disabled := disabledSet(omk)
 	sha := headSHA(root)
+	firstFail := 0
 	for _, g := range stage {
-		if code := runOne(g, root, omk, sha, disabled, stdin, stdout, stderr); code != 0 {
-			return code
+		if code := runOne(g, root, omk, sha, disabled, stdin, stdout, stderr); code != 0 && firstFail == 0 {
+			firstFail = code
 		}
 	}
-	return 0
+	return firstFail
 }
 
 // runOne runs a single gate, mirroring omakase-gate.sh's five-step order:

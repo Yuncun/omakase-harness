@@ -209,18 +209,19 @@ func TestRunHook_ExitCodePassthrough(t *testing.T) {
 	}
 }
 
-func TestRunHook_FailFastStopsStage(t *testing.T) {
+func TestRunHook_RunsEveryGateReturnsFirstFailure(t *testing.T) {
 	root, omk := newRepo(t)
-	// First gate fails; the second must never run (no marker file written).
+	// The first gate fails; every gate still runs (the second writes a marker),
+	// and the stage returns the first failure's code.
 	marker := filepath.Join(t.TempDir(), "ran")
 	man := "gate: a\n  hook: pre-commit\n  run: exit 3\n" +
 		"gate: b\n  hook: pre-commit\n  run: touch " + marker + "\n"
 	code, _, _ := run(t, root, omk, "pre-commit", man, nil)
 	if code != 3 {
-		t.Fatalf("want first failure's code 3, got %d", code)
+		t.Fatalf("want the first failure's code 3, got %d", code)
 	}
-	if _, err := os.Stat(marker); err == nil {
-		t.Fatalf("second gate ran after the first failed (fail-fast broken)")
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("the second gate did not run — every declared gate must run")
 	}
 }
 
