@@ -214,3 +214,59 @@ func ForHook(gates []Gate, hook string) []Gate {
 	}
 	return out
 }
+
+// snapshotHasLefthookMarker reports whether the init-written snapshot still
+// carries a lefthook-era artifact — payload-snapshot/lefthook-local.yml or the
+// deleted payload-snapshot/.omakase/bin/omakase-gate.sh. Its presence is the
+// fingerprint of a repo initialized before the gate module: that snapshot
+// declares no gate blocks, so the upgraded binary would run zero gates here
+// while every other proof still reads green (the #72 status-lie).
+func snapshotHasLefthookMarker(omk string) bool {
+	snap := filepath.Join(omk, "payload-snapshot")
+	for _, rel := range []string{
+		"lefthook-local.yml",
+		filepath.Join(".omakase", "bin", "omakase-gate.sh"),
+	} {
+		if _, err := os.Stat(filepath.Join(snap, rel)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// StaleLefthookSnapshot reports whether omk's snapshot is a pre-gate-module
+// (lefthook-era) snapshot: it still carries a lefthook-era marker AND declares
+// no gate blocks. Both the hook (fail closed, run.go) and the probe (Problem,
+// internal/probe) key on this one predicate, so status and commit time agree.
+// A genuinely gate-less current harness — a manifest present with no gate
+// blocks and no lefthook marker in the snapshot — is not stale and still
+// passes.
+func StaleLefthookSnapshot(omk string) (bool, error) {
+	if !snapshotHasLefthookMarker(omk) {
+		return false, nil
+	}
+	gates, err := Load(omk)
+	if err != nil {
+		return false, err
+	}
+	return len(gates) == 0, nil
+}
+
+// HasGateBlock reports whether content declares at least one gate: block — a
+// column-0 `gate:` line. init uses it to refuse a harness-ROOT omakase.manifest
+// that puts gates where omakase never reads them: gates belong in
+// payload/omakase.manifest, the copy init places and snapshots.
+func HasGateBlock(content []byte) bool {
+	sc := bufio.NewScanner(bytes.NewReader(content))
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		line := sc.Text()
+		if line == "" || line[0] == ' ' || line[0] == '\t' {
+			continue
+		}
+		if key, _, ok := splitKV(line); ok && key == "gate" {
+			return true
+		}
+	}
+	return false
+}

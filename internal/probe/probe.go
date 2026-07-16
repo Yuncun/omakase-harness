@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Yuncun/omakase-harness/internal/gate"
 	"github.com/Yuncun/omakase-harness/internal/hook"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
@@ -76,6 +77,15 @@ type State struct {
 	FilesPresent   Tri       // every enabled placed row exists in this worktree
 	HashesMatch    Tri       // no enabled row drifted from its ledger hash
 
+	// GatesMigrated proves the snapshot's gate wiring is the gate-module form,
+	// not a pre-#114 lefthook-era snapshot. Problem means the snapshot declares
+	// no gate blocks but still carries a lefthook-era marker, so the upgraded
+	// binary would run zero gates here while the proofs above read green (the
+	// #72 status-lie): status must say so, and the gate hook fails closed on the
+	// same fact. A migrated harness (gate blocks present) or a genuinely
+	// gate-less current harness (no marker) is OK.
+	GatesMigrated Tri
+
 	// Kept counts the enabled rows whose $OMK/kept/<rel> accepted copy
 	// exists — files the user edited and consented to keep (#98 Part 2).
 	// A fact, not a problem: keep moved the ledger hash to the accepted
@@ -121,6 +131,7 @@ func Collect(cwd string) (*State, error) {
 	// Proofs.
 	st.HooksInstalled, st.HookIssue = hooksInstalled(repo.Root)
 	st.FilesPresent, st.HashesMatch = files(repo.Root, repo.OMK)
+	st.GatesMigrated = gatesMigrated(repo.OMK)
 	st.Kept = keptCount(repo.OMK)
 
 	st.LastRun = lastRun(filepath.Join(repo.OMK, "ledger.tsv"))
@@ -244,6 +255,21 @@ func files(root, omk string) (present, hashes Tri) {
 		hashes = Unknown
 	}
 	return present, hashes
+}
+
+// gatesMigrated proves the snapshot is not a pre-gate-module (lefthook-era)
+// snapshot. It shares gate.StaleLefthookSnapshot with the hook path, so a
+// commit and `omakase status` never disagree: a stale snapshot is a Problem,
+// an unreadable manifest is Unknown (never green), everything else OK.
+func gatesMigrated(omk string) Tri {
+	stale, err := gate.StaleLefthookSnapshot(omk)
+	if err != nil {
+		return Unknown
+	}
+	if stale {
+		return Problem
+	}
+	return OK
 }
 
 // keptCount counts the enabled placed rows carrying a kept mark (the

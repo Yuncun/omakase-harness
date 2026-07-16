@@ -78,7 +78,7 @@ func Statusline(st *probe.State, o Opts) string {
 	}
 
 	problem := problemFact(st)
-	unknown := st.HooksInstalled == probe.Unknown || st.FilesPresent == probe.Unknown || st.HashesMatch == probe.Unknown
+	unknown := st.HooksInstalled == probe.Unknown || st.GatesMigrated == probe.Unknown || st.FilesPresent == probe.Unknown || st.HashesMatch == probe.Unknown
 
 	switch {
 	case problem != "":
@@ -105,11 +105,14 @@ func StopNotice(st *probe.State, ranThisTurn bool) string {
 	if st.HooksInstalled == probe.Problem {
 		return name + " is not active — hooks not installed · omakase init"
 	}
+	if st.GatesMigrated == probe.Problem {
+		return name + " — needs migration (initialized before the gate module) · omakase init"
+	}
 	if st.FilesPresent == probe.Problem || st.HashesMatch == probe.Problem {
 		return name + " — harness files changed · omakase init"
 	}
 
-	if st.HooksInstalled == probe.Unknown || st.FilesPresent == probe.Unknown || st.HashesMatch == probe.Unknown {
+	if st.HooksInstalled == probe.Unknown || st.GatesMigrated == probe.Unknown || st.FilesPresent == probe.Unknown || st.HashesMatch == probe.Unknown {
 		return name + " — state could not be verified"
 	}
 
@@ -137,9 +140,11 @@ func InitVerdict(st *probe.State) string {
 	switch {
 	case st.HooksInstalled == probe.Problem:
 		return "omakase: NOT verified — hooks not installed — run omakase status"
+	case st.GatesMigrated == probe.Problem:
+		return "omakase: NOT verified — harness needs migration — run omakase status"
 	case st.FilesPresent == probe.Problem || st.HashesMatch == probe.Problem:
 		return "omakase: NOT verified — harness files changed — run omakase status"
-	case st.HooksInstalled == probe.OK && st.FilesPresent == probe.OK && st.HashesMatch == probe.OK:
+	case st.HooksInstalled == probe.OK && st.GatesMigrated == probe.OK && st.FilesPresent == probe.OK && st.HashesMatch == probe.OK:
 		s := "omakase: verified — hooks installed ✓ · files present ✓ · files match ✓"
 		// Kept files read green by design (the ledger hash is the accepted
 		// hash); the verdict still names them so consent is visible at the
@@ -182,6 +187,8 @@ func problemFact(st *probe.State) string {
 	switch {
 	case st.HooksInstalled == probe.Problem:
 		return "hooks not installed"
+	case st.GatesMigrated == probe.Problem:
+		return "harness needs migration"
 	case st.FilesPresent == probe.Problem || st.HashesMatch == probe.Problem:
 		return "harness files changed"
 	}

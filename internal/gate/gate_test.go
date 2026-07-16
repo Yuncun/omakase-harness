@@ -6,7 +6,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Yuncun/omakase-harness/internal/state"
@@ -534,5 +536,176 @@ func TestLedgerShapeMatchesReaders(t *testing.T) {
 	}
 	if v, ok := verds["b"]; !ok || v.Verdict != "fail" {
 		t.Fatalf("state.LatestVerdicts must read gate b as fail, got %+v (ok=%v)", v, ok)
+	}
+}
+
+// --- fail closed on a pre-gate-module (lefthook-era) snapshot --------------
+
+// writeLefthookMarker plants payload-snapshot/lefthook-local.yml — the
+// fingerprint init left in a repo initialized before the gate module.
+func writeLefthookMarker(t *testing.T, omk string) {
+	t.Helper()
+	dir := filepath.Join(omk, "payload-snapshot")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lefthook-local.yml"), []byte("pre-commit:\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An upgraded binary running against a v0.19.x snapshot (lefthook-local.yml in
+// the snapshot, a header-only or absent manifest) must FAIL CLOSED with the
+// migration pointer, never silently run zero gates (the #72 status-lie).
+func TestRunHook_StaleLefthookSnapshotBlocks(t *testing.T) {
+	for _, hook := range []string{"pre-commit", "pre-push"} {
+		t.Run(hook, func(t *testing.T) {
+			root, omk := newRepo(t)
+			writeLefthookMarker(t, omk)
+			// The shipped starter snapshot: header only, zero gate blocks.
+			writeSnapshotManifest(t, omk, "name: x\nversion: 0.19.1\n")
+			var out bytes.Buffer
+			code := RunHook(hook, root, omk, strings.NewReader(""), &out, &out)
+			if code == 0 {
+				t.Fatalf("%s: a lefthook-era snapshot must fail closed, got exit 0", hook)
+			}
+			if !strings.Contains(out.String(), "lefthook-local.yml") || !strings.Contains(out.String(), "omakase init") {
+				t.Fatalf("%s: the block must point at the migration: %q", hook, out.String())
+			}
+		})
+	}
+}
+
+// The base v0.19.x snapshot had NO omakase.manifest at all (only .omakase/ +
+// lefthook-local.yml); the marker alone with a missing manifest must block too.
+func TestRunHook_StaleLefthookSnapshotNoManifestBlocks(t *testing.T) {
+	root, omk := newRepo(t)
+	writeLefthookMarker(t, omk)
+	var out bytes.Buffer
+	code := RunHook("pre-commit", root, omk, strings.NewReader(""), &out, &out)
+	if code == 0 {
+		t.Fatalf("a lefthook-era snapshot with no manifest must fail closed, got exit 0")
+	}
+}
+
+// A migrated harness that genuinely declares zero gates — a manifest present,
+// no gate blocks, and NO lefthook marker — is not stale and still passes.
+func TestRunHook_GatelessCurrentHarnessPasses(t *testing.T) {
+	root, omk := newRepo(t)
+	writeSnapshotManifest(t, omk, "name: x\nversion: 1\n")
+	var out bytes.Buffer
+	code := RunHook("pre-commit", root, omk, strings.NewReader(""), &out, &out)
+	if code != 0 {
+		t.Fatalf("a gate-less current harness must pass, got exit %d (%q)", code, out.String())
+	}
+}
+
+func TestStaleLefthookSnapshot(t *testing.T) {
+	_, omk := newRepo(t)
+	if stale, err := StaleLefthookSnapshot(omk); err != nil || stale {
+		t.Fatalf("clean omk: want not-stale, got stale=%v err=%v", stale, err)
+	}
+	writeLefthookMarker(t, omk)
+	writeSnapshotManifest(t, omk, "name: x\n")
+	if stale, err := StaleLefthookSnapshot(omk); err != nil || !stale {
+		t.Fatalf("lefthook-era snapshot: want stale, got stale=%v err=%v", stale, err)
+	}
+	// A marker plus a real gate block is NOT stale — the gates run; the stray
+	// marker alone never disables them.
+	writeSnapshotManifest(t, omk, "gate: g\n  hook: pre-commit\n  run: true\n")
+	if stale, err := StaleLefthookSnapshot(omk); err != nil || stale {
+		t.Fatalf("marker + gates: want not-stale, got stale=%v err=%v", stale, err)
+	}
+}
+
+func TestHasGateBlock(t *testing.T) {
+	if HasGateBlock(nil) {
+		t.Fatalf("empty content declares no gate block")
+	}
+	if HasGateBlock([]byte("name: x\nversion: 1\nrecommends: go\n")) {
+		t.Fatalf("a header-only manifest declares no gate block")
+	}
+	if !HasGateBlock([]byte("name: x\n\ngate: g\n  hook: pre-commit\n  run: true\n")) {
+		t.Fatalf("a manifest with a gate: line must report a gate block")
+	}
+	// An indented line whose value contains "gate:" is not a block opener, but
+	// the column-0 gate: above it still counts.
+	if !HasGateBlock([]byte("gate: g\n  run: echo gate: not-a-block\n")) {
+		t.Fatalf("column-0 gate: must count even when an indented value contains 'gate:'")
+	}
+}
+
+// --- skip-var name folding ------------------------------------------------
+
+// Every shipped gate uses a hyphenated name (block-marker, go-test, go-checks),
+// so the '-'→'_' fold in skipVar must be exercised, not just the '.' case.
+func TestRunHook_HyphenatedNameSkipVar(t *testing.T) {
+	root, omk := newRepo(t)
+	code, _, _ := run(t, root, omk, "pre-commit",
+		"gate: block-marker\n  hook: pre-commit\n  run: exit 1\n",
+		map[string]string{"OMAKASE_SKIP_BLOCK_MARKER": "1"})
+	if code != 0 {
+		t.Fatalf("hyphenated name: OMAKASE_SKIP_BLOCK_MARKER must bypass block-marker, got %d", code)
+	}
+}
+
+// --- non-ASCII glob -------------------------------------------------------
+
+// A UTF-8 glob must match a UTF-8 filename exactly as the deleted sh `case`
+// did: byte-wise translation re-encoded the lead byte and silently skipped the
+// gate (fail-open). café/* must match café/foo.go and run the gate.
+func TestRunHook_GlobMatchesNonASCII(t *testing.T) {
+	root, omk := newRepo(t)
+	withRemote(t, root)
+	commitFile(t, root, "café/foo.go", "package x\n")
+	code, _, led := run(t, root, omk, "pre-push", "gate: intl\n  hook: pre-push\n  run: false\n  glob: café/*\n", nil)
+	if code == 0 {
+		t.Fatalf("a UTF-8 glob (café/*) must match a UTF-8 path (café/foo.go) and run the gate")
+	}
+	if !hasRow(led, "intl", "fail") {
+		t.Fatalf("the matched gate must have run: %q", led)
+	}
+}
+
+// --- signal-killed step ---------------------------------------------------
+
+// A step killed by a signal surfaces 128+signal (the sh convention), not a
+// flattened 1: SIGTERM -> 143.
+func TestRunHook_SignalKilledStepIs128Plus(t *testing.T) {
+	root, omk := newRepo(t)
+	code, _, _ := run(t, root, omk, "pre-commit", "gate: sig\n  hook: pre-commit\n  run: kill -TERM $$\n", nil)
+	if code != 143 {
+		t.Fatalf("a SIGTERM-killed step must surface 128+15=143, got %d", code)
+	}
+}
+
+// --- concurrent ledger appends --------------------------------------------
+
+// The ledger's single-write O_APPEND is the invariant two worktrees committing
+// at the same shared ledger rely on: N concurrent appends must land N untorn
+// 4-field rows, never an interleaved (<4-field) row a fail-open reader would
+// trip on. The deleted omakase-gate.test.sh proved this in sh; here in Go.
+func TestLedgerConcurrentAppendsDoNotTear(t *testing.T) {
+	omk := t.TempDir()
+	const n = 24
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			// Distinct name/sha per goroutine so an interleave is detectable.
+			_ = appendRow(omk, "gate"+strconv.Itoa(i), "pass", "sha"+strconv.Itoa(i))
+		}(i)
+	}
+	wg.Wait()
+	led, _ := os.ReadFile(filepath.Join(omk, "ledger.tsv"))
+	rows := ledgerRows(string(led))
+	if len(rows) != n {
+		t.Fatalf("want %d rows from %d concurrent appends, got %d", n, n, len(rows))
+	}
+	for _, r := range rows {
+		if len(r) != 4 {
+			t.Fatalf("a concurrent append tore a row (not 4 fields): %v", r)
+		}
 	}
 }

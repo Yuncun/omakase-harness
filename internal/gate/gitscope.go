@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -122,14 +123,17 @@ func changedMatches(root, base string, patterns []string) bool {
 	return false
 }
 
-// gitDiffNames runs `git diff --name-only <range>` from root and returns the
-// changed paths.
+// gitDiffNames runs `git diff --name-only -z <range>` from root and returns the
+// changed paths. `-z` is load-bearing: without it git octal-quotes a non-ASCII
+// path (core.quotePath defaults on), so a raw UTF-8 filename never reaches the
+// glob matcher and its gate silently drops out of scope (fail-open). NUL
+// termination also keeps a path containing a newline one record.
 func gitDiffNames(root, rng string) ([]string, error) {
-	out, err := exec.Command("git", "-C", root, "diff", "--name-only", rng).Output()
+	out, err := exec.Command("git", "-C", root, "diff", "--name-only", "-z", rng).Output()
 	if err != nil {
 		return nil, err
 	}
-	return strings.Split(strings.TrimRight(string(out), "\n"), "\n"), nil
+	return strings.Split(strings.TrimRight(string(out), "\x00"), "\x00"), nil
 }
 
 // hasFreshPass reports whether omk/ledger.tsv already carries a `pass` row for
@@ -165,15 +169,19 @@ var globCache = map[string]*regexp.Regexp{}
 
 // globToRegexp translates one sh-case glob into an anchored regexp: `*` -> `.*`
 // (spans `/`), `?` -> `.`, a `[...]` bracket expression carried across (with
-// `[!` -> `[^`), and every other byte escaped literally.
+// `[!` -> `[^`), and every other RUNE escaped literally. Iterating runes (not
+// bytes) keeps a multibyte UTF-8 literal intact: a byte-wise `string(byte)`
+// re-encodes a lead byte as its own code point, so `café*` would compile to a
+// regexp that no longer matches the real `café.go` filename bytes (fail-open).
 func globToRegexp(pattern string) *regexp.Regexp {
 	if re, ok := globCache[pattern]; ok {
 		return re
 	}
+	rs := []rune(pattern)
 	var b strings.Builder
 	b.WriteString(`^`)
-	for i := 0; i < len(pattern); i++ {
-		c := pattern[i]
+	for i := 0; i < len(rs); i++ {
+		c := rs[i]
 		switch c {
 		case '*':
 			b.WriteString(`.*`)
@@ -183,20 +191,20 @@ func globToRegexp(pattern string) *regexp.Regexp {
 			// Carry a bracket expression across verbatim, translating a leading
 			// '!' negation to '^'. An unterminated '[' is a literal '['.
 			j := i + 1
-			if j < len(pattern) && (pattern[j] == '!' || pattern[j] == '^') {
+			if j < len(rs) && (rs[j] == '!' || rs[j] == '^') {
 				j++
 			}
-			if j < len(pattern) && pattern[j] == ']' { // a ']' right after the (negated) open is a literal
+			if j < len(rs) && rs[j] == ']' { // a ']' right after the (negated) open is a literal
 				j++
 			}
-			for j < len(pattern) && pattern[j] != ']' {
+			for j < len(rs) && rs[j] != ']' {
 				j++
 			}
-			if j >= len(pattern) {
+			if j >= len(rs) {
 				b.WriteString(regexp.QuoteMeta("["))
 				continue
 			}
-			cls := pattern[i : j+1]
+			cls := string(rs[i : j+1])
 			cls = strings.Replace(cls, "[!", "[^", 1)
 			b.WriteString(cls)
 			i = j
@@ -218,12 +226,18 @@ func short8(sha string) string {
 	return sha
 }
 
-// exitCode extracts a child's exit code from an *exec.ExitError, defaulting to
-// 1 for any other run error.
+// exitCode extracts a child's exit code from an *exec.ExitError. A normal exit
+// returns its code; a signal-killed child (ExitCode() == -1) returns
+// 128+signal — the sh convention the deleted omakase-gate.sh passed through
+// (`sh -c "$STEP"; exit $?`), so an OOM SIGKILL or a timeout SIGTERM surfaces
+// 137/143, not a flattened 1. Any other run error defaults to 1.
 func exitCode(err error) int {
 	if ee, ok := err.(*exec.ExitError); ok {
 		if code := ee.ExitCode(); code > 0 {
 			return code
+		}
+		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			return 128 + int(ws.Signal())
 		}
 	}
 	return 1

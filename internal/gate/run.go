@@ -27,6 +27,16 @@ func RunHook(hook, root, omk string, stdin io.Reader, stdout, stderr io.Writer) 
 		fmt.Fprintf(stderr, "omakase: BLOCKING — %s: the harness manifest is unreadable (%v); its gates cannot run.\n", hook, err)
 		return 1
 	}
+	// Fail closed on a pre-gate-module (lefthook-era) snapshot: it declares no
+	// gate blocks but still carries a lefthook-era marker, so an upgraded binary
+	// would silently run zero gates here while status stays green (the #72
+	// status-lie). Block with the migration pointer instead of passing. A
+	// genuinely gate-less current harness — no marker in the snapshot — still
+	// passes.
+	if len(gates) == 0 && snapshotHasLefthookMarker(omk) {
+		fmt.Fprintf(stderr, "omakase: BLOCKING — %s: this repo was initialized before the gate module; its snapshot still declares gates in lefthook-local.yml, which omakase no longer reads. Re-run 'omakase init' in this repo to migrate. Bypass once: git %s --no-verify.\n", hook, bypassVerb(hook))
+		return 1
+	}
 	stage := ForHook(gates, hook)
 	if len(stage) == 0 {
 		return 0
@@ -116,6 +126,15 @@ func Record(root, omk, name string) error {
 		return fmt.Errorf("could not write %s: %w", filepath.Join(omk, "ledger.tsv"), err)
 	}
 	return nil
+}
+
+// bypassVerb names the git verb whose --no-verify skips this hook, so a block
+// message can print a runnable bypass. pre-push -> push, else commit.
+func bypassVerb(hook string) string {
+	if hook == "pre-push" {
+		return "push"
+	}
+	return "commit"
 }
 
 // skipVar is the audited-bypass env var name for a gate: OMAKASE_SKIP_<NAME>,
