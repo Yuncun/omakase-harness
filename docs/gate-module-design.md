@@ -21,10 +21,11 @@ hooks (#98), or to any consent/toggle behavior. No compatibility layer for old h
    directory convention.
 2. **Authoring** — a gate is a plain script or command. The binary provides filtering,
    caching, audited skips, and ledger recording around it. `omakase-gate.sh` is deleted.
-3. **Coexistence** — generic hook chaining: at init, a pre-existing hook file for a hook
-   omakase owns is preserved and runs after omakase's gates. No lefthook-specific (or any
-   manager-specific) cooperation code survives. Managers that own hooks via
-   `core.hooksPath` (husky v9) still refuse — there is no hook file to chain.
+3. **Coexistence** — keep today's refusal: init does not install where another hook
+   manager is present, now including repos whose project uses lefthook natively (today
+   those get lefthook-specific cooperation; that code dies with the runner). The stock
+   git-lfs hook forwarding stays. Generic hook chaining was considered and rejected as
+   scope creep (2026-07-15); it stays severable — see "Deferred: hook chaining" below.
 4. **Migration** — hard cut. The release that ships this reads manifest gates only; init on
    a harness that still ships `lefthook-local.yml` refuses with migration instructions.
 
@@ -36,7 +37,7 @@ hooks (#98), or to any consent/toggle behavior. No compatibility layer for old h
 | authoring a harness | `lefthook-local.yml` of `run: omakase-gate.sh …` lines | `gate:` blocks in `omakase.manifest`; gates are plain scripts |
 | skip everything once | `LEFTHOOK=0 git commit` | `OMAKASE_SKIP_GATES=1 git commit` (audited, printed) |
 | skip one gate once | `OMAKASE_SKIP_<NAME>=1` | unchanged |
-| init in a repo with existing hooks | refused | file-based hooks preserved and chained; `core.hooksPath` managers still refused |
+| init in a repo with existing hooks | refused (except native-lefthook repos, which get cooperation) | refused, native-lefthook repos included — the one regression, affecting no known install |
 | init duration / trust | fetches + sha256-verifies a 3.4 MB lefthook binary per machine | nothing fetched beyond omakase itself |
 | status / menu gate list | runs `lefthook dump`, pattern-matches output | reads the declaration directly |
 | `git commit --no-verify` | bypasses everything | unchanged |
@@ -149,62 +150,37 @@ flowchart TB
     a2 --> a3["omakase hook pre-commit"]
     a3 --> a4["internal/gate: filter · cache · skip · record"]
     a4 --> a5["sh -c the check"]
-    a5 --> a6["chained: pre-commit.before-omakase, if preserved"]
   end
 ```
 
 The dispatcher files and their fail-closed guard (#98) are untouched. The "pinned runner
 missing" blocking point no longer exists — one fewer way a commit can block.
 
-## Generic hook chaining
+## Coexistence: the refusal stays
 
-Applies only to the three hook names omakase owns (`pre-commit`, `pre-push`,
-`post-checkout`). Hooks omakase never touches (`commit-msg`, …) keep working directly.
+Init keeps refusing to install where another hook manager is present ("installing
+omakase's hooks would displace the project's own"). Two changes:
 
-**At init:** for each owned hook name, if a hook file exists that is not an omakase
-dispatcher (marker comment `# omakase dispatcher`), rename it to
-`<name>.before-omakase` and record the preservation in the shared zone. Then write the
-dispatcher as today. Idempotent: a dispatcher is never preserved (marker check), and an
-existing `.before-omakase` is never overwritten by a second preservation.
+- **Native-lefthook repos now refuse too.** Today the incumbent scan skips
+  lefthook-mentioning hook files and `overlay/hook.go` runs the repo's own lefthook config
+  through our pinned lefthook. That cooperation code dies with the runner, and installing
+  over those hooks would silently disable the project's own gates — so these repos join
+  the refusal list, with the same "if these are stale leftovers…" message. This is the
+  design's one regression; no known install is affected (none of our repos use lefthook
+  natively, and enterprise rulesets ban committed hook configs).
+- **The stock git-lfs forwarding stays exactly as it is** — the incumbent scan keeps
+  skipping stock git-lfs hooks and `omakase hook` keeps forwarding to `git lfs` at fire
+  time. It is manager-neutral (git-lfs is not a hook manager) and already tested.
 
-**At fire time:** after omakase's own gates pass, `omakase hook` executes
-`<name>.before-omakase` if present, forwarding stdin and arguments (pre-push's ref list on
-stdin reaches it intact). Its exit code merges with the stage result — either side failing
-blocks, which is exactly what git did before omakase arrived. For post-checkout the chained
-hook runs after the heal and stays fail-open like the heal itself.
+### Deferred: hook chaining
 
-**At remove:** each preserved hook is restored to its original name. `placed.tsv`-style
-exactness applies: remove restores precisely what init preserved.
-
-```mermaid
-sequenceDiagram
-  participant G as git
-  participant D as dispatcher
-  participant O as omakase hook
-  participant P as pre-commit.before-omakase
-  G->>D: fires pre-commit
-  D->>O: exec
-  O->>O: run declared gates (block on failure)
-  O->>P: exec preserved hook, stdin/args forwarded
-  P-->>O: exit code
-  O-->>G: nonzero from either side blocks
-```
-
-**What this deletes:** the lefthook-config cooperation in `overlay/hook.go` (hasMain /
-hasLocal / `LEFTHOOK_CONFIG`) and the stock-git-lfs stub forwarding — a git-lfs hook is now
-just another preserved file. A repo whose project genuinely uses lefthook keeps working:
-its lefthook-installed hook files are preserved and chained, and they invoke the lefthook
-the project's own developers installed. omakase never ships or fetches lefthook again.
-
-**What still refuses at init:** `core.hooksPath` pointing anywhere but the standard hooks
-dir (husky v9, and any manager that owns the hooks *directory* — there is no file to
-chain), and a `package.json` `prepare` script that wires husky / simple-git-hooks (npm
-install would overwrite the dispatchers back). The refusal message drops the "omakase does
-not chain hook managers" line and names only these two causes.
-
-**Incumbent scan changes:** `.before-omakase` joins `.sample` / `.old` as a skipped suffix;
-the "existing non-lefthook hook" and "pre-commit stub" refusal classes become preservation
-instead.
+Generic chaining — preserve a pre-existing hook file as `<name>.before-omakase`, run it
+after our gates, restore it on remove — was considered and rejected as scope creep
+(2026-07-15). It would widen where omakase can install (repos with pre-commit stubs or
+hand-written hooks are refused today and remain refused), at the cost of the design's only
+new non-gate machinery. The decision is severable: everything it would touch is the
+incumbent scan plus one call site in `omakase hook`. Revisit if a real install ever hits
+the refusal.
 
 ## Deletions
 
@@ -213,13 +189,12 @@ instead.
 | `internal/lefthook/` (fetch, pin, resolve + tests) | 313 + 555 |
 | `bin/lib-lefthook.sh` (the same fetch in shell) | 172 |
 | `status/guards.go` dump-scraping + `tui/gaterows.go` duplicate | 322 + 159 (replaced by thin `gate.Load` rendering) |
-| lefthook cooperation + git-lfs forwarding in `overlay/hook.go` | ~150 of 374 |
+| lefthook cooperation in `overlay/hook.go` (hasMain / hasLocal / `LEFTHOOK_CONFIG`); git-lfs forwarding STAYS | ~100 of 374 |
 | `payload/.omakase/bin/omakase-gate.sh` | 163 sh |
 | `payload/lefthook-local.yml` + starter-harness's | both |
 | lefthook checksums, machine-cache dir, release re-pin chore for it | — |
 
-Estimated: ~1,700 lines out (tests included), ~350–450 in (`internal/gate` + tests +
-chaining).
+Estimated: ~1,650 lines out (tests included), ~300–400 in (`internal/gate` + tests).
 
 ## Migration (hard cut)
 
@@ -248,7 +223,7 @@ chaining).
 | one writer | init/remove write wiring | strengthened: gate list read from the init-written snapshot only |
 | nothing runs undeclared | yml scan at init | manifest validation at init |
 | green needs proof | probe tri-state | unchanged; `HooksInstalled` no longer has a runner to consider |
-| zero committed footprint / exact undo | — | unchanged; preserved hooks are recorded and restored by remove |
+| zero committed footprint / exact undo | — | unchanged |
 
 ## Testing
 
@@ -258,8 +233,8 @@ chaining).
   name/sha), `record` failing loud.
 - Ledger compatibility: rows written by the module are byte-identical in shape to the
   script's; `probe.RunSummary` tests run against module-written ledgers.
-- Chaining: preserved-hook exec (stdin forwarding for pre-push), either-side-blocks,
-  remove-restores, re-init idempotency, `.before-omakase` skipped by the incumbent scan.
+- Coexistence: native-lefthook repos refuse at init with the incumbent message; git-lfs
+  forwarding regression tests unchanged.
 - End-to-end: the repo's own starter-harness install (self-hosted since #108) proves a
   blocked commit live, as PR #108 did.
 
@@ -267,5 +242,3 @@ chaining).
 
 1. The plumbing verb name for the deferred-gate PASS: `omakase record <name>` (proposed).
 2. The skip-all env name: `OMAKASE_SKIP_GATES=1` (proposed, consistent with per-gate skips).
-3. Chaining order: omakase gates first, then the preserved hook (proposed — cheap
-   deterministic gates before a potentially slow foreign hook).
