@@ -16,8 +16,9 @@
 #   4. `omakase` on PATH (brew or manual install).
 #   5. The omakase-managed cached binary — fetched (tier 6, opt-in via $1=fetch)
 #      if absent. remove.sh never passes fetch: uninstall stays offline.
-# The fetch mirrors bin/lib-lefthook.sh: pinned version, baked sha256s, one
-# download per machine into ${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/<ver>/.
+# The fetch is a self-contained mirror of the Go binary's own release-fetch:
+# pinned version, baked sha256s, one download per machine into
+# ${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/<ver>/.
 #
 # resolve_omakase also exports OMAKASE_BASE_PAYLOAD (the plugin's own
 # bin/../payload) so the binary can find the --source merge base even when it
@@ -76,7 +77,7 @@ omakase_platform() {
 # sha256 of a file via whichever digest tool exists (shasum on macOS, sha256sum
 # elsewhere); echoes the bare hex digest, or nothing if neither tool is present
 # (caller treats an empty actual as a mismatch and rejects). Self-contained on
-# purpose, same as lib-lefthook.sh — do NOT consolidate the two libs' copies.
+# purpose — kept independent of the other bin/ libs.
 omakase_sha256_file() {  # $1 = file
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
   elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'

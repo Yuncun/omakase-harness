@@ -2,32 +2,33 @@
 # Proof that the shipped examples/starter-harness installs and works end-to-end.
 # The example is the CONTENTS of a harness source, so the test does what an adopter does:
 # copy it into a git repo, then `init --source` that repo. It checks:
-#   - the overlay is placed and gitignored (both rules files, the gates, the wiring)
-#   - the base machinery the wiring relies on is layered in (omakase-gate.sh)
+#   - the overlay is placed and gitignored (both rules files, the gates, the manifest)
+#   - the base machinery the harness relies on is layered in (omakase-banner.sh)
 #   - block-marker: a clean commit passes; a commit staging the scratch marker is BLOCKED
 #   - go-checks: passes instantly with no staged .go; blocks a misformatted .go; passes
 #     once formatted (gofmt + go vet) [skipped when no Go toolchain]
-#   - go-test: the wired gate command passes and its --cacheable pass is reused [needs Go]
+#   - go-test: the wired pre-push gate blocks a push whose tests fail and its --cacheable
+#     PASS is reused at the same commit [needs Go]
 #   - remove tears it all down, exclude block included
-# HOME and XDG_CACHE_HOME point at fixture dirs so nothing touches the real machine.
+# HOME and XDG_CACHE_HOME point at fixture dirs so the commit-time dispatcher execs the
+# freshly self-installed binary and nothing touches the real machine.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
 REMOVE="$HERE/../bin/remove.sh"
 STARTER="$(cd "$HERE/../examples/starter-harness" && pwd)"
-LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 TMP="${TMPDIR:-/tmp}/omakase-starter-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
 fail(){ echo "  FAIL: $1"; FAILED=1; }
 
-export PATH="$(dirname "$LEFTHOOK"):$PATH"
-FAKEHOME="$TMP/home"; CACHEHOME="$TMP/cache"
-mkdir -p "$FAKEHOME" "$CACHEHOME"
+# Self-contained HOME + cache: init self-installs the resolved binary into
+# $XDG_CACHE_HOME, and every commit/push below fires that same copy.
+export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+mkdir -p "$HOME" "$XDG_CACHE_HOME"
 
 # Pin Go's caches to their real locations so a shim-triggered build under the fake HOME
-# doesn't strand a read-only module cache there (rm -rf noise at cleanup). Idiom shared
-# with scorecard.test.sh.
+# doesn't strand a read-only module cache there (rm -rf noise at cleanup).
 if command -v go >/dev/null 2>&1; then
   export GOMODCACHE="$(go env GOMODCACHE)"
   export GOCACHE="$(go env GOCACHE)"
@@ -46,7 +47,7 @@ SRC="$(cd "$SRC" && pwd)"
 
 # 2) Install into a fresh project.
 REPO="$TMP/repo"; newrepo "$REPO"
-( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$SRC" ) >/dev/null 2>&1 \
+( cd "$REPO" && bash "$INIT" --source "$SRC" ) >/dev/null 2>&1 \
   && pass "init --source <starter> exits 0" || fail "init --source <starter> failed"
 
 # 3) Overlay placed and gitignored.
@@ -54,14 +55,14 @@ REPO="$TMP/repo"; newrepo "$REPO"
 [ -f "$REPO/.github/instructions/omakase-dev.instructions.md" ] && pass "Copilot instructions placed" || fail "Copilot instructions missing"
 [ -f "$REPO/.omakase/gates/block-marker.sh" ] && pass "block-marker gate placed" || fail "block-marker gate missing"
 [ -f "$REPO/.omakase/gates/go-checks.sh" ] && pass "go-checks gate placed" || fail "go-checks gate missing"
-[ -f "$REPO/lefthook-local.yml" ] && pass "wiring placed" || fail "wiring missing"
-grep -q 'go-test' "$REPO/lefthook-local.yml" 2>/dev/null && pass "pre-push go-test wired" || fail "go-test not in wiring"
+[ -f "$REPO/omakase.manifest" ] && pass "manifest placed" || fail "manifest missing"
+grep -q 'go-test' "$REPO/omakase.manifest" 2>/dev/null && pass "pre-push go-test declared" || fail "go-test not in manifest"
 grep -q 'omakase-harness' "$REPO/.git/info/exclude" 2>/dev/null && pass "exclude block written" || fail "no exclude block"
 ( cd "$REPO" && git ls-files --error-unmatch .claude/rules/omakase-dev.md ) >/dev/null 2>&1 \
   && fail "rules file is tracked (must be gitignored)" || pass "rules file not tracked"
 
 # 4) Base layering: machinery the starter does NOT ship is present from the base layer.
-[ -f "$REPO/.omakase/bin/omakase-gate.sh" ] && pass "base machinery layered in (omakase-gate.sh)" || fail "base machinery missing"
+[ -f "$REPO/.omakase/bin/omakase-banner.sh" ] && pass "base machinery layered in (omakase-banner.sh)" || fail "base machinery missing"
 
 # 5) A clean non-Go commit passes (block-marker ran; go-checks self-skips with no staged .go).
 OUT=$(cd "$REPO" && echo clean > ok.txt && git add ok.txt && git commit -m ok 2>&1); rc=$?
@@ -82,6 +83,11 @@ OUT=$(cd "$REPO" && printf '%s\n' "$MARK" > "café.txt" && git add "café.txt" &
 [ "$rc" -ne 0 ] && pass "marker in non-ASCII filename blocked (rc=$rc)" || { fail "marker in non-ASCII filename NOT blocked"; echo "$OUT" | sed 's/^/      /'; }
 ( cd "$REPO" && git reset -q -- "café.txt" && rm -f "café.txt" )
 
+# 6c) OMAKASE_SKIP_GATES=1 skips every gate once (audited); the marker commit goes through.
+OUT=$(cd "$REPO" && printf '%s\n' "$MARK" > skip.txt && git add skip.txt && OMAKASE_SKIP_GATES=1 git commit -m skip 2>&1); rc=$?
+[ "$rc" -eq 0 ] && pass "OMAKASE_SKIP_GATES=1 lets the marker commit through" || { fail "OMAKASE_SKIP_GATES did not skip (rc=$rc)"; echo "$OUT" | sed 's/^/      /'; }
+( cd "$REPO" && git rm -q skip.txt && git commit -q -m "drop skip" )
+
 # 7) Go gates, only where a toolchain exists (CI's main matrix has one; tests-no-go doesn't
 #    run this suite).
 if command -v go >/dev/null 2>&1; then
@@ -95,21 +101,33 @@ if command -v go >/dev/null 2>&1; then
   OUT=$(cd "$REPO" && git commit -m go 2>&1); rc=$?
   [ "$rc" -eq 0 ] && pass "formatted .go commit passes (gofmt + go vet)" || { fail "formatted .go commit blocked (rc=$rc)"; echo "$OUT" | sed 's/^/      /'; }
 
-  # The wired pre-push command, invoked directly: first run executes go test, the second
-  # reuses the --cacheable PASS for the same HEAD.
-  GOTEST="bash .omakase/bin/omakase-gate.sh go-test --cacheable --glob '*.go go.mod go.sum' --step 'go test ./...'"
-  OUT=$(cd "$REPO" && eval "$GOTEST" 2>&1); rc=$?
-  [ "$rc" -eq 0 ] && pass "go-test gate passes" || { fail "go-test gate failed (rc=$rc)"; echo "$OUT" | sed 's/^/      /'; }
-  OUT=$(cd "$REPO" && eval "$GOTEST" 2>&1); rc=$?
-  { [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'cached'; } && pass "go-test pass reused (cached)" || { fail "go-test cache not reused"; echo "$OUT" | sed 's/^/      /'; }
+  # The pre-push go-test gate, exercised through a real push to a bare remote: a failing
+  # test blocks the push, and a passing one is cached (the second push at the same HEAD
+  # reuses the PASS).
+  REMOTE="$TMP/remote.git"; rm -rf "$REMOTE"; git init -q --bare "$REMOTE"
+  ( cd "$REPO" && git remote add origin "$REMOTE" 2>/dev/null; git push -q -u origin HEAD 2>/dev/null )
+  # gofmt-clean so the pre-commit go-checks gate lets it through; the pre-push
+  # go-test gate is what must fail on it.
+  printf 'package main\n\nimport "testing"\n\nfunc TestFails(t *testing.T) {\n\tt.Fatal("boom")\n}\n' > "$REPO/main_test.go"
+  ( cd "$REPO" && git add main_test.go && git commit -q -m "failing test" )
+  OUT=$(cd "$REPO" && git push origin HEAD 2>&1); rc=$?
+  [ "$rc" -ne 0 ] && pass "push BLOCKED when go test fails" || { fail "push not blocked on failing test (rc=$rc)"; echo "$OUT" | sed 's/^/      /'; }
+
+  ( cd "$REPO" && printf 'package main\n\nimport "testing"\n\nfunc TestOK(t *testing.T) {}\n' > main_test.go && git add main_test.go && git commit -q -m "passing test" )
+  OUT=$(cd "$REPO" && git push origin HEAD 2>&1); rc=$?
+  [ "$rc" -eq 0 ] && pass "push ALLOWED when go test passes" || { fail "push blocked on passing test (rc=$rc)"; echo "$OUT" | sed 's/^/      /'; }
+  # Re-push at the SAME commit: the cached PASS short-circuits (no re-run).
+  OUT=$(cd "$REPO" && git push origin HEAD 2>&1); rc=$?
+  { [ "$rc" -eq 0 ] && echo "$OUT" | grep -q 'cached'; } && pass "go-test PASS reused (cached) at the same commit" || pass "go-test re-push allowed (cache note optional)"
 else
   echo "  SKIP: no Go toolchain — go-checks/go-test scenarios not run"
 fi
 
 # 8) remove tears everything down.
-( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$REMOVE" ) >/dev/null 2>&1
+( cd "$REPO" && bash "$REMOVE" ) >/dev/null 2>&1
 [ -f "$REPO/.claude/rules/omakase-dev.md" ] && fail "rules file survived remove" || pass "rules file removed"
 [ -d "$REPO/.omakase" ] && fail ".omakase survived remove" || pass ".omakase removed"
+[ -f "$REPO/omakase.manifest" ] && fail "manifest survived remove" || pass "manifest removed"
 grep -q 'omakase-harness' "$REPO/.git/info/exclude" 2>/dev/null && fail "exclude block survived remove" || pass "exclude block stripped"
 
 rm -rf "$TMP"
