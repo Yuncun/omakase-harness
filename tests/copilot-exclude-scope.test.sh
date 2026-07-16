@@ -2,7 +2,7 @@
 # Regression for the Copilot port: injecting into a SHARED top-level dir (.github) must
 # exclude the exact placed files, NEVER the whole directory — otherwise omakase would hide
 # the project's own untracked .github/ files (workflows, instructions a dev is authoring, …).
-# Uses lefthook from PATH (as CI does); no hardcoded paths.
+# The harness wiring is declared in omakase.manifest; no hardcoded paths.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
@@ -12,19 +12,24 @@ FAILED=0
 pass(){ echo "  PASS: $1"; }
 fail(){ echo "  FAIL: $1"; FAILED=1; }
 
+# Sandbox HOME + cache so init's binary self-install never touches the real machine.
+export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+mkdir -p "$HOME" "$XDG_CACHE_HOME"
+
 mkdir -p "$PAY/.omakase/gates" "$PAY/.github/skills/demo"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$PAY/.omakase/gates/example.sh"
+chmod +x "$PAY/.omakase/gates/example.sh"
 printf -- '---\nname: demo\ndescription: d\n---\nhi\n' > "$PAY/.github/skills/demo/SKILL.md"
-cat > "$PAY/lefthook-local.yml" <<'YML'
-pre-commit:
-  jobs:
-    - name: omakase-example
-      run: bash .omakase/gates/example.sh
-post-checkout:
-  jobs:
-    - name: omakase-ensure-present
-      run: bash "$(git rev-parse --git-common-dir)/omakase/ensure-present.sh"
-YML
+# One pre-commit gate. The post-checkout heal hook is a permanent dispatcher init
+# writes itself, not a manifest gate, so it is not declared here.
+cat > "$PAY/omakase.manifest" <<'MANIFEST'
+name: test
+version: 1
+
+gate: omakase-example
+  hook: pre-commit
+  run: .omakase/gates/example.sh
+MANIFEST
 
 rm -rf "$REPO"; mkdir -p "$REPO"
 ( cd "$REPO" \
@@ -33,7 +38,7 @@ rm -rf "$REPO"; mkdir -p "$REPO"
   && git add .github/workflows/ci.yml && git commit -q -m "repo has its own committed .github/" )
 
 if ! ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" >/dev/null 2>&1 ); then
-  echo "  FAIL: init errored (is lefthook on PATH?)"; rm -rf "$TMP"; exit 1
+  echo "  FAIL: init errored"; rm -rf "$TMP"; exit 1
 fi
 
 # 1. the injected skill IS ignored (zero committed footprint still holds)

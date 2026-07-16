@@ -13,11 +13,10 @@
 #   S4 gate runs — every ledger.tsv row is 4 fields, field 1 numeric (epoch)
 # Behavioral coverage (kind classification, hash-matches-content, enabled=0
 # semantics, gate caching/verdicts/concurrency) lives in tests/placed.test.sh and
-# tests/omakase-gate.test.sh — NOT re-asserted here.
+# internal/gate's Go unit tests — NOT re-asserted here.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
-LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 TMP="${TMPDIR:-/tmp}/omakase-state-format-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
@@ -31,7 +30,15 @@ else sha_str(){ printf '%s' "$1" | sha256sum | awk '{print $1}'; }; fi
 newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }
 common_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)"; }
 
-export PATH="$(dirname "$LEFTHOOK"):$PATH"
+# Self-contained HOME + cache so init self-installs the binary the S4 commit hook
+# execs (${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase), and nothing
+# touches the real machine. S2 re-sets HOME/XDG inline to these same dirs.
+export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+mkdir -p "$HOME" "$XDG_CACHE_HOME"
+if command -v go >/dev/null 2>&1; then
+  export GOMODCACHE="$(go env GOMODCACHE)"
+  export GOCACHE="$(go env GOCACHE)"
+fi
 
 # The placed.tsv format contract, asserted per scenario. Failure output names the
 # offending row(s). $1 = placed.tsv path, $2 = scenario label.
@@ -88,9 +95,10 @@ dups="$(cut -f1 "$PLACED" 2>/dev/null | sort | uniq -d)"
 echo "== S4: gate runs write 4-column ledger rows (epoch name verdict sha) =="
 REPO="$TMP/repoS4"; newrepo "$REPO"
 ( cd "$REPO" && bash "$INIT" ) >/dev/null 2>&1
-[ -f "$REPO/.omakase/bin/omakase-gate.sh" ] || fail "S4: init did not place .omakase/bin/omakase-gate.sh"
-( cd "$REPO" && bash .omakase/bin/omakase-gate.sh fmtpass --step 'true' ) >/dev/null 2>&1
-( cd "$REPO" && bash .omakase/bin/omakase-gate.sh fmtfail --step 'exit 3' ) >/dev/null 2>&1
+[ -f "$REPO/omakase.manifest" ] || fail "S4: init did not place omakase.manifest"
+# A real commit fires the wired pre-commit gate, which appends a ledger row. The
+# commit hook execs the binary init self-installed into $XDG_CACHE_HOME (set above).
+( cd "$REPO" && echo hi > note.txt && git add note.txt && git commit -q -m c1 ) >/dev/null 2>&1
 LEDGER="$(common_of "$REPO")/omakase/ledger.tsv"
 if [ -s "$LEDGER" ]; then
   pass "S4: gate runs produced ledger.tsv rows"

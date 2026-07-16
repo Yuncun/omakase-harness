@@ -18,12 +18,17 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
 REMOVE="$HERE/../bin/remove.sh"
 SHOW="$HERE/../bin/status.sh"
-LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
 [ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
-verify(){ ( cd "$1" && LEFTHOOK=0 "$OMAKASE" hook pre-commit ); }   # verify-only gate run
+# OMAKASE_SKIP_GATES=1 skips the gate commands but NOT the fail-closed
+# placed-files check — so this stays a verify-only run of the pre-commit hook.
+verify(){ ( cd "$1" && OMAKASE_SKIP_GATES=1 "$OMAKASE" hook pre-commit ); }
 heal(){ ( cd "$1" && "$OMAKASE" hook post-checkout ); }
 TMP="${TMPDIR:-/tmp}/omakase-ledger-test.$$"
+# Self-contained HOME + cache: init self-installs the resolved binary into
+# $XDG_CACHE_HOME, and real commits below fire that same copy via the dispatchers.
+export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+mkdir -p "$HOME" "$XDG_CACHE_HOME"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
 fail(){ echo "  FAIL: $1"; FAILED=1; }
@@ -43,12 +48,14 @@ mkpayload(){ # $1 = payload dir
 echo "omakase-example-gate-ran"
 exit 0
 SH
-  cat > "$p/lefthook-local.yml" <<'YML'
-pre-commit:
-  jobs:
-    - name: omakase-example
-      run: bash .omakase/gates/example.sh
-YML
+  cat > "$p/omakase.manifest" <<'MAN'
+name: test
+version: 1
+
+gate: omakase-example
+  hook: pre-commit
+  run: bash .omakase/gates/example.sh
+MAN
   printf 'a rule\n' > "$p/.claude/rules/style.md"
   printf 'spaced rule\n' > "$p/.claude/rules/my rule.md"
   printf 'a skill\n' > "$p/.claude/skills/demo/SKILL.md"
@@ -64,8 +71,6 @@ newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config us
 common_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)"; }
 col(){ awk -F'\t' -v p="$2" -v c="$3" '$1==p{print $c; exit}' "$1"; }   # $1=ledger $2=path $3=column
 
-export PATH="$(dirname "$LEFTHOOK"):$PATH"
-
 # ---------- Scenario M: ledger columns, kinds, hashes ----------
 echo "== Scenario M: init writes the provenance ledger (placed.tsv) =="
 PAY="$TMP/payM"; REPO="$TMP/repoM"
@@ -80,7 +85,7 @@ n_rows=$(grep -c . "$LEDGER"); n_payload=$(find "$PAY" \( -type f -o -type l \) 
 [ "$n_rows" -eq "$n_payload" ] && pass "one row per placed artifact ($n_rows)" || fail "row count $n_rows != payload file count $n_payload"
 
 [ "$(col "$LEDGER" .omakase/gates/example.sh 2)" = gate ]    && pass "kind: gate script -> gate" || fail "gate script kind wrong"
-[ "$(col "$LEDGER" lefthook-local.yml 2)" = gate ]           && pass "kind: lefthook-local.yml -> gate" || fail "lefthook-local.yml kind wrong"
+[ "$(col "$LEDGER" omakase.manifest 2)" = gate ]             && pass "kind: omakase.manifest -> gate" || fail "omakase.manifest kind wrong"
 [ "$(col "$LEDGER" .claude/rules/style.md 2)" = rule ]       && pass "kind: .claude/rules -> rule" || fail "rule kind wrong"
 [ "$(col "$LEDGER" .claude/skills/demo/SKILL.md 2)" = skill ] && pass "kind: .claude/skills -> skill" || fail "skill kind wrong"
 [ "$(col "$LEDGER" .claude/commands/go.md 2)" = command ]    && pass "kind: .claude/commands -> command" || fail "command kind wrong"
@@ -149,7 +154,7 @@ mkpayload "$PAY"; newrepo "$REPO"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 COMMON="$(common_of "$REPO")"
 [ ! -e "$COMMON/omakase/placed.list" ] && pass "no placed.list exists (ledger is the only record)" || fail "placed.list present"
-( cd "$REPO" && printf 'UPSTREAM CONTENT\n' > .omakase/gates/example.sh && git add -f .omakase/gates/example.sh && LEFTHOOK=0 git commit -q -m upstream )
+( cd "$REPO" && printf 'UPSTREAM CONTENT\n' > .omakase/gates/example.sh && git add -f .omakase/gates/example.sh && git commit -q --no-verify -m upstream )
 OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
 [ "$rc" -eq 0 ] && pass "re-init completes (warn, not block)" || fail "re-init failed ($OUT)"
 { echo "$OUT" | grep -qi 'WARNING' && echo "$OUT" | grep -q '.omakase/gates/example.sh'; } && pass "collision warning fired off the ledger, names the path" || fail "no ledger-keyed collision warning ($OUT)"
@@ -171,7 +176,7 @@ echo "$OUT" | grep -qi 'No omakase harness' && fail "show false-negatives on a p
 OUT=$( cd "$REPO" && bash "$SHOW" --markdown 2>&1 )
 echo "$OUT" | grep -qi 'pre-0.10' && pass "markdown mode carries the pre-0.10 notice" || fail "markdown mode missing pre-0.10 notice"
 # an upstream collision arriving exactly across the upgrade must still warn
-( cd "$REPO" && printf 'UPSTREAM CONTENT\n' > .claude/rules/style.md && git add -f .claude/rules/style.md && LEFTHOOK=0 git commit -q -m upstream )
+( cd "$REPO" && printf 'UPSTREAM CONTENT\n' > .claude/rules/style.md && git add -f .claude/rules/style.md && git commit -q --no-verify -m upstream )
 OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
 [ "$rc" -eq 0 ] && pass "init over a pre-0.10 record completes" || fail "upgrade init failed ($OUT)"
 { echo "$OUT" | grep -qi 'WARNING' && echo "$OUT" | grep -q '.claude/rules/style.md'; } && pass "collision warning still fires from the stale placed.list (one-time fallback)" || fail "upgrade run lost the collision warning ($OUT)"

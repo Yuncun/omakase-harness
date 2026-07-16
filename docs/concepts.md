@@ -3,8 +3,8 @@
 ## Base harness and custom harness
 
 **omakase base harness** — the tool you install once. It holds the install/remove logic
-(`bin/`), the base machinery every harness can rely on (the banner, the gate primitive
-(`omakase-gate.sh`) and its scorecard ledger), and the `omakase` commands. This repo is the base harness.
+(`bin/`), the base machinery every harness can rely on (the banner, the gate runner and its
+scorecard ledger), and the `omakase` commands. This repo is the base harness.
 
 **custom harness** — a personal harness you make and share: a git repo with a `payload/`
 tree and a one-line `omakase.manifest`. You install it with `--source`, and the base harness
@@ -39,23 +39,25 @@ directory is gitignored wholesale and will not reach a teammate.
 
 ## Gates
 
-A gate is a check wired into a git hook via `omakase-gate.sh`. The primitive takes a name
-and a `--step '<cmd>'`. The step exits 0 (pass) or non-zero (block). Two flags extend the
-behavior:
+A gate is a check declared as a `gate:` block in `omakase.manifest` and run by the omakase
+binary at a git hook. The block names the gate and gives it a `run:` command line, executed
+via `sh` from the repo root; exit 0 passes, non-zero blocks the commit or push. `hook:`
+picks the stage (`pre-commit` or `pre-push`). Two optional keys extend the behavior:
 
-- `--cacheable`: once a step passes for a given commit, subsequent runs at that commit skip
-  the step. Use for expensive checks, or when a check runs out of band: the hook uses a
-  blocking step that refuses the push, the check runs separately (by an agent or developer),
-  and when it passes it calls `omakase-gate.sh <name> --record` to record the result. The
-  re-push at the same commit is then allowed.
-- `--glob '<pats>'`: space-separated path globs; the gate is skipped when no changed file
+- `cacheable: true`: once the `run:` passes for a given commit, subsequent runs at that
+  commit skip it. Use for expensive checks, or when a check runs out of band: the `run:`
+  blocks the push, the check runs separately (by an agent or developer), and when it passes
+  it calls `omakase record <name>` to record the result. The re-push at the same commit is
+  then allowed.
+- `glob: <pats>`: space-separated path globs; the gate is skipped when no changed file
   matches.
 
-Every run appends to the scorecard, visible in `omakase status`. Two audited bypasses
-exist: `OMAKASE_SKIP_<NAME>=1` (name upper-cased, `-`→`_`) skips one invocation, and a
-persistent per-gate toggle (`omakase status --disable <gate>`, the interactive screen, or
-the MCP menu) records the gate in the git dir's `omakase/disabled-gates` until re-enabled.
-Both announce the skip on every hook run — a bypassed gate is never silent.
+Every run appends to the scorecard, visible in `omakase status`. Audited bypasses exist:
+`OMAKASE_SKIP_<NAME>=1` (name upper-cased, `.`/`-`→`_`) skips one gate for one git command,
+`OMAKASE_SKIP_GATES=1` skips every gate for one git command, and a persistent per-gate
+toggle (`omakase status --disable <gate>`, the interactive screen, or the MCP menu) records
+the gate in the git dir's `omakase/disabled-gates` until re-enabled. All announce the skip
+on every hook run — a bypassed gate is never silent.
 
 ## State
 

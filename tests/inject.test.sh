@@ -7,33 +7,39 @@ OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && reso
 [ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
 heal(){ ( cd "$1" && "$OMAKASE" hook post-checkout ); }
 REMOVE="$HERE/../bin/remove.sh"
-LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 TMP="${TMPDIR:-/tmp}/omakase-inject-test.$$"
+# Self-contained HOME + cache: init self-installs the resolved binary into
+# $XDG_CACHE_HOME, and every real commit/checkout below fires that same copy
+# through the permanent hook dispatchers (nothing touches the real machine).
+export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+mkdir -p "$HOME" "$XDG_CACHE_HOME"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
 fail(){ echo "  FAIL: $1"; FAILED=1; }
 
 mkpayload(){ # $1 = payload dir
   local p="$1"
-  mkdir -p "$p/.omakase/gates" "$p/.omakase/bin"
+  mkdir -p "$p/.omakase/gates" "$p/.claude/rules"
   cat > "$p/.omakase/gates/example.sh" <<'SH'
 #!/usr/bin/env bash
 echo "omakase-example-gate-ran"
 exit 0
 SH
-  cp "$HERE/../payload/.omakase/bin/omakase-gate.sh" "$p/.omakase/bin/omakase-gate.sh"
-  chmod +x "$p/.omakase/bin/omakase-gate.sh"
-  cat > "$p/lefthook-local.yml" <<'YML'
-pre-commit:
-  jobs:
-    - name: omakase-example
-      run: bash .omakase/bin/omakase-gate.sh omakase-example --step 'bash .omakase/gates/example.sh'
-YML
+  # A non-machinery placed file so `omakase status` has a visible Injected row
+  # (the .omakase/ tree and omakase.manifest are machinery — filtered as noise).
+  printf 'a rule\n' > "$p/.claude/rules/style.md"
+  # Gates are declared in omakase.manifest now (lefthook / omakase-gate.sh gone).
+  cat > "$p/omakase.manifest" <<'MAN'
+name: test
+version: 1
+
+gate: omakase-example
+  hook: pre-commit
+  run: bash .omakase/gates/example.sh
+MAN
 }
 
 newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }
-
-export PATH="$(dirname "$LEFTHOOK"):$PATH"
 
 # ---------- Scenario A: clean repo, no harness ----------
 echo "== Scenario A: additive into a repo with no harness =="
@@ -51,8 +57,12 @@ OUT=$(cd "$REPO" && echo x > f.txt && git add f.txt 2>/dev/null; git commit -m t
 [ ! -e "$REPO/.omakase" ] && pass "remove deleted placed tree" || fail "remove left files"
 grep -q "omakase-harness" "$REPO/.git/info/exclude" && fail "remove left exclude block" || pass "remove stripped exclude block"
 
-# ---------- Scenario B: repo already commits AGENTS.md + lefthook.yml ----------
-echo "== Scenario B: collisions skipped, committed files untouched =="
+# ---------- Scenario B: repo commits its own lefthook.yml -> incumbent refusal ----------
+# A repo that commits its own lefthook.yml is using lefthook natively. omakase no
+# longer runs lefthook, so installing its dispatchers would displace the project's
+# own hooks — init REFUSES (the gate module's one intended regression) and places
+# nothing, leaving the committed config exactly in place.
+echo "== Scenario B: a committed project lefthook.yml is an incumbent hook manager — init refuses =="
 PAY="$TMP/payloadB"; REPO="$TMP/repoB"
 mkpayload "$PAY"
 printf 'team agents\n' > "$PAY/AGENTS.md"   # colliding singleton in the payload
@@ -64,18 +74,16 @@ pre-commit:
       run: 'true'
 YML
 git add AGENTS.md lefthook.yml && git commit -q -m team )
-( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
 
+[ "$rc" -ne 0 ] && pass "init REFUSES to install over a committed project lefthook.yml (exit 1)" || fail "init did not refuse the incumbent lefthook.yml (rc=$rc)"
+echo "$OUT" | grep -q "lefthook.yml is git-tracked (the project's own lefthook config)" && pass "refusal names the git-tracked lefthook.yml incumbent" || { fail "refusal wording wrong"; echo "$OUT" | sed 's/^/      /'; }
 grep -q "COMMITTED team agents" "$REPO/AGENTS.md" && pass "committed AGENTS.md NOT overwritten" || fail "AGENTS.md was overwritten"
 ( cd "$REPO" && git diff --quiet HEAD -- AGENTS.md lefthook.yml ) && pass "committed AGENTS.md + lefthook.yml diff clean" || fail "committed files changed"
-[ -f "$REPO/lefthook-local.yml" ] && pass "lefthook-local.yml placed (additive)" || fail "lefthook-local.yml missing"
-[ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status clean with committed harness present" || { fail "status not clean"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
-OUT=$(cd "$REPO" && echo x > g.txt && git add g.txt 2>/dev/null; git commit -m t 2>&1); echo "$OUT" | grep -q "omakase-example-gate-ran" && pass "personal gate fires alongside committed team config" || { fail "personal gate did not fire"; echo "$OUT" | sed 's/^/      /'; }
-# issue #80: the repo tracks its own lefthook.yml, so lefthook writes no skeleton
-# and init must NOT snapshot a heal source (git already carries lefthook.yml into
-# every worktree).
-BCOMMON="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
-[ ! -e "$BCOMMON/omakase/lefthook.yml" ] && pass "tracked lefthook.yml: no heal snapshot written (#80)" || fail "tracked lefthook.yml wrongly snapshotted for heal"
+[ ! -e "$REPO/omakase.manifest" ] && pass "refusal placed nothing (no omakase.manifest)" || fail "init placed omakase.manifest despite refusing"
+[ ! -e "$REPO/.omakase" ] && pass "refusal placed nothing (no .omakase tree)" || fail "init placed the .omakase tree despite refusing"
+[ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status clean (refusal changed nothing)" || { fail "status not clean after refusal"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
+grep -q "omakase-harness" "$REPO/.git/info/exclude" 2>/dev/null && fail "refusal wrote an exclude block" || pass "refusal wrote no exclude block"
 
 # ---------- Scenario C: worktree auto-install ----------
 # A fresh worktree has none of the gitignored harness files. init.sh snapshots the
@@ -94,12 +102,6 @@ grep -q '.omakase/gates/example.sh' "$COMMON/omakase/placed.tsv" 2>/dev/null && 
 [ -f "$COMMON/omakase/payload-snapshot/.omakase/gates/example.sh" ] && pass "payload snapshot captured the gate" || fail "snapshot missing the gate"
 grep -q "omakase-harness" "$REPO/.worktreeinclude" 2>/dev/null && pass ".worktreeinclude block written" || fail ".worktreeinclude block missing"
 [ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status still clean (harness artifacts out of git)" || { fail "status not clean after harness wiring"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
-
-# C1b: the lefthook.yml skeleton is dead (#98): the hook runner points lefthook
-# straight at the placed wiring (explicit config), so no skeleton is written at
-# the main checkout and no heal snapshot exists — the whole #80 problem is moot.
-[ ! -e "$REPO/lefthook.yml" ] && pass "no lefthook.yml skeleton at the main checkout (explicit config, #98)" || fail "a lefthook.yml skeleton appeared (mechanism regressed?)"
-[ ! -e "$COMMON/omakase/lefthook.yml" ] && pass "no lefthook.yml heal snapshot in the shared omakase dir" || fail "stale lefthook.yml heal snapshot written"
 
 # C2: mechanism — a fresh linked worktree AUTO-self-heals on `git worktree add`
 # (the post-checkout dispatcher runs the binary's native heal), so the gate is
@@ -132,7 +134,7 @@ grep -q 'omakase dispatcher' "$PCHOOK" 2>/dev/null && pass "shared post-checkout
 WTB="$TMP/repoC-wtbare"
 ( cd "$REPO" && git worktree add -q "$WTB" -b wtbare ) >/dev/null 2>&1
 [ -x "$WTB/.omakase/gates/example.sh" ] && pass "bare 'git worktree add' self-healed the gate (no manual heal)" || fail "bare worktree did NOT self-heal — harness incomplete"
-[ -f "$WTB/lefthook-local.yml" ] && pass "bare worktree self-healed the wiring too" || fail "bare worktree missing lefthook-local.yml after self-heal"
+[ -f "$WTB/omakase.manifest" ] && pass "bare worktree self-healed the manifest wiring too" || fail "bare worktree missing omakase.manifest after self-heal"
 ( cd "$REPO" && git worktree remove --force "$WTB" ) 2>/dev/null; ( cd "$REPO" && git worktree prune ) 2>/dev/null
 
 # C5: remove tears the harness snapshot down too.
@@ -158,8 +160,8 @@ COMMON="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 [ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status clean (symlink gitignored)" || { fail "status not clean (symlink)"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
 WTD="$TMP/repoD-wt"
 ( cd "$REPO" && git worktree add -q "$WTD" -b wtdsym ) 2>/dev/null
-( cd "$WTD" && bash "$COMMON/omakase/ensure-present.sh" )
-[ -L "$WTD/CLAUDE.md" ] && pass "ensure-present self-healed the symlink into a worktree" || fail "ensure-present did not carry the symlink"
+heal "$WTD" >/dev/null 2>&1
+[ -L "$WTD/CLAUDE.md" ] && pass "the native heal self-healed the symlink into a worktree" || fail "the heal did not carry the symlink"
 ( cd "$REPO" && git worktree remove --force "$WTD" ) 2>/dev/null; ( cd "$REPO" && git worktree prune ) 2>/dev/null
 
 # ---------- Scenario E: re-init always matches payload — overwrites divergent files + warns ----------
@@ -215,7 +217,7 @@ echo "$OUT" | grep -qi 'No omakase harness' && pass "show reports empty state be
 OUT=$( cd "$REPO" && bash "$SHOW" 2>&1 )
 echo "$OUT" | grep -q 'INJECTED (omakase)' && pass "show prints the placed files as the Injected group" || fail "show missing INJECTED group"
 INJ="$(echo "$OUT" | awk '/^INJECTED \(omakase\)/{f=1;next} /^GLOBAL /{f=0} f')"
-echo "$INJ" | grep -q 'lefthook-local.yml' && pass "show lists an injected harness file in the Injected group" || fail "show did not list the injected file in the Injected group"
+echo "$INJ" | grep -q '.claude/rules/style.md' && pass "show lists an injected harness file in the Injected group" || fail "show did not list the injected file in the Injected group"
 echo "$OUT" | grep -qi 'zero footprint' && pass "show states the zero-committed footprint" || fail "show missing the footprint line"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 

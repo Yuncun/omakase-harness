@@ -17,21 +17,23 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
 OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
 [ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
-verify(){ ( cd "$1" && LEFTHOOK=0 "$OMAKASE" hook pre-commit ); }   # verify-only gate run
+verify(){ ( cd "$1" && "$OMAKASE" hook pre-commit ); }   # verify-only gate run
 REMOVE="$HERE/../bin/remove.sh"
 SHOW="$HERE/../bin/status.sh"
-LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 TMP="${TMPDIR:-/tmp}/omakase-sources-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
 fail(){ echo "  FAIL: $1"; FAILED=1; }
 
-export PATH="$(dirname "$LEFTHOOK"):$PATH"
-
 FAKEHOME="$TMP/home"; CACHEHOME="$TMP/cache"
 mkdir -p "$FAKEHOME" "$CACHEHOME"
+# Real commits below fire the git-hook dispatcher, which execs the binary init
+# self-installs under $XDG_CACHE_HOME/omakase/bin/current. Export HOME +
+# XDG_CACHE_HOME so init and the commits share that one self-installed copy.
+export HOME="$FAKEHOME"; export XDG_CACHE_HOME="$CACHEHOME"
 
-# Build a SOURCE repo at $1: payload/ (gate + rule + wiring) + omakase.manifest, committed.
+# Build a SOURCE repo at $1: payload/ (gate script + rule + gate wiring in
+# payload/omakase.manifest) + the source-root omakase.manifest (identity), committed.
 mksource(){
   local r="$1"; rm -rf "$r"; mkdir -p "$r"
   ( cd "$r" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
@@ -41,13 +43,18 @@ mksource(){
 echo "omakase-example-gate-ran"
 exit 0
 SH
-  cat > "$r/payload/lefthook-local.yml" <<'YML'
-pre-commit:
-  jobs:
-    - name: omakase-example
-      run: bash .omakase/gates/example.sh
-YML
+  # The harness's gates live in payload/omakase.manifest (placed + snapshotted;
+  # gates fire from it) — the file that replaced payload/lefthook-local.yml.
+  cat > "$r/payload/omakase.manifest" <<'MAN'
+name: test
+version: 1
+
+gate: omakase-example
+  hook: pre-commit
+  run: bash .omakase/gates/example.sh
+MAN
   printf 'a rule\n' > "$r/payload/.claude/rules/style.md"
+  # The source-root manifest carries identity (name/version); init reads it.
   cat > "$r/omakase.manifest" <<'MAN'
 name: test-harness
 version: 0.1.0
@@ -198,16 +205,15 @@ SH
 # a source SYMLINK must survive the merge loop's cp -P (the advertised CLAUDE.md -> AGENTS.md)
 printf 'shared agent instructions\n' > "$SRC6/payload/AGENTS.md"
 ( cd "$SRC6/payload" && ln -s AGENTS.md CLAUDE.md )
-# wiring that DEPENDS on base machinery the source does NOT ship (banner + gate primitive)
-cat > "$SRC6/payload/lefthook-local.yml" <<'YML'
-output: [summary, success, failure, execution_out]
-pre-commit:
-  jobs:
-    - name: omakase-banner
-      run: bash .omakase/bin/omakase-banner.sh pre-commit
-    - name: source-discipline
-      run: bash .omakase/bin/omakase-gate.sh source-discipline --step 'bash .omakase/gates/discipline.sh'
-YML
+# gate wiring in payload/omakase.manifest — the run: fires the source's OWN gate.
+cat > "$SRC6/payload/omakase.manifest" <<'MAN'
+name: needs-base
+version: 1
+
+gate: source-discipline
+  hook: pre-commit
+  run: bash .omakase/gates/discipline.sh
+MAN
 printf 'name: needs-base\nversion: 0.1.0\n' > "$SRC6/omakase.manifest"
 ( cd "$SRC6" && git add -A && git commit -q -m harness )
 SRC6="$(cd "$SRC6" && pwd)"
@@ -219,14 +225,14 @@ export TMPDIR="$TMP/merge-tmp"; mkdir -p "$TMPDIR"
 ( cd "$REPO6" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$SRC6" ) >/dev/null 2>&1
 # base machinery the source did NOT ship is present (layered from the base harness's payload)
 [ -x "$REPO6/.omakase/bin/omakase-banner.sh" ] && pass "base banner layered in (source did not ship it)" || fail "base banner missing — base payload not layered under source"
-[ -x "$REPO6/.omakase/bin/omakase-gate.sh" ] && pass "base gate primitive layered in" || fail "base gate primitive missing"
+[ -x "$REPO6/.omakase/bin/omakase-worktree-guard.sh" ] && pass "base worktree-guard layered in (source did not ship it)" || fail "base worktree-guard missing — base payload not layered under source"
 # the source's own gate is placed too
 [ -x "$REPO6/.omakase/gates/discipline.sh" ] && pass "source's own gate placed" || fail "source gate missing"
 grep -q 'SOURCE-OVERRODE-EXAMPLE' "$REPO6/.omakase/gates/example.sh" 2>/dev/null && pass "source wins over a base file at the same path (replace semantics, no write-through)" || fail "base file won over the source on overlap (merge write-through?)"
 { [ -L "$REPO6/CLAUDE.md" ] && [ "$(readlink "$REPO6/CLAUDE.md")" = "AGENTS.md" ]; } && pass "source symlink preserved through the merge (CLAUDE.md -> AGENTS.md)" || fail "source symlink not preserved by the merge loop"
 [ -z "$(find "$TMPDIR" -maxdepth 1 -name 'omakase-merge.*' 2>/dev/null)" ] && pass "merge staging dir cleaned on exit (no scratch leak)" || fail "merge staging dir leaked in $TMPDIR"
-# the source's lefthook WINS over the base's (it is the overlay)
-grep -q 'source-discipline' "$REPO6/lefthook-local.yml" 2>/dev/null && pass "source lefthook-local.yml overlays the base one" || fail "source wiring did not win"
+# the source's omakase.manifest WINS over the base's (it is the overlay)
+grep -q 'source-discipline' "$REPO6/omakase.manifest" 2>/dev/null && pass "source omakase.manifest overlays the base one" || fail "source wiring did not win"
 COMMON6="$(cd "$REPO6" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 verify "$REPO6" >/dev/null 2>&1 && pass "the gate verify passes over the merged overlay" || fail "the gate verify blocked the merged overlay"
 # the real bite: a commit must FIRE the wired gate with no exit-127 from missing machinery
@@ -237,20 +243,23 @@ echo "$OUT" | grep -qiE 'No such file|not found|: 127' && { fail "commit hit a m
 [ -z "$(cd "$REPO6" && git status --porcelain | grep -v '^?? f.txt$')" ] && pass "no stray tracked/ignored residue from the merge" || { fail "merge left residue in git status"; (cd "$REPO6" && git status --porcelain | sed 's/^/      /'); }
 ( cd "$REPO6" && bash "$REMOVE" ) >/dev/null 2>&1
 
-# ---------- Scenario S7: wiring guard — a source referencing an unshipped script is refused ----------
-# The wiring guard: after the base+source merge, every
-# .omakase/*.sh the merged wiring references must exist, else the harness would die at
-# commit with exit 127. Refuse at init, fail-closed, place nothing.
-echo "== Scenario S7: a source wiring a script neither it nor the base harness ships is refused =="
+# ---------- Scenario S7: gate guard — a source declaring an unshipped script is refused ----------
+# The "nothing runs undeclared" check moved to the manifest: after the base+source
+# merge, a gate whose run: first token is a payload path (.omakase/… or gates/…) must
+# name a script the merged payload actually ships, else the harness would die at commit
+# with exit 127. Refuse at init, fail-closed, place nothing.
+echo "== Scenario S7: a source gate naming a script neither it nor the base harness ships is refused =="
 SRC7="$TMP/src-bad-wiring"; REPO7="$TMP/repoS7"
-rm -rf "$SRC7"; mkdir -p "$SRC7/payload/.omakase/gates"
+rm -rf "$SRC7"; mkdir -p "$SRC7/payload"
 ( cd "$SRC7" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
-cat > "$SRC7/payload/lefthook-local.yml" <<'YML'
-pre-commit:
-  jobs:
-    - name: ghost
-      run: bash .omakase/gates/this-script-does-not-exist.sh
-YML
+cat > "$SRC7/payload/omakase.manifest" <<'MAN'
+name: bad-wiring
+version: 1
+
+gate: ghost
+  hook: pre-commit
+  run: .omakase/gates/this-script-does-not-exist.sh
+MAN
 printf 'name: bad-wiring\n' > "$SRC7/omakase.manifest"
 ( cd "$SRC7" && git add -A && git commit -q -m m )
 SRC7="$(cd "$SRC7" && pwd)"
@@ -261,11 +270,11 @@ echo "$ERR" | grep -q 'this-script-does-not-exist.sh' && pass "refusal names the
 { [ ! -e "$REPO7/.omakase" ] && [ -z "$(cd "$REPO7" && git status --porcelain)" ]; } && pass "nothing placed on wiring refusal" || fail "wiring refusal left artifacts behind"
 grep -q 'omakase-harness' "$REPO7/.git/info/exclude" 2>/dev/null && fail "wiring refusal wrote the exclude block" || pass "no exclude block on wiring refusal"
 
-# ---------- Scenario S8: a COMMENTED-OUT wiring reference is ignored, not a false refusal ----------
-# The wiring guard greps the merged lefthook-local.yml; it must strip YAML '#' comments first, or a
-# commented-out breadcrumb referencing a script the source doesn't ship (the pattern the base
-# payload's own wiring uses for its templates) would trip a fail-closed refusal for a dead line.
-echo "== Scenario S8: a commented-out wiring reference is ignored, not refused =="
+# ---------- Scenario S8: a COMMENTED-OUT gate reference is ignored, not a false refusal ----------
+# gate.Parse skips full-line comments in omakase.manifest, so a commented-out breadcrumb
+# referencing a script the source doesn't ship (the pattern a harness uses to leave a
+# retired gate in place as documentation) must never trip a fail-closed refusal for a dead line.
+echo "== Scenario S8: a commented-out gate reference is ignored, not refused =="
 SRC8="$TMP/src-commented-wiring"; REPO8="$TMP/repoS8"
 rm -rf "$SRC8"; mkdir -p "$SRC8/payload/.omakase/gates"
 ( cd "$SRC8" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
@@ -273,43 +282,47 @@ cat > "$SRC8/payload/.omakase/gates/live.sh" <<'SH'
 #!/usr/bin/env bash
 echo live; exit 0
 SH
-# the LIVE gate is shipped; the gate referenced in the COMMENT (legacy-removed.sh) is NOT — and must
+# the LIVE gate is declared; the gate in the COMMENT (legacy-removed.sh) is NOT — and must
 # not be treated as a live requirement.
-cat > "$SRC8/payload/lefthook-local.yml" <<'YML'
-pre-commit:
-  jobs:
-    # Old gate, replaced by 'live' below — left as a breadcrumb:
-    # - run: bash .omakase/gates/legacy-removed.sh
-    - name: live
-      run: bash .omakase/gates/live.sh
-YML
+cat > "$SRC8/payload/omakase.manifest" <<'MAN'
+name: commented-wiring
+version: 1
+
+# Old gate, replaced by 'live' below — left as a breadcrumb:
+# gate: legacy
+#   run: .omakase/gates/legacy-removed.sh
+gate: live
+  hook: pre-commit
+  run: bash .omakase/gates/live.sh
+MAN
 printf 'name: commented-wiring\n' > "$SRC8/omakase.manifest"
 ( cd "$SRC8" && git add -A && git commit -q -m m )
 SRC8="$(cd "$SRC8" && pwd)"
 newrepo "$REPO8"
 OUT8=$( cd "$REPO8" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$SRC8" 2>&1 ); rc=$?
-[ "$rc" -eq 0 ] && pass "commented-out wiring reference did not cause a refusal (install succeeded)" || { fail "commented-out reference tripped the wiring guard (rc=$rc)"; echo "$OUT8" | sed 's/^/      /'; }
+[ "$rc" -eq 0 ] && pass "commented-out gate reference did not cause a refusal (install succeeded)" || { fail "commented-out reference tripped the gate guard (rc=$rc)"; echo "$OUT8" | sed 's/^/      /'; }
 echo "$OUT8" | grep -q 'legacy-removed.sh' && fail "guard named a commented-out script" || pass "guard ignored the commented-out script"
 [ -x "$REPO8/.omakase/gates/live.sh" ] && pass "source's live gate placed" || fail "live gate missing"
 ( cd "$REPO8" && bash "$REMOVE" ) >/dev/null 2>&1
 
-# ---------- Scenario S9: a non-shipping script named AFTER a '#' inside a --step is still caught ----------
-# The '#'-truncation hazard the awk guard closes: a '#' INSIDE a quoted --step value precedes the
-# script reference. A line-comment-stripping guard (sed 's/#.*//') would cut the line at the '#' and
-# miss does-not-ship.sh, passing the install. The guard skips only FULL-LINE comments, so it keeps
-# this line whole, finds the reference, and refuses. (This is the differential vs a sed-based guard.)
-echo "== Scenario S9: wiring guard catches a script named after a # inside a --step =="
+# ---------- Scenario S9: the does-not-ship refusal fires on a plain OMAKASE_PAYLOAD install too ----------
+# The "nothing runs undeclared" check lives in the manifest and runs for a plain install as
+# well as a --source merge: a gate whose run: first token is a payload path the payload does
+# not ship refuses at init, before placing anything (it would otherwise die at commit, exit 127).
+echo "== Scenario S9: a gate naming an unshipped payload script is refused on a plain install =="
 REPOWG="$TMP/repoWG"; PAYWG="$TMP/payWG"
 rm -rf "$PAYWG"; cp -R "$HERE/../payload/." "$PAYWG/"
-cat > "$PAYWG/lefthook-local.yml" <<'YML'
-pre-commit:
-  jobs:
-    - name: ghost
-      run: bash .omakase/bin/omakase-gate.sh ghost --step 'echo "#skip"; bash .omakase/gates/does-not-ship.sh'
-YML
+cat > "$PAYWG/omakase.manifest" <<'MAN'
+name: base
+version: 1
+
+gate: ghost
+  hook: pre-commit
+  run: .omakase/gates/does-not-ship.sh
+MAN
 newrepo "$REPOWG"
 OUT="$( cd "$REPOWG" && OMAKASE_PAYLOAD="$PAYWG" bash "$INIT" 2>&1 )"; RC=$?
-{ [ "$RC" -ne 0 ] && echo "$OUT" | grep -q 'does-not-ship.sh'; } && pass "guard refuses a script named after a # inside a --step (plain path)" || fail "guard missed the non-shipping script ($RC: $OUT)"
+{ [ "$RC" -ne 0 ] && echo "$OUT" | grep -q 'does-not-ship.sh'; } && pass "manifest refuses a gate naming an unshipped payload script (plain install)" || fail "guard missed the non-shipping script ($RC: $OUT)"
 [ ! -d "$REPOWG/.omakase" ] && pass "guard refused before placing anything" || fail "guard placed files despite refusing"
 
 # ---------- Scenario S10: a harness adopted from a SUBFOLDER of a hub repo ----------

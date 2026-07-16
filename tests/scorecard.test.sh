@@ -13,7 +13,6 @@ SHOW="$HERE/../bin/status.sh"
 INIT="$HERE/../bin/init.sh"
 REMOVE="$HERE/../bin/remove.sh"
 PAY="$HERE/../payload"
-LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 TMP="${TMPDIR:-/tmp}/omakase-status-test.$$"
 NOW=1700000000
 FAILED=0
@@ -27,7 +26,13 @@ has_run(){ awk -F'\t' -v g="$2" -v v="$3" '$2==g && $3==v{f=1} END{exit f?0:1}' 
 if command -v shasum >/dev/null 2>&1; then shastr(){ printf '%s' "$1" | shasum -a 256 | awk '{print $1}'; }; shafile(){ shasum -a 256 < "$1" | awk '{print $1}'; }
 elif command -v sha256sum >/dev/null 2>&1; then shastr(){ printf '%s' "$1" | sha256sum | awk '{print $1}'; }; shafile(){ sha256sum < "$1" | awk '{print $1}'; }
 else shastr(){ echo nodigest; }; shafile(){ echo nodigest; }; fi
-export PATH="$(dirname "$LEFTHOOK"):$PATH"
+
+# Self-contained HOME + cache: init self-installs the resolved binary into
+# $XDG_CACHE_HOME, so the real commit in Scenario U fires that copy through the
+# permanent .git/hooks dispatchers. Scenarios pin their own $HOME below to
+# control the personal inventory; $XDG_CACHE_HOME stays this fixture cache.
+export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+mkdir -p "$HOME" "$XDG_CACHE_HOME"
 
 # Freeze the Go module + build caches to their real locations: scenarios pin $HOME
 # to fixture dirs to control the personal inventory, which also relocates the
@@ -41,7 +46,7 @@ if command -v go >/dev/null 2>&1; then
 fi
 
 # ---------- Scenario S: omakase status surfaces a 4-col ledger verdict on the guards chart ----------
-# Since #23 `show` lists gates from the lefthook WIRING, joined to the latest ledger verdict.
+# Since #23 `show` lists gates from the manifest WIRING, joined to the latest ledger verdict.
 # A 4-col row for the base payload's WIRED gate (markers) must surface with its verdict in both
 # modes. Asserts on gate-name + verdict, not the exact header.
 echo "== Scenario S: show surfaces a 4-col verdict on the guards chart =="
@@ -59,7 +64,7 @@ echo "$OUT" | grep -E 'markers' | grep -q 'fail' && pass "markdown fail row (4-c
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
 # ---------- Scenario U: a real commit records a 4-col row through the wiring ----------
-echo "== Scenario U: a real lefthook commit writes a 4-col ledger row =="
+echo "== Scenario U: a real commit writes a 4-col ledger row through the wiring =="
 REPO="$TMP/repoU"; newrepo "$REPO"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 LEDGER="$(ledger_of "$REPO")"
@@ -109,7 +114,10 @@ PLACEDTSV="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)/omakas
 awk -F'\t' -v OFS='\t' '$1==".claude/settings.json"{$5=0} 1' "$PLACEDTSV" > "$PLACEDTSV.tmp" && mv "$PLACEDTSV.tmp" "$PLACEDTSV"
 OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" 2>&1 )"
 echo "$OUT" | grep -qiF 'Injected (omakase)' && pass "Injected group prints when installed" || fail "no Injected group ($OUT)"
-echo "$OUT" | grep 'lefthook-local\.yml' | grep 'gate' | grep -q 'payload' && pass "injected row carries kind + source value" || fail "injected row missing kind/source ($OUT)"
+# The manifest gate wiring (omakase.manifest) is machinery — hidden while healthy —
+# so the visible injected row to check for kind + source is the .claude/settings.json
+# config the fixture added.
+echo "$OUT" | grep '\.claude/settings\.json' | grep 'config' | grep -q 'payload' && pass "injected row carries kind + source value" || fail "injected row missing kind/source ($OUT)"
 echo "$OUT" | grep '\.claude/settings\.json' | grep -qi 'disabled' && pass "hand-disabled row carries the disabled marker" || fail "disabled marker missing ($OUT)"
 # omakase's own machinery (.omakase/) is not itemised in Injected; scope the absence check
 # to that section (Guards may legitimately name an .omakase/ gate path in the ENFORCES cell).
@@ -149,7 +157,7 @@ echo "$OUT" | grep -i -A1 'not installed by omakase' | grep -q '(none)' && pass 
 # was invisible at rest; DRIFT surfacing is pinned in the Go goldens). The (none) check
 # anchors to the line right AFTER the Injected header, per mode ("    (none)" term /
 # "- _(none)_" md): a bare "(none)" would be satisfied by the empty Committed or Global
-# sections too. The hand-built install carries no lefthook.yml, so no real gate run is
+# sections too. The hand-built install declares no gates, so no real gate run is
 # needed.
 echo "== Scenario I2: healthy machinery hidden; missing machinery surfaces =="
 inj_empty(){ # $1 = captured output, $2 = mode (term|md), $3 = label
@@ -168,10 +176,10 @@ else
   HOMEI2="$TMP/homeI2"; rm -rf "$HOMEI2"; mkdir -p "$HOMEI2"
   COMMONI2="$(cd "$REPOI2" && cd "$(git rev-parse --git-common-dir)" && pwd)"; mkdir -p "$COMMONI2/omakase"
   mkdir -p "$REPOI2/.omakase/bin" "$REPOI2/.omakase/gates"
-  printf 'gate runner\n' > "$REPOI2/.omakase/bin/omakase-gate.sh"
+  printf 'banner\n' > "$REPOI2/.omakase/bin/omakase-banner.sh"
   printf 'example gate\n' > "$REPOI2/.omakase/gates/example.sh"
-  { printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/bin/omakase-gate.sh' guard payload "$(shafile "$REPOI2/.omakase/bin/omakase-gate.sh")" 1
-    printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/gates/example.sh'     guard payload "$(shafile "$REPOI2/.omakase/gates/example.sh")" 1
+  { printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/bin/omakase-banner.sh' guard payload "$(shafile "$REPOI2/.omakase/bin/omakase-banner.sh")" 1
+    printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/gates/example.sh'      guard payload "$(shafile "$REPOI2/.omakase/gates/example.sh")" 1
   } > "$COMMONI2/omakase/placed.tsv"
   OUT="$( cd "$REPOI2" && HOME="$HOMEI2" bash "$SHOW" 2>&1 )"; RC=$?
   [ "$RC" -eq 0 ] && pass "I2: status exits 0 on the all-machinery install" || fail "I2: status exited $RC"
@@ -185,7 +193,7 @@ else
   echo "$OUT" | grep '\.omakase/gates/example\.sh' | grep -q 'MISSING' \
     && pass "I2 [term]: a missing machinery row surfaces with the MISSING marker" \
     || fail "I2 [term]: gutted machinery is still invisible ($OUT)"
-  echo "$OUT" | grep '\.omakase/bin/omakase-gate\.sh' >/dev/null \
+  echo "$OUT" | grep '\.omakase/bin/omakase-banner\.sh' >/dev/null \
     && fail "I2 [term]: the still-healthy machinery row leaked into the listing" \
     || pass "I2 [term]: the still-healthy machinery row stays hidden"
 fi

@@ -347,13 +347,9 @@ else
   echo "  SKIP: no omakase binary available — put go on PATH to build one, or set OMAKASE_TEST_LIVE_FETCH=1 to reuse O8's fetched release binary"
 fi
 if [ -n "$O10BUILT" ]; then
-    # Stub lefthook via LEFTHOOK_BIN (a no-op `install`): init's only lefthook call
-    # is `lefthook install`, O10 fires no commit, and the host's real lefthook may
-    # be an npm/node wrapper needing `node` (absent from CLEANPATH). Stubbing the
-    # external hook installer keeps O10 offline + node-free while still exercising
-    # the real omakase binary's WHOLE init flow — the base-payload handoff under
-    # test. Same idiom as O5/O6 stubbing the omakase binary.
-    O10LEFT="$O10/lefthook-stub"; printf '#!/bin/sh\nexit 0\n' > "$O10LEFT"; chmod +x "$O10LEFT"
+    # init writes its own git-hook dispatchers (no external hook runner), so O10
+    # needs no hook-installer stub: it fires no commit and only exercises the real
+    # omakase binary's WHOLE init flow — the base-payload handoff under test.
     # Simulated plugin clone: bin/ (+libs) and payload/, NO go.mod / dist/,
     # so resolution tiers 2-3 are unreachable and it falls to the cached binary
     # (tier 5) — the same trick as O5.
@@ -378,15 +374,16 @@ if [ -n "$O10BUILT" ]; then
 
     # ---- leg 7: THE PROBE — shim -> cached binary -> init --source, offline ----
     # git must be reachable through CLEANPATH (as every scenario manages it); HOME
-    # gives git a config dir; LEFTHOOK_BIN keeps the hook install offline.
+    # gives git a config dir. init writes its own hook dispatchers, so no external
+    # hook installer is involved.
     O10TGT="$O10/target"; scratch_repo "$O10TGT"
     O10OUT="$O10/probe.out"; O10ERR="$O10/probe.err"
-    ( cd "$O10TGT" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" LEFTHOOK_BIN="$O10LEFT" \
+    ( cd "$O10TGT" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" \
       bash "$O10/plugin/bin/init.sh" --source "$O10SRC" >"$O10OUT" 2>"$O10ERR" )
     rc=$?
     [ "$rc" -eq 0 ] && pass "shim -> cached binary -> init --source exits 0 (fetched-binary init works)" || fail "probe exited $rc ($(cat "$O10ERR"))"
     grep -q 'cached at' "$O10OUT" && pass "the source was cached + injected (the full --source flow ran)" || fail "no 'cached at' in probe stdout ($(cat "$O10OUT"))"
-    [ -x "$O10TGT/.omakase/bin/omakase-gate.sh" ] && pass "base payload file placed (OMAKASE_BASE_PAYLOAD located the merge base)" || fail "base gate primitive missing — base payload not located"
+    [ -x "$O10TGT/.omakase/bin/omakase-banner.sh" ] && pass "base payload file placed (OMAKASE_BASE_PAYLOAD located the merge base)" || fail "base machinery missing — base payload not located"
     [ -f "$O10TGT/.omakase/O10-SOURCE-MARKER" ] && pass "source marker placed (source delta layered over the base)" || fail "source marker missing"
 
     # ---- leg 8: negative control — the cached binary DIRECTLY, no OMAKASE_BASE_PAYLOAD ----
@@ -396,7 +393,7 @@ if [ -n "$O10BUILT" ]; then
     # failure mode, now a clear fail-fast BEFORE any clone. Same env as leg 7 minus
     # the shim, so the ONLY difference is the absent OMAKASE_BASE_PAYLOAD export.
     O10NCERR="$O10/negctl.err"
-    ( cd "$O10TGT" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" LEFTHOOK_BIN="$O10LEFT" \
+    ( cd "$O10TGT" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" \
       "$O10BIN" init --source "$O10SRC" >/dev/null 2>"$O10NCERR" )
     rc=$?
     [ "$rc" -eq 1 ] && pass "cached binary run WITHOUT OMAKASE_BASE_PAYLOAD exits 1 (the assertion bites)" || fail "negative control exited $rc, expected 1 ($(cat "$O10NCERR"))"
@@ -405,11 +402,11 @@ if [ -n "$O10BUILT" ]; then
     # ---- leg 9: bare init — no --source — the shim-exported var feeds the plain default too ----
     O10TGT2="$O10/target2"; scratch_repo "$O10TGT2"
     O10OUT2="$O10/bare.out"; O10ERR2="$O10/bare.err"
-    ( cd "$O10TGT2" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" LEFTHOOK_BIN="$O10LEFT" \
+    ( cd "$O10TGT2" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" \
       bash "$O10/plugin/bin/init.sh" >"$O10OUT2" 2>"$O10ERR2" )
     rc=$?
     [ "$rc" -eq 0 ] && pass "bare init (no --source, no remembered source) exits 0 via the cached binary" || fail "bare init exited $rc ($(cat "$O10ERR2"))"
-    [ -x "$O10TGT2/.omakase/bin/omakase-gate.sh" ] && pass "bare install placed the base payload (OMAKASE_BASE_PAYLOAD feeds the plain default too)" || fail "bare install missing base machinery"
+    [ -x "$O10TGT2/.omakase/bin/omakase-banner.sh" ] && pass "bare install placed the base payload (OMAKASE_BASE_PAYLOAD feeds the plain default too)" || fail "bare install missing base machinery"
 fi
 
 rm -rf "$TMP"
