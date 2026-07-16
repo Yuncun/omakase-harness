@@ -172,15 +172,13 @@ omakase's hooks would displace the project's own"). Two changes:
   skipping stock git-lfs hooks and `omakase hook` keeps forwarding to `git lfs` at fire
   time. It is manager-neutral (git-lfs is not a hook manager) and already tested.
 
-### Deferred: hook chaining
+### Deferred: hook chaining (issue #113)
 
 Generic chaining — preserve a pre-existing hook file as `<name>.before-omakase`, run it
-after our gates, restore it on remove — was considered and rejected as scope creep
-(2026-07-15). It would widen where omakase can install (repos with pre-commit stubs or
-hand-written hooks are refused today and remain refused), at the cost of the design's only
-new non-gate machinery. The decision is severable: everything it would touch is the
-incumbent scan plus one call site in `omakase hook`. Revisit if a real install ever hits
-the refusal.
+after our gates, restore it on remove — was considered and rejected here as scope creep
+(2026-07-15). It is now a separate feature with its own design pass: **issue #113**, which
+carries the capability table and the open design questions. It depends on this design
+landing first and touches only the incumbent scan plus one call site in `omakase hook`.
 
 ## Deletions
 
