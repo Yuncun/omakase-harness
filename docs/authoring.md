@@ -1,15 +1,16 @@
 # Authoring a custom harness
 
-A custom harness is a `payload/` tree with an `omakase.manifest` beside it
-(see [Reference](reference.md#manifest)), kept in a git repository — at the repo root, or in a
-subfolder of a repo that holds other things too. `payload/` is copied onto a target on install;
-everything else (README, tests, `bin/`) stays in the custom harness.
+A custom harness is a `payload/` tree with an `omakase.manifest` beside it — the harness's
+identity (`name`, `version`; see [Reference](reference.md#manifest)) — kept in a git
+repository, at the repo root or in a subfolder of a repo that holds other things too.
+`payload/` is copied onto a target on install; everything else (README, tests, `bin/`) stays
+in the custom harness.
 
 A `--source` install layers the omakase **base harness's payload** under your `payload/` (your
 delta wins on overlap), so you ship only your delta and **rely on base machinery without keeping
 your own copy**: the banner and other optional UX come from the base harness. Declare your gates
-as `gate:` blocks in `omakase.manifest` (see [Reference](reference.md#manifest)) and ship only
-your own gate scripts. If a gate's `run:` names a payload script (`.omakase/…` or `gates/…`)
+as `gate:` blocks in `payload/omakase.manifest` — the copy that gets placed and snapshotted, not
+the root manifest (see [Reference](reference.md#manifest)) — and ship only your own gate scripts. If a gate's `run:` names a payload script (`.omakase/…` or `gates/…`)
 neither you nor the base harness ships, `init` refuses and places nothing — so a typo surfaces
 at install, not as an exit-127 on commit.
 
@@ -19,8 +20,8 @@ omakase's own development runs: placed agent rules, two pre-commit gates, a cach
 test gate, and the `omakase.manifest` that declares them. Try it with
 `omakase init Yuncun/omakase-harness/examples/starter-harness`, then copy it and swap in your
 own rules and gates. There is no capture
-tool: build `payload/` and `omakase.manifest` by hand, moving in whatever files a project already
-has in place.
+tool: build `payload/` (its `omakase.manifest` carries the gate wiring) and the root
+`omakase.manifest` by hand, moving in whatever files a project already has in place.
 
 ## Public surface (the stability contract)
 
@@ -51,8 +52,8 @@ The `add-gate` skill walks an agent through this end-to-end: picking the keys, p
 whether a third-party tool can even be gated, and wiring it. This section is the conceptual
 reference behind it.
 
-A gate is one `gate:` block in `omakase.manifest` (see [Concepts](concepts.md#gates)). A
-block opens with `gate: <name>` and carries these keys:
+A gate is one `gate:` block in `payload/omakase.manifest` (see [Concepts](concepts.md#gates)).
+A block opens with `gate: <name>` and carries these keys:
 
 - `hook:` — `pre-commit` or `pre-push` (required): the stage the gate runs at.
 - `run:` — the check (required): a command line run via `sh` from the repo root. Exit 0 =

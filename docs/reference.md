@@ -140,14 +140,21 @@ installed harness, and `remove` always tears it down completely.
 
 ## Manifest
 
-`omakase.manifest` sits at the harness root, beside `payload/`. Flat, hand-parsed text; no
-YAML. Its header keys (`name`, `version`, `recommends`) identify the harness — only `name`
-is required, and only for a `--source` install. Its `gate:` blocks declare the harness's
-gates: `init` snapshots the manifest into the target's git dir, and each git hook reads its
-gates from that snapshot (editing the placed copy changes nothing until a bare `init`
-re-consents to it).
+A harness carries two `omakase.manifest` files — flat, hand-parsed text, no YAML — with
+different jobs:
 
-Header keys, one `key: value` line each:
+- **The root `omakase.manifest`, beside `payload/`** — the harness's identity. Its header
+  keys (`name`, `version`, `recommends`) name the harness; `name` is required, and only for
+  a `--source` install (it is read when the source is fetched). It declares **no gates** —
+  a `gate:` block here never runs, and `init` refuses a source whose root manifest carries
+  one, pointing you to the payload copy below.
+- **`payload/omakase.manifest`** — the gate wiring. Its `gate:` blocks declare the harness's
+  gates. `init` places this file with the rest of `payload/` (it lands at the target root as
+  `omakase.manifest`) and snapshots it into the target's git dir; each git hook reads its
+  gates from that snapshot. Editing the placed copy changes nothing until a bare `init`
+  re-consents to it.
+
+Root-manifest header keys, one `key: value` line each:
 
 | Key | Required | Meaning |
 |---|---|---|
@@ -157,9 +164,9 @@ Header keys, one `key: value` line each:
 
 ### Gate blocks
 
-A `gate: <name>` line at column 0 opens a block; indented `key: value` lines belong to it
-until the next column-0 line. The omakase binary runs each gate at its hook (see
-[Concepts](concepts.md#gates)).
+Gate blocks live in `payload/omakase.manifest`. A `gate: <name>` line at column 0 opens a
+block; indented `key: value` lines belong to it until the next column-0 line. The omakase
+binary runs each gate at its hook (see [Concepts](concepts.md#gates)).
 
     gate: go-test
       hook: pre-push

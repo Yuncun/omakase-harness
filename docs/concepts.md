@@ -39,8 +39,8 @@ directory is gitignored wholesale and will not reach a teammate.
 
 ## Gates
 
-A gate is a check declared as a `gate:` block in `omakase.manifest` and run by the omakase
-binary at a git hook. The block names the gate and gives it a `run:` command line, executed
+A gate is a check declared as a `gate:` block in `payload/omakase.manifest` and run by the
+omakase binary at a git hook. The block names the gate and gives it a `run:` command line, executed
 via `sh` from the repo root; exit 0 passes, non-zero blocks the commit or push. `hook:`
 picks the stage (`pre-commit` or `pre-push`). Two optional keys extend the behavior:
 

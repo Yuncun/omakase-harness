@@ -1,6 +1,7 @@
 *.bak
 .DS_Store
-# Stock scaffold lefthook drops in a repo root; the real gate config is payload/lefthook-local.yml
+# A stray lefthook.yml (e.g. a contributor ran `lefthook install` by hand) — omakase no
+# longer uses lefthook; ignore it so a leftover never gets committed here.
 /lefthook.yml
 
 # Local scratch — never ship to origin

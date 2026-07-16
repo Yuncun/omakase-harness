@@ -4,16 +4,16 @@ The worked example of a custom harness — and not a demo: this is the real harn
 omakase repo itself uses for its own development. Adopt it to see a harness working, then
 copy it and swap in your own rules and gates.
 
-It carries only its own **delta**; the base machinery it relies on (`omakase-gate.sh`, the
-run ledger, the status surfaces) is layered in underneath at install:
+It carries only its own **delta**; the base machinery it relies on (the run ledger, the
+status surfaces) is layered in underneath at install:
 
-    omakase.manifest                          name + version (required beside payload/)
+    omakase.manifest                          name + version (harness identity, beside payload/)
     payload/.claude/rules/omakase-dev.md      conventions, read by Claude Code
     payload/.github/instructions/
       omakase-dev.instructions.md             the same conventions, read by Copilot
     payload/.omakase/gates/block-marker.sh    gate: refuse a staged scratch marker
     payload/.omakase/gates/go-checks.sh       gate: gofmt + go vet on staged Go files
-    payload/lefthook-local.yml                wires the gates onto pre-commit / pre-push
+    payload/omakase.manifest                  declares the gates (hook / run / glob / cacheable)
 
 ## What runs
 
