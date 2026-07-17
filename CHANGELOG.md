@@ -5,13 +5,48 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-07-16
+
 ### Changed
+- **Gates are declared in the manifest and run by omakase itself; lefthook is
+  gone** (#114, #115). A harness declares each gate as a `gate:` block in
+  `payload/omakase.manifest` — keys `hook:` (`pre-commit` or `pre-push`),
+  `run:` (a command line, `sh -c` from the repo root; non-zero blocks),
+  `glob:` (skip when no changed file matches), `cacheable: true` (reuse a
+  PASS for the same HEAD) — and the omakase binary runs them at hook time.
+  No third-party hook runner is fetched, provisioned, or configured;
+  `omakase-gate.sh` and the lefthook config files leave the authoring
+  surface; git-lfs hook forwarding stays. The run ledger format and the
+  skip switches (`OMAKASE_SKIP_<NAME>=1` per gate, audited) are unchanged.
+  **Fail-closed migration**: hooks written by a pre-0.20 install BLOCK
+  commits and pushes until a bare `omakase init` re-consents to the
+  harness under the new format — an upgrade can never silently disable
+  gates — and `init` refuses a harness that still ships
+  `lefthook-local.yml`, and any repo using native lefthook (cooperation
+  ended with the runner).
+- **One manifest** (#116, #117): `payload/omakase.manifest` now carries the
+  harness's identity (`name` required; `version`, `recommends` optional)
+  as well as its gate blocks. A leftover source-root `omakase.manifest`
+  (the old two-file layout) is refused fail-closed at install with
+  instructions to move its keys into the payload manifest.
 - **`examples/sample-harness` replaced by `examples/starter-harness`** — the worked
   example is no longer a toy: it is the harness omakase development itself uses
   (self-hosted via the subfolder-source install). It places agent rules for
   Claude Code and Copilot and wires three real gates: `block-marker` (refuse a
   staged scratch marker) and `go-checks` (gofmt + go vet on staged Go files) on
   pre-commit, and a cached `go-test` on pre-push.
+
+### Added
+- **`omakase record <name>`** — record an out-of-band PASS for a deferred
+  gate at the current HEAD. The pattern for a check that cannot run inside
+  a hook (an agent review, a visual verification): a blocking `run:` plus
+  `cacheable: true`, cleared by the out-of-band job via `record`.
+- **`OMAKASE_SKIP_GATES=1`** — skip every gate for one run (audited),
+  alongside the existing per-gate `OMAKASE_SKIP_<NAME>=1`.
+- **`/omakase:author` skill** (#120) — walks an agent through building a
+  custom harness (or converting a repo's existing agent files into one):
+  layout, the one manifest, portability review, gate wiring via
+  `/omakase:add-gate`, a test cycle, publishing.
 
 ## [0.19.1] — 2026-07-14
 
