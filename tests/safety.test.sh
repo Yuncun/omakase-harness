@@ -12,7 +12,6 @@ REMOVE="$HERE/../bin/remove.sh"
 OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
 [ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
 heal(){ ( cd "$1" && "$OMAKASE" hook post-checkout ); }
-LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 TMP="${TMPDIR:-/tmp}/omakase-safety-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
@@ -26,21 +25,29 @@ mkpayload(){ # $1 = payload dir
 echo "omakase-example-gate-ran"
 exit 0
 SH
-  cat > "$p/lefthook-local.yml" <<'YML'
-pre-commit:
-  jobs:
-    - name: omakase-example
-      run: bash .omakase/gates/example.sh
-post-checkout:
-  jobs:
-    - name: omakase-ensure-present
-      run: bash "$(git rev-parse --git-common-dir)/omakase/ensure-present.sh"
-YML
+  cat > "$p/omakase.manifest" <<'MANIFEST'
+name: test
+version: 1
+
+gate: omakase-example
+  hook: pre-commit
+  run: bash .omakase/gates/example.sh
+MANIFEST
 }
 
 newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }
 
-export PATH="$(dirname "$LEFTHOOK"):$PATH"
+# Self-contained HOME + cache: init self-installs the resolved binary into
+# $XDG_CACHE_HOME, and every commit/checkout below fires that same copy — the
+# permanent .git/hooks dispatchers exec ${XDG_CACHE_HOME:-$HOME/.cache}/omakase/…
+export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+mkdir -p "$HOME" "$XDG_CACHE_HOME"
+# Pin Go's caches to their real locations so a shim-triggered build under the fake
+# HOME doesn't strand a read-only module cache there.
+if command -v go >/dev/null 2>&1; then
+  export GOMODCACHE="$(go env GOMODCACHE)"
+  export GOCACHE="$(go env GOCACHE)"
+fi
 
 # ---------- Scenario H: incumbent hook-manager guard ----------
 echo "== Scenario H: init refuses when an incumbent hook manager is present =="
@@ -55,7 +62,7 @@ echo "$OUT" | grep -qi 'husky' && pass "refusal names husky" || fail "refusal do
 grep -q "omakase-harness" "$REPO/.git/info/exclude" 2>/dev/null && fail "wrote exclude block despite refusal" || pass "exclude block untouched"
 [ ! -f "$REPO/.git/hooks/pre-commit" ] && pass "no hook stub installed" || fail "hook stub installed despite refusal"
 
-# H2: package.json "prepare": "husky" (reinstalls husky over lefthook on npm install)
+# H2: package.json "prepare": "husky" (reinstalls husky over omakase's hooks on npm install)
 REPO="$TMP/repoH2"; newrepo "$REPO"
 printf '{ "scripts": { "prepare": "husky" } }\n' > "$REPO/package.json"
 OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
@@ -79,19 +86,19 @@ OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
 REPO="$TMP/repoH5"; newrepo "$REPO"
 printf '#!/bin/sh\necho team-gate\nexit 1\n' > "$REPO/.git/hooks/pre-push"; chmod +x "$REPO/.git/hooks/pre-push"
 OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
-[ "$rc" -ne 0 ] && pass "refused on an existing non-lefthook hook file" || fail "did not refuse on a foreign hook file"
+[ "$rc" -ne 0 ] && pass "refused on an existing hand-written hook file" || fail "did not refuse on a foreign hook file"
 grep -q 'team-gate' "$REPO/.git/hooks/pre-push" 2>/dev/null && pass "incumbent hook left untouched (not displaced to .old)" || fail "incumbent hook was displaced"
 
-# H6: no false positives — samples-only repo installs; re-init tolerates lefthook's own stubs
+# H6: no false positives — samples-only repo installs; re-init tolerates omakase's own dispatchers
 REPO="$TMP/repoH6"; newrepo "$REPO"
 OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
 [ "$rc" -eq 0 ] && pass "clean repo (.sample hooks only) installs fine" || fail "refused a clean repo ($OUT)"
 OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
-[ "$rc" -eq 0 ] && pass "re-init does not trip over lefthook's own stubs" || fail "re-init refused its own stubs ($OUT)"
+[ "$rc" -eq 0 ] && pass "re-init does not trip over omakase's own dispatchers" || fail "re-init refused its own dispatchers ($OUT)"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
 # H7: core.hooksPath pointing at the repo's OWN hooks dir is NOT an incumbent (a real-world
-# configuration). lefthook refuses to install while ANY core.hooksPath is set, so
+# configuration). A set core.hooksPath would send git elsewhere than the dispatchers, so
 # init clears the redundant entry (with a notice) and succeeds. Foreign stays refused (H3).
 REPO="$TMP/repoH7"; newrepo "$REPO"
 ( cd "$REPO" && git config core.hooksPath .git/hooks )
@@ -127,10 +134,10 @@ mkdir -p "$REPO/.husky"; printf '#!/bin/sh\ntrue\n' > "$REPO/.husky/pre-commit"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAYH" bash "$INIT" ) >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 0 ] && pass "untracked .husky matching the payload stays exempt (roundtrip)" || fail "untracked payload .husky wrongly refused"
 
-# H10: Git LFS hooks are NOT an incumbent manager. lefthook absorbs git-lfs natively (it
-# re-runs `git lfs <event>` at runtime for events it owns and leaves the rest in place), so a
-# Git-LFS repo must install cleanly instead of being misclassified as a rival hook manager.
-# A genuine foreign hook alongside the LFS hooks must still refuse, narrowly.
+# H10: Git LFS hooks are NOT an incumbent manager. `omakase hook` absorbs git-lfs natively
+# (it re-runs `git lfs <event>` at fire time for events it dispatches and leaves the rest in
+# place), so a Git-LFS repo must install cleanly instead of being misclassified as a rival
+# hook manager. A genuine foreign hook alongside the LFS hooks must still refuse, narrowly.
 mklfs(){ # $1 = hooks dir — write the four stock hooks `git lfs install` creates
   local d="$1" h
   for h in post-checkout post-commit post-merge pre-push; do
@@ -140,7 +147,7 @@ mklfs(){ # $1 = hooks dir — write the four stock hooks `git lfs install` creat
 }
 # H10a: a clean Git-LFS repo installs; the LFS events omakase does not dispatch stay
 # intact, and a displaced stock LFS pre-push loses nothing — `omakase hook pre-push`
-# (via lefthook) forwards `git lfs pre-push` itself at fire time.
+# forwards `git lfs pre-push` itself at fire time.
 REPO="$TMP/repoH10a"; newrepo "$REPO"; mklfs "$REPO/.git/hooks"
 OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
 [ "$rc" -eq 0 ] && pass "Git-LFS repo installs (LFS hooks not misclassified as a rival manager)" || fail "init refused a Git-LFS repo ($OUT)"
@@ -149,7 +156,7 @@ grep -q 'git lfs post-merge' "$REPO/.git/hooks/post-merge" 2>/dev/null && pass "
 OUT2=$( cd "$REPO" && echo x > x.txt && git add x.txt && git commit -m x 2>&1 )
 echo "$OUT2" | grep -q 'omakase-example-gate-ran' && pass "harness gates actually run in a Git-LFS repo" || fail "harness gates dead in a Git-LFS repo ($OUT2)"
 # The e2e proof of the forward: a logging git-lfs on PATH; a real hook run must reach it
-# with the hook's own args (lefthook forwards `git lfs pre-push <args>` before jobs).
+# with the hook's own args (omakase hook forwards `git lfs pre-push <args>` before the gates).
 FAKELFS="$TMP/fakelfs"; mkdir -p "$FAKELFS"
 printf '#!/bin/sh\necho "git-lfs-called: $*" >> "%s/lfs.log"\nexit 0\n' "$TMP" > "$FAKELFS/git-lfs"
 chmod +x "$FAKELFS/git-lfs"
@@ -228,7 +235,7 @@ REPO="$TMP/repoJ"; newrepo "$REPO"
 COMMON="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 # Simulate an upstream commit landing a tracked file at a placed path (same end state
 # as a pull: the index tracks the path, the working copy is upstream's content).
-( cd "$REPO" && printf 'UPSTREAM CONTENT\n' > .omakase/gates/example.sh && git add -f .omakase/gates/example.sh && LEFTHOOK=0 git commit -q -m upstream )
+( cd "$REPO" && printf 'UPSTREAM CONTENT\n' > .omakase/gates/example.sh && git add -f .omakase/gates/example.sh && OMAKASE_SKIP_GATES=1 git commit -q -m upstream )
 
 # J1: the post-checkout self-heal warns (the timely surface) and never touches the tracked file
 ERR=$( heal "$REPO" 2>&1 )
@@ -282,16 +289,18 @@ BEFORE_BYTES="$(cat "$REPO/.git/hooks/pre-commit")"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 [ "$(cat "$REPO/.git/hooks/pre-commit")" = "$BEFORE_BYTES" ] && pass "re-init leaves identical dispatcher bytes" || fail "re-init changed the dispatcher content"
 
-# K4b: lefthook's npm postinstall runs `lefthook install -f` on every npm/yarn install,
-# clobbering the dispatchers. Nothing re-arms from hook time — ever (the pre-#98 arms
-# race is over): a checkout must NOT rewrite the hook; the next explicit init repairs.
-( cd "$REPO" && "$LEFTHOOK" install -f ) >/dev/null 2>&1
-grep -q 'omakase dispatcher' "$REPO/.git/hooks/pre-commit" && fail "expected lefthook install -f to clobber the dispatcher" || pass "lefthook install -f clobbers the dispatcher (the residual external writer)"
+# K4b: nothing re-arms from hook time — ever (the pre-#98 arms race is over). A
+# stale omakase hook from before the write-once scheme (the residual writer
+# class) sits where the dispatcher was; a checkout must NOT rewrite it, and only
+# an explicit init migrates it back to the permanent dispatcher. (A genuinely
+# FOREIGN hook here would make init REFUSE — that is the incumbent guard, H5.)
+printf '#!/bin/sh\n# omakase-harness (pre-gate-module stub)\nexit 0\n' > "$REPO/.git/hooks/pre-commit"
+grep -q 'omakase dispatcher' "$REPO/.git/hooks/pre-commit" && fail "setup: the clobber did not take" || pass "a stale omakase hook sits where the dispatcher was (the residual-writer class)"
 CLOBBERED_BYTES="$(cat "$REPO/.git/hooks/pre-commit")"
 ( cd "$REPO" && git checkout -q -b rearm ) 2>/dev/null
 [ "$(cat "$REPO/.git/hooks/pre-commit")" = "$CLOBBERED_BYTES" ] && pass "checkout does NOT rewrite the hook (nothing re-arms from hook time)" || fail "hook rewritten from hook time — the arms race is back"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
-grep -q 'omakase dispatcher' "$REPO/.git/hooks/pre-commit" && pass "the next explicit init repairs the clobbered hook" || fail "init did not restore the dispatcher"
+grep -q 'omakase dispatcher' "$REPO/.git/hooks/pre-commit" && pass "the next explicit init migrates the stale hook to the permanent dispatcher" || fail "init did not restore the dispatcher"
 
 # K5: the fail-closed guard blocks a commit when the overlay is WIPED (e.g. `git clean
 # -fdx`) — before this guard, gates silently did not run; the block's restore command
@@ -303,7 +312,7 @@ COMMON2="$(cd "$REPO2" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 WT="$TMP/repoK2-wt"
 ( cd "$REPO2" && git worktree add -q "$WT" -b wtsafety ) >/dev/null 2>&1
 [ -x "$WT/.omakase/gates/example.sh" ] && pass "fresh worktree auto-healed on add (worktree-bootstrap)" || fail "fresh worktree did not auto-heal"
-rm -rf "$WT/.omakase" "$WT/lefthook-local.yml"   # simulate `git clean -fdx` wiping the gitignored overlay
+rm -rf "$WT/.omakase" "$WT/omakase.manifest"   # simulate `git clean -fdx` wiping the gitignored overlay
 OUT=$( cd "$WT" && echo w > w.txt && git add w.txt && git commit -m w 2>&1 ); rc=$?
 [ "$rc" -ne 0 ] && pass "wiped overlay: commit BLOCKED instead of gates silently not running" || fail "wiped-overlay worktree committed without gates ($OUT)"
 heal "$WT" >/dev/null 2>&1

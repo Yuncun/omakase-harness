@@ -31,7 +31,7 @@ func installOne(t *testing.T, rows string, files map[string]string) (string, *st
 	return dir, repo
 }
 
-// --disable/--enable on harness machinery (.omakase/, lefthook wiring) must
+// --disable/--enable on harness machinery (.omakase/, omakase.manifest) must
 // refuse with exit 2 and delete nothing — the CLI surface classifies machinery
 // the same way the TUI and MCP menu do, so `--disable .omakase` can no longer
 // wipe the gate primitive and brick every commit.
@@ -65,9 +65,7 @@ func TestRunToggleRefusesMachinery(t *testing.T) {
 func TestRunToggleRejectsUnknownName(t *testing.T) {
 	rows := "AGENTS.md\tdoc\tacme\t" + sha256Hex("body\n") + "\t1\n"
 	_, repo := installOne(t, rows, map[string]string{"AGENTS.md": "body\n"})
-	// No lefthook wiring in this repo -> no wired gates -> a typo is unknown.
-	lh := writeFakeLefthook(t, "")
-	t.Setenv("LEFTHOOK_BIN", lh)
+	// No manifest in this repo -> no declared gates -> a typo is unknown.
 
 	var stdout, stderr bytes.Buffer
 	code := runToggle(true, "AGENTS.mddd", &stdout, &stderr)
@@ -82,12 +80,15 @@ func TestRunToggleRejectsUnknownName(t *testing.T) {
 	}
 }
 
-// A --disable target that is a lefthook-wired gate name is accepted and
+// A --disable target that is a manifest-declared gate name is accepted and
 // recorded; real gates must not be over-refused.
 func TestRunToggleAcceptsWiredGate(t *testing.T) {
 	_, repo := installOne(t, "AGENTS.md\tdoc\tacme\t"+sha256Hex("b\n")+"\t1\n", map[string]string{"AGENTS.md": "b\n"})
-	lh := writeFakeLefthook(t, "pre-commit:\n  jobs:\n    - name: smoke\n      run: bash .omakase/bin/omakase-gate.sh smoke --step 'exit 9'\n")
-	t.Setenv("LEFTHOOK_BIN", lh)
+	if err := os.MkdirAll(filepath.Join(repo.OMK, "payload-snapshot"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeOMK(t, filepath.Join(repo.OMK, "payload-snapshot"), "omakase.manifest",
+		"gate: smoke\n  hook: pre-commit\n  run: .omakase/gates/smoke.sh\n")
 
 	var stdout, stderr bytes.Buffer
 	code := runToggle(true, "smoke", &stdout, &stderr)

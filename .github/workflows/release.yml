@@ -31,10 +31,9 @@ jobs:
       - name: Go vet, test, build
         run: |
           go vet ./... && go test ./... && CGO_ENABLED=0 go build -o dist/omakase ./cmd/omakase
-      - run: npm install -g lefthook
       - name: Run test suites
         run: |
-          export LEFTHOOK_BIN="$(command -v lefthook)"
+          export OMAKASE_BIN="$PWD/dist/omakase"
           rc=0
           for t in tests/*.test.sh; do
             echo "=== $t ==="

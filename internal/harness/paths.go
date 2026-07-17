@@ -16,7 +16,7 @@ var SharedTopdirs = []string{".github"}
 // surface (order matters: it is handed to `git ls-files -- globs...`).
 var CommittedGlobs = []string{
 	"AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", ".claude",
-	"lefthook.yml", "lefthook-local.yml", ".lefthook", ".omakase",
+	"omakase.manifest", "lefthook.yml", "lefthook-local.yml", ".lefthook", ".omakase",
 	".husky", ".githooks", ".github/copilot-instructions.md",
 	".github/instructions", ".github/skills", ".github/prompts",
 	".github/chatmodes", ".github/hooks",
@@ -53,7 +53,7 @@ func KindOf(path string) string {
 	case bashGlobMatch(".github/copilot-instructions.md", path):
 		return "doc"
 	// --- host-agnostic ---
-	case bashGlobMatch("lefthook-local.yml", path), bashGlobMatch("lefthook.yml", path), bashGlobMatch(".omakase/gates/*", path):
+	case bashGlobMatch("omakase.manifest", path), bashGlobMatch(".omakase/gates/*", path):
 		return "gate"
 	case bashGlobMatch(".husky/*", path), bashGlobMatch(".githooks/*", path):
 		return "gate"
@@ -96,13 +96,16 @@ func bashGlobMatch(pattern, s string) bool {
 }
 
 // IsMachinery reports whether rel is harness machinery: the paths that keep
-// the harness itself running (.omakase/ tree, lefthook wiring, hook dirs,
-// .worktreeinclude). Machinery is never a consent item — the TUI and MCP
-// menu filter it out, the scriptable toggles refuse it, and init ignores a
-// stale enabled=0 ledger row for it.
+// the harness itself running (.omakase/ tree, the omakase.manifest gate
+// declaration, hook dirs, .worktreeinclude). Machinery is never a consent
+// item — the TUI and MCP menu filter it out, the scriptable toggles refuse it,
+// and init ignores a stale enabled=0 ledger row for it. The lefthook wiring
+// names stay listed so a re-init that migrates a pre-gate-module install still
+// sweeps a placed lefthook-local.yml row as machinery.
 func IsMachinery(rel string) bool {
 	switch {
 	case strings.HasPrefix(rel, ".omakase/"),
+		rel == "omakase.manifest",
 		rel == "lefthook.yml", rel == "lefthook-local.yml", rel == ".worktreeinclude",
 		strings.HasPrefix(rel, ".lefthook/"), strings.HasPrefix(rel, ".husky/"),
 		strings.HasPrefix(rel, ".githooks/"):

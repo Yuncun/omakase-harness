@@ -84,17 +84,17 @@ func runToggle(off bool, name string, stdout, stderr io.Writer) int {
 	}
 
 	if len(targets) == 0 { // gate
-		// A gate name is valid only if lefthook actually wires it (the same
+		// A gate name is valid only if the manifest declares it (the same
 		// source the TUI's gate rows use), or it is already disabled (so a
-		// stale disable stays reversible even if the wiring later changed).
+		// stale disable stays reversible even if the manifest later changed).
 		// Anything else — a typo'd file path, a gate-script filename — would
 		// otherwise become a phantom disabled-gates entry with a false success.
-		if !wiredGateNames(repo.Root)[name] && !overlay.DisabledGates(repo.OMK)[name] {
+		if !wiredGateNames(repo.OMK)[name] && !overlay.DisabledGates(repo.OMK)[name] {
 			fmt.Fprintf(stderr, "omakase: unknown gate or placed path: %s\n", name)
 			return 2
 		}
 		if off {
-			if err := overlay.GateOff(repo, name, stderr); err != nil {
+			if err := overlay.GateOff(repo, name); err != nil {
 				fmt.Fprintf(stderr, "omakase: %v\n", err)
 				return 1
 			}
@@ -190,13 +190,13 @@ func runKeepRestore(keep bool, name string, stdout, stderr io.Writer) int {
 	return code
 }
 
-// wiredGateNames is the set of consent-tracked gate names lefthook currently
-// wires, resolved from the same source the interactive screen's gate rows use
-// (tui.GateRows). It is the authority for whether a --disable/--enable target
-// that matched no placed path is a real gate. lefthook unresolved -> empty set.
-func wiredGateNames(root string) map[string]bool {
+// wiredGateNames is the set of gate names the manifest declares, resolved from
+// the same source the interactive screen's gate rows use (tui.GateRows). It is
+// the authority for whether a --disable/--enable target that matched no placed
+// path is a real gate. No manifest -> empty set.
+func wiredGateNames(omk string) map[string]bool {
 	set := map[string]bool{}
-	for _, g := range tui.GateRows(root) {
+	for _, g := range tui.GateRows(omk) {
 		if g.Gate {
 			set[g.Name] = true
 		}

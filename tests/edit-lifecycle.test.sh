@@ -19,7 +19,6 @@
 #   E8 remove leaves the kept file on disk (reported), deletes the rest
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
 [ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
 TMP="${TMPDIR:-/tmp}/omakase-edit-lifecycle-test.$$"
@@ -30,7 +29,6 @@ newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config us
 common_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)"; }
 bar(){ ( cd "$1" && printf '{"workspace":{"current_dir":"%s"}}' "$1" | NO_COLOR=1 "$OMAKASE" statusline ); }
 
-[ -n "$LEFTHOOK" ] && export PATH="$(dirname "$LEFTHOOK"):$PATH"
 mkdir -p "$TMP"
 
 # ---------- fixture: a controlled two-file payload ----------

@@ -20,7 +20,7 @@ Anything not listed falls to `other` and is left to the project — that boundar
 | `.github/prompts/*` | Copilot | `prompt` ⬅ |
 | `.github/chatmodes/*` | Copilot | `prompt` ⬅ |
 | `.github/hooks/*` | Copilot | `gate` ⬅ |
-| `lefthook*.yml`, `.omakase/gates/*` | agnostic | `gate` |
+| `omakase.manifest`, `.omakase/gates/*` | agnostic | `gate` |
 | `.husky/*`, `.githooks/*` | agnostic | `gate` ⬅ |
 | everything else | — | `other` (not harness) |
 

@@ -12,45 +12,49 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
 SHOW="$HERE/../bin/status.sh"
-LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 TMP="${TMPDIR:-/tmp}/omakase-toggles-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
 fail(){ echo "  FAIL: $1"; FAILED=1; }
 newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }
 omk_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)/omakase"; }
-export PATH="$(dirname "$LEFTHOOK"):$PATH"
-HAVE_LH=0; { [ -n "$LEFTHOOK" ] && [ -x "$LEFTHOOK" ]; } && HAVE_LH=1
 
-if [ "$HAVE_LH" -eq 0 ]; then
-  echo "SKIP: toggles e2e needs a real lefthook install to prove a commit actually blocks/allows; LEFTHOOK_BIN unset and lefthook not on PATH"
-  echo ""
-  echo "ALL PASS"
-  exit 0
+# Self-contained HOME + cache: init self-installs the resolved binary into
+# $XDG_CACHE_HOME, and every real commit below fires that same copy — the commit
+# hook execs ${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase. Nothing
+# touches the real machine. Gates are run by the omakase binary from
+# omakase.manifest, so this suite always runs — it needs no external hook runner.
+export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+mkdir -p "$HOME" "$XDG_CACHE_HOME"
+if command -v go >/dev/null 2>&1; then
+  export GOMODCACHE="$(go env GOMODCACHE)"
+  export GOCACHE="$(go env GOCACHE)"
 fi
 
 mkdir -p "$TMP"
 
 # ---- fixture payload: one wired gate ("smoke", always exits 9) + one file (AGENTS.md) ----
 FIX="$TMP/payload"
-mkdir -p "$FIX/.omakase/bin" "$FIX/.omakase/gates"
-cp "$HERE/../payload/.omakase/bin/omakase-gate.sh" "$FIX/.omakase/bin/omakase-gate.sh"
+mkdir -p "$FIX/.omakase/gates"
 cat > "$FIX/.omakase/gates/smoke.sh" <<'SH'
 #!/usr/bin/env bash
-# Fixture gate body (unused directly by the wired job below, which inlines its
-# own --step; shipped so the payload carries a realistic .omakase/gates/ entry).
+# Fixture gate body (unused directly by the wired gate below, which inlines its
+# own check in run:; shipped so the payload carries a realistic .omakase/gates/
+# entry and a piece of .omakase/ machinery for the machinery-refusal cases).
 exit 0
 SH
 chmod +x "$FIX/.omakase/gates/smoke.sh"
 printf 'Fixture agent doctrine.\n' > "$FIX/AGENTS.md"
 mkdir -p "$FIX/.claude/rules"
 printf 'Fixture style rule.\n' > "$FIX/.claude/rules/style.md"   # non-machinery placed file for the tracked-path test
-cat > "$FIX/lefthook-local.yml" <<'YML'
-pre-commit:
-  jobs:
-    - name: smoke
-      run: bash .omakase/bin/omakase-gate.sh smoke --step 'exit 9'
-YML
+cat > "$FIX/omakase.manifest" <<'MANIFEST'
+name: test
+version: 1
+
+gate: smoke
+  hook: pre-commit
+  run: exit 9
+MANIFEST
 
 echo "== toggles: gate lifecycle (--disable/--enable a wired gate) =="
 REPO="$TMP/repo"; newrepo "$REPO"
@@ -123,12 +127,12 @@ OUT="$( cd "$REPO" && echo extra >> AGENTS.md && "$SHOW" --disable AGENTS.md 2>&
 
 echo "== toggles: machinery + unknown names are refused (exit 2) =="
 # 9. --disable .omakase (harness machinery) -> exit 2, deletes nothing, no raw
-#    bash-127 commit wedge. The gate primitive must survive.
+#    bash-127 commit wedge. The .omakase/ machinery must survive.
 OUT="$( cd "$REPO" && "$SHOW" --disable .omakase 2>&1 )"; RC=$?
 { [ "$RC" -eq 2 ] && echo "$OUT" | grep -q machinery; } \
   && pass "case9: --disable .omakase refuses machinery (exit 2)" \
   || fail "case9: machinery refusal ($RC: $OUT)"
-[ -f "$REPO/.omakase/bin/omakase-gate.sh" ] && pass "case9: the gate primitive survives" || fail "case9: gate primitive deleted"
+[ -f "$REPO/.omakase/gates/smoke.sh" ] && pass "case9: the machinery survives" || fail "case9: machinery deleted"
 
 # 10. --disable CLAUDE.mdd (typo: no placed path, no wired gate) -> exit 2, and
 #     the junk name never reaches disabled-gates as a phantom entry.

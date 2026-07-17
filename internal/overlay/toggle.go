@@ -1,22 +1,20 @@
 // Package-file toggle.go: the per-item consent backend behind `omakase status`
 // (interactive Enter and the --disable/--enable/--keep/--restore flags). Gates
-// toggle via $OMK/disabled-gates (read by payload/.omakase/bin/omakase-gate.sh
-// step 2b); files toggle via the placed.tsv enabled column + payload-snapshot
-// restore; edits are kept/restored via $OMK/kept (issue #98 Part 2).
+// toggle via $OMK/disabled-gates (read by internal/gate step 2); files toggle
+// via the placed.tsv enabled column + payload-snapshot restore; edits are
+// kept/restored via $OMK/kept (issue #98 Part 2).
 package overlay
 
 import (
 	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/Yuncun/omakase-harness/internal/state"
-	"github.com/Yuncun/omakase-harness/internal/templates"
 )
 
 var (
@@ -57,16 +55,12 @@ func DisabledGates(omk string) map[string]bool {
 	return m
 }
 
-// GateOff lists name in disabled-gates (idempotent) after healing the placed
-// gate script (healGateScript below) so an old, pre-Task-1 placed copy — one
-// that has never checked disabled-gates — gets rewritten first. warn receives
-// the one-line notice when the gate script is committed and cannot be healed.
-func GateOff(repo *state.Repo, name string, warn io.Writer) error {
+// GateOff lists name in disabled-gates (idempotent). internal/gate reads this
+// file at hook time (step 2), so the disable takes effect immediately — no
+// placed script to heal now that gates are declared in the manifest.
+func GateOff(repo *state.Repo, name string) error {
 	if name == "" || strings.ContainsAny(name, " \t\n") {
 		return fmt.Errorf("invalid gate name %q", name)
-	}
-	if err := healGateScript(repo, warn, true); err != nil {
-		return err
 	}
 	if DisabledGates(repo.OMK)[name] {
 		return nil
@@ -101,54 +95,6 @@ func GateOn(repo *state.Repo, name string) error {
 		content = strings.Join(names, "\n") + "\n"
 	}
 	return rewriteFile(disabledGatesPath(repo.OMK), []byte(content))
-}
-
-// healGateScript self-updates a placed gate script that predates the
-// disabled-gates check (step 2b): without it, a disabled gate would keep
-// blocking. Snapshot + ledger hash move in the same step — a healed file
-// with a stale recorded hash would read as drift everywhere the ledger
-// hash is compared (status's drift flag, ensure-present's warn), phantom
-// noise pinned on omakase's own edit.
-func healGateScript(repo *state.Repo, warn io.Writer, disableInFlight bool) error {
-	const rel = ".omakase/bin/omakase-gate.sh"
-	dest := filepath.Join(repo.Root, rel)
-	b, err := os.ReadFile(dest)
-	if err != nil {
-		return nil // no placed gate script — nothing depends on healing
-	}
-	if strings.Contains(string(b), "disabled-gates") {
-		return nil // already 2b-capable (tracked or not) — nothing to heal
-	}
-	// omakase never rewrites a committed file; healing a tracked gate script
-	// would be the one write path in this package without that guard. The
-	// tracked script predates the disabled-gates check, so the disable is still
-	// recorded but won't take effect until the repo updates the script itself —
-	// say that plainly and skip, touching neither snapshot nor ledger.
-	if gitTracked(repo.Root, rel) {
-		// Warn only when a disable is in play — GateOff always is; a routine
-		// bare init with an empty disabled-gates has nothing to warn about and
-		// would otherwise nag on every refresh, forever.
-		if disableInFlight || len(DisabledGates(repo.OMK)) > 0 {
-			fmt.Fprintf(warn, "omakase: WARNING — tracked gate script %s predates disabled-gates support — disabled gates will not take effect until the repo updates it.\n", rel)
-		}
-		return nil
-	}
-	if err := templates.Install("omakase-gate.sh", dest); err != nil {
-		return err
-	}
-	snap := filepath.Join(repo.OMK, "payload-snapshot", rel)
-	if lexists(snap) {
-		if err := CopyEntry(dest, snap); err != nil {
-			return err
-		}
-	}
-	ledger := filepath.Join(repo.OMK, "placed.tsv")
-	rows := state.ReadPlaced(ledger)
-	if idx := placedIndex(rows, rel); idx >= 0 {
-		rows[idx].Hash = state.HashOf(dest)
-		return state.WritePlaced(ledger, rows)
-	}
-	return nil
 }
 
 func placedIndex(rows []state.PlacedRow, rel string) int {

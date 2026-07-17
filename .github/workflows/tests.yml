@@ -20,10 +20,9 @@ jobs:
       - name: Go vet, test, build
         run: |
           go vet ./... && go test ./... && CGO_ENABLED=0 go build -o dist/omakase ./cmd/omakase
-      - run: npm install -g lefthook
       - name: Run test suites
         run: |
-          export LEFTHOOK_BIN="$(command -v lefthook)"
+          export OMAKASE_BIN="$PWD/dist/omakase"
           rc=0
           for t in tests/*.test.sh; do
             echo "=== $t ==="
@@ -35,9 +34,8 @@ jobs:
     # Covers the issue #70 machine shape: no Go toolchain, so the shim fetches the
     # published release binary and drives init from it. GitHub's runners preinstall
     # Go, so this runs in a slim Debian container that genuinely lacks one. The
-    # fetch suite needs no lefthook/node: it stubs lefthook via LEFTHOOK_BIN and no
-    # scenario that runs without Go invokes a real omakase binary except O10, which
-    # points LEFTHOOK_BIN at a no-op stub.
+    # fetch suite needs no node: it drives the shim's own binary fetch, and no
+    # scenario that runs without Go invokes gates.
     runs-on: ubuntu-latest
     container: debian:stable-slim
     steps:

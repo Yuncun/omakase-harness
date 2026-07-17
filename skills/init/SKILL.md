@@ -7,8 +7,9 @@ allowed-tools: Bash(*/run.sh*) Bash(*/bin/init.sh*)
 # /omakase:init — overlay a harness (zero committed footprint)
 
 Install a harness onto the current git repo: copy a payload tree onto real paths, record every
-placed path in `.git/info/exclude` (nothing committed, `.gitignore` untouched), and install
-lefthook to run the gates. `/omakase:remove` reverses it.
+placed path in `.git/info/exclude` (nothing committed, `.gitignore` untouched), and install one
+git-hook dispatcher per hook so omakase runs the harness's manifest-declared gates itself (no
+third-party runner). `/omakase:remove` reverses it.
 
 Run this skill's self-locating `run.sh` — it finds the base harness's `bin/` and operates on the
 current repo. The argument selects the mode:
@@ -38,16 +39,13 @@ refreshes it. If the manifest declares `recommends:`, init prints it once — re
 ## Guardrails (do not override)
 
 - **Refusals — relay verbatim and STOP.** init refuses (placing nothing) on a bad source (no
-  `payload/`, no `omakase.manifest`, or merged hook wiring naming a `.omakase/*.sh` neither side
-  ships) and on an incumbent hook manager (husky, pre-commit, a foreign `core.hooksPath`, or
-  non-lefthook hooks). Do not delete the incumbent's files or force config — that is the user's call.
+  `payload/`, no `omakase.manifest`, a root manifest that declares `gate:` blocks, a payload that
+  still ships `lefthook-local.yml`, or a gate whose `run:` names a payload script neither side
+  ships) and on an incumbent hook manager (husky, pre-commit, a foreign `core.hooksPath`, or any
+  existing git hooks — including a project's own **native lefthook**, which omakase no longer
+  cooperates with). Do not delete the incumbent's files or force config — that is the user's call.
 - **Committed files (skipped).** NEVER run `git rm --cached` or set `OMAKASE_CUTOVER_CONFIRM=1`
   yourself; cutting over stages deletions of shared files that the next commit applies for everyone.
   Surface the skip report and run the guarded `init.sh --cut-over` only if the user explicitly asks.
 - **Upstream collision.** If init prints an upstream-collision WARNING (an injected path is now
   tracked by the repo), relay it verbatim — the named preserved-copy path holds the user's version.
-- **lefthook fetch.** init self-provisions a pinned, checksum-verified lefthook into a per-machine
-  cache if none is on PATH (the repo is never touched, so `/omakase:remove` need not undo it). Only
-  if that fetch fails does init stop with "lefthook not found and could not be fetched" — then ask
-  how the user wants lefthook (`brew install lefthook`, `mise use lefthook`, or a project
-  devDependency), run their choice, and re-run.

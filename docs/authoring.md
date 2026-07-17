@@ -1,34 +1,37 @@
 # Authoring a custom harness
 
-A custom harness is a `payload/` tree with an `omakase.manifest` beside it
-(see [Reference](reference.md#manifest)), kept in a git repository — at the repo root, or in a
-subfolder of a repo that holds other things too. `payload/` is copied onto a target on install;
-everything else (README, tests, `bin/`) stays in the custom harness.
+A custom harness is a `payload/` tree with an `omakase.manifest` beside it — the harness's
+identity (`name`, `version`; see [Reference](reference.md#manifest)) — kept in a git
+repository, at the repo root or in a subfolder of a repo that holds other things too.
+`payload/` is copied onto a target on install; everything else (README, tests, `bin/`) stays
+in the custom harness.
 
 A `--source` install layers the omakase **base harness's payload** under your `payload/` (your
 delta wins on overlap), so you ship only your delta and **rely on base machinery without keeping
-your own copy**: the banner and the `omakase-gate.sh` primitive are provided by the base harness. Wire the
-primitive into `payload/lefthook-local.yml` and ship only your own gates. If your
-wiring references a `.omakase/*.sh` neither you nor the base harness ships,
-`init` refuses and places nothing — so a typo surfaces at install, not as an exit-127 on commit.
+your own copy**: the banner and other optional UX come from the base harness. Declare your gates
+as `gate:` blocks in `payload/omakase.manifest` — the copy that gets placed and snapshotted, not
+the root manifest (see [Reference](reference.md#manifest)) — and ship only your own gate scripts. If a gate's `run:` names a payload script (`.omakase/…` or `gates/…`)
+neither you nor the base harness ships, `init` refuses and places nothing — so a typo surfaces
+at install, not as an exit-127 on commit.
 
 Start from the base harness repo or an existing custom harness, edit `payload/`, and publish. The
 worked example is [`examples/starter-harness/`](../examples/starter-harness/) — the harness
 omakase's own development runs: placed agent rules, two pre-commit gates, a cached pre-push
-test gate, and the wiring. Try it with
+test gate, and the `omakase.manifest` that declares them. Try it with
 `omakase init Yuncun/omakase-harness/examples/starter-harness`, then copy it and swap in your
 own rules and gates. There is no capture
-tool: build `payload/` and `omakase.manifest` by hand, moving in whatever files a project already
-has in place.
+tool: build `payload/` (its `omakase.manifest` carries the gate wiring) and the root
+`omakase.manifest` by hand, moving in whatever files a project already has in place.
 
 ## Public surface (the stability contract)
 
-The base harness exposes exactly **one stable primitive a custom harness may reference:
-`.omakase/bin/omakase-gate.sh`**. Its name and its CLI grammar — `<name>` followed by
-`--step` / `--cacheable` / `--glob` / `--record` — are the contract. They will not be renamed
-or repurposed out from under your wiring; anything else is an internal refactor you never see.
+The stable surface a custom harness authors against is the **`omakase.manifest` schema** —
+the `gate:` block and its keys (`hook:`, `run:`, `glob:`, `cacheable:`; see
+[Reference](reference.md#manifest)). Those key names and their meanings will not be renamed
+or repurposed out from under your manifest; anything else is an internal refactor you never
+see.
 
-The other base scripts are **optional UX, opt-in, and not part of the contract**:
+The base scripts are **optional UX, opt-in, and not part of the contract**:
 `omakase-banner.sh` (the branded box) and `omakase-worktree-guard.sh` (a Claude Code
 PreToolUse hook that denies edits to product files in the main checkout while other
 worktrees are active — the pre-edit half of worktree discipline; a commit-time allowlist
@@ -38,29 +41,32 @@ The status-bar segment and the Stop-hook notice are **binary subcommands**, not 
 scripts: `omakase statusline` and `omakase stop-notice` (init prints the wiring). They
 probe the shared ledger and hooks, so a custom harness gets them for free.
 
-The install- and build-time wiring guard rejects any wiring that references a `.omakase/*.sh`
-the surface does not ship, so a drift between your wiring and the surface **fails closed at
-install, not silently at commit time**.
+A gate whose `run:` names a payload script (`.omakase/…` or `gates/…`) is validated at
+install: `init` refuses any harness that references a script it does not ship, so a drift
+between a gate and the scripts on disk **fails closed at install, not silently at commit
+time**.
 
 ## Adding a gate
 
-The `add-gate` skill walks an agent through this end-to-end: picking the flags, pre-flighting
+The `add-gate` skill walks an agent through this end-to-end: picking the keys, pre-flighting
 whether a third-party tool can even be gated, and wiring it. This section is the conceptual
 reference behind it.
 
-A gate is one `omakase-gate.sh` call wired into a hook job (see [Concepts](concepts.md#gates)).
-Three flags cover the common cases:
+A gate is one `gate:` block in `payload/omakase.manifest` (see [Concepts](concepts.md#gates)).
+A block opens with `gate: <name>` and carries these keys:
 
-- `--step '<cmd>'`: the check. Exit 0 = pass; non-zero blocks the commit or push.
-- `--cacheable`: reuse a passing result for the same commit (run it once, then skip). Use
-  for expensive steps or for a check that runs out of band: a blocking step refuses the push
-  until the check records its own pass via `omakase-gate.sh <name> --record`.
-- `--glob '<pats>'`: space-separated path globs; skip the gate when no changed file matches.
+- `hook:` — `pre-commit` or `pre-push` (required): the stage the gate runs at.
+- `run:` — the check (required): a command line run via `sh` from the repo root. Exit 0 =
+  pass; non-zero blocks the commit or push.
+- `cacheable: true` — reuse a passing result for the same commit (run it once, then skip).
+  Use for expensive steps or for a check that runs out of band: a blocking `run:` refuses
+  the push until the check records its own pass via `omakase record <name>`.
+- `glob:` — space-separated path globs; skip the gate when no changed file matches.
 
 ## Wrapping a third-party check
 
 To gate on a review or test skill you do not own: install it as a dependency, then write
-a thin job that runs it, maps its output to success or failure, and records the result.
+a thin gate script that runs it, maps its output to success or failure, and records the result.
 You own the threshold for what counts as failing; the upstream skill stays unmodified. Do
 not copy it into `payload/`. Depend on it and invoke it.
 
@@ -89,8 +95,8 @@ repo, edit `payload/`, and install from the clone. `placed.tsv` and `status.sh` 
 source of each installed file, so the active source is always inspectable. Do not install
 from both the plugin and a clone into one repo.
 
-**Owned directories are gitignored wholesale.** A file a gate or its job writes under
-`.omakase/` or `.claude/` is invisible to git and never reaches a teammate. That is
+**Owned directories are gitignored wholesale.** A file a gate (or the command it runs) writes
+under `.omakase/` or `.claude/` is invisible to git and never reaches a teammate. That is
 correct for machinery and per-machine state. Content the team must share — test specs,
 fixtures, recorded flows — belongs in the project's own committed tree, with the gate's
 config pointing at it. A test that lives only in an ignored directory runs only on the

@@ -1,7 +1,7 @@
 // This file implements the `omakase init` verb: arg parse, payload
-// resolution, the wiring / lefthook / incumbent-hook-manager guards, the
-// guarded cut-over, the upstream-collision guard, the place loop, the orphan
-// sweep, the exclude and .worktreeinclude marked blocks, the snapshot +
+// resolution, the manifest gate-validation and incumbent-hook-manager guards,
+// the guarded cut-over, the upstream-collision guard, the place loop, the
+// orphan sweep, the exclude and .worktreeinclude marked blocks, the snapshot +
 // provenance ledger rebuild, the hook dispatcher writes, and the closing
 // summary. Payload files are processed in one lexical walk order;
 // iterations over existing state files follow file row order.
@@ -21,13 +21,12 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"syscall"
 
+	"github.com/Yuncun/omakase-harness/internal/gate"
 	"github.com/Yuncun/omakase-harness/internal/harness"
 	"github.com/Yuncun/omakase-harness/internal/hook"
-	"github.com/Yuncun/omakase-harness/internal/lefthook"
 	"github.com/Yuncun/omakase-harness/internal/probe"
 	"github.com/Yuncun/omakase-harness/internal/render"
 	"github.com/Yuncun/omakase-harness/internal/state"
@@ -69,10 +68,6 @@ const usageText = "usage: init.sh [<owner/repo[/subpath][#ref]> | --source <git-
 
 // Scan regexes, compiled once.
 var (
-	// Full-line YAML comments, skipped by the wiring scan.
-	reWiringComment = regexp.MustCompile(`^[[:space:]]*#`)
-	// Wired script references (.omakase/….sh).
-	reWiringRef = regexp.MustCompile(`\.omakase/[A-Za-z0-9._/-]+\.sh`)
 	// A package.json "prepare" script wiring a hook manager.
 	rePrepare = regexp.MustCompile(`"prepare"[[:space:]]*:[[:space:]]*"[^"]*(husky|simple-git-hooks)`)
 	// The four fixed strip patterns of isStockGitLFSHook; the fifth (the
@@ -239,38 +234,34 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// ---- fail-closed wiring guard ----
-	wiring := filepath.Join(payload, "lefthook-local.yml")
-	if fileRegular(wiring) {
-		missing := ""
-		for _, ref := range wiringRefs(wiring) {
-			if !fileRegular(filepath.Join(payload, ref)) {
-				missing += " " + ref
-			}
-		}
-		if missing != "" {
-			fmt.Fprintf(stderr, "omakase: hook wiring references script(s) the payload does not ship:%s\n", missing)
-			fmt.Fprintln(stderr, "  These would fail at commit time (exit 127). Fix lefthook-local.yml or ship the script(s). Nothing was placed.")
+	// ---- manifest gate guard (nothing runs undeclared) ----
+	// A harness that still ships lefthook-local.yml is from before the gate
+	// module; omakase no longer reads it. Refuse with migration instructions,
+	// place nothing (the unchanged refuse-invariant).
+	if fileRegular(filepath.Join(payload, "lefthook-local.yml")) {
+		fmt.Fprintln(stderr, "omakase: this harness declares gates in lefthook-local.yml, which omakase no longer reads. Declare them as gate: blocks in omakase.manifest (see the README) and delete the yml. Nothing was changed.")
+		return 1
+	}
+	// Validate the manifest's gate blocks before placing anything: an unknown
+	// key, a missing required key, a duplicate name, or a bad hook stage
+	// refuses the whole harness; a gate whose run: names a payload script the
+	// harness does not ship (or that is not executable) refuses too — the
+	// "nothing runs undeclared" check, moved here from the old yml scan.
+	if manifest := filepath.Join(payload, "omakase.manifest"); fileRegular(manifest) {
+		content, rerr := os.ReadFile(manifest)
+		if rerr != nil {
+			fmt.Fprintf(stderr, "omakase: could not read %s: %v. Nothing was changed.\n", manifest, rerr)
 			return 1
 		}
-		// The dispatcher set is fixed (issue #98), so a wiring key naming any
-		// other git hook would silently never fire. Warn, don't refuse.
-		for _, k := range wiringHookKeys(wiring) {
-			if !hook.Known(k) {
-				fmt.Fprintf(stderr, "omakase: WARNING — the hook wiring defines '%s:', but omakase only dispatches pre-commit, pre-push, and post-checkout; those jobs will not run.\n", k)
-			}
+		gates, perr := gate.Parse(content)
+		if perr != nil {
+			fmt.Fprintf(stderr, "omakase: invalid gate declaration in omakase.manifest: %v. Nothing was changed.\n", perr)
+			return 1
 		}
-	}
-
-	// ---- lefthook provision, fetching if needed ----
-	// Hook time never fetches (no network at commit time), so init is the
-	// moment the pinned lefthook must be resolvable: walk every tier and
-	// self-fetch into the machine cache on a miss. The resolved value is not
-	// run here — the dispatchers exec `omakase hook`, which re-resolves
-	// through the same tiers at fire time.
-	if _, ok := lefthook.ResolveForInit(root, stderr); !ok {
-		lefthook.Guidance(stderr)
-		return 1
+		if verr := gate.ValidateRunnable(gates, payload); verr != nil {
+			fmt.Fprintf(stderr, "omakase: %v. It would fail at commit time (exit 127). Nothing was changed.\n", verr)
+			return 1
+		}
 	}
 
 	const begin = "# >>> omakase-harness >>>"
@@ -296,9 +287,9 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		if hpAbs != stdAbs {
 			incumbent = append(incumbent, "core.hooksPath = '"+hookspath+"' (a foreign hook manager owns the hooks dir; husky v9 sets .husky/_)")
 		} else {
-			// Redundant config: names the default location, but lefthook refuses
-			// to install while any core.hooksPath is set. Flagged here, cleared
-			// just before install, so a refusal below mutates nothing.
+			// Redundant config: names the default location. Cleared just before
+			// the dispatcher writes so git uses the default hooks dir, and so a
+			// refusal below mutates nothing.
 			resetHooksPath = true
 		}
 	}
@@ -308,7 +299,29 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		incumbent = append(incumbent, ".husky/ directory (husky)")
 	}
 	if fileRegular(filepath.Join(root, "package.json")) && fileMatchesLine(filepath.Join(root, "package.json"), rePrepare) {
-		incumbent = append(incumbent, "package.json \"prepare\" script wires a hook manager (husky / simple-git-hooks) — npm install would overwrite lefthook's hooks")
+		incumbent = append(incumbent, "package.json \"prepare\" script wires a hook manager (husky / simple-git-hooks) — npm install would overwrite omakase's hooks")
+	}
+	// A project's own committed lefthook config: omakase no longer runs
+	// lefthook, so installing its dispatchers would displace lefthook's hooks
+	// and silently disable the project's gates. A placed (gitignored)
+	// lefthook-local.yml from a harness is caught earlier by the manifest
+	// guard, not here — this looks only at tracked files. lefthook loads config
+	// under several root names — lefthook.{yml,yaml,toml,json}, the dotted
+	// .lefthook.*, and the -local overlay variants — so the scan covers the
+	// whole set, not just the two .yml names (a repo committing lefthook.yaml
+	// but not yet lefthook-installed would otherwise slip past). The `:(glob)`
+	// pathspec keeps `*` from crossing '/', so it matches only root-level config.
+	cfgOut := gitStdout(root, "ls-files", "--",
+		":(glob)lefthook.*", ":(glob)lefthook-local.*",
+		":(glob).lefthook.*", ":(glob).lefthook-local.*")
+	for _, cfg := range strings.Split(strings.TrimRight(cfgOut, "\n"), "\n") {
+		if cfg == "" {
+			continue
+		}
+		incumbent = append(incumbent, cfg+" is git-tracked (the project's own lefthook config)")
+	}
+	if strings.TrimRight(gitStdout(root, "ls-files", "--", ".lefthook"), "\n") != "" {
+		incumbent = append(incumbent, ".lefthook/ content is git-tracked (the project's own lefthook config)")
 	}
 	preCommitConfig := fileRegular(filepath.Join(root, ".pre-commit-config.yaml"))
 	for _, hf := range sortedHookFiles(hooksDir) {
@@ -323,19 +336,22 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			continue
 		}
 		if bytes.Contains(content, []byte("# omakase dispatcher")) {
-			continue // omakase's own hook (a re-init), any version's text
+			continue // omakase's own dispatcher (a re-init), any version's text
 		}
-		if bytes.Contains(bytes.ToLower(content), []byte("lefthook")) {
-			continue // pre-#98 omakase stubs, or a project lefthook we coexist with
+		if bytes.Contains(content, []byte("omakase-harness")) {
+			continue // a pre-gate-module omakase stub (guard-block markers) — a bare re-init migrates it
 		}
 		if isStockGitLFSHook(hf, content) {
 			continue // `omakase hook` forwards git-lfs — not a rival manager
 		}
 		base := filepath.Base(hf)
-		if preCommitConfig && (bytes.Contains(content, []byte("pre-commit.com")) || bytes.Contains(content, []byte("generated by pre-commit"))) {
+		switch {
+		case bytes.Contains(bytes.ToLower(content), []byte("lefthook")):
+			incumbent = append(incumbent, base+": lefthook-installed hook in "+hooksDir+" (the project uses lefthook natively)")
+		case preCommitConfig && (bytes.Contains(content, []byte("pre-commit.com")) || bytes.Contains(content, []byte("generated by pre-commit"))):
 			incumbent = append(incumbent, base+": installed pre-commit-framework stub (plus .pre-commit-config.yaml)")
-		} else {
-			incumbent = append(incumbent, base+": existing non-lefthook hook in "+hooksDir)
+		default:
+			incumbent = append(incumbent, base+": existing hook in "+hooksDir)
 		}
 	}
 	if len(incumbent) > 0 {
@@ -731,16 +747,6 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Heal a placed gate script that a stale (pre-2b) payload just
-	// (re)placed; otherwise a bare re-init would revert an already-healed
-	// script, silently re-enabling a gate the human disabled. healGateScript
-	// no-ops when the script is absent, already 2b-capable, or git-tracked
-	// (warning), and otherwise rewrites it and refreshes the snapshot and
-	// ledger hash so drift detection stays quiet.
-	if err := healGateScript(repo, stderr, false); err != nil {
-		fmt.Fprintf(stderr, "omakase: %v\n", err)
-		return 1
-	}
 	removeF(filepath.Join(omk, "placed.list")) // pre-0.10 record — superseded
 
 	// ---- redundant hooksPath reset ----
@@ -935,35 +941,6 @@ func walkPayload(payload string) ([]string, error) {
 	return rels, err
 }
 
-// wiringRefs extracts the unique `.omakase/….sh` references from path's
-// non-comment lines, sorted.
-func wiringRefs(path string) []string {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-
-	seen := make(map[string]bool)
-	var refs []string
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	for sc.Scan() {
-		line := sc.Text()
-		if reWiringComment.MatchString(line) {
-			continue
-		}
-		for _, m := range reWiringRef.FindAllString(line, -1) {
-			if !seen[m] {
-				seen[m] = true
-				refs = append(refs, m)
-			}
-		}
-	}
-	sort.Strings(refs)
-	return refs
-}
-
 // isStockGitLFSHook reports whether hf is the pristine stub `git lfs
 // install` writes: the right basename, git-lfs's own presence guard, and
 // nothing left once the shebang, comments, blank lines, the presence guard,
@@ -1129,46 +1106,6 @@ func fileRegular(p string) bool {
 func fileExecutable(p string) bool {
 	info, err := os.Stat(p)
 	return err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0
-}
-
-// gitHookNames are git's own hook names — what a top-level wiring key must
-// be to count as a hook definition (every other top-level key is a lefthook
-// setting like `colors:` or `extends:`).
-var gitHookNames = map[string]bool{
-	"applypatch-msg": true, "pre-applypatch": true, "post-applypatch": true,
-	"pre-commit": true, "pre-merge-commit": true, "prepare-commit-msg": true,
-	"commit-msg": true, "post-commit": true, "pre-rebase": true,
-	"post-checkout": true, "post-merge": true, "pre-push": true,
-	"pre-receive": true, "update": true, "proc-receive": true,
-	"post-receive": true, "post-update": true, "reference-transaction": true,
-	"push-to-checkout": true, "pre-auto-gc": true, "post-rewrite": true,
-	"sendemail-validate": true, "post-index-change": true,
-}
-
-// wiringHookKeys returns the git hook names defined as top-level keys in
-// the wiring file at path, in file order — a line-anchored scan, not a YAML
-// parse (a top-level key starts at column 0, so comments and nested keys
-// can never match).
-func wiringHookKeys(path string) []string {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-	var keys []string
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	for sc.Scan() {
-		line := sc.Text()
-		i := strings.IndexByte(line, ':')
-		if i <= 0 || strings.ContainsAny(line[:i], " \t#") {
-			continue
-		}
-		if gitHookNames[line[:i]] {
-			keys = append(keys, line[:i])
-		}
-	}
-	return keys
 }
 
 // lexists reports whether the path is present as any type, including a

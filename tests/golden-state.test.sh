@@ -24,7 +24,6 @@
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
-LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 TMP="${TMPDIR:-/tmp}/omakase-golden-state-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
@@ -36,8 +35,6 @@ END_MARK='# <<< omakase-harness <<<'
 
 newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }
 common_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)"; }
-
-export PATH="$(dirname "$LEFTHOOK"):$PATH"
 
 # Derive the expected exclude-block bytes from placed.tsv — the frozen derivation
 # rule (see header). The shared-topdir list is hardcoded to .github on purpose:

@@ -10,13 +10,11 @@
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
-LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 TMP="${TMPDIR:-/tmp}/omakase-recommends-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
 fail(){ echo "  FAIL: $1"; FAILED=1; }
 
-export PATH="$(dirname "$LEFTHOOK"):$PATH"
 FAKEHOME="$TMP/home"; CACHEHOME="$TMP/cache"
 mkdir -p "$FAKEHOME" "$CACHEHOME"
 trap 'rm -rf "$TMP"' EXIT
@@ -27,16 +25,16 @@ mksource(){
   ( cd "$r" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
   mkdir -p "$r/payload/.omakase/gates"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$r/payload/.omakase/gates/example.sh"
-  cat > "$r/payload/lefthook-local.yml" <<'YML'
-pre-commit:
-  jobs:
-    - name: omakase-example
-      run: bash .omakase/gates/example.sh
-post-checkout:
-  jobs:
-    - name: omakase-ensure-present
-      run: bash "$(git rev-parse --git-common-dir)/omakase/ensure-present.sh"
-YML
+  # gates live in payload/omakase.manifest now (replaces payload/lefthook-local.yml)
+  cat > "$r/payload/omakase.manifest" <<'MAN'
+name: test
+version: 1
+
+gate: omakase-example
+  hook: pre-commit
+  run: bash .omakase/gates/example.sh
+MAN
+  # the source-root manifest carries identity + the recommends: line under test
   { printf 'name: test-harness\nversion: 0.1.0\n'; [ -n "$rec" ] && printf 'recommends: %s\n' "$rec"; } > "$r/omakase.manifest"
   ( cd "$r" && git add -A && git commit -q -m harness )
 }

@@ -4,15 +4,14 @@
 # expands the shorthand to a GitHub URL, clones it, optionally checks out a
 # pinned #ref, and places the delta — the install path every adopter actually
 # uses (share.sh/import.sh are gone; init's owner/repo shorthand is not).
-# Fully offline: a git `insteadOf` rewrite stands in for github.com and a stub
-# lefthook stands in for a real install (same proven pattern the deleted
-# share.test.sh used).
+# Fully offline: a git `insteadOf` rewrite stands in for github.com (the same
+# proven pattern the deleted share.test.sh used); init fetches nothing but the
+# omakase binary, which the shim resolves locally.
 #   H1. init <owner/repo> expands, clones, places the delta, zero committed footprint
 #   H2. init <owner/repo#tag> pins the checkout to the tag's content
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
-LEFTHOOK="${LEFTHOOK_BIN:-$(command -v lefthook || true)}"
 TMP="${TMPDIR:-/tmp}/omakase-init-shorthand-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
@@ -21,8 +20,7 @@ trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP"
 
 # Isolated HOME (the git config --global calls below never touch the real
-# one) + a private XDG cache + a stub lefthook, so init needs no network and
-# no real lefthook install.
+# one) + a private XDG cache, so init needs no network.
 export HOME="$TMP/home"; mkdir -p "$HOME"
 export XDG_CACHE_HOME="$TMP/cache"; mkdir -p "$XDG_CACHE_HOME"
 git config --global user.email t@t
@@ -32,9 +30,6 @@ git config --global commit.gpgsign false
 # fails instantly (no network, no hang). A more specific insteadOf added below
 # wins by longest-match, so it stands in for one specific owner/repo.
 git config --global url."$TMP/nogithub/".insteadOf "https://github.com/"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/lefthook"; chmod +x "$TMP/lefthook"
-export LEFTHOOK_BIN="$TMP/lefthook"
-export PATH="$(dirname "$LEFTHOOK"):$PATH"
 
 # Build a tiny publishable harness repo at $1: omakase.manifest + one payload
 # delta file (payload/AGENTS.md), committed.

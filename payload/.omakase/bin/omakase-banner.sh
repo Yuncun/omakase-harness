@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# omakase-banner — print a rounded, gray-gradient box header branded to the harness,
-# in place of lefthook's own box (which is suppressed via `output:` in lefthook-local.yml).
+# omakase-banner — print a rounded, gray-gradient box header branded to the harness.
+# Optional UX a harness can print at a hook or in omakase status; nothing depends on it.
 # Usage: omakase-banner.sh [hook-name]   (hook omitted -> just name + version, e.g. for omakase status)
 # Icon is swappable: $OMAKASE_ICON (default 🥡). Version read from .omakase/VERSION if present.
 # Honors NO_COLOR. Never fails a hook.

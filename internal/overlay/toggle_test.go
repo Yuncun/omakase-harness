@@ -2,7 +2,6 @@ package overlay
 
 import (
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +16,6 @@ import (
 func placeSingleGate(t *testing.T) (string, *state.Repo) {
 	t.Helper()
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	singleGatePayload(t)
 	var stdout, stderr strings.Builder
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
@@ -31,10 +29,10 @@ func placeSingleGate(t *testing.T) (string, *state.Repo) {
 func TestGateOffOnIdempotent(t *testing.T) {
 	_, repo := placeSingleGate(t)
 
-	if err := GateOff(repo, "example", io.Discard); err != nil {
+	if err := GateOff(repo, "example"); err != nil {
 		t.Fatalf("GateOff: %v", err)
 	}
-	if err := GateOff(repo, "example", io.Discard); err != nil {
+	if err := GateOff(repo, "example"); err != nil {
 		t.Fatalf("GateOff (second call): %v", err)
 	}
 	content := readFileT(t, filepath.Join(repo.OMK, "disabled-gates"))
@@ -60,131 +58,6 @@ func TestGateOffOnIdempotent(t *testing.T) {
 	// GateOn when already absent is a no-op nil.
 	if err := GateOn(repo, "example"); err != nil {
 		t.Fatalf("GateOn on absent entry: %v", err)
-	}
-}
-
-// GateOff self-heals a stale placed gate script (one predating the menu-bypass
-// check) when a gate is toggled — the file is rewritten from the embedded copy,
-// and the snapshot + ledger hash are updated so the fail-closed drift guards stay
-// quiet. init also heals now (TestReinitHealsStaleGateScript), so this test
-// reverts the on-disk copy to a stale stub after init to isolate GateOff's own
-// heal path.
-func TestGateOffHealsOldGateScript(t *testing.T) {
-	dir, repo := initRepo(t)
-	stubLefthook(t)
-	p := singleGatePayload(t)
-	rel := ".omakase/bin/omakase-gate.sh"
-	const staleStub = "#!/usr/bin/env bash\n# stale gate script predating the menu-bypass check\nexit 0\n"
-	writeFile(t, filepath.Join(p, rel), staleStub)
-
-	var stdout, stderr strings.Builder
-	if code := RunInit(nil, &stdout, &stderr); code != 0 {
-		t.Fatalf("init exit = %d, want 0; stderr=%q", code, stderr.String())
-	}
-
-	// init heals the stale payload script; revert the on-disk copy to stale so
-	// GateOff's heal is what this test exercises.
-	placed := filepath.Join(dir, rel)
-	writeFile(t, placed, staleStub)
-	if strings.Contains(readFileT(t, placed), "disabled-gates") {
-		t.Fatalf("fixture invalid: reverted gate script still contains 'disabled-gates'")
-	}
-
-	if err := GateOff(repo, "anything", io.Discard); err != nil {
-		t.Fatalf("GateOff: %v", err)
-	}
-
-	placedContent := readFileT(t, placed)
-	if !strings.Contains(placedContent, "disabled-gates") {
-		t.Errorf("placed gate script not healed: missing 'disabled-gates'\n%s", placedContent)
-	}
-
-	snap := filepath.Join(repo.OMK, "payload-snapshot", rel)
-	eq(t, "snapshot content", readFileT(t, snap), placedContent)
-
-	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
-	idx := placedIndex(rows, rel)
-	if idx < 0 {
-		t.Fatalf("ledger row missing for %s", rel)
-	}
-	eq(t, "ledger Hash", rows[idx].Hash, state.HashOf(placed))
-}
-
-// A bare re-init from a stale payload must not leave the placed gate script
-// stale: init re-heals it after the place loop, so a gate the human disabled
-// stays honored across the documented refresh flow rather than the gate silently
-// re-enabling while the consent surfaces still show it off.
-func TestReinitHealsStaleGateScript(t *testing.T) {
-	dir, repo := initRepo(t)
-	stubLefthook(t)
-	p := singleGatePayload(t)
-	rel := ".omakase/bin/omakase-gate.sh"
-	const staleStub = "#!/usr/bin/env bash\n# stale gate script predating the menu-bypass check\nexit 0\n"
-	writeFile(t, filepath.Join(p, rel), staleStub)
-	placed := filepath.Join(dir, rel)
-
-	// First init from the stale payload: init heals the placed script.
-	var out, errOut strings.Builder
-	if code := RunInit(nil, &out, &errOut); code != 0 {
-		t.Fatalf("init exit = %d; stderr=%q", code, errOut.String())
-	}
-	if !strings.Contains(readFileT(t, placed), "disabled-gates") {
-		t.Fatalf("init did not heal the stale gate script")
-	}
-
-	// Disable a gate (records disabled-gates; the heal is a no-op now).
-	if err := GateOff(repo, "smoke", io.Discard); err != nil {
-		t.Fatalf("GateOff: %v", err)
-	}
-
-	// Bare re-init from the same stale payload: the place loop overwrites the
-	// placed script with the stale payload copy, then the init heal restores
-	// the menu-bypass check.
-	out.Reset()
-	errOut.Reset()
-	if code := RunInit(nil, &out, &errOut); code != 0 {
-		t.Fatalf("re-init exit = %d; stderr=%q", code, errOut.String())
-	}
-
-	healed := readFileT(t, placed)
-	if n := strings.Count(healed, "disabled-gates"); n != 3 {
-		t.Errorf("re-init left placed gate script pre-2b: %d 'disabled-gates' occurrences, want 3", n)
-	}
-	if !DisabledGates(repo.OMK)["smoke"] {
-		t.Errorf("disabled-gates lost 'smoke' across re-init")
-	}
-	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
-	idx := placedIndex(rows, rel)
-	if idx < 0 {
-		t.Fatalf("ledger row missing for %s", rel)
-	}
-	eq(t, "ledger Hash", rows[idx].Hash, state.HashOf(placed))
-}
-
-// A git-tracked placed gate script must not be healed (overwritten) by a gate
-// toggle — omakase never rewrites a committed file. GateOff still records the
-// disable, but warns that the tracked, stale script won't honor it until the repo
-// updates the script itself, and leaves the script untouched.
-func TestGateOffSkipsTrackedGateScript(t *testing.T) {
-	dir, repo := initRepo(t)
-	rel := ".omakase/bin/omakase-gate.sh"
-	const staleStub = "#!/usr/bin/env bash\n# tracked, customized gate script predating the menu-bypass check\nexit 0\n"
-	writeFile(t, filepath.Join(dir, rel), staleStub)
-	runGitT(t, dir, "add", "-f", rel) // staged counts as tracked (gitTracked -> ls-files)
-
-	var warn strings.Builder
-	if err := GateOff(repo, "smoke", &warn); err != nil {
-		t.Fatalf("GateOff: %v", err)
-	}
-
-	if got := readFileT(t, filepath.Join(dir, rel)); got != staleStub {
-		t.Errorf("tracked gate script was rewritten:\n got: %q\nwant: %q", got, staleStub)
-	}
-	if w := warn.String(); !strings.Contains(w, "tracked") || !strings.Contains(w, "disabled-gates") {
-		t.Errorf("GateOff warning missing/weak for tracked script: %q", w)
-	}
-	if !DisabledGates(repo.OMK)["smoke"] {
-		t.Errorf("disabled-gates did not record 'smoke' despite the tracked-script skip")
 	}
 }
 
@@ -324,7 +197,6 @@ func twoRulePayload(t *testing.T) string {
 func placeTwoRules(t *testing.T) (string, *state.Repo) {
 	t.Helper()
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	twoRulePayload(t)
 	var stdout, stderr strings.Builder
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
@@ -376,7 +248,6 @@ func TestFileOnGroupSkipsEditedSibling(t *testing.T) {
 // and must refresh its snapshot so a later FileOn restores the new payload copy.
 func TestReinitPreservesDeclined(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	const ruleContent = "steer gently\n"
 	p := t.TempDir()
 	writeFile(t, filepath.Join(p, ".omakase", "gates", "example.sh"), gateContent)
@@ -453,7 +324,6 @@ func TestReinitPreservesDeclined(t *testing.T) {
 // touches it once written.
 func TestReinitAllDeclinedStillWritesWorktreeinclude(t *testing.T) {
 	dir, repo := initRepo(t)
-	stubLefthook(t)
 	pay := t.TempDir()
 	rel := ".claude/rules/steer.md"
 	writeFile(t, filepath.Join(pay, rel), "steer gently\n")

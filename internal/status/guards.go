@@ -1,21 +1,20 @@
-// This file renders the guards chart — the "run when" table. The chart is
-// derived from `lefthook dump` (the normalized hook wiring) joined to the run
-// ledger. The dump is walked line by line rather than parsed as YAML.
+// This file renders the guards chart — the "run when" table. It reads the
+// declared gates straight from the manifest (internal/gate) and joins them to
+// the run ledger; declaration IS wiring now, so there is no runner to dump and
+// no declared/wired distinction to reconcile.
 package status
 
 import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/Yuncun/omakase-harness/internal/lefthook"
+	"github.com/Yuncun/omakase-harness/internal/gate"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
@@ -27,65 +26,24 @@ const (
 	glyphEmDash = "—"
 )
 
-// Scan regexes. The three line-anchored ones (hook header, job name, run
-// line) gate a rule and, when they carry a trailing capture region, strip
-// their own match off the front of the line.
-var (
-	reHookHeader = regexp.MustCompile(`^[A-Za-z0-9_-]+:[[:space:]]*$`)
-	reJobName    = regexp.MustCompile(`^[[:space:]]*-[[:space:]]+name:[[:space:]]*`)
-	reRun        = regexp.MustCompile(`^[[:space:]]*run:[[:space:]]*`)
-	reGate       = regexp.MustCompile(`omakase-gate\.sh [A-Za-z0-9._-]+`)
-	reGlob       = regexp.MustCompile(`--glob '[^']*'`)
-	// A YAML block-scalar indicator after `run:` — "|" or ">" with optional
-	// chomp/indent suffix. `lefthook dump` re-emits a block-scalar run this
-	// way, with the command on the following deeper-indented line(s).
-	reBlockScalar = regexp.MustCompile(`^[|>][0-9+-]*[[:space:]]*$`)
-)
-
-// RenderGuards resolves lefthook, runs `<lefthook> dump` with cwd=root
-// (stderr discarded), and renders the chart — or, if lefthook can't be
-// resolved or the dump is empty, the one-line not-resolved note. Verdicts are
-// read from omk/ledger.tsv and the age reference from $OMAKASE_NOW.
-func RenderGuards(w io.Writer, root, omk string, md bool) {
-	dump := ""
-	if lh := resolveLefthook(root); lh != "" {
-		dump = dumpLefthook(lh, root)
-	}
-
-	if dump == "" {
+// RenderGuards loads the declared gates from the snapshot manifest under omk
+// and renders the chart — or, if none are declared, the one-line note.
+// Verdicts are read from omk/ledger.tsv and the age reference from
+// $OMAKASE_NOW.
+func RenderGuards(w io.Writer, omk string, md bool) {
+	gates, err := gate.Load(omk)
+	if err != nil || len(gates) == 0 {
 		if md {
-			fmt.Fprintln(w, "_lefthook not resolved - gates are not running._")
+			fmt.Fprintln(w, "_no gates declared — this harness gates nothing._")
 		} else {
-			fmt.Fprintln(w, "  (lefthook not resolved - gates are not running)")
+			fmt.Fprintln(w, "  (no gates declared — this harness gates nothing)")
 		}
 		return
 	}
 
 	// A missing ledger yields an empty verdict map.
 	verds := state.LatestVerdicts(filepath.Join(omk, "ledger.tsv"))
-	renderGuardsChart(w, dump, verds, nowFromEnv(), md)
-}
-
-// resolveLefthook resolves lefthook for the guards chart through the shared
-// tier walk (lefthook.ResolveForStatus): LEFTHOOK_BIN, `lefthook` on PATH,
-// $root/node_modules/.bin/lefthook, then the omakase-managed cache — the same
-// order init and remove use, never fetching (status is read-only). Returns ""
-// if nothing resolves.
-func resolveLefthook(root string) string {
-	if lh, ok := lefthook.ResolveForStatus(root); ok {
-		return lh
-	}
-	return ""
-}
-
-// dumpLefthook runs `<lh> dump` with cwd=root and returns its stdout with
-// trailing newlines stripped. stderr is discarded and the exit code ignored,
-// so a non-zero dump that still printed keeps its stdout.
-func dumpLefthook(lh, root string) string {
-	cmd := exec.Command(lh, "dump")
-	cmd.Dir = root
-	out, _ := cmd.Output() // stderr left unset -> discarded; exit code ignored
-	return strings.TrimRight(string(out), "\n")
+	renderGuardsChart(w, gates, verds, nowFromEnv(), md)
 }
 
 // nowFromEnv is the age reference: OMAKASE_NOW if set, else the current
@@ -126,153 +84,41 @@ func awkNumeric(s string) int64 {
 
 type guardRow struct{ hook, guard, enf, verdict string }
 
-// renderGuardsChart walks dump line by line, buffers one row per non-cosmetic
-// job (hook -> job -> first run), joins each ledgered gate to its verdict,
-// then emits a markdown table (md) or a width-aligned terminal table. now is
-// the age reference.
-func renderGuardsChart(w io.Writer, dump string, verds map[string]state.Verdict, now int64, md bool) {
+// renderGuardsChart builds one row per declared gate (in manifest order),
+// joins each to its latest ledger verdict, then emits a markdown table (md) or
+// a width-aligned terminal table. now is the age reference.
+func renderGuardsChart(w io.Writer, gates []gate.Gate, verds map[string]state.Verdict, now int64, md bool) {
 	// Term widths start at the header label lengths.
 	wH, wG, wE := utf8.RuneCountInString("RUN WHEN"), utf8.RuneCountInString("GUARD"), utf8.RuneCountInString("ENFORCES")
 
 	var rows []guardRow
-	var curhook, jobname string
-	haverun := false
+	for _, g := range gates {
+		enf := enforces(g)
 
-	// Indexed loop (not a Scanner): the block-scalar rule below needs to
-	// consume the lines following a `run: |` as that run's continuation.
-	lines := strings.Split(dump, "\n")
-	for i := 0; i < len(lines); i++ {
-		line := lines[i]
-
-		// Hook header (col 0): curhook is the text before the first ':'.
-		if reHookHeader.MatchString(line) {
-			if i := strings.IndexByte(line, ':'); i >= 0 {
-				curhook = line[:i]
-			}
-			continue
-		}
-
-		// `- name: <job>`: the remainder is jobname; resets haverun.
-		if loc := reJobName.FindStringIndex(line); loc != nil {
-			jobname = line[loc[1]:]
-			haverun = false
-			continue
-		}
-
-		// `run: <cmd>`.
-		loc := reRun.FindStringIndex(line)
-		if loc == nil {
-			continue
-		}
-		// Only the first run after a name:; run lines with no pending name are
-		// skipped.
-		if jobname == "" || haverun {
-			continue
-		}
-		haverun = true
-		runcmd := line[loc[1]:]
-
-		// A block-scalar run: the command lives on the following line(s),
-		// each indented deeper than the `run:` line; join them with single
-		// spaces into one logical command so the gate name,
-		// --cacheable/--glob description, and ledger join all work as they
-		// do for a single-line run. Consuming the continuation lines here
-		// also keeps them from misparsing as rules.
-		if reBlockScalar.MatchString(runcmd) {
-			runIndent := len(line) - len(strings.TrimLeft(line, " "))
-			var parts []string
-			for i+1 < len(lines) {
-				next := strings.TrimRight(lines[i+1], " \t")
-				if next == "" { // blank inside/after the block: skip, keep looking
-					i++
-					continue
-				}
-				trimmed := strings.TrimLeft(next, " ")
-				if len(next)-len(trimmed) <= runIndent {
-					break
-				}
-				parts = append(parts, trimmed)
-				i++
-			}
-			runcmd = strings.Join(parts, " ")
-		}
-
-		// omakase-banner: cosmetic header box, not a guard.
-		if jobname == "omakase-banner" {
-			jobname = ""
-			continue
-		}
-
-		// A gate -> its canonical (ledgered) name.
-		ledgered := false
-		gate := ""
-		if m := reGate.FindString(runcmd); m != "" {
-			gate = strings.TrimPrefix(m, "omakase-gate.sh ")
-			ledgered = true
-		}
-
-		// ENFORCES cell precedence.
-		var enf string
-		switch {
-		case strings.Contains(runcmd, "ensure-present.sh"):
-			enf = "self-heal: restore any missing injected files"
-		case ledgered: // describe by safe flags only
-			cached := strings.Contains(runcmd, "--cacheable")
-			scope := "runs every commit"
-			if m := reGlob.FindString(runcmd); m != "" {
-				g := strings.TrimPrefix(m, "--glob '")
-				g = strings.TrimSuffix(g, "'")
-				scope = "scope: " + g
-			}
-			if cached {
-				enf = "cached; " + scope
-			} else {
-				enf = scope
-			}
-		default:
-			enf = runcmd
-		}
-
-		// Row name = gate if ledgered, else the job name.
-		gname := jobname
-		if ledgered {
-			gname = gate
-		}
-
-		// Verdict cell.
 		var vc string
-		if v, ok := verds[gate]; gate != "" && ok { // has a ledger row
+		if v, ok := verds[g.Name]; ok { // has a ledger row
 			d := now - v.Epoch
 			if d < 0 { // clamp >= 0
 				d = 0
 			}
 			vc = verdictGlyph(v.Verdict) + " - " + age(d) + " ago"
-		} else if ledgered { // wired gate, never run
+		} else { // declared, never run
 			vc = "- not yet run"
-		} else { // non-gate job
-			vc = glyphEmDash
 		}
 
-		rows = append(rows, guardRow{curhook, gname, enf, vc})
-		// Grow term widths to the longest cell. Only the ASCII columns are
-		// padded; the verdict cell is always last and unpadded.
-		if l := utf8.RuneCountInString(curhook); l > wH {
+		rows = append(rows, guardRow{g.Hook, g.Name, enf, vc})
+		if l := utf8.RuneCountInString(g.Hook); l > wH {
 			wH = l
 		}
-		if l := utf8.RuneCountInString(gname); l > wG {
+		if l := utf8.RuneCountInString(g.Name); l > wG {
 			wG = l
 		}
 		if l := utf8.RuneCountInString(enf); l > wE {
 			wE = l
 		}
-		jobname = ""
 	}
 
 	if md {
-		if len(rows) == 0 {
-			fmt.Fprintln(w, "_(no guards wired)_")
-			return
-		}
 		fmt.Fprintln(w, "| Run when | Guard | Enforces | Last verdict |")
 		fmt.Fprintln(w, "| --- | --- | --- | --- |")
 		for _, r := range rows { // escape only Guard + Enforces
@@ -280,15 +126,25 @@ func renderGuardsChart(w io.Writer, dump string, verds map[string]state.Verdict,
 		}
 		return
 	}
-	if len(rows) == 0 {
-		fmt.Fprintln(w, "  (no guards wired)")
-		return
-	}
 	// Header + rows, verdict last and unpadded.
 	fmt.Fprintf(w, "  %-*s   %-*s   %-*s   %s\n", wH, "RUN WHEN", wG, "GUARD", wE, "ENFORCES", "LAST VERDICT")
 	for _, r := range rows {
 		fmt.Fprintf(w, "  %-*s   %-*s   %-*s   %s\n", wH, r.hook, wG, r.guard, wE, r.enf, r.verdict)
 	}
+}
+
+// enforces describes a gate's scope from its declaration: a glob narrows it to
+// the matching files, cacheable notes the once-per-commit reuse, and neither
+// means it runs on every fire.
+func enforces(g gate.Gate) string {
+	scope := "runs every fire"
+	if len(g.Glob) > 0 {
+		scope = "scope: " + strings.Join(g.Glob, " ")
+	}
+	if g.Cacheable {
+		return "cached; " + scope
+	}
+	return scope
 }
 
 // mdcell escapes a literal `|` (which would break the md table) and folds

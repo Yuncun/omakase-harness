@@ -1,0 +1,17 @@
+name: omakase-base
+version: 0.19.1
+
+# The harness declares its gates here. omakase runs each gate at the named git
+# hook: it reports the run in the scorecard (omakase status), passes the check's
+# exit code through (non-zero blocks the commit/push), and — with cacheable: —
+# reuses a PASS until HEAD moves. Skip one gate once with OMAKASE_SKIP_<NAME>=1;
+# skip every gate once with OMAKASE_SKIP_GATES=1 (both audited and printed).
+#
+# This one example gate blocks a staged merge-conflict marker. Replace it, or
+# add your own scripts under .omakase/gates/ and declare them below. A run: whose
+# first token is a payload path (.omakase/… or gates/…) must be an executable the
+# harness ships; any other first token (go, make, npm, …) is your own command.
+
+gate: markers
+  hook: pre-commit
+  run: .omakase/gates/example.sh

@@ -2,8 +2,8 @@
 # Example gate (a "scoped checker": fast, runs per-commit on staged files).
 # It blocks a commit that stages an unresolved merge-conflict marker. It is fully
 # generic — depends on nothing but git, passes on a clean repo, and shows you a real
-# gate actually firing. Replace it, or add your own gates in .omakase/gates/ and wire
-# them in lefthook-local.yml. Exit non-zero to block; exit 0 to allow.
+# gate actually firing. Replace it, or add your own gates in .omakase/gates/ and declare
+# them in omakase.manifest as gate: blocks. Exit non-zero to block; exit 0 to allow.
 set -euo pipefail
 
 # A real conflict always writes the <<<<<<< / >>>>>>> pair, each with a trailing ref

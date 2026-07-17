@@ -16,7 +16,7 @@ shim fails closed: recovery guidance on stderr (install a binary, or point
 ### `init.sh [<owner/repo[/subpath][#ref]> | --source <git-url|path>] [--cut-over] [--help]`
 
 Overlays `payload/` onto the current repo, records placed paths in `.git/info/exclude`,
-and installs hooks through lefthook. Skips paths the repo tracks. Overwrites a divergent
+and installs one dispatcher per hook (no third-party runner). Skips paths the repo tracks. Overwrites a divergent
 installed (untracked) file to match payload and warns. Removes a previously placed file
 the payload no longer ships, unless it was edited locally.
 
@@ -44,9 +44,9 @@ the payload no longer ships, unless it was edited locally.
   DIFFERENT harness than the one installed: **replaces** it — every file the old source
   placed and the new one does not ship is swept, then the new source is installed fresh.
   There is no stacking; a repo holds exactly one installed harness at a time. Refuses
-  (placing nothing) if the hook wiring references a `.omakase/*.sh` script neither the
-  harness nor the base ships. The harness is remembered; a later bare `init` refreshes
-  and reinstalls it.
+  (placing nothing) if a gate's `run:` names a payload script (`.omakase/…` or `gates/…`)
+  neither the harness nor the base ships. The harness is remembered; a later bare `init`
+  refreshes and reinstalls it.
 - `--cut-over` — also untrack (`git rm --cached`) every payload path the repo currently
   tracks, so the installed copy takes over. Guarded: refuses without
   `OMAKASE_CUTOVER_CONFIRM=1`.
@@ -68,7 +68,7 @@ wiring, the run ledger, and the paths hidden via `.git/info/exclude`.
   the toggle rather than lose the edits). Disabling a GATE records it in the
   git dir's `omakase/disabled-gates`; the hook still announces the skip on
   every run — a bypassed gate is never silent — until `--enable` clears it.
-  Machinery (`.omakase/`, the lefthook wiring) refuses to toggle. A name that
+  Machinery (`.omakase/`, the `omakase.manifest`) refuses to toggle. A name that
   matches nothing errors (exit 2).
 - `--keep <path>` / `--restore <path>` — the edit lifecycle (#98). You edited
   a placed file (or directory of them); the status surfaces show it as
@@ -128,30 +128,65 @@ installed harness, and `remove` always tears it down completely.
 
 | Variable | Effect |
 |---|---|
-| `LEFTHOOK_BIN` | path to a lefthook binary to use instead of PATH, `node_modules`, or the fetched cache |
-| `LEFTHOOK=0` | skip gates for one git command — an explicit choice, so the missing-lefthook block honors it. The overlay integrity check still runs; bypass it with git's own `--no-verify` |
+| `OMAKASE_SKIP_<NAME>=1` | skip one gate for one git command — name upper-cased, `.`/`-`→`_`. Audited and printed on every hook run; a bypassed gate is never silent |
+| `OMAKASE_SKIP_GATES=1` | skip every gate for one git command — the explicit skip-all escape. Audited and printed. The overlay integrity check still runs; bypass it with git's own `--no-verify` |
 | `OMAKASE_CUTOVER_CONFIRM=1` | required to apply `init.sh --cut-over` |
 | `OMAKASE_PAYLOAD` | path to a payload tree to install, overriding the plugin payload. Lower precedence than `--source` |
 | `OMAKASE_BASE_PAYLOAD` | path to the base (plugin) payload tree, exported automatically by the bin/ shims. Needed when the binary resolves from the per-machine cache or PATH, away from a `payload/` sibling. A location hint only — unlike `OMAKASE_PAYLOAD` it never suppresses a remembered source |
-| `OMAKASE_LEFTHOOK_BASE_URL` | mirror for the lefthook binary download |
 | `OMAKASE_RELEASE_BASE_URL` | mirror for the omakase binary download, overriding the GitHub releases base URL |
 | `OMAKASE_BIN` | path to an omakase binary to use instead of dev rebuild, `dist/omakase`, PATH, or the fetched cache — must be executable, or resolution fails immediately |
-| `XDG_CACHE_HOME` | cache root for the fetched lefthook and omakase binaries (default `~/.cache`) |
-
-A gate that defers its verdict is skipped with its own variable, by convention
-`OMAKASE_SKIP_<CHECK>=1`.
+| `OMAKASE_NOW` | test hook: pins the ledger epoch (the timestamp on each recorded gate row) to a fixed value for reproducible runs |
+| `XDG_CACHE_HOME` | cache root for the fetched omakase binary (default `~/.cache`) |
 
 ## Manifest
 
-`omakase.manifest` sits at the harness root. It is read only when installing from
-`--source`; a plugin or `OMAKASE_PAYLOAD` install does not require it. Flat `key: value`
-lines.
+A harness carries two `omakase.manifest` files — flat, hand-parsed text, no YAML — with
+different jobs:
+
+- **The root `omakase.manifest`, beside `payload/`** — the harness's identity. Its header
+  keys (`name`, `version`, `recommends`) name the harness; `name` is required, and only for
+  a `--source` install (it is read when the source is fetched). It declares **no gates** —
+  a `gate:` block here never runs, and `init` refuses a source whose root manifest carries
+  one, pointing you to the payload copy below.
+- **`payload/omakase.manifest`** — the gate wiring. Its `gate:` blocks declare the harness's
+  gates. `init` places this file with the rest of `payload/` (it lands at the target root as
+  `omakase.manifest`) and snapshots it into the target's git dir; each git hook reads its
+  gates from that snapshot. Editing the placed copy changes nothing until a bare `init`
+  re-consents to it.
+
+Root-manifest header keys, one `key: value` line each:
 
 | Key | Required | Meaning |
 |---|---|---|
 | `name` | for `--source` | harness name, shown on install |
 | `version` | no | harness version |
 | `recommends` | no | free-text companion-tool hint, printed once at install |
+
+### Gate blocks
+
+Gate blocks live in `payload/omakase.manifest`. A `gate: <name>` line at column 0 opens a
+block; indented `key: value` lines belong to it until the next column-0 line. The omakase
+binary runs each gate at its hook (see [Concepts](concepts.md#gates)).
+
+    gate: go-test
+      hook: pre-push
+      run: go test ./...
+      glob: *.go go.mod go.sum
+      cacheable: true
+
+| Key | Required | Meaning |
+|---|---|---|
+| `gate:` | yes | the gate's name: `[A-Za-z0-9._-]+`, unique in the manifest. The scorecard name and the `OMAKASE_SKIP_<NAME>` name (upper-cased, `.`/`-`→`_`) |
+| `hook:` | yes | `pre-commit` or `pre-push` — the only stages omakase wires |
+| `run:` | yes | a command line, run via `sh` from the repo root; exit 0 passes, non-zero blocks |
+| `glob:` | no | space-separated case-glob patterns (a single `*` spans directories); the gate runs only when a changed file in the range matches. Absent = always in scope |
+| `cacheable:` | no | `true` reuses a recorded PASS for the exact HEAD sha until HEAD moves |
+
+At init, an unknown key, a missing required key, a duplicate name, or a bad hook stage
+refuses the whole harness (places nothing). If a `run:`'s first token is a payload path
+(`.omakase/…` or `gates/…`), that file must exist in the payload and be executable — the
+"nothing runs undeclared" check; any other first token (`go`, `make`, `bash …`) is the
+author's own command, resolved from `PATH`.
 
 ## Instruction files
 

@@ -24,6 +24,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/Yuncun/omakase-harness/internal/gate"
 )
 
 // reOwnerRepo is the owner/repo shorthand test: two path segments, each
@@ -323,6 +325,14 @@ func fetchSource(src, subpath, sourceRef string, stdout, stderr io.Writer) (payl
 	name := manifestField(manifest, "name")
 	if name == "" {
 		fmt.Fprintf(stderr, "omakase: source '%s' manifest is missing the required 'name:' line\n", canonical)
+		return "", "", 1
+	}
+	// The root manifest is the harness's identity only. Gates live in
+	// payload/omakase.manifest (the copy init places and snapshots); a gate: in
+	// the root manifest would never run. Refuse, so a doc-following author sees
+	// the mistake at install instead of a silently gate-less harness.
+	if gate.HasGateBlock(manifest) {
+		fmt.Fprintf(stderr, "omakase: source '%s' declares gate: blocks in its root omakase.manifest, which omakase never runs — gates belong in payload/omakase.manifest (placed and snapshotted at init). Move the gate: blocks there and re-run. Nothing was changed.\n", canonical)
 		return "", "", 1
 	}
 	payloadDir = filepath.Join(srcRoot, "payload")

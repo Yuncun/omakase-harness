@@ -14,16 +14,21 @@ import (
 
 // buildStatusFixture builds an installed repo for the full-output goldens: two
 // committed harness files (+ a non-harness tracked file), one present,
-// non-drifted injected file (normal.txt) plus a HEALTHY .omakase machinery
-// row (on disk, hash matching — healthy machinery stays out of inventory), a
-// remembered source (acme/harness), a base VERSION, and a ledger. It returns
-// the repo, the fixture HOME (shared with the inventory goldens), and a fake
-// lefthook that emits fixtureDump. The $OMK layout is hand-built.
-// fixtureGateContent is the healthy machinery file's bytes; the fixture rows
-// carry its real hash so the row is neither drifted nor missing.
-const fixtureGateContent = "#!/usr/bin/env bash\nfixture gate\n"
+// non-drifted injected file (normal.txt) plus a HEALTHY omakase.manifest
+// machinery row (on disk, hash matching — healthy machinery stays out of
+// inventory), a remembered source (acme/harness), a base VERSION, a ledger, and
+// a snapshot manifest declaring the fixture gates (what the Guards chart reads).
+// It returns the repo and the fixture HOME (shared with the inventory goldens).
+// The $OMK layout is hand-built.
 
-func buildStatusFixture(t *testing.T) (*state.Repo, string, string) {
+// fixtureManifest declares the gates the Guards chart renders (markers, tests,
+// review), matching fixtureGates in guards_test.go.
+const fixtureManifest = "name: harness\nversion: 0.11.3\n\n" +
+	"gate: markers\n  hook: pre-commit\n  run: .omakase/gates/example.sh\n\n" +
+	"gate: tests\n  hook: pre-push\n  run: make check\n  cacheable: true\n  glob: a/*|b/*\n\n" +
+	"gate: review\n  hook: pre-push\n  run: echo BLOCKED; exit 1\n  cacheable: true\n  glob: src/*\n"
+
+func buildStatusFixture(t *testing.T) (*state.Repo, string) {
 	t.Helper()
 	dir := newGitRepo(t)
 
@@ -45,15 +50,20 @@ func buildStatusFixture(t *testing.T) (*state.Repo, string, string) {
 	writeFile(t, dir, "normal.txt", normalContent)
 	normalHash := sha256Hex(normalContent)
 
-	writeFile(t, dir, ".omakase/bin/omakase-gate.sh", fixtureGateContent)
+	writeFile(t, dir, "omakase.manifest", fixtureManifest)
 	placedTSV := "normal.txt\tdoc\tacme/harness\t" + normalHash + "\t1\n" +
-		".omakase/bin/omakase-gate.sh\tgate\tacme/harness\t" + sha256Hex(fixtureGateContent) + "\t1\n"
+		"omakase.manifest\tgate\tacme/harness\t" + sha256Hex(fixtureManifest) + "\t1\n"
 	writeOMK(t, repo.OMK, "placed.tsv", placedTSV)
 	writeOMK(t, repo.OMK, "source", "acme/harness\n")
 	writeOMK(t, repo.OMK, "ledger.tsv", fixtureLedger)
 	writeFile(t, dir, ".omakase/VERSION", "0.11.3\n")
+	// The Guards chart reads the gate list from the snapshot manifest.
+	if err := os.MkdirAll(filepath.Join(repo.OMK, "payload-snapshot"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeOMK(t, filepath.Join(repo.OMK, "payload-snapshot"), "omakase.manifest", fixtureManifest)
 
-	return repo, buildHomeFixture(t), writeFakeLefthook(t, fixtureDump)
+	return repo, buildHomeFixture(t)
 }
 
 func writeOMK(t *testing.T, omk, name, content string) {
@@ -65,11 +75,10 @@ func writeOMK(t *testing.T, omk, name, content string) {
 
 // pinStatusEnv sets the env the goldens expect and chdirs into the repo, so
 // Run's os.Getwd/os.Getenv see the fixture.
-func pinStatusEnv(t *testing.T, repo *state.Repo, home, lefthook string) {
+func pinStatusEnv(t *testing.T, repo *state.Repo, home string) {
 	t.Helper()
 	t.Chdir(repo.Root)
 	t.Setenv("HOME", home)
-	t.Setenv("LEFTHOOK_BIN", lefthook)
 	t.Setenv("OMAKASE_NOW", "2000000000")
 	t.Setenv("NO_COLOR", "1")
 }
@@ -84,20 +93,20 @@ func withRoot(golden, root string) string {
 // buildStatusFixture.
 
 // Markdown output for the installed fixture.
-const wantFullMD = "## 🥡 harness\n\n`acme/harness` · base omakase 0.11.3 · installed in `{{ROOT}}`\n\n**Zero footprint** — 2 file(s) injected, 0 committed; all gitignored via `.git/info/exclude` (invisible to git).\n\n### Guards — what runs when you commit / push\n\n| Run when | Guard | Enforces | Last verdict |\n| --- | --- | --- | --- |\n| `pre-commit` | markers | runs every commit | ✓ pass - 5m ago |\n| `pre-commit` | lint | sh -c 'echo a \\| grep a' | — |\n| `pre-push` | tests | cached; scope: a/*\\|b/* | ✗ fail - 2h ago |\n| `pre-push` | review | cached; scope: src/* | - not yet run |\n| `post-checkout` | omakase-ensure-present | self-heal: restore any missing injected files | — |\n\n### The project's harness (committed — managed by git, not omakase)\n- `.claude/rules/team.md` — rule\n- `CLAUDE.md` — doc\n\n### Injected (omakase) — placed by `omakase init`, gitignored\n- `normal.txt` — doc, from acme/harness\n\n### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)\n- `~/.claude/CLAUDE.md` — doc\n- `~/.claude/settings.json` — config\n- `~/.claude/rules/alpha.md` — rule\n- `~/.claude/rules/beta.md` — rule\n- `~/.claude/commands/cmd1.md` — command\n- `~/.claude/agents/agent1.md` — agent\n- `~/.claude/skills/myskill/` — skill\n- `~/.copilot/skills/coskill/` — skill\n\n_Refresh:_ `omakase init`  ·  _Remove:_ `omakase remove`  ·  _read-only; running status changes nothing._\n"
+const wantFullMD = "## 🥡 harness\n\n`acme/harness` · base omakase 0.11.3 · installed in `{{ROOT}}`\n\n**Zero footprint** — 2 file(s) injected, 0 committed; all gitignored via `.git/info/exclude` (invisible to git).\n\n### Guards — what runs when you commit / push\n\n| Run when | Guard | Enforces | Last verdict |\n| --- | --- | --- | --- |\n| `pre-commit` | markers | runs every fire | ✓ pass - 5m ago |\n| `pre-push` | tests | cached; scope: a/*\\|b/* | ✗ fail - 2h ago |\n| `pre-push` | review | cached; scope: src/* | - not yet run |\n\n### The project's harness (committed — managed by git, not omakase)\n- `.claude/rules/team.md` — rule\n- `CLAUDE.md` — doc\n\n### Injected (omakase) — placed by `omakase init`, gitignored\n- `normal.txt` — doc, from acme/harness\n\n### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)\n- `~/.claude/CLAUDE.md` — doc\n- `~/.claude/settings.json` — config\n- `~/.claude/rules/alpha.md` — rule\n- `~/.claude/rules/beta.md` — rule\n- `~/.claude/commands/cmd1.md` — command\n- `~/.claude/agents/agent1.md` — agent\n- `~/.claude/skills/myskill/` — skill\n- `~/.copilot/skills/coskill/` — skill\n\n_Refresh:_ `omakase init`  ·  _Remove:_ `omakase remove`  ·  _read-only; running status changes nothing._\n"
 
 // Terminal output for the installed fixture, no banner.
-const wantFullTerm = "harness — acme/harness · base omakase 0.11.3 · installed in {{ROOT}}\nzero footprint: 2 injected, 0 committed, all gitignored (.git/info/exclude)\n\nGUARDS — what runs when you commit / push\n  RUN WHEN        GUARD                    ENFORCES                                        LAST VERDICT\n  pre-commit      markers                  runs every commit                               ✓ pass - 5m ago\n  pre-commit      lint                     sh -c 'echo a | grep a'                         —\n  pre-push        tests                    cached; scope: a/*|b/*                          ✗ fail - 2h ago\n  pre-push        review                   cached; scope: src/*                            - not yet run\n  post-checkout   omakase-ensure-present   self-heal: restore any missing injected files   —\n\nTHE PROJECT'S HARNESS (committed — managed by git, not omakase)\n    + .claude/rules/team.md   (rule)\n    + CLAUDE.md   (doc)\nINJECTED (omakase) — placed by omakase init, gitignored\n    + normal.txt   (doc, from acme/harness)\nGLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)\n    + ~/.claude/CLAUDE.md   (doc)\n    + ~/.claude/settings.json   (config)\n    + ~/.claude/rules/alpha.md   (rule)\n    + ~/.claude/rules/beta.md   (rule)\n    + ~/.claude/commands/cmd1.md   (command)\n    + ~/.claude/agents/agent1.md   (agent)\n    + ~/.claude/skills/myskill/   (skill)\n    + ~/.copilot/skills/coskill/   (skill)\n\nRestore the harness (replaces missing or changed files; removes dropped ones):   omakase init\nUndo everything:                                                                 omakase remove\n"
+const wantFullTerm = "harness — acme/harness · base omakase 0.11.3 · installed in {{ROOT}}\nzero footprint: 2 injected, 0 committed, all gitignored (.git/info/exclude)\n\nGUARDS — what runs when you commit / push\n  RUN WHEN     GUARD     ENFORCES                 LAST VERDICT\n  pre-commit   markers   runs every fire          ✓ pass - 5m ago\n  pre-push     tests     cached; scope: a/*|b/*   ✗ fail - 2h ago\n  pre-push     review    cached; scope: src/*     - not yet run\n\nTHE PROJECT'S HARNESS (committed — managed by git, not omakase)\n    + .claude/rules/team.md   (rule)\n    + CLAUDE.md   (doc)\nINJECTED (omakase) — placed by omakase init, gitignored\n    + normal.txt   (doc, from acme/harness)\nGLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)\n    + ~/.claude/CLAUDE.md   (doc)\n    + ~/.claude/settings.json   (config)\n    + ~/.claude/rules/alpha.md   (rule)\n    + ~/.claude/rules/beta.md   (rule)\n    + ~/.claude/commands/cmd1.md   (command)\n    + ~/.claude/agents/agent1.md   (agent)\n    + ~/.claude/skills/myskill/   (skill)\n    + ~/.copilot/skills/coskill/   (skill)\n\nRestore the harness (replaces missing or changed files; removes dropped ones):   omakase init\nUndo everything:                                                                 omakase remove\n"
 
 // Terminal output for the installed fixture with a deterministic banner script
 // at .omakase/bin/omakase-banner.sh printing two lines — proves the banner exec
 // and multi-line stdout passthrough.
 const bannerScript = "#!/usr/bin/env bash\necho \"== omakase ==\"\necho \"banner line two\"\n"
-const wantFullTermBanner = "== omakase ==\nbanner line two\nharness — acme/harness · base omakase 0.11.3 · installed in {{ROOT}}\nzero footprint: 2 injected, 0 committed, all gitignored (.git/info/exclude)\n\nGUARDS — what runs when you commit / push\n  RUN WHEN        GUARD                    ENFORCES                                        LAST VERDICT\n  pre-commit      markers                  runs every commit                               ✓ pass - 5m ago\n  pre-commit      lint                     sh -c 'echo a | grep a'                         —\n  pre-push        tests                    cached; scope: a/*|b/*                          ✗ fail - 2h ago\n  pre-push        review                   cached; scope: src/*                            - not yet run\n  post-checkout   omakase-ensure-present   self-heal: restore any missing injected files   —\n\nTHE PROJECT'S HARNESS (committed — managed by git, not omakase)\n    + .claude/rules/team.md   (rule)\n    + CLAUDE.md   (doc)\nINJECTED (omakase) — placed by omakase init, gitignored\n    + normal.txt   (doc, from acme/harness)\nGLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)\n    + ~/.claude/CLAUDE.md   (doc)\n    + ~/.claude/settings.json   (config)\n    + ~/.claude/rules/alpha.md   (rule)\n    + ~/.claude/rules/beta.md   (rule)\n    + ~/.claude/commands/cmd1.md   (command)\n    + ~/.claude/agents/agent1.md   (agent)\n    + ~/.claude/skills/myskill/   (skill)\n    + ~/.copilot/skills/coskill/   (skill)\n\nRestore the harness (replaces missing or changed files; removes dropped ones):   omakase init\nUndo everything:                                                                 omakase remove\n"
+const wantFullTermBanner = "== omakase ==\nbanner line two\nharness — acme/harness · base omakase 0.11.3 · installed in {{ROOT}}\nzero footprint: 2 injected, 0 committed, all gitignored (.git/info/exclude)\n\nGUARDS — what runs when you commit / push\n  RUN WHEN     GUARD     ENFORCES                 LAST VERDICT\n  pre-commit   markers   runs every fire          ✓ pass - 5m ago\n  pre-push     tests     cached; scope: a/*|b/*   ✗ fail - 2h ago\n  pre-push     review    cached; scope: src/*     - not yet run\n\nTHE PROJECT'S HARNESS (committed — managed by git, not omakase)\n    + .claude/rules/team.md   (rule)\n    + CLAUDE.md   (doc)\nINJECTED (omakase) — placed by omakase init, gitignored\n    + normal.txt   (doc, from acme/harness)\nGLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)\n    + ~/.claude/CLAUDE.md   (doc)\n    + ~/.claude/settings.json   (config)\n    + ~/.claude/rules/alpha.md   (rule)\n    + ~/.claude/rules/beta.md   (rule)\n    + ~/.claude/commands/cmd1.md   (command)\n    + ~/.claude/agents/agent1.md   (agent)\n    + ~/.claude/skills/myskill/   (skill)\n    + ~/.copilot/skills/coskill/   (skill)\n\nRestore the harness (replaces missing or changed files; removes dropped ones):   omakase init\nUndo everything:                                                                 omakase remove\n"
 
 func TestStatusRunMD(t *testing.T) {
-	repo, home, lh := buildStatusFixture(t)
-	pinStatusEnv(t, repo, home, lh)
+	repo, home := buildStatusFixture(t)
+	pinStatusEnv(t, repo, home)
 
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"--markdown"}, &stdout, &stderr)
@@ -114,8 +123,8 @@ func TestStatusRunMD(t *testing.T) {
 }
 
 func TestStatusRunTerm(t *testing.T) {
-	repo, home, lh := buildStatusFixture(t)
-	pinStatusEnv(t, repo, home, lh)
+	repo, home := buildStatusFixture(t)
+	pinStatusEnv(t, repo, home)
 
 	var stdout, stderr bytes.Buffer
 	code := Run(nil, &stdout, &stderr)
@@ -132,9 +141,9 @@ func TestStatusRunTerm(t *testing.T) {
 }
 
 func TestStatusRunTermBanner(t *testing.T) {
-	repo, home, lh := buildStatusFixture(t)
+	repo, home := buildStatusFixture(t)
 	writeFile(t, repo.Root, ".omakase/bin/omakase-banner.sh", bannerScript)
-	pinStatusEnv(t, repo, home, lh)
+	pinStatusEnv(t, repo, home)
 
 	var stdout, stderr bytes.Buffer
 	code := Run(nil, &stdout, &stderr)
@@ -152,9 +161,9 @@ func TestStatusRunTermBanner(t *testing.T) {
 // (prints `pwd`) run from a subdirectory of the repo must see that
 // subdirectory, proving Run does not force cmd.Dir = repo.Root.
 func TestStatusRunTermBannerCwd(t *testing.T) {
-	repo, home, lh := buildStatusFixture(t)
+	repo, home := buildStatusFixture(t)
 	writeFile(t, repo.Root, ".omakase/bin/omakase-banner.sh", "#!/usr/bin/env bash\npwd\n")
-	pinStatusEnv(t, repo, home, lh)
+	pinStatusEnv(t, repo, home)
 
 	// buildStatusFixture already created src/ (tracked non-harness file); reuse it
 	// as an invocation cwd that is inside the repo but distinct from repo.Root.
@@ -186,8 +195,8 @@ func TestStatusRunTermBannerCwd(t *testing.T) {
 // interactiveTerminal gates on the process's os.Stdin/os.Stdout, which under
 // `go test` is a pipe, not a terminal.
 func TestPipedStatusNeverInteractive(t *testing.T) {
-	repo, home, lh := buildStatusFixture(t)
-	pinStatusEnv(t, repo, home, lh)
+	repo, home := buildStatusFixture(t)
+	pinStatusEnv(t, repo, home)
 
 	var stdout, stderr bytes.Buffer
 	code := Run(nil, &stdout, &stderr)
@@ -209,13 +218,13 @@ func TestPipedStatusNeverInteractive(t *testing.T) {
 // the page whose whole point is showing consent state no longer overstates what
 // is on disk.
 func TestStatusFootprintCountsConsentState(t *testing.T) {
-	repo, home, lh := buildStatusFixture(t)
-	// Mark normal.txt disabled (as FileOff would), leaving the machinery gate
-	// row enabled -> 1 injected, 1 toggled off.
+	repo, home := buildStatusFixture(t)
+	// Mark normal.txt disabled (as FileOff would), leaving the machinery
+	// manifest row enabled -> 1 injected, 1 toggled off.
 	placedTSV := "normal.txt\tdoc\tacme/harness\t" + sha256Hex("normal-body\n") + "\t0\n" +
-		".omakase/bin/omakase-gate.sh\tgate\tacme/harness\t" + sha256Hex(fixtureGateContent) + "\t1\n"
+		"omakase.manifest\tgate\tacme/harness\t" + sha256Hex(fixtureManifest) + "\t1\n"
 	writeOMK(t, repo.OMK, "placed.tsv", placedTSV)
-	pinStatusEnv(t, repo, home, lh)
+	pinStatusEnv(t, repo, home)
 
 	var md, mdErr bytes.Buffer
 	if code := Run([]string{"--markdown"}, &md, &mdErr); code != 0 {
@@ -253,8 +262,8 @@ func TestStatusNotARepo(t *testing.T) {
 // TestStatusFormatSelection pins the flag rule: only argv[0] is inspected, and only the
 // three literal flags select md; anything else (or nothing) is terminal mode.
 func TestStatusFormatSelection(t *testing.T) {
-	repo, home, lh := buildStatusFixture(t)
-	pinStatusEnv(t, repo, home, lh)
+	repo, home := buildStatusFixture(t)
+	pinStatusEnv(t, repo, home)
 
 	mdHead := "## 🥡 harness"
 	termHead := "harness — acme/harness"

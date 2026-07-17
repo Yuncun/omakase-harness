@@ -39,8 +39,8 @@ changes there must keep `tests/harness-paths.test.sh` and
 ## Scope
 
 omakase optimizes for the fewest controls and the least code. Weigh every new flag,
-command, or file against that. Prefer reusing lefthook's native behavior over adding a
-format.
+command, or file against that. Prefer extending the existing `omakase.manifest` gate
+schema over adding a new format.
 
 ## Releasing
 

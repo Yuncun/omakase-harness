@@ -1,12 +1,14 @@
 package probe
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Yuncun/omakase-harness/internal/gate"
 	"github.com/Yuncun/omakase-harness/internal/hook"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
@@ -339,6 +341,77 @@ func TestCollectEmptyLedgerHashSkipsDrift(t *testing.T) {
 	writeFile(t, root, ".omakase/bin/omakase-gate.sh", "#!/bin/sh\n# edited\n")
 	if st := collect(t, root); st.HashesMatch != OK {
 		t.Fatalf("HashesMatch = %v, want OK when the ledger row has no real hash", st.HashesMatch)
+	}
+}
+
+// -------------------------------------------------------- gate migration
+
+// A pre-gate-module (lefthook-era) snapshot — lefthook-local.yml in the
+// snapshot, no gate-bearing manifest — must read as a Problem even while every
+// other proof stays green (the #72 status-lie the hook now fails closed on).
+func TestCollectStaleLefthookSnapshotIsProblem(t *testing.T) {
+	root := newTestRepo(t)
+	omk := installHarness(t, root)
+	snap := filepath.Join(omk, "payload-snapshot")
+	if err := os.MkdirAll(snap, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(snap, "lefthook-local.yml"), []byte("pre-commit:\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st := collect(t, root)
+	if st.GatesMigrated != Problem {
+		t.Fatalf("GatesMigrated = %v, want Problem on a lefthook-era snapshot", st.GatesMigrated)
+	}
+	// The other proofs still read green — the probe added a NEW signal instead
+	// of leaning on an existing one.
+	if st.HooksInstalled != OK || st.FilesPresent != OK || st.HashesMatch != OK {
+		t.Fatalf("expected the other proofs green (hooks=%v files=%v hashes=%v)", st.HooksInstalled, st.FilesPresent, st.HashesMatch)
+	}
+}
+
+// A migrated snapshot (a gate-bearing manifest, no lefthook marker) is OK.
+func TestCollectMigratedSnapshotIsOK(t *testing.T) {
+	root := newTestRepo(t)
+	omk := installHarness(t, root)
+	snap := filepath.Join(omk, "payload-snapshot")
+	if err := os.MkdirAll(snap, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(snap, "omakase.manifest"), []byte("gate: g\n  hook: pre-commit\n  run: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if st := collect(t, root); st.GatesMigrated != OK {
+		t.Fatalf("GatesMigrated = %v, want OK on a migrated snapshot", st.GatesMigrated)
+	}
+}
+
+// A ledger written by the gate module (not a hand-authored string) must
+// summarize correctly through probe's OWN parser (lastRun / RunSummary) —
+// closing the loop the issue asked for: probe run against module output.
+func TestRunSummaryReadsModuleWrittenLedger(t *testing.T) {
+	t.Setenv("OMAKASE_NOW", "1700000000")
+	root := newTestRepo(t)
+	omk := filepath.Join(root, ".git", "omakase")
+	snap := filepath.Join(omk, "payload-snapshot")
+	if err := os.MkdirAll(snap, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Two gates the module runs and records at the same HEAD: one passes, one fails.
+	man := "gate: a\n  hook: pre-commit\n  run: true\n" +
+		"gate: b\n  hook: pre-commit\n  run: exit 1\n"
+	if err := os.WriteFile(filepath.Join(snap, "omakase.manifest"), []byte(man), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := gate.RunHook("pre-commit", root, omk, strings.NewReader(""), io.Discard, io.Discard); code == 0 {
+		t.Fatalf("the failing gate should have blocked; got exit 0")
+	}
+	sum := lastRun(filepath.Join(omk, "ledger.tsv"))
+	if sum == nil {
+		t.Fatal("probe.lastRun returned nil for a module-written ledger")
+	}
+	if sum.Checks != 2 || sum.Failed != 1 {
+		t.Fatalf("RunSummary = %+v, want checks=2 failed=1 from the module-written rows", *sum)
 	}
 }
 
