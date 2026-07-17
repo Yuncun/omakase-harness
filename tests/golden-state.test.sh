@@ -205,7 +205,7 @@ SRC="$TMP/src-harness"; rm -rf "$SRC"; mkdir -p "$SRC/payload/.claude/rules"
 printf 'shared agent instructions\n' > "$SRC/payload/AGENTS.md"
 ( cd "$SRC/payload" && ln -s AGENTS.md CLAUDE.md )
 printf 'a rule\n' > "$SRC/payload/.claude/rules/style.md"
-printf 'name: golden-state-fixture\n' > "$SRC/omakase.manifest"
+printf 'name: golden-state-fixture\n' > "$SRC/payload/omakase.manifest"
 ( cd "$SRC" && git add -A && git commit -q -m harness )
 SRC="$(cd "$SRC" && pwd)"   # init absolutizes local dir sources (macOS TMPDIR carries a trailing slash)
 REPO4="$TMP/repoG4"; newrepo "$REPO4"

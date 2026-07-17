@@ -251,22 +251,3 @@ func StaleLefthookSnapshot(omk string) (bool, error) {
 	}
 	return len(gates) == 0, nil
 }
-
-// HasGateBlock reports whether content declares at least one gate: block — a
-// column-0 `gate:` line. init uses it to refuse a harness-ROOT omakase.manifest
-// that puts gates where omakase never reads them: gates belong in
-// payload/omakase.manifest, the copy init places and snapshots.
-func HasGateBlock(content []byte) bool {
-	sc := bufio.NewScanner(bytes.NewReader(content))
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	for sc.Scan() {
-		line := sc.Text()
-		if line == "" || line[0] == ' ' || line[0] == '\t' {
-			continue
-		}
-		if key, _, ok := splitKV(line); ok && key == "gate" {
-			return true
-		}
-	}
-	return false
-}

@@ -364,11 +364,11 @@ if [ -n "$O10BUILT" ]; then
     O10BIN="$O10CACHE/omakase"
     O10HOME="$O10/home"; mkdir -p "$O10HOME"
 
-    # Local fixture source repo: omakase.manifest + one marker payload file, committed.
+    # Local fixture source repo: payload/omakase.manifest + one marker payload file, committed.
     O10SRC="$O10/src"; mkdir -p "$O10SRC/payload/.omakase"
     ( cd "$O10SRC" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
     printf 'o10-source-marker\n' > "$O10SRC/payload/.omakase/O10-SOURCE-MARKER"
-    printf 'name: o10-fixture\nversion: 0.1.0\n' > "$O10SRC/omakase.manifest"
+    printf 'name: o10-fixture\nversion: 0.1.0\n' > "$O10SRC/payload/omakase.manifest"
     ( cd "$O10SRC" && git add -A && git commit -q -m fixture )
     O10SRC="$(cd "$O10SRC" && pwd)"   # absolutize (macOS TMPDIR trails a slash), as init does
 

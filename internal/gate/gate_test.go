@@ -618,23 +618,6 @@ func TestStaleLefthookSnapshot(t *testing.T) {
 	}
 }
 
-func TestHasGateBlock(t *testing.T) {
-	if HasGateBlock(nil) {
-		t.Fatalf("empty content declares no gate block")
-	}
-	if HasGateBlock([]byte("name: x\nversion: 1\nrecommends: go\n")) {
-		t.Fatalf("a header-only manifest declares no gate block")
-	}
-	if !HasGateBlock([]byte("name: x\n\ngate: g\n  hook: pre-commit\n  run: true\n")) {
-		t.Fatalf("a manifest with a gate: line must report a gate block")
-	}
-	// An indented line whose value contains "gate:" is not a block opener, but
-	// the column-0 gate: above it still counts.
-	if !HasGateBlock([]byte("gate: g\n  run: echo gate: not-a-block\n")) {
-		t.Fatalf("column-0 gate: must count even when an indented value contains 'gate:'")
-	}
-}
-
 // --- skip-var name folding ------------------------------------------------
 
 // Every shipped gate uses a hyphenated name (block-marker, go-test, go-checks),

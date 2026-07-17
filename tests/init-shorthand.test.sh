@@ -31,11 +31,11 @@ git config --global commit.gpgsign false
 # wins by longest-match, so it stands in for one specific owner/repo.
 git config --global url."$TMP/nogithub/".insteadOf "https://github.com/"
 
-# Build a tiny publishable harness repo at $1: omakase.manifest + one payload
-# delta file (payload/AGENTS.md), committed.
+# Build a tiny publishable harness repo at $1: payload/omakase.manifest + one
+# payload delta file (payload/AGENTS.md), committed.
 mkharness(){
   local r="$1"; rm -rf "$r"; mkdir -p "$r/payload"
-  printf 'name: shorthand-harness\nversion: 0.1.0\n' > "$r/omakase.manifest"
+  printf 'name: shorthand-harness\nversion: 0.1.0\n' > "$r/payload/omakase.manifest"
   printf 'shorthand doctrine\n' > "$r/payload/AGENTS.md"
   ( cd "$r" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git add -A && git commit -q -m harness )
 }

@@ -8,8 +8,8 @@ description: Wire a tool, skill, or check to run on a git hook as an omakase gat
 You are editing a **custom harness** (a clone of omakase-harness or your own harness
 repo), adding a gate to its `payload/`. You are NOT editing an installed
 overlay — edits to an injected copy are overwritten on the next `init`. Confirm you are in
-the harness repo (it has a `payload/` tree and an `omakase.manifest`); if you are in an
-adopter repo, stop and switch to the harness clone first.
+the harness repo (it has a `payload/` tree whose `payload/omakase.manifest` is its one manifest);
+if you are in an adopter repo, stop and switch to the harness clone first.
 
 A **gate** is a check omakase runs at a git hook (pre-commit or pre-push), declared as a
 `gate:` block in `payload/omakase.manifest`. The check itself is a plain script or command:
@@ -109,9 +109,9 @@ OMAKASE_PAYLOAD=<your>/payload bash <base-harness>/bin/init.sh
 OMAKASE_PAYLOAD=<your>/payload bash <base-harness>/bin/remove.sh    # reset
 ```
 
-Then, if the harness lists its gates in a guard table (README / docs), add the new one there;
-and for `--source` harnesses, leave the root `omakase.manifest` alone unless the gate needs a
-new `recommends:`.
+Then, if the harness lists its gates in a guard table (README / docs), add the new one there.
+Identity keys (`name`, `version`, `recommends`) live in the same `payload/omakase.manifest`
+header — touch them only if the gate needs a new `recommends:`.
 
 ## See also
 
