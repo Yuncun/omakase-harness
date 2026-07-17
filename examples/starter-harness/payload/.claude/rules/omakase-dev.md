@@ -13,3 +13,8 @@ overwritten on the next init.
 - Mark scratch or secret-in-progress code with the scratch marker — the words `DO NOT` +
   `COMMIT`, in capitals, together — and the `block-marker` gate refuses to commit it until
   the marker is removed.
+- User-facing status wording lives only in `internal/render`; `internal/probe` returns
+  facts (tri-state values), never display strings. A wording change that touches more than
+  `render` is wrong.
+- Designs for un-built work go in GitHub issues, not committed docs or PRs; committed docs
+  describe shipped behavior only.
