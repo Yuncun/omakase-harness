@@ -23,8 +23,9 @@ keys off `.claude-plugin/plugin.json`, and the banner / `omakase status` read
 `payload/.omakase/VERSION` (see CONTRIBUTING.md for how the two update
 channels differ).
 
-1. Bump the version in **both** `.claude-plugin/plugin.json` and
-   `payload/.omakase/VERSION` — they must match the tag. Pre-1.0, a breaking
+1. Bump the version in all **three** stamps — `.claude-plugin/plugin.json`,
+   `payload/.omakase/VERSION`, and the `version:` line in
+   `payload/omakase.manifest` — they must match the tag. Pre-1.0, a breaking
    change bumps the minor (`0.17.0` → `0.18.0`), a backward-compatible one
    bumps the patch.
 2. In `CHANGELOG.md`, rename the `## [Unreleased]` block to
