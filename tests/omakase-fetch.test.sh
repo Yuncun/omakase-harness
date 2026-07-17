@@ -334,7 +334,6 @@ echo "== Scenario O10: a cache-resident release binary drives init end-to-end (i
 # way — they need only a real omakase binary seeded into the cache.
 O10="$TMP/o10"; mkdir -p "$O10"
 O10BUILT=""
-O10PINNED=""
 if command -v go >/dev/null 2>&1; then
   # Build the real binary ONCE for the whole scenario — every leg shares it.
   if ( cd "$HERE/.." && go build -o "$O10/omakase-built" ./cmd/omakase ) 2>"$O10/build.err"; then
@@ -344,7 +343,6 @@ if command -v go >/dev/null 2>&1; then
   fi
 elif [ "${OMAKASE_TEST_LIVE_FETCH:-}" = "1" ] && [ -x "${O8CACHED:-}" ]; then
   O10BUILT="$O8CACHED"
-  O10PINNED=1
 else
   echo "  SKIP: no omakase binary available — put go on PATH to build one, or set OMAKASE_TEST_LIVE_FETCH=1 to reuse O8's fetched release binary"
 fi
@@ -366,19 +364,13 @@ if [ -n "$O10BUILT" ]; then
     O10BIN="$O10CACHE/omakase"
     O10HOME="$O10/home"; mkdir -p "$O10HOME"
 
-    # Local fixture source repo: a manifest + one marker payload file, committed.
-    # The manifest's location must match the binary driving the probe: a HEAD
-    # build reads the ONE payload/omakase.manifest and refuses a root file; the
-    # pinned release (< 0.20.0) requires the root manifest. Collapse this to the
-    # one-manifest arm at the v0.20.0 re-pin.
+    # Local fixture source repo: the one payload/omakase.manifest + one marker
+    # payload file, committed. Both binary sources (HEAD build and the ≥ 0.20.0
+    # pinned release) read the one-manifest layout.
     O10SRC="$O10/src"; mkdir -p "$O10SRC/payload/.omakase"
     ( cd "$O10SRC" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
     printf 'o10-source-marker\n' > "$O10SRC/payload/.omakase/O10-SOURCE-MARKER"
-    if [ -n "$O10PINNED" ]; then
-      printf 'name: o10-fixture\nversion: 0.1.0\n' > "$O10SRC/omakase.manifest"
-    else
-      printf 'name: o10-fixture\nversion: 0.1.0\n' > "$O10SRC/payload/omakase.manifest"
-    fi
+    printf 'name: o10-fixture\nversion: 0.1.0\n' > "$O10SRC/payload/omakase.manifest"
     ( cd "$O10SRC" && git add -A && git commit -q -m fixture )
     O10SRC="$(cd "$O10SRC" && pwd)"   # absolutize (macOS TMPDIR trails a slash), as init does
 
