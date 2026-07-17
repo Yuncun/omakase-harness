@@ -30,8 +30,9 @@ Any other environment, or a plain shell:
     bash /path/to/omakase/bin/init.sh
 
 The plugin wraps the same `bin/` scripts behind skills: `/omakase:init`,
-`/omakase:status`, `/omakase:remove`, plus `/omakase:add-gate` (authoring: wire a
-check into a git hook).
+`/omakase:status`, `/omakase:remove`, plus two authoring skills — `/omakase:author`
+(build a custom harness, or turn a repo's existing agent files into one) and
+`/omakase:add-gate` (wire a check into a git hook).
 
 ## Commands
 

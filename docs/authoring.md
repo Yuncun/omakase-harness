@@ -21,7 +21,8 @@ test gate, and the `omakase.manifest` that declares them. Try it with
 `omakase init Yuncun/omakase-harness/examples/starter-harness`, then copy it and swap in your
 own rules and gates. There is no capture
 tool: build `payload/` and its one `omakase.manifest` (identity + gate wiring) by hand, moving
-in whatever files a project already has in place.
+in whatever files a project already has in place. The `author` skill walks an agent through
+exactly that, end to end; this document is the conceptual reference behind it.
 
 ## Public surface (the stability contract)
 
