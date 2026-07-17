@@ -32,8 +32,9 @@ mkdir -p "$FAKEHOME" "$CACHEHOME"
 # XDG_CACHE_HOME so init and the commits share that one self-installed copy.
 export HOME="$FAKEHOME"; export XDG_CACHE_HOME="$CACHEHOME"
 
-# Build a SOURCE repo at $1: payload/ (gate script + rule + gate wiring in
-# payload/omakase.manifest) + the source-root omakase.manifest (identity), committed.
+# Build a SOURCE repo at $1: payload/ (gate script + rule) plus the one manifest
+# payload/omakase.manifest carrying identity + gate wiring, committed. omakase
+# reads only payload/omakase.manifest — there is no source-root manifest.
 mksource(){
   local r="$1"; rm -rf "$r"; mkdir -p "$r"
   ( cd "$r" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
@@ -43,22 +44,15 @@ mksource(){
 echo "omakase-example-gate-ran"
 exit 0
 SH
-  # The harness's gates live in payload/omakase.manifest (placed + snapshotted;
-  # gates fire from it) — the file that replaced payload/lefthook-local.yml.
   cat > "$r/payload/omakase.manifest" <<'MAN'
-name: test
-version: 1
+name: test-harness
+version: 0.1.0
 
 gate: omakase-example
   hook: pre-commit
   run: bash .omakase/gates/example.sh
 MAN
   printf 'a rule\n' > "$r/payload/.claude/rules/style.md"
-  # The source-root manifest carries identity (name/version); init reads it.
-  cat > "$r/omakase.manifest" <<'MAN'
-name: test-harness
-version: 0.1.0
-MAN
   ( cd "$r" && git add -A && git commit -q -m harness )
 }
 
@@ -151,26 +145,33 @@ grep -q 'PAYLOAD-V6' "$REPO/.omakase/gates/example.sh" && pass "fresh clone deli
 
 # ---------- Scenario S4: refusals — fail closed, place nothing ----------
 echo "== Scenario S4: invalid sources are refused with nothing placed =="
-SRCNP="$TMP/src-no-payload"; rm -rf "$SRCNP"; mkdir -p "$SRCNP"
-( cd "$SRCNP" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
-printf 'name: broken\n' > "$SRCNP/omakase.manifest"
-( cd "$SRCNP" && git add -A && git commit -q -m m )
-REPO2="$TMP/repoS4a"; newrepo "$REPO2"
-ERR=$( cd "$REPO2" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$SRCNP" 2>&1 ); rc=$?
-[ "$rc" -ne 0 ] && pass "source without payload/ refused (nonzero exit)" || fail "missing payload accepted"
-echo "$ERR" | grep -qi 'payload' && pass "error names the missing payload" || fail "error unclear ($ERR)"
-{ [ ! -e "$REPO2/.omakase" ] && [ ! -e "$REPO2/.git/omakase" ] && [ -z "$(cd "$REPO2" && git status --porcelain)" ]; } && pass "nothing placed on payload refusal" || fail "refusal left artifacts behind"
-grep -q 'omakase-harness' "$REPO2/.git/info/exclude" 2>/dev/null && fail "refusal wrote the exclude block" || pass "no exclude block on refusal"
-
+# S4a: a payload/ with no payload/omakase.manifest — not an omakase source.
 SRCNM="$TMP/src-no-manifest"; rm -rf "$SRCNM"; mkdir -p "$SRCNM/payload"
 ( cd "$SRCNM" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
 printf 'a rule\n' > "$SRCNM/payload/rule.md"
 ( cd "$SRCNM" && git add -A && git commit -q -m m )
-REPO3="$TMP/repoS4b"; newrepo "$REPO3"
+SRCNM="$(cd "$SRCNM" && pwd)"   # collapse any `//` (macOS TMPDIR trails a slash) so it is not read as the subpath marker
+REPO3="$TMP/repoS4a"; newrepo "$REPO3"
 ERR=$( cd "$REPO3" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$SRCNM" 2>&1 ); rc=$?
-[ "$rc" -ne 0 ] && pass "source without omakase.manifest refused (nonzero exit)" || fail "missing manifest accepted"
-echo "$ERR" | grep -qi 'manifest' && pass "error names the missing manifest" || fail "error unclear ($ERR)"
+[ "$rc" -ne 0 ] && pass "source without payload/omakase.manifest refused (nonzero exit)" || fail "missing manifest accepted"
+echo "$ERR" | grep -qF 'payload/omakase.manifest' && echo "$ERR" | grep -qi 'not an omakase source' && pass "error names payload/omakase.manifest, not an omakase source" || fail "error unclear ($ERR)"
 { [ ! -e "$REPO3/.git/omakase" ] && [ -z "$(cd "$REPO3" && git status --porcelain)" ]; } && pass "nothing placed on manifest refusal" || fail "refusal left artifacts behind"
+
+# S4b: a leftover source-root omakase.manifest is refused with the migration
+# pointer — omakase reads one manifest, and the root file must never be ignored.
+SRCROOT="$TMP/src-root-manifest"; rm -rf "$SRCROOT"; mkdir -p "$SRCROOT/payload"
+( cd "$SRCROOT" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
+printf 'name: rooter\nversion: 0.1.0\n' > "$SRCROOT/omakase.manifest"
+printf 'name: rooter\nversion: 0.1.0\n' > "$SRCROOT/payload/omakase.manifest"
+printf 'a rule\n' > "$SRCROOT/payload/rule.md"
+( cd "$SRCROOT" && git add -A && git commit -q -m m )
+SRCROOT="$(cd "$SRCROOT" && pwd)"   # collapse any `//` (macOS TMPDIR trails a slash) so it is not read as the subpath marker
+REPO2="$TMP/repoS4b"; newrepo "$REPO2"
+ERR=$( cd "$REPO2" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$SRCROOT" 2>&1 ); rc=$?
+[ "$rc" -ne 0 ] && pass "source with a root omakase.manifest refused (nonzero exit)" || fail "root manifest accepted"
+{ echo "$ERR" | grep -qi 'no longer reads' && echo "$ERR" | grep -qF 'payload/omakase.manifest'; } && pass "refusal carries the migration pointer to payload/omakase.manifest" || fail "migration message unclear ($ERR)"
+{ [ ! -e "$REPO2/.omakase" ] && [ ! -e "$REPO2/.git/omakase" ] && [ -z "$(cd "$REPO2" && git status --porcelain)" ]; } && pass "nothing placed on root-manifest refusal" || fail "refusal left artifacts behind"
+grep -q 'omakase-harness' "$REPO2/.git/info/exclude" 2>/dev/null && fail "refusal wrote the exclude block" || pass "no exclude block on refusal"
 
 # ---------- Scenario S5: remove tears down the remembered source too ----------
 echo "== Scenario S5: remove deletes placed files + the remembered source =="
@@ -214,7 +215,6 @@ gate: source-discipline
   hook: pre-commit
   run: bash .omakase/gates/discipline.sh
 MAN
-printf 'name: needs-base\nversion: 0.1.0\n' > "$SRC6/omakase.manifest"
 ( cd "$SRC6" && git add -A && git commit -q -m harness )
 SRC6="$(cd "$SRC6" && pwd)"
 newrepo "$REPO6"
@@ -260,7 +260,6 @@ gate: ghost
   hook: pre-commit
   run: .omakase/gates/this-script-does-not-exist.sh
 MAN
-printf 'name: bad-wiring\n' > "$SRC7/omakase.manifest"
 ( cd "$SRC7" && git add -A && git commit -q -m m )
 SRC7="$(cd "$SRC7" && pwd)"
 newrepo "$REPO7"
@@ -295,7 +294,6 @@ gate: live
   hook: pre-commit
   run: bash .omakase/gates/live.sh
 MAN
-printf 'name: commented-wiring\n' > "$SRC8/omakase.manifest"
 ( cd "$SRC8" && git add -A && git commit -q -m m )
 SRC8="$(cd "$SRC8" && pwd)"
 newrepo "$REPO8"
@@ -330,7 +328,7 @@ echo "== Scenario S10: --source <hub>//subpath adopts a harness from inside a re
 HUB="$TMP/hub"; REPOSUB="$TMP/repoS10"
 rm -rf "$HUB"; mkdir -p "$HUB/tools/harness/payload/.claude/rules"
 ( cd "$HUB" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
-printf 'name: hub-harness\n' > "$HUB/tools/harness/omakase.manifest"
+printf 'name: hub-harness\n' > "$HUB/tools/harness/payload/omakase.manifest"
 printf 'sub rule\n' > "$HUB/tools/harness/payload/.claude/rules/sub.md"
 printf 'name: decoy\n' > "$HUB/omakase.manifest"   # root-level decoys: a subpath install must never read these
 mkdir -p "$HUB/payload"; printf 'never\n' > "$HUB/payload/decoy.txt"

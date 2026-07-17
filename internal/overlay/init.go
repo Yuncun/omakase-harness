@@ -47,8 +47,9 @@ const usageText = "usage: init.sh [<owner/repo[/subpath][#ref]> | --source <git-
 	"               Extra segments name a harness directory INSIDE the repo — `init you/hub/tools`\n" +
 	"               adopts the harness at hub's tools/ — so one hub repo can publish many harnesses.\n" +
 	"  --source <git-url|path>\n" +
-	"               pull a harness SOURCE — a git repo carrying a payload/ tree plus an\n" +
-	"               omakase.manifest (flat key: value; name required, version + recommends optional) —\n" +
+	"               pull a harness SOURCE — a git repo carrying a payload/ tree whose\n" +
+	"               payload/omakase.manifest (flat key: value; name required, version + recommends\n" +
+	"               optional, plus any gate: blocks) is the harness's one manifest —\n" +
 	"               into a local cache (${XDG_CACHE_HOME:-~/.cache}/omakase/sources) and inject\n" +
 	"               the base harness's payload with the source's payload layered ON TOP (base\n" +
 	"               machinery underneath, source wins on overlap), so a source ships only its\n" +

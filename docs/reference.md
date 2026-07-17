@@ -140,21 +140,21 @@ installed harness, and `remove` always tears it down completely.
 
 ## Manifest
 
-A harness carries two `omakase.manifest` files — flat, hand-parsed text, no YAML — with
-different jobs:
+A harness carries **one** `omakase.manifest` — flat, hand-parsed text, no YAML — at
+`payload/omakase.manifest`. It carries both the harness's identity and its gate wiring:
 
-- **The root `omakase.manifest`, beside `payload/`** — the harness's identity. Its header
-  keys (`name`, `version`, `recommends`) name the harness; `name` is required, and only for
-  a `--source` install (it is read when the source is fetched). It declares **no gates** —
-  a `gate:` block here never runs, and `init` refuses a source whose root manifest carries
-  one, pointing you to the payload copy below.
-- **`payload/omakase.manifest`** — the gate wiring. Its `gate:` blocks declare the harness's
-  gates. `init` places this file with the rest of `payload/` (it lands at the target root as
-  `omakase.manifest`) and snapshots it into the target's git dir; each git hook reads its
-  gates from that snapshot. Editing the placed copy changes nothing until a bare `init`
-  re-consents to it.
+- **Identity** — header keys (`name`, `version`, `recommends`) name the harness; `name` is
+  required, read when a `--source` install fetches the source.
+- **Gate wiring** — `gate:` blocks declare the harness's gates.
 
-Root-manifest header keys, one `key: value` line each:
+`init` places this file with the rest of `payload/` (it lands at the target root as
+`omakase.manifest`) and snapshots it into the target's git dir; each git hook reads its gates
+from that snapshot. Editing the placed copy changes nothing until a bare `init` re-consents to
+it. A leftover source-root `omakase.manifest` (the pre-consolidation two-file layout) is refused
+fail-closed: `init` points you to move its keys into `payload/omakase.manifest` and delete the
+root file.
+
+Header keys, one `key: value` line each:
 
 | Key | Required | Meaning |
 |---|---|---|

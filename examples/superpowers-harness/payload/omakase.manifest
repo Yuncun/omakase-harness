@@ -1,0 +1,7 @@
+name: superpowers-harness
+version: 0.1.0
+recommends: superpowers — if not auto-installed, run (claude OR copilot): plugin marketplace add obra/superpowers-marketplace && plugin install superpowers@superpowers-marketplace
+
+# This harness ships no gates — its whole job is to enable a companion plugin
+# through each host's native settings file. omakase reads this one manifest
+# (identity here; gate: blocks would go below), places it, and snapshots it.

@@ -6,7 +6,7 @@ on **both** Claude Code and GitHub Copilot CLI. No workarounds.
 
 It carries only its own delta:
 
-    omakase.manifest                       name + version + a recommends: fallback line
+    payload/omakase.manifest               the one manifest — name + version + a recommends: fallback line (no gates)
     payload/.claude/settings.json          Claude Code reads this
     payload/.github/copilot/settings.json  Copilot CLI reads this (same JSON, different path)
 

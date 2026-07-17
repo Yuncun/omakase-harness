@@ -24,8 +24,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"github.com/Yuncun/omakase-harness/internal/gate"
 )
 
 // reOwnerRepo is the owner/repo shorthand test: two path segments, each
@@ -239,12 +237,14 @@ func runSource(source, sourceRef, sourceSub, basePayload string, stdout, stderr 
 // fetchSource resolves the disposable cache dir from the source slug,
 // refreshes an existing clone (or discards and reclones a stale/corrupt
 // one), pins an optional #ref, then validates the manifest fail-closed
-// before anything is placed. With a subpath, the source root — where the
-// manifest and payload/ must live — is that directory inside the clone, and
-// the validation runs there, never at the repo root. On success it prints
-// the "cached at" line and returns the source root's payload/ dir and the
-// manifest's recommends value; on failure it writes the message and returns
-// a non-zero code.
+// before anything is placed. omakase reads one manifest —
+// payload/omakase.manifest — so validation runs on srcRoot/payload/omakase.manifest;
+// a leftover source-root omakase.manifest is refused (the pre-consolidation
+// two-file layout). With a subpath, the source root — where payload/ must live —
+// is that directory inside the clone, and the validation runs there, never at
+// the repo root. On success it prints the "cached at" line and returns the
+// source root's payload/ dir and the manifest's recommends value; on failure it
+// writes the message and returns a non-zero code.
 func fetchSource(src, subpath, sourceRef string, stdout, stderr io.Writer) (payloadDir, recommends string, code int) {
 	// canonical names THIS harness (root + subfolder) in messages and keys
 	// the cache, so distinct subfolders of one hub repo get distinct clones —
@@ -276,8 +276,7 @@ func fetchSource(src, subpath, sourceRef string, stdout, stderr io.Writer) (payl
 			// healthy, reusable checkout: HEAD resolves locally and it still
 			// carries a manifest + payload/.
 			if cacheGitHealthy(cache) &&
-				fileRegular(filepath.Join(srcRoot, "omakase.manifest")) &&
-				isDir(filepath.Join(srcRoot, "payload")) {
+				fileRegular(filepath.Join(srcRoot, "payload", "omakase.manifest")) {
 				fmt.Fprintf(stderr, "omakase: could not refresh source cache at %s — reusing the cached copy (offline?)\n", cache)
 			} else {
 				fmt.Fprintf(stderr, "omakase: source cache at %s is stale or corrupt — discarding and re-cloning (a cache is disposable)\n", cache)
@@ -315,29 +314,31 @@ func fetchSource(src, subpath, sourceRef string, stdout, stderr io.Writer) (payl
 		return "", "", 1
 	}
 
+	// omakase reads one manifest: payload/omakase.manifest (the copy init places
+	// and snapshots). A leftover source-root omakase.manifest is the
+	// pre-consolidation two-file layout; refuse fail-closed rather than silently
+	// ignore its name:/version:/recommends: (or gate: blocks) where omakase never
+	// reads them.
+	if fileRegular(filepath.Join(srcRoot, "omakase.manifest")) {
+		fmt.Fprintf(stderr, "omakase: source '%s' has a root omakase.manifest, which omakase no longer reads — omakase reads one manifest: payload/omakase.manifest. Move name:/version:/recommends: there and delete the root file. Nothing was changed.\n", canonical)
+		return "", "", 1
+	}
+
 	// Fail-closed manifest validation, before anything is placed.
-	manifestPath := filepath.Join(srcRoot, "omakase.manifest")
+	payloadDir = filepath.Join(srcRoot, "payload")
+	if !isDir(payloadDir) || !dirNonEmpty(payloadDir) {
+		fmt.Fprintf(stderr, "omakase: source '%s' has no non-empty payload/ tree — nothing to inject\n", canonical)
+		return "", "", 1
+	}
+	manifestPath := filepath.Join(payloadDir, "omakase.manifest")
 	if !fileRegular(manifestPath) {
-		fmt.Fprintf(stderr, "omakase: source '%s' has no omakase.manifest at its root — not an omakase source\n", canonical)
+		fmt.Fprintf(stderr, "omakase: source '%s' has no payload/omakase.manifest — not an omakase source\n", canonical)
 		return "", "", 1
 	}
 	manifest, _ := os.ReadFile(manifestPath)
 	name := manifestField(manifest, "name")
 	if name == "" {
 		fmt.Fprintf(stderr, "omakase: source '%s' manifest is missing the required 'name:' line\n", canonical)
-		return "", "", 1
-	}
-	// The root manifest is the harness's identity only. Gates live in
-	// payload/omakase.manifest (the copy init places and snapshots); a gate: in
-	// the root manifest would never run. Refuse, so a doc-following author sees
-	// the mistake at install instead of a silently gate-less harness.
-	if gate.HasGateBlock(manifest) {
-		fmt.Fprintf(stderr, "omakase: source '%s' declares gate: blocks in its root omakase.manifest, which omakase never runs — gates belong in payload/omakase.manifest (placed and snapshotted at init). Move the gate: blocks there and re-run. Nothing was changed.\n", canonical)
-		return "", "", 1
-	}
-	payloadDir = filepath.Join(srcRoot, "payload")
-	if !isDir(payloadDir) || !dirNonEmpty(payloadDir) {
-		fmt.Fprintf(stderr, "omakase: source '%s' has no non-empty payload/ tree — nothing to inject\n", canonical)
 		return "", "", 1
 	}
 	ver := manifestField(manifest, "version")

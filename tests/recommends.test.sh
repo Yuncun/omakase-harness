@@ -25,17 +25,12 @@ mksource(){
   ( cd "$r" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
   mkdir -p "$r/payload/.omakase/gates"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$r/payload/.omakase/gates/example.sh"
-  # gates live in payload/omakase.manifest now (replaces payload/lefthook-local.yml)
-  cat > "$r/payload/omakase.manifest" <<'MAN'
-name: test
-version: 1
-
-gate: omakase-example
-  hook: pre-commit
-  run: bash .omakase/gates/example.sh
-MAN
-  # the source-root manifest carries identity + the recommends: line under test
-  { printf 'name: test-harness\nversion: 0.1.0\n'; [ -n "$rec" ] && printf 'recommends: %s\n' "$rec"; } > "$r/omakase.manifest"
+  # The one manifest carries identity, the recommends: line under test, and the
+  # gate wiring — omakase reads only payload/omakase.manifest.
+  { printf 'name: test-harness\nversion: 0.1.0\n'
+    [ -n "$rec" ] && printf 'recommends: %s\n' "$rec"
+    printf '\ngate: omakase-example\n  hook: pre-commit\n  run: bash .omakase/gates/example.sh\n'
+  } > "$r/payload/omakase.manifest"
   ( cd "$r" && git add -A && git commit -q -m harness )
 }
 newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }

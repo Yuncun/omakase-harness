@@ -32,14 +32,15 @@ injected file the payload no longer ships** (only when untouched). Tell the user
 placed / overwritten / skipped / removed, and that `/omakase:remove` undoes it.
 
 **Adopting `owner/repo`** (or `--source`) pulls a **custom harness** (a git repo with a `payload/`
-tree plus an `omakase.manifest`) into a local cache, then overlays base machinery underneath with
+tree whose `payload/omakase.manifest` is its one manifest) into a local cache, then overlays base machinery underneath with
 the custom harness's payload winning on overlap. The source is remembered; a later bare init
 refreshes it. If the manifest declares `recommends:`, init prints it once — relay it.
 
 ## Guardrails (do not override)
 
 - **Refusals — relay verbatim and STOP.** init refuses (placing nothing) on a bad source (no
-  `payload/`, no `omakase.manifest`, a root manifest that declares `gate:` blocks, a payload that
+  `payload/`, no `payload/omakase.manifest`, a leftover source-root `omakase.manifest` (the
+  pre-consolidation two-file layout — move its keys into `payload/omakase.manifest`), a payload that
   still ships `lefthook-local.yml`, or a gate whose `run:` names a payload script neither side
   ships) and on an incumbent hook manager (husky, pre-commit, a foreign `core.hooksPath`, or any
   existing git hooks — including a project's own **native lefthook**, which omakase no longer

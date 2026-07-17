@@ -88,7 +88,7 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: demo\nversion: 1.2.3\nrecommends: install the widget plugin\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: demo\nversion: 1.2.3\nrecommends: install the widget plugin\n")
 	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "src.sh"), "src gate\n")
 	writeFile(t, filepath.Join(src, "payload", ".claude", "rules", "r.md"), "rule\n")
 	commitAll(t, src, "src")
@@ -99,12 +99,13 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 	}
 
 	cache := sourceCacheDir(src)
-	// merged lexical order: .claude/rules/r.md, .omakase/bin/base.sh, .omakase/gates/src.sh
+	// merged lexical order: .claude/rules/r.md, .omakase/bin/base.sh, .omakase/gates/src.sh, omakase.manifest
 	wantOut := "omakase: source '" + src + "' (name: demo, version: 1.2.3) cached at " + cache + "\n" +
-		"omakase: placed 3 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
+		"omakase: placed 4 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
 		"  + .claude/rules/r.md\n" +
 		"  + .omakase/bin/base.sh\n" +
 		"  + .omakase/gates/src.sh\n" +
+		"  + omakase.manifest\n" +
 		"omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.\n" +
 		"omakase: see the whole harness any time with  omakase status\n" +
 		"omakase: this harness recommends — install the widget plugin\n" +
@@ -144,7 +145,7 @@ func TestSourceNoRecommendsNoLine(t *testing.T) {
 	useBasePayloadDir(t) // empty base
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: quiet\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: quiet\n")
 	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "g.sh"), "g\n")
 	commitAll(t, src, "src")
 
@@ -192,45 +193,46 @@ func assertSourceRefusal(t *testing.T, argvSource, wantErr string) {
 	}
 }
 
-// TestSourceMissingManifest: a payload-only source (no omakase.manifest) is
-// refused.
+// TestSourceMissingManifest: a payload with no payload/omakase.manifest is
+// refused as not an omakase source, naming the path init reads.
 func TestSourceMissingManifest(t *testing.T) {
 	src := newSourceRepo(t)
 	writeFile(t, filepath.Join(src, "payload", "rule.md"), "a rule\n")
 	commitAll(t, src, "no-manifest")
 	assertSourceRefusal(t, src,
-		"omakase: source '"+src+"' has no omakase.manifest at its root — not an omakase source\n")
+		"omakase: source '"+src+"' has no payload/omakase.manifest — not an omakase source\n")
 }
 
 // TestSourceMissingName: a manifest with no name: line is refused.
 func TestSourceMissingName(t *testing.T) {
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "version: 1.0\nrecommends: x\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "version: 1.0\nrecommends: x\n")
 	writeFile(t, filepath.Join(src, "payload", "rule.md"), "a rule\n")
 	commitAll(t, src, "no-name")
 	assertSourceRefusal(t, src,
 		"omakase: source '"+src+"' manifest is missing the required 'name:' line\n")
 }
 
-// TestSourceGatesInRootManifest: gates declared in the harness-ROOT
-// omakase.manifest never run (gates live in payload/omakase.manifest), so the
-// install is refused with a pointer there — a doc-following author's gates must
-// not be silently substituted by the base's.
-func TestSourceGatesInRootManifest(t *testing.T) {
+// TestSourceRootManifestRefused: a leftover source-root omakase.manifest (the
+// pre-consolidation two-file layout) is refused fail-closed with the migration
+// pointer, even when a valid payload/omakase.manifest is present — omakase reads
+// one manifest, so the root file must never be silently ignored.
+func TestSourceRootManifestRefused(t *testing.T) {
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"),
-		"name: rooter\n\ngate: block-marker\n  hook: pre-commit\n  run: .omakase/gates/x.sh\n")
+	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: rooter\nversion: 0.1.0\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: rooter\nversion: 0.1.0\n")
 	writeFile(t, filepath.Join(src, "payload", "rule.md"), "a rule\n")
-	commitAll(t, src, "gates-in-root")
+	commitAll(t, src, "root-manifest")
 	assertSourceRefusal(t, src,
-		"omakase: source '"+src+"' declares gate: blocks in its root omakase.manifest, which omakase never runs — gates belong in payload/omakase.manifest (placed and snapshotted at init). Move the gate: blocks there and re-run. Nothing was changed.\n")
+		"omakase: source '"+src+"' has a root omakase.manifest, which omakase no longer reads — omakase reads one manifest: payload/omakase.manifest. Move name:/version:/recommends: there and delete the root file. Nothing was changed.\n")
 }
 
-// TestSourceEmptyPayload: a manifest but no non-empty payload/ tree is refused.
-// git cannot track an empty dir, so payload/ is absent in the clone.
+// TestSourceEmptyPayload: a source with no payload/ tree is refused — nothing to
+// inject. git cannot track an empty dir, so a source shipping only a top-level
+// file has no payload/ in the clone.
 func TestSourceEmptyPayload(t *testing.T) {
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: empty\n")
+	writeFile(t, filepath.Join(src, "README.md"), "not a harness\n")
 	commitAll(t, src, "no-payload")
 	assertSourceRefusal(t, src,
 		"omakase: source '"+src+"' has no non-empty payload/ tree — nothing to inject\n")
@@ -246,7 +248,7 @@ func TestSourceCRLFManifest(t *testing.T) {
 
 	src := newSourceRepo(t)
 	// CRLF line endings + trailing spaces on name and version.
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name:  crlf-harness  \r\nversion: 2.3 \r\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name:  crlf-harness  \r\nversion: 2.3 \r\n")
 	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "g.sh"), "g\n")
 	commitAll(t, src, "crlf")
 
@@ -275,7 +277,7 @@ func TestSourceRefPinBranch(t *testing.T) {
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: pinned\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: pinned\n")
 	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "g.sh"), "DEFAULT\n")
 	commitAll(t, src, "default")
 	runGitT(t, src, "branch", "-M", "main")
@@ -305,7 +307,7 @@ func TestSourceRefPinTag(t *testing.T) {
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: tagged\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: tagged\n")
 	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "g.sh"), "TAGGED\n")
 	commitAll(t, src, "v1")
 	runGitT(t, src, "tag", "v1")
@@ -326,7 +328,7 @@ func TestSourceRefNotFound(t *testing.T) {
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: x\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: x\n")
 	writeFile(t, filepath.Join(src, "payload", "g.sh"), "g\n")
 	commitAll(t, src, "src")
 
@@ -360,7 +362,7 @@ func TestRememberedSourceRoundTrip(t *testing.T) {
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: rt\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: rt\n")
 	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "g.sh"), "PINNED\n")
 	commitAll(t, src, "tagged")
 	runGitT(t, src, "branch", "-M", "main")
@@ -396,7 +398,7 @@ func TestBranchPinNotPreserved(t *testing.T) {
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: br\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: br\n")
 	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "g.sh"), "MAIN\n")
 	commitAll(t, src, "main")
 	runGitT(t, src, "branch", "-M", "main")
@@ -429,7 +431,7 @@ func TestSourceCacheRefreshPicksUpNewCommit(t *testing.T) {
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: refresh\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: refresh\n")
 	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "g.sh"), "V1\n")
 	commitAll(t, src, "v1")
 
@@ -464,7 +466,7 @@ func TestSourceCorruptCacheReclone(t *testing.T) {
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: recover\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: recover\n")
 	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "g.sh"), "V1\n")
 	commitAll(t, src, "v1")
 
@@ -497,7 +499,7 @@ func TestSourceCorruptCacheReclone(t *testing.T) {
 // ---------------------------------------------------------------- offline repair
 
 // TestFetchSourceReusesCacheWhenRefreshFails: a prior fetch leaves a healthy,
-// valid cache (.git + omakase.manifest + payload/). The cache's remote then goes
+// valid cache (.git + payload/omakase.manifest). The cache's remote then goes
 // dark (repointed at a nonexistent local path, no network involved) and the
 // source itself disappears too, so both refreshCache's `git fetch` and any
 // reclone attempt (which would clone from `src` verbatim) are impossible — the
@@ -508,7 +510,7 @@ func TestFetchSourceReusesCacheWhenRefreshFails(t *testing.T) {
 	srcTestEnv(t)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: reuse\nversion: 9.9\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: reuse\nversion: 9.9\n")
 	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "g.sh"), "ORIGINAL\n")
 	commitAll(t, src, "v1")
 
@@ -565,7 +567,7 @@ func TestMergeSourceWinsOverlap(t *testing.T) {
 	writeFile(t, filepath.Join(base, ".omakase", "gates", "example.sh"), "BASE\n")
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: overlap\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: overlap\n")
 	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "example.sh"), "SOURCE\n")
 	commitAll(t, src, "src")
 
@@ -585,7 +587,7 @@ func TestMergeSymlinkOverFile(t *testing.T) {
 	writeFile(t, filepath.Join(base, "CLAUDE.md"), "base regular doc\n")
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: symlink\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: symlink\n")
 	writeFile(t, filepath.Join(src, "payload", "AGENTS.md"), "real doctrine\n")
 	if err := os.Symlink("AGENTS.md", filepath.Join(src, "payload", "CLAUDE.md")); err != nil {
 		t.Fatal(err)
@@ -615,7 +617,7 @@ func TestMergeFileOverSymlink(t *testing.T) {
 	}
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: fileoversym\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: fileoversym\n")
 	writeFile(t, filepath.Join(src, "payload", "link.md"), "source regular content\n")
 	commitAll(t, src, "src")
 
@@ -642,7 +644,7 @@ func TestMergeStagingCleaned(t *testing.T) {
 	t.Setenv("TMPDIR", tmp)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: staging\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: staging\n")
 	writeFile(t, filepath.Join(src, "payload", "g.sh"), "g\n")
 	commitAll(t, src, "src")
 
@@ -670,7 +672,7 @@ func TestSourceLefthookLocalRefusalPostMerge(t *testing.T) {
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: legacy-wiring\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: legacy-wiring\n")
 	writeFile(t, filepath.Join(src, "payload", "lefthook-local.yml"),
 		"pre-commit:\n  jobs:\n    - name: ghost\n      run: bash .omakase/gates/example.sh\n")
 	commitAll(t, src, "src")
@@ -862,7 +864,7 @@ func TestSourceMergeBaseFromEnv(t *testing.T) {
 	t.Setenv("OMAKASE_BASE_PAYLOAD", base)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: envbase\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: envbase\n")
 	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "src.sh"), "src\n")
 	commitAll(t, src, "src")
 
@@ -888,7 +890,7 @@ func TestSourceMergeBaseMissing(t *testing.T) {
 	t.Setenv("OMAKASE_BASE_PAYLOAD", missing)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: wouldwork\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: wouldwork\n")
 	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "src.sh"), "src\n")
 	commitAll(t, src, "src")
 
@@ -922,7 +924,7 @@ func TestBareRunRememberedSourceSurvivesBasePayloadEnv(t *testing.T) {
 	t.Setenv("OMAKASE_BASE_PAYLOAD", base)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: remembered\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: remembered\n")
 	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "src.sh"), "src delta\n")
 	commitAll(t, src, "src")
 
@@ -961,10 +963,10 @@ func TestSourceSubpathMerge(t *testing.T) {
 
 	src := newSourceRepo(t)
 	// Decoys at the clone root: a subpath install must never read these.
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: decoy\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: decoy\n")
 	writeFile(t, filepath.Join(src, "payload", "decoy.txt"), "never placed\n")
 	// The real harness lives two levels down, next to other hub content.
-	writeFile(t, filepath.Join(src, "tools", "harness", "omakase.manifest"), "name: hubbed\nversion: 0.1\n")
+	writeFile(t, filepath.Join(src, "tools", "harness", "payload", "omakase.manifest"), "name: hubbed\nversion: 0.1\n")
 	writeFile(t, filepath.Join(src, "tools", "harness", "payload", ".omakase", "gates", "src.sh"), "src gate\n")
 	writeFile(t, filepath.Join(src, "tools", "harness", "payload", ".claude", "rules", "r.md"), "rule\n")
 	commitAll(t, src, "hub")
@@ -977,10 +979,11 @@ func TestSourceSubpathMerge(t *testing.T) {
 
 	cache := sourceCacheDir(canonical)
 	wantOut := "omakase: source '" + canonical + "' (name: hubbed, version: 0.1) cached at " + cache + "\n" +
-		"omakase: placed 3 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
+		"omakase: placed 4 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
 		"  + .claude/rules/r.md\n" +
 		"  + .omakase/bin/base.sh\n" +
 		"  + .omakase/gates/src.sh\n" +
+		"  + omakase.manifest\n" +
 		"omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.\n" +
 		"omakase: see the whole harness any time with  omakase status\n" +
 		"omakase: to customize, fork the harness source (clone -> edit -> publish) and\n" +
@@ -1014,7 +1017,7 @@ func TestSourceSubpathMissingDir(t *testing.T) {
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: hub\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: hub\n")
 	writeFile(t, filepath.Join(src, "payload", "x.txt"), "x\n")
 	commitAll(t, src, "hub")
 
@@ -1030,15 +1033,15 @@ func TestSourceSubpathMissingDir(t *testing.T) {
 }
 
 // TestSourceSubpathManifestValidatedAtSubroot: the fail-closed manifest check
-// runs at the SUBPATH root — a valid manifest at the clone root must not
-// stand in for a missing one under the subpath.
+// runs at the SUBPATH root — a valid payload/omakase.manifest at the clone root
+// must not stand in for a missing one under the subpath.
 func TestSourceSubpathManifestValidatedAtSubroot(t *testing.T) {
 	_, _ = initRepo(t)
 	srcTestEnv(t)
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: root-ok\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: root-ok\n")
 	writeFile(t, filepath.Join(src, "payload", "x.txt"), "x\n")
 	writeFile(t, filepath.Join(src, "sub", "payload", "y.txt"), "y\n") // no manifest here
 	commitAll(t, src, "hub")
@@ -1048,7 +1051,7 @@ func TestSourceSubpathManifestValidatedAtSubroot(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
 	}
-	eq(t, "stderr", stderr.String(), "omakase: source '"+src+"//sub' has no omakase.manifest at its root — not an omakase source\n")
+	eq(t, "stderr", stderr.String(), "omakase: source '"+src+"//sub' has no payload/omakase.manifest — not an omakase source\n")
 }
 
 // TestSourceSubpathTraversalRefused: a subpath that escapes (or degenerates
@@ -1059,7 +1062,7 @@ func TestSourceSubpathTraversalRefused(t *testing.T) {
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "omakase.manifest"), "name: hub\n")
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: hub\n")
 	writeFile(t, filepath.Join(src, "payload", "x.txt"), "x\n")
 	commitAll(t, src, "hub")
 
@@ -1097,7 +1100,7 @@ func TestSourceSubpathRememberedRoundTrip(t *testing.T) {
 	useBasePayloadDir(t)
 
 	src := newSourceRepo(t)
-	writeFile(t, filepath.Join(src, "sub", "omakase.manifest"), "name: rt-sub\n")
+	writeFile(t, filepath.Join(src, "sub", "payload", "omakase.manifest"), "name: rt-sub\n")
 	writeFile(t, filepath.Join(src, "sub", "payload", ".omakase", "gates", "g.sh"), "V1\n")
 	commitAll(t, src, "v1")
 

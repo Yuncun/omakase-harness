@@ -70,7 +70,7 @@ SRC="$TMP/src-harness"; rm -rf "$SRC"; mkdir -p "$SRC/payload"
 ( cd "$SRC" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false )
 printf 'shared agent instructions\n' > "$SRC/payload/AGENTS.md"
 ( cd "$SRC/payload" && ln -s AGENTS.md CLAUDE.md )
-printf 'name: state-format-fixture\n' > "$SRC/omakase.manifest"
+printf 'name: state-format-fixture\n' > "$SRC/payload/omakase.manifest"
 ( cd "$SRC" && git add -A && git commit -q -m harness )
 SRC="$(cd "$SRC" && pwd)"   # init absolutizes local dir sources (macOS TMPDIR carries a trailing slash)
 REPO="$TMP/repoS2"; newrepo "$REPO"

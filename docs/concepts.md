@@ -7,7 +7,7 @@
 scorecard ledger), and the `omakase` commands. This repo is the base harness.
 
 **custom harness** — a personal harness you make and share: a git repo with a `payload/`
-tree and a one-line `omakase.manifest`. You install it with `--source`, and the base harness
+tree whose `payload/omakase.manifest` is its one manifest. You install it with `--source`, and the base harness
 layers its machinery underneath your files (your files win on overlap), so a custom harness
 ships only your own delta. See [Authoring](authoring.md).
 
