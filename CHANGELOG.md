@@ -5,6 +5,15 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added
+- **`status` classifies "yours, unmanaged"** (#123): untracked agent config at
+  the known paths that is neither committed nor placed by omakase — files that
+  exist only in this clone — shown as its own group in both the installed page
+  and the no-overlay audit, with the natural offer to add them to a harness
+  (the author skill). Harness machinery and Claude Code's own
+  `.claude/worktrees/` area never surface there; past 20 rows the elision is
+  stated explicitly.
+
 ### Changed
 - **`status` in a repo with no overlay is now a deliberate presence-only
   audit** (#119, #123). It lists the agent config that exists — committed in

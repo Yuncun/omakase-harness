@@ -151,6 +151,74 @@ func exists(path string) bool {
 	return err == nil
 }
 
+// maxUnmanagedRows caps the rendered "yours, unmanaged" rows; past it the
+// elision is stated in a count line — a silent cap would read as "that's
+// everything" (the #110 lesson).
+const maxUnmanagedRows = 20
+
+// UnmanagedList lists the repo's untracked agent config at the known
+// committed-surface paths (harness.CommittedGlobs): present in this clone,
+// not git-tracked (ignored or not — ignored ≠ managed), and not in the
+// placed ledger at placedPath (any enabled state). These files exist ONLY
+// here — the natural candidates for a harness (#123 item 3). Two path
+// classes are skipped: harness machinery (harness.IsMachinery — never a
+// consent or authoring item; an unledgered machinery file is torn state,
+// not the user's config) and Claude Code's own .claude/worktrees/ area
+// (whole checkouts, not agent config). Rows are {path, kind} in git's
+// sorted order; any git error yields nil.
+func UnmanagedList(root, placedPath string) [][2]string {
+	args := append([]string{"-C", root, "-c", "core.quotePath=false", "ls-files", "--others", "--"}, harness.CommittedGlobs...)
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return nil
+	}
+	placed := map[string]bool{}
+	for _, row := range state.ReadPlaced(placedPath) {
+		placed[row.Rel] = true
+	}
+	var rows [][2]string
+	for _, rel := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if rel == "" || placed[rel] || harness.IsMachinery(rel) || strings.HasPrefix(rel, ".claude/worktrees/") {
+			continue
+		}
+		rows = append(rows, [2]string{rel, harness.KindOf(rel)})
+	}
+	return rows
+}
+
+// renderUnmanaged writes the "yours, unmanaged" group. Empty renders
+// nothing — the group is a flag, not a fixture. The trailing line is the
+// natural offer: a file worth keeping beyond this clone belongs in a
+// harness. In md mode the group ends with a blank line (the caller prints
+// the next header directly).
+func renderUnmanaged(w io.Writer, rows [][2]string, md bool) {
+	if len(rows) == 0 {
+		return
+	}
+	shown, elided := rows, 0
+	if len(shown) > maxUnmanagedRows {
+		elided = len(shown) - maxUnmanagedRows
+		shown = shown[:maxUnmanagedRows]
+	}
+	if md {
+		fmt.Fprintln(w, "### Yours, unmanaged — untracked agent config, only in this clone (not committed, not placed by omakase)")
+		renderPathRows(w, shown, true)
+		if elided > 0 {
+			fmt.Fprintf(w, "- … and %d more\n", elided)
+		}
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "_To keep or share one beyond this clone, add it to a harness — the author skill (`/omakase:author`)._")
+		fmt.Fprintln(w)
+		return
+	}
+	fmt.Fprintln(w, "YOURS, UNMANAGED — untracked agent config, only in this clone (not committed, not placed by omakase)")
+	renderPathRows(w, shown, false)
+	if elided > 0 {
+		fmt.Fprintf(w, "    … and %d more\n", elided)
+	}
+	fmt.Fprintln(w, "    to keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author")
+}
+
 // committedRows pairs each CommittedList path with its kind, in git's order,
 // for renderPathRows.
 func committedRows(root string) [][2]string {
@@ -198,6 +266,7 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 	comm := committedRows(repo.Root)
 	pers := PersonalList(home)
 	placedPath := filepath.Join(repo.OMK, "placed.tsv")
+	unmanaged := UnmanagedList(repo.Root, placedPath)
 
 	if md {
 		fmt.Fprintln(w, "### The project's harness (committed — managed by git, not omakase)")
@@ -209,6 +278,8 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 			fmt.Fprintln(w, "- _(none)_")
 		}
 		fmt.Fprintln(w)
+
+		renderUnmanaged(w, unmanaged, true)
 
 		fmt.Fprintln(w, "### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)")
 		renderPathRows(w, pers, true)
@@ -222,6 +293,8 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 	if !renderInjected(w, repo, placedPath, false) {
 		fmt.Fprintln(w, "    (none)")
 	}
+
+	renderUnmanaged(w, unmanaged, false)
 
 	fmt.Fprintln(w, "GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)")
 	renderPathRows(w, pers, false)
@@ -370,6 +443,7 @@ func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, md boo
 func RenderNotInstalled(w io.Writer, repo *state.Repo, home string, md bool) {
 	comm := committedRows(repo.Root)
 	pers := PersonalList(home)
+	unmanaged := UnmanagedList(repo.Root, filepath.Join(repo.OMK, "placed.tsv"))
 
 	if md {
 		fmt.Fprintln(w, "**No omakase harness is installed in this repo.**")
@@ -377,6 +451,7 @@ func RenderNotInstalled(w io.Writer, repo *state.Repo, home string, md bool) {
 		fmt.Fprintln(w, "### Agent config committed in this repo (managed by git, not omakase)")
 		renderPathRows(w, comm, true)
 		fmt.Fprintln(w)
+		renderUnmanaged(w, unmanaged, true)
 		fmt.Fprintln(w, "### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)")
 		renderPathRows(w, pers, true)
 		fmt.Fprintln(w)
@@ -390,6 +465,7 @@ func RenderNotInstalled(w io.Writer, repo *state.Repo, home string, md bool) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "AGENT CONFIG COMMITTED IN THIS REPO (managed by git, not omakase)")
 	renderPathRows(w, comm, false)
+	renderUnmanaged(w, unmanaged, false)
 	fmt.Fprintln(w, "GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)")
 	renderPathRows(w, pers, false)
 	fmt.Fprintln(w)

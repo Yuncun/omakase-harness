@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,6 +91,11 @@ func buildInstalledFixture(t *testing.T) (*state.Repo, string) {
 	runGitT(t, dir, "add", ".claude/rules/team.md", "CLAUDE.md", "src/app.js")
 	runGitT(t, dir, "commit", "-q", "-m", "files")
 
+	// Untracked agent config -> the "yours, unmanaged" group; Claude Code's
+	// own worktree area must never surface there.
+	writeFile(t, dir, ".claude/rules/local-tweak.md", "local tweak\n")
+	writeFile(t, dir, ".claude/worktrees/wt/junk.md", "checkout litter\n")
+
 	repo, err := state.Discover(dir)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -156,6 +162,11 @@ func buildNotInstalledFixture(t *testing.T) (*state.Repo, string) {
 	runGitT(t, dir, "add", ".claude/rules/team.md", "src/app.js")
 	runGitT(t, dir, "commit", "-q", "-m", "files")
 
+	// Untracked agent config for the audit's "yours, unmanaged" group.
+	writeFile(t, dir, ".claude/rules/local-tweak.md", "local tweak\n")
+	writeFile(t, dir, "CLAUDE.local.md", "personal doctrine\n")
+	writeFile(t, dir, ".claude/worktrees/wt/junk.md", "checkout litter\n")
+
 	repo, err := state.Discover(dir)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -183,6 +194,9 @@ INJECTED (omakase) — placed by omakase init, gitignored
     ! .omakase/internal.sh   (gate, from some/src; MISSING — run omakase init to restore)
     ~ .omakase/stale-gate.sh   (gate, from some/src; DRIFTED — differs from canonical, run omakase init to re-sync)
     + sixtab.txt   (doc, from some/src)
+YOURS, UNMANAGED — untracked agent config, only in this clone (not committed, not placed by omakase)
+    + .claude/rules/local-tweak.md   (rule)
+    to keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author
 GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)
     + ~/.claude/CLAUDE.md   (doc)
     + ~/.claude/settings.json   (config)
@@ -208,6 +222,11 @@ const wantInventoryMDInstalled = "### The project's harness (committed — manag
 	"- `.omakase/internal.sh` — gate, from some/src — **MISSING** (run `omakase init` to restore)\n" +
 	"- `.omakase/stale-gate.sh` — gate, from some/src — **DRIFTED** (differs from canonical; `omakase init` to re-sync, or it may be an intentional local edit)\n" +
 	"- `sixtab.txt` — doc, from some/src\n" +
+	"\n" +
+	"### Yours, unmanaged — untracked agent config, only in this clone (not committed, not placed by omakase)\n" +
+	"- `.claude/rules/local-tweak.md` — rule\n" +
+	"\n" +
+	"_To keep or share one beyond this clone, add it to a harness — the author skill (`/omakase:author`)._\n" +
 	"\n" +
 	"### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)\n" +
 	"- `~/.claude/CLAUDE.md` — doc\n" +
@@ -245,6 +264,10 @@ const wantNotInstalledTerm = `No omakase harness is installed in this repo.
 
 AGENT CONFIG COMMITTED IN THIS REPO (managed by git, not omakase)
     + .claude/rules/team.md   (rule)
+YOURS, UNMANAGED — untracked agent config, only in this clone (not committed, not placed by omakase)
+    + .claude/rules/local-tweak.md   (rule)
+    + CLAUDE.local.md   (doc)
+    to keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author
 GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)
     + ~/.claude/CLAUDE.md   (doc)
     + ~/.claude/settings.json   (config)
@@ -264,6 +287,12 @@ const wantNotInstalledMD = "**No omakase harness is installed in this repo.**\n"
 	"\n" +
 	"### Agent config committed in this repo (managed by git, not omakase)\n" +
 	"- `.claude/rules/team.md` — rule\n" +
+	"\n" +
+	"### Yours, unmanaged — untracked agent config, only in this clone (not committed, not placed by omakase)\n" +
+	"- `.claude/rules/local-tweak.md` — rule\n" +
+	"- `CLAUDE.local.md` — doc\n" +
+	"\n" +
+	"_To keep or share one beyond this clone, add it to a harness — the author skill (`/omakase:author`)._\n" +
 	"\n" +
 	"### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)\n" +
 	"- `~/.claude/CLAUDE.md` — doc\n" +
@@ -294,6 +323,72 @@ func TestRenderNotInstalledMD(t *testing.T) {
 	RenderNotInstalled(&buf, repo, home, true)
 	if got := buf.String(); got != wantNotInstalledMD {
 		t.Errorf("RenderNotInstalled (md) mismatch\n--- got ---\n%s\n--- want ---\n%s", got, wantNotInstalledMD)
+	}
+}
+
+// ---------------------------------------------------------------- unmanaged
+
+// UnmanagedList: an untracked agent file at a known path is listed; a
+// git-tracked file, a placed (ledgered) file — any enabled state — and
+// Claude Code's own .claude/worktrees/ area are not; a gitignored personal
+// file still is (ignored ≠ managed).
+func TestUnmanagedList(t *testing.T) {
+	dir := newGitRepo(t)
+	writeFile(t, dir, "CLAUDE.md", "committed\n")
+	runGitT(t, dir, "add", "CLAUDE.md")
+	runGitT(t, dir, "commit", "-q", "-m", "c")
+
+	writeFile(t, dir, ".claude/rules/mine.md", "mine\n")
+	writeFile(t, dir, ".claude/rules/placed.md", "placed\n")
+	writeFile(t, dir, ".claude/rules/off.md", "toggled\n")
+	writeFile(t, dir, ".claude/worktrees/wt/junk.md", "litter\n")
+	writeFile(t, dir, ".claude/settings.local.json", "{}\n")
+	writeFile(t, dir, ".gitignore", ".claude/settings.local.json\n")
+	writeFile(t, dir, ".omakase/stray.sh", "machinery residue\n") // unledgered machinery: torn state, never "yours"
+
+	placedPath := filepath.Join(dir, "placed.tsv")
+	if err := os.WriteFile(placedPath, []byte(
+		".claude/rules/placed.md\trule\tsome/src\tdeadbeef\t1\n"+
+			".claude/rules/off.md\trule\tsome/src\tdeadbeef\t0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := UnmanagedList(dir, placedPath)
+	want := [][2]string{
+		{".claude/rules/mine.md", "rule"},
+		{".claude/settings.local.json", "config"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("UnmanagedList = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("row %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+// renderUnmanaged: an empty list renders nothing (the group is a flag, not a
+// fixture); past the cap the elision is stated, never silent.
+func TestRenderUnmanagedCap(t *testing.T) {
+	var empty bytes.Buffer
+	renderUnmanaged(&empty, nil, false)
+	if empty.Len() != 0 {
+		t.Errorf("empty list rendered %q, want nothing", empty.String())
+	}
+
+	var rows [][2]string
+	for i := 0; i < maxUnmanagedRows+2; i++ {
+		rows = append(rows, [2]string{fmt.Sprintf(".claude/rules/r%02d.md", i), "rule"})
+	}
+	var buf bytes.Buffer
+	renderUnmanaged(&buf, rows, false)
+	out := buf.String()
+	if !strings.Contains(out, "… and 2 more") {
+		t.Errorf("cap not stated:\n%s", out)
+	}
+	if strings.Count(out, "+ .claude/rules/") != maxUnmanagedRows {
+		t.Errorf("rendered %d rows, want %d:\n%s", strings.Count(out, "+ .claude/rules/"), maxUnmanagedRows, out)
 	}
 }
 
