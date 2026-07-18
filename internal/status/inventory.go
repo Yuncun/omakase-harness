@@ -151,28 +151,57 @@ func exists(path string) bool {
 	return err == nil
 }
 
+// committedRows pairs each CommittedList path with its kind, in git's order,
+// for renderPathRows.
+func committedRows(root string) [][2]string {
+	var rows [][2]string
+	for _, rel := range CommittedList(root) {
+		if rel == "" {
+			continue
+		}
+		rows = append(rows, [2]string{rel, harness.KindOf(rel)})
+	}
+	return rows
+}
+
+// renderPathRows writes {display path, kind} rows as md bullets or indented
+// terminal + rows, with the (none) placeholder when nothing rendered.
+func renderPathRows(w io.Writer, rows [][2]string, md bool) {
+	shown := false
+	for _, row := range rows {
+		if row[0] == "" {
+			continue
+		}
+		shown = true
+		if md {
+			fmt.Fprintf(w, "- `%s` — %s\n", row[0], row[1])
+		} else {
+			fmt.Fprintf(w, "    + %s   (%s)\n", row[0], row[1])
+		}
+	}
+	if shown {
+		return
+	}
+	if md {
+		fmt.Fprintln(w, "- _(none)_")
+	} else {
+		fmt.Fprintln(w, "    (none)")
+	}
+}
+
 // RenderInventory renders the harness files grouped by origin: Committed
 // (this repo's own git-tracked surface), Injected (from repo.OMK's
 // placed.tsv), and Global (home's personal config, not installed by omakase).
 // md selects markdown output (### headers, `- ` bullets) vs terminal output
 // (all-caps headers, indented +/-/~/! rows).
 func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
-	comm := CommittedList(repo.Root)
+	comm := committedRows(repo.Root)
 	pers := PersonalList(home)
 	placedPath := filepath.Join(repo.OMK, "placed.tsv")
 
 	if md {
 		fmt.Fprintln(w, "### The project's harness (committed — managed by git, not omakase)")
-		if len(comm) > 0 {
-			for _, rel := range comm {
-				if rel == "" {
-					continue
-				}
-				fmt.Fprintf(w, "- `%s` — %s\n", rel, harness.KindOf(rel))
-			}
-		} else {
-			fmt.Fprintln(w, "- _(none)_")
-		}
+		renderPathRows(w, comm, true)
 		fmt.Fprintln(w)
 
 		fmt.Fprintln(w, "### Injected (omakase) — placed by `omakase init`, gitignored")
@@ -182,30 +211,12 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 		fmt.Fprintln(w)
 
 		fmt.Fprintln(w, "### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)")
-		if len(pers) > 0 {
-			for _, row := range pers {
-				if row[0] == "" {
-					continue
-				}
-				fmt.Fprintf(w, "- `%s` — %s\n", row[0], row[1])
-			}
-		} else {
-			fmt.Fprintln(w, "- _(none)_")
-		}
+		renderPathRows(w, pers, true)
 		return
 	}
 
 	fmt.Fprintln(w, "THE PROJECT'S HARNESS (committed — managed by git, not omakase)")
-	if len(comm) > 0 {
-		for _, rel := range comm {
-			if rel == "" {
-				continue
-			}
-			fmt.Fprintf(w, "    + %s   (%s)\n", rel, harness.KindOf(rel))
-		}
-	} else {
-		fmt.Fprintln(w, "    (none)")
-	}
+	renderPathRows(w, comm, false)
 
 	fmt.Fprintln(w, "INJECTED (omakase) — placed by omakase init, gitignored")
 	if !renderInjected(w, repo, placedPath, false) {
@@ -213,16 +224,7 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 	}
 
 	fmt.Fprintln(w, "GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)")
-	if len(pers) > 0 {
-		for _, row := range pers {
-			if row[0] == "" {
-				continue
-			}
-			fmt.Fprintf(w, "    + %s   (%s)\n", row[0], row[1])
-		}
-	} else {
-		fmt.Fprintln(w, "    (none)")
-	}
+	renderPathRows(w, pers, false)
 }
 
 // renderInjected writes the Injected group's rows and reports whether
@@ -356,18 +358,43 @@ func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, md boo
 	}
 }
 
-// RenderNotInstalled prints the "no harness installed" message, a blank line,
-// then the full inventory (the audit view still works on an uninstalled
-// repo). The caller exits 0.
+// RenderNotInstalled prints the presence-only audit for a repo with no
+// overlay (#119): the agent config that exists — committed in this repo,
+// plus the user's global config — with the scan's boundary stated outright.
+// It reports presence only ("these files exist"), never influence: a path
+// scan cannot see settings hierarchies, MCP servers, or host precedence, so
+// "this is what steers your agents" would overclaim. The Injected group is
+// omitted (nothing placed, nothing to report), and the install pointer names
+// the owner/repo form — a bare init with nothing remembered installs
+// nothing. The caller exits 0.
 func RenderNotInstalled(w io.Writer, repo *state.Repo, home string, md bool) {
+	comm := committedRows(repo.Root)
+	pers := PersonalList(home)
+
 	if md {
-		fmt.Fprintln(w, "**No omakase harness is installed in this repo.** Run `omakase init` to inject one.")
-	} else {
-		fmt.Fprintln(w, "No omakase harness is installed in this repo.")
-		fmt.Fprintln(w, "Run  omakase init  to inject one.") // two spaces around the verb
+		fmt.Fprintln(w, "**No omakase harness is installed in this repo.**")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "### Agent config committed in this repo (managed by git, not omakase)")
+		renderPathRows(w, comm, true)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)")
+		renderPathRows(w, pers, true)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "_A presence check of known paths for known tools — not exhaustive; a file can be present and never read._")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "_Install a harness:_ `omakase init <owner/repo>`")
+		return
 	}
+
+	fmt.Fprintln(w, "No omakase harness is installed in this repo.")
 	fmt.Fprintln(w)
-	RenderInventory(w, repo, home, md)
+	fmt.Fprintln(w, "AGENT CONFIG COMMITTED IN THIS REPO (managed by git, not omakase)")
+	renderPathRows(w, comm, false)
+	fmt.Fprintln(w, "GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)")
+	renderPathRows(w, pers, false)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "A presence check of known paths for known tools — not exhaustive; a file can be present and never read.")
+	fmt.Fprintln(w, "Install a harness:  omakase init <owner/repo>") // two spaces around the verb
 }
 
 // RenderPre010 handles a repo where placed.tsv is absent but omk/placed.list

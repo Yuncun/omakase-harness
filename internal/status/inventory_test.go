@@ -237,15 +237,14 @@ func TestRenderInventoryMDInstalled(t *testing.T) {
 	}
 }
 
-// Terminal-mode output for the not-installed fixture: the not-installed message
-// plus the full RenderInventory.
+// Terminal-mode output for the not-installed fixture: the presence-only audit
+// (#119) — committed + global groups only (no empty Injected group), the scan
+// boundary stated, and the install pointer naming the owner/repo form (a bare
+// init with nothing remembered installs nothing).
 const wantNotInstalledTerm = `No omakase harness is installed in this repo.
-Run  omakase init  to inject one.
 
-THE PROJECT'S HARNESS (committed — managed by git, not omakase)
+AGENT CONFIG COMMITTED IN THIS REPO (managed by git, not omakase)
     + .claude/rules/team.md   (rule)
-INJECTED (omakase) — placed by omakase init, gitignored
-    (none)
 GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)
     + ~/.claude/CLAUDE.md   (doc)
     + ~/.claude/settings.json   (config)
@@ -255,16 +254,16 @@ GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, appl
     + ~/.claude/agents/agent1.md   (agent)
     + ~/.claude/skills/myskill/   (skill)
     + ~/.copilot/skills/coskill/   (skill)
+
+A presence check of known paths for known tools — not exhaustive; a file can be present and never read.
+Install a harness:  omakase init <owner/repo>
 `
 
 // Markdown-mode output for the not-installed fixture.
-const wantNotInstalledMD = "**No omakase harness is installed in this repo.** Run `omakase init` to inject one.\n" +
+const wantNotInstalledMD = "**No omakase harness is installed in this repo.**\n" +
 	"\n" +
-	"### The project's harness (committed — managed by git, not omakase)\n" +
+	"### Agent config committed in this repo (managed by git, not omakase)\n" +
 	"- `.claude/rules/team.md` — rule\n" +
-	"\n" +
-	"### Injected (omakase) — placed by `omakase init`, gitignored\n" +
-	"- _(none)_\n" +
 	"\n" +
 	"### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)\n" +
 	"- `~/.claude/CLAUDE.md` — doc\n" +
@@ -274,7 +273,11 @@ const wantNotInstalledMD = "**No omakase harness is installed in this repo.** Ru
 	"- `~/.claude/commands/cmd1.md` — command\n" +
 	"- `~/.claude/agents/agent1.md` — agent\n" +
 	"- `~/.claude/skills/myskill/` — skill\n" +
-	"- `~/.copilot/skills/coskill/` — skill\n"
+	"- `~/.copilot/skills/coskill/` — skill\n" +
+	"\n" +
+	"_A presence check of known paths for known tools — not exhaustive; a file can be present and never read._\n" +
+	"\n" +
+	"_Install a harness:_ `omakase init <owner/repo>`\n"
 
 func TestRenderNotInstalledTerm(t *testing.T) {
 	repo, home := buildNotInstalledFixture(t)

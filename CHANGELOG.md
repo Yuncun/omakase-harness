@@ -6,6 +6,13 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 ## [Unreleased]
 
 ### Changed
+- **`status` in a repo with no overlay is now a deliberate presence-only
+  audit** (#119, #123). It lists the agent config that exists — committed in
+  the repo plus the user's global config — states its boundary ("known paths
+  for known tools — not exhaustive; a file can be present and never read"),
+  drops the empty Injected section, and points the install line at
+  `omakase init <owner/repo>`. Presence only: it never claims to know what a
+  host actually reads.
 - **Bare `init` with nothing remembered now installs nothing** (#123). It prints
   one line pointing at `omakase status` and exits 0. Previously the plugin path
   silently installed the base machinery and a cache-resident binary errored with
