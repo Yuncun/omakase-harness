@@ -216,7 +216,7 @@ func renderUnmanaged(w io.Writer, rows [][2]string, md bool) {
 	if elided > 0 {
 		fmt.Fprintf(w, "    … and %d more\n", elided)
 	}
-	fmt.Fprintln(w, "    to keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author")
+	fmt.Fprintln(w, "    To keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author")
 }
 
 // committedRows pairs each CommittedList path with its kind, in git's order,

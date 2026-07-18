@@ -27,7 +27,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/skills/init/run.sh" --source <url|path>  # ...any gi
 
 **Bare init** refreshes the remembered source. With no source remembered it installs
 nothing and prints one line pointing at `omakase status` — relay that and suggest
-`status` to see what's steering agents in the repo. When it does refresh, it **skips any
+`status` to see the agent config present in the repo. When it does refresh, it **skips any
 path the repo already tracks** (never overwrites a committed file), **overwrites an injected file
 that differs from payload** (warning that a local edit was replaced), and **removes a previously
 injected file the payload no longer ships** (only when untouched). Tell the user which files were

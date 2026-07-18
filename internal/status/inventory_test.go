@@ -196,7 +196,7 @@ INJECTED (omakase) — placed by omakase init, gitignored
     + sixtab.txt   (doc, from some/src)
 YOURS, UNMANAGED — untracked agent config, only in this clone (not committed, not placed by omakase)
     + .claude/rules/local-tweak.md   (rule)
-    to keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author
+    To keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author
 GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)
     + ~/.claude/CLAUDE.md   (doc)
     + ~/.claude/settings.json   (config)
@@ -267,7 +267,7 @@ AGENT CONFIG COMMITTED IN THIS REPO (managed by git, not omakase)
 YOURS, UNMANAGED — untracked agent config, only in this clone (not committed, not placed by omakase)
     + .claude/rules/local-tweak.md   (rule)
     + CLAUDE.local.md   (doc)
-    to keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author
+    To keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author
 GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)
     + ~/.claude/CLAUDE.md   (doc)
     + ~/.claude/settings.json   (config)
@@ -381,14 +381,34 @@ func TestRenderUnmanagedCap(t *testing.T) {
 	for i := 0; i < maxUnmanagedRows+2; i++ {
 		rows = append(rows, [2]string{fmt.Sprintf(".claude/rules/r%02d.md", i), "rule"})
 	}
-	var buf bytes.Buffer
-	renderUnmanaged(&buf, rows, false)
-	out := buf.String()
-	if !strings.Contains(out, "… and 2 more") {
-		t.Errorf("cap not stated:\n%s", out)
-	}
-	if strings.Count(out, "+ .claude/rules/") != maxUnmanagedRows {
-		t.Errorf("rendered %d rows, want %d:\n%s", strings.Count(out, "+ .claude/rules/"), maxUnmanagedRows, out)
+	// The cap keeps the FIRST maxUnmanagedRows rows: both boundary rows are
+	// pinned by identity, so a wrong-slice regression (an offset or a last-N
+	// window) fails even though it would still render 20 rows and "2 more".
+	last := fmt.Sprintf(".claude/rules/r%02d.md", maxUnmanagedRows-1)
+	cut := fmt.Sprintf(".claude/rules/r%02d.md", maxUnmanagedRows)
+	for _, mode := range []struct {
+		name string
+		md   bool
+		row  string
+	}{
+		{"terminal", false, "+ .claude/rules/"},
+		{"markdown", true, "- `.claude/rules/"},
+	} {
+		var buf bytes.Buffer
+		renderUnmanaged(&buf, rows, mode.md)
+		out := buf.String()
+		if !strings.Contains(out, "… and 2 more") {
+			t.Errorf("%s: cap not stated:\n%s", mode.name, out)
+		}
+		if strings.Count(out, mode.row) != maxUnmanagedRows {
+			t.Errorf("%s: rendered %d rows, want %d:\n%s", mode.name, strings.Count(out, mode.row), maxUnmanagedRows, out)
+		}
+		if !strings.Contains(out, "r00.md") || !strings.Contains(out, last) {
+			t.Errorf("%s: first-20 boundary rows missing (want r00 and %s):\n%s", mode.name, last, out)
+		}
+		if strings.Contains(out, cut) {
+			t.Errorf("%s: elided row %s rendered:\n%s", mode.name, cut, out)
+		}
 	}
 }
 

@@ -3,6 +3,7 @@ package overlay
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1019,7 +1020,7 @@ func TestBareInitNothingRemembered(t *testing.T) {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
 	eq(t, "stdout", stdout.String(),
-		"omakase: nothing to refresh — no harness is installed in this repo. See what's steering agents here:  omakase status\n")
+		"omakase: nothing to refresh — no harness is installed in this repo. See the agent config present here:  omakase status\n")
 	eq(t, "stderr", stderr.String(), "")
 	if _, err := os.Stat(filepath.Join(dir, ".omakase")); !os.IsNotExist(err) {
 		t.Error("base machinery placed on a bare init with nothing remembered")
@@ -1029,6 +1030,36 @@ func TestBareInitNothingRemembered(t *testing.T) {
 	}
 	if fileRegular(filepath.Join(repo.CommonDir, "hooks", "pre-commit")) {
 		t.Error("hook dispatcher written without an install")
+	}
+}
+
+// An OMAKASE_PAYLOAD install writes placed.tsv but remembers no source. A later
+// bare init (env unset) still installs nothing, but must not claim "no harness
+// is installed" — placed.tsv says otherwise and the gates are live.
+func TestBareInitInstalledNoRememberedSource(t *testing.T) {
+	dir, repo := initRepo(t)
+	clearBasePayloadOverride(t)
+	singleGatePayload(t)
+	if code := RunInit(nil, io.Discard, io.Discard); code != 0 {
+		t.Fatalf("setup install exit = %d, want 0", code)
+	}
+	if !fileRegular(filepath.Join(repo.OMK, "placed.tsv")) {
+		t.Fatal("setup install wrote no placed.tsv")
+	}
+	before := readFileT(t, filepath.Join(repo.OMK, "placed.tsv"))
+	t.Setenv("OMAKASE_PAYLOAD", "")
+
+	var stdout, stderr strings.Builder
+	code := RunInit(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(),
+		"omakase: nothing to refresh — a harness is installed here, but no source is remembered to refresh it from. See what's installed:  omakase status\n")
+	eq(t, "stderr", stderr.String(), "")
+	eq(t, "placed.tsv", readFileT(t, filepath.Join(repo.OMK, "placed.tsv")), before)
+	if !fileRegular(filepath.Join(dir, ".omakase", "gates", "example.sh")) {
+		t.Error("placed gate vanished on a no-op bare init")
 	}
 }
 
