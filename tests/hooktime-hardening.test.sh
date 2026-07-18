@@ -54,7 +54,7 @@ fi
 
 # ---------- fixture: repoA carries a real install; repoB is the leak target ----------
 REPOA="$TMP/repoA"; newrepo "$REPOA"
-( cd "$REPOA" && bash "$INIT" ) >/dev/null 2>&1 || fail "setup: init exited non-zero in repoA"
+( cd "$REPOA" && OMAKASE_PAYLOAD="$HERE/../payload" bash "$INIT" ) >/dev/null 2>&1 || fail "setup: init exited non-zero in repoA"
 OMKA="$(common_of "$REPOA")/omakase"
 REPOB="$TMP/repoB"; newrepo "$REPOB"
 REL="$(awk -F'\t' '{print $1; exit}' "$OMKA/placed.tsv" 2>/dev/null)"

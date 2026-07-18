@@ -3,6 +3,7 @@ package overlay
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -997,6 +998,69 @@ func TestPayloadNotFound(t *testing.T) {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 	eq(t, "stderr", stderr.String(), "omakase: payload dir not found at "+missing+"\n")
+}
+
+// Bare init with nothing remembered places NOTHING: no remembered source and
+// no OMAKASE_PAYLOAD override means there is no harness to refresh, so init
+// prints one line pointing at status and exits 0 (#123 item 1). A base
+// payload being available (the shims always export OMAKASE_BASE_PAYLOAD) is
+// merge-base plumbing, never install intent — it must not trigger the old
+// silent base-machinery install.
+func TestBareInitNothingRemembered(t *testing.T) {
+	dir, repo := initRepo(t)
+	clearBasePayloadOverride(t)
+	base := t.TempDir()
+	writeFile(t, filepath.Join(base, ".omakase", "bin", "omakase-banner.sh"), "base\n")
+	t.Setenv("OMAKASE_BASE_PAYLOAD", base)
+	t.Setenv("OMAKASE_PAYLOAD", "")
+
+	var stdout, stderr strings.Builder
+	code := RunInit(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(),
+		"omakase: nothing to refresh — no harness is installed in this repo. See the agent config present here:  omakase status\n")
+	eq(t, "stderr", stderr.String(), "")
+	if _, err := os.Stat(filepath.Join(dir, ".omakase")); !os.IsNotExist(err) {
+		t.Error("base machinery placed on a bare init with nothing remembered")
+	}
+	if fileRegular(filepath.Join(repo.OMK, "placed.tsv")) {
+		t.Error("placed.tsv written — install state created without an install")
+	}
+	if fileRegular(filepath.Join(repo.CommonDir, "hooks", "pre-commit")) {
+		t.Error("hook dispatcher written without an install")
+	}
+}
+
+// An OMAKASE_PAYLOAD install writes placed.tsv but remembers no source. A later
+// bare init (env unset) still installs nothing, but must not claim "no harness
+// is installed" — placed.tsv says otherwise and the gates are live.
+func TestBareInitInstalledNoRememberedSource(t *testing.T) {
+	dir, repo := initRepo(t)
+	clearBasePayloadOverride(t)
+	singleGatePayload(t)
+	if code := RunInit(nil, io.Discard, io.Discard); code != 0 {
+		t.Fatalf("setup install exit = %d, want 0", code)
+	}
+	if !fileRegular(filepath.Join(repo.OMK, "placed.tsv")) {
+		t.Fatal("setup install wrote no placed.tsv")
+	}
+	before := readFileT(t, filepath.Join(repo.OMK, "placed.tsv"))
+	t.Setenv("OMAKASE_PAYLOAD", "")
+
+	var stdout, stderr strings.Builder
+	code := RunInit(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(),
+		"omakase: nothing to refresh — a harness is installed here, but no source is remembered to refresh it from. See what's installed:  omakase status\n")
+	eq(t, "stderr", stderr.String(), "")
+	eq(t, "placed.tsv", readFileT(t, filepath.Join(repo.OMK, "placed.tsv")), before)
+	if !fileRegular(filepath.Join(dir, ".omakase", "gates", "example.sh")) {
+		t.Error("placed gate vanished on a no-op bare init")
+	}
 }
 
 // ---------------------------------------------------- source precedence

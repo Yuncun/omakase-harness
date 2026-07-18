@@ -91,7 +91,8 @@ printf 'app\n'       > "$REPO/src/app.js"
 # not installed yet — the audit view still works
 OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" 2>&1 )"
 echo "$OUT" | grep -qi 'No omakase harness' && pass "not-installed message kept" || fail "not-installed message gone ($OUT)"
-echo "$OUT" | grep -qiF "The project's harness" && pass "Committed group prints on an uninstalled repo" || fail "no Committed group when not installed"
+echo "$OUT" | grep -qiF "Agent config committed" && pass "Committed group prints on an uninstalled repo" || fail "no Committed group when not installed"
+echo "$OUT" | grep -q 'known paths for known tools' && pass "audit states its scan boundary (presence-only, not exhaustive)" || fail "scan-boundary line missing ($OUT)"
 echo "$OUT" | grep '\.claude/rules/team\.md' | grep -q 'rule' && pass "tracked harness file listed with kind rule" || fail "tracked rule missing or unkinded ($OUT)"
 echo "$OUT" | grep -q 'src/app.js' && fail "non-harness tracked file leaked into the inventory" || pass "non-harness tracked file excluded"
 echo "$OUT" | grep -qiF 'not installed by omakase' && pass "Global group prints on an uninstalled repo" || fail "no Global group when not installed"
@@ -100,7 +101,7 @@ echo "$OUT" | grep 'CLAUDE\.md' | grep -q 'doc' && pass "personal CLAUDE.md list
 [ "$(echo "$OUT" | grep -c 'skills/myskill')" -eq 1 ] && pass "personal skill dir is ONE row (not its files)" || fail "skill dir rows != 1"
 echo "$OUT" | grep 'skills/myskill' | grep -q 'skill' && pass "personal skill dir carries kind skill" || fail "skill dir unkinded"
 OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --markdown 2>&1 )"
-{ echo "$OUT" | grep -qi 'No omakase harness' && echo "$OUT" | grep -qiF "The project's harness"; } \
+{ echo "$OUT" | grep -qi 'No omakase harness' && echo "$OUT" | grep -qiF "Agent config committed"; } \
   && pass "markdown not-installed keeps the message and the Committed group" || fail "markdown not-installed inventory wrong ($OUT)"
 
 # installed — injected rows come from the provenance ledger with source + kind.

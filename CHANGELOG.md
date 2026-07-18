@@ -5,6 +5,32 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added
+- **`status` classifies "yours, unmanaged"** (#123): untracked agent config at
+  the known paths that is neither committed nor placed by omakase — files that
+  exist only in this clone — shown as its own group in both the installed page
+  and the no-overlay audit, with the natural offer to add them to a harness
+  (the author skill). Harness machinery and Claude Code's own
+  `.claude/worktrees/` area never surface there; past 20 rows the elision is
+  stated explicitly.
+
+### Changed
+- **`status` in a repo with no overlay is now a deliberate presence-only
+  audit** (#119, #123). It lists the agent config that exists — committed in
+  the repo plus the user's global config — states its boundary ("known paths
+  for known tools — not exhaustive; a file can be present and never read"),
+  drops the empty Injected section, and points the install line at
+  `omakase init <owner/repo>`. Presence only: it never claims to know what a
+  host actually reads.
+- **Bare `init` with nothing remembered now installs nothing** (#123). It prints
+  one line pointing at `omakase status` and exits 0; the wording keys on the
+  placed ledger, so a harness installed without a remembered source (an
+  `OMAKASE_PAYLOAD` install) is told it has no source to refresh from, never
+  that nothing is installed. Previously the plugin path silently installed the
+  base machinery and a cache-resident binary errored with an internal path
+  ("payload dir not found"). A remembered source still refreshes, and the
+  `OMAKASE_PAYLOAD` override still installs, exactly as before.
+
 ## [0.20.0] — 2026-07-16
 
 ### Changed

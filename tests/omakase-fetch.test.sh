@@ -330,14 +330,17 @@ echo "== Scenario O10: a cache-resident release binary drives init end-to-end (i
 #
 # Binary source, in order: go on PATH builds from source; else the pinned release
 # binary O8 fetched this run (OMAKASE_TEST_LIVE_FETCH=1) stands in, so a host
-# without Go still reaches the #70 path; else skip. Legs 7-9 are identical either
-# way — they need only a real omakase binary seeded into the cache.
+# without Go still reaches the #70 path; else skip. Legs 7-8 are identical either
+# way — they need only a real omakase binary seeded into the cache. Leg 9 asserts
+# HEAD (#123) bare-init semantics and runs only on the HEAD build.
 O10="$TMP/o10"; mkdir -p "$O10"
 O10BUILT=""
+O10HEADBUILD=""   # set when O10BUILT is compiled from this checkout
 if command -v go >/dev/null 2>&1; then
   # Build the real binary ONCE for the whole scenario — every leg shares it.
   if ( cd "$HERE/.." && go build -o "$O10/omakase-built" ./cmd/omakase ) 2>"$O10/build.err"; then
     O10BUILT="$O10/omakase-built"
+    O10HEADBUILD=1
   else
     fail "O10 could not build the omakase binary ($(cat "$O10/build.err"))"
   fi
@@ -401,14 +404,25 @@ if [ -n "$O10BUILT" ]; then
     [ "$rc" -eq 1 ] && pass "cached binary run WITHOUT OMAKASE_BASE_PAYLOAD exits 1 (the assertion bites)" || fail "negative control exited $rc, expected 1 ($(cat "$O10NCERR"))"
     grep -q 'base payload not found at' "$O10NCERR" && pass "negative control fails fast, naming the base payload path it tried" || fail "no 'base payload not found at' on stderr ($(cat "$O10NCERR"))"
 
-    # ---- leg 9: bare init — no --source — the shim-exported var feeds the plain default too ----
-    O10TGT2="$O10/target2"; scratch_repo "$O10TGT2"
-    O10OUT2="$O10/bare.out"; O10ERR2="$O10/bare.err"
-    ( cd "$O10TGT2" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" \
-      bash "$O10/plugin/bin/init.sh" >"$O10OUT2" 2>"$O10ERR2" )
-    rc=$?
-    [ "$rc" -eq 0 ] && pass "bare init (no --source, no remembered source) exits 0 via the cached binary" || fail "bare init exited $rc ($(cat "$O10ERR2"))"
-    [ -x "$O10TGT2/.omakase/bin/omakase-banner.sh" ] && pass "bare install placed the base payload (OMAKASE_BASE_PAYLOAD feeds the plain default too)" || fail "bare install missing base machinery"
+    # ---- leg 9: bare init with nothing remembered places NOTHING (#123 item 1) ----
+    # A fresh repo, no --source, no remembered source: there is no harness to
+    # refresh, so init prints the one-line pointer at status and exits 0 —
+    # never the old silent base-machinery install, even though the shim
+    # exported OMAKASE_BASE_PAYLOAD (merge-base plumbing, not install intent).
+    # HEAD-build only: the pinned release standing in on a no-Go host predates
+    # #123 (it still installs the base payload) until the next release re-pin.
+    if [ -n "$O10HEADBUILD" ]; then
+        O10TGT2="$O10/target2"; scratch_repo "$O10TGT2"
+        O10OUT2="$O10/bare.out"; O10ERR2="$O10/bare.err"
+        ( cd "$O10TGT2" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" \
+          bash "$O10/plugin/bin/init.sh" >"$O10OUT2" 2>"$O10ERR2" )
+        rc=$?
+        [ "$rc" -eq 0 ] && pass "bare init (no --source, no remembered source) exits 0 via the cached binary" || fail "bare init exited $rc ($(cat "$O10ERR2"))"
+        grep -q 'nothing to refresh' "$O10OUT2" && pass "bare init printed the one-line pointer at status" || fail "no 'nothing to refresh' in bare-init stdout ($(cat "$O10OUT2"))"
+        [ -e "$O10TGT2/.omakase" ] && fail "bare init placed base machinery despite nothing remembered" || pass "bare init placed nothing (no silent base-machinery install)"
+    else
+        echo "  SKIP: leg 9 asserts HEAD (#123) bare-init semantics — the stand-in pinned release predates them"
+    fi
 fi
 
 rm -rf "$TMP"

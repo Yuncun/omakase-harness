@@ -149,10 +149,11 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 
 	// ---- source precedence ----
 	// Payload precedence: --source flag > OMAKASE_PAYLOAD env > remembered
-	// source ($OMK/source) > defaultPayload. Suppression of a remembered
-	// source keys on OMAKASE_PAYLOAD only; OMAKASE_BASE_PAYLOAD is the merge
-	// base the shims hand over, not a suppression key, so a bare re-run
-	// never silently downgrades a remembered source to a plain install.
+	// source ($OMK/source); with all three absent, init places nothing (the
+	// early return below). Suppression of a remembered source keys on
+	// OMAKASE_PAYLOAD only; OMAKASE_BASE_PAYLOAD is the merge base the shims
+	// hand over, not a suppression key, so a bare re-run never silently
+	// downgrades a remembered source to a plain install.
 	if source == "" && os.Getenv("OMAKASE_PAYLOAD") == "" {
 		if first := state.FirstLine(filepath.Join(omk, "source")); first != "" {
 			source = first
@@ -173,8 +174,9 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// path.Clean normalizes the benign forms ("sub/", "a/./b") so the
 	// canonical remembered string stays stable. A subpath with no repo in
 	// front of the marker ("--source //sub") refuses too — the pathological
-	// bare "#ref" collapses to a plain install, but a parsed subpath is
-	// explicit intent and must never be dropped silently.
+	// bare "#ref" empties the source and falls into the nothing-to-refresh
+	// return below (or a plain install when OMAKASE_PAYLOAD is set), but a
+	// parsed subpath is explicit intent and must never be dropped silently.
 	if sourceSub != "" {
 		if source == "" {
 			fmt.Fprintf(stderr, "omakase: source '//%s' is missing the repo part before the '//' subpath marker\n", sourceSub)
@@ -186,6 +188,25 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		sourceSub = clean
+	}
+
+	// ---- nothing to refresh (the newcomer first-run) ----
+	// No source (given or remembered) and no OMAKASE_PAYLOAD override means
+	// there is nothing to install from: place nothing and point at status.
+	// Silently installing the base machinery here — or erroring with the
+	// binary-relative cache path — was wrong first-run behavior (#123).
+	// OMAKASE_BASE_PAYLOAD does not count as intent: it is the merge base
+	// the shims always export, never a request to install. The wording keys
+	// on placed.tsv, the same signal status routes on: an OMAKASE_PAYLOAD
+	// install writes placed.tsv but remembers no source, and that repo must
+	// never be told "no harness is installed" while its gates are live.
+	if source == "" && os.Getenv("OMAKASE_PAYLOAD") == "" {
+		if fileRegular(filepath.Join(omk, "placed.tsv")) {
+			fmt.Fprintln(stdout, "omakase: nothing to refresh — a harness is installed here, but no source is remembered to refresh it from. See what's installed:  omakase status")
+		} else {
+			fmt.Fprintln(stdout, "omakase: nothing to refresh — no harness is installed in this repo. See the agent config present here:  omakase status")
+		}
+		return 0
 	}
 
 	// ---- payload resolution: --source merge, or the plain default ----
@@ -209,12 +230,9 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		rememberedSource = res.remembered
 		recommends = res.recommends
 	} else {
-		// OMAKASE_PAYLOAD overrides; otherwise defaultPayload
-		// (OMAKASE_BASE_PAYLOAD, else the binary-relative ../payload).
+		// A plain install always has OMAKASE_PAYLOAD set: the empty-source,
+		// empty-env case took the nothing-to-refresh return above.
 		payload = os.Getenv("OMAKASE_PAYLOAD")
-		if payload == "" {
-			payload = defaultPayload()
-		}
 	}
 	// Strip one trailing slash so rel derivation stays clean; a pathological
 	// OMAKASE_PAYLOAD=/ collapses to "" and is rejected below.
