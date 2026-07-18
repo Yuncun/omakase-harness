@@ -176,13 +176,13 @@ COMMON="$(common_of "$REPO")"
 mkdir -p "$COMMON/info"
 printf 'scratch/\n*.tmp\n' > "$COMMON/info/exclude"   # two pre-existing user lines
 cp "$COMMON/info/exclude" "$TMP/G1.before"
-( cd "$REPO" && bash "$INIT" ) >/dev/null 2>&1 || fail "G1: plain init exited non-zero"
+( cd "$REPO" && OMAKASE_PAYLOAD="$HERE/../payload" bash "$INIT" ) >/dev/null 2>&1 || fail "G1: plain init exited non-zero"
 check_exclude_golden "$REPO" "$TMP/G1.before" "G1"
 
 # ---------- G2: re-init — still exactly one block, byte-identical file ----------
 echo "== G2: re-init leaves exactly one block, byte-identical exclude file =="
 cp "$COMMON/info/exclude" "$TMP/G2.after-first-init"
-( cd "$REPO" && bash "$INIT" ) >/dev/null 2>&1 || fail "G2: re-init exited non-zero"
+( cd "$REPO" && OMAKASE_PAYLOAD="$HERE/../payload" bash "$INIT" ) >/dev/null 2>&1 || fail "G2: re-init exited non-zero"
 check_exclude_golden "$REPO" "$TMP/G1.before" "G2"
 if cmp -s "$TMP/G2.after-first-init" "$COMMON/info/exclude"; then
   pass "G2: exclude file after re-init is byte-identical to after the first init"

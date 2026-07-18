@@ -401,14 +401,19 @@ if [ -n "$O10BUILT" ]; then
     [ "$rc" -eq 1 ] && pass "cached binary run WITHOUT OMAKASE_BASE_PAYLOAD exits 1 (the assertion bites)" || fail "negative control exited $rc, expected 1 ($(cat "$O10NCERR"))"
     grep -q 'base payload not found at' "$O10NCERR" && pass "negative control fails fast, naming the base payload path it tried" || fail "no 'base payload not found at' on stderr ($(cat "$O10NCERR"))"
 
-    # ---- leg 9: bare init — no --source — the shim-exported var feeds the plain default too ----
+    # ---- leg 9: bare init with nothing remembered places NOTHING (#123 item 1) ----
+    # A fresh repo, no --source, no remembered source: there is no harness to
+    # refresh, so init prints the one-line pointer at status and exits 0 —
+    # never the old silent base-machinery install, even though the shim
+    # exported OMAKASE_BASE_PAYLOAD (merge-base plumbing, not install intent).
     O10TGT2="$O10/target2"; scratch_repo "$O10TGT2"
     O10OUT2="$O10/bare.out"; O10ERR2="$O10/bare.err"
     ( cd "$O10TGT2" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" \
       bash "$O10/plugin/bin/init.sh" >"$O10OUT2" 2>"$O10ERR2" )
     rc=$?
     [ "$rc" -eq 0 ] && pass "bare init (no --source, no remembered source) exits 0 via the cached binary" || fail "bare init exited $rc ($(cat "$O10ERR2"))"
-    [ -x "$O10TGT2/.omakase/bin/omakase-banner.sh" ] && pass "bare install placed the base payload (OMAKASE_BASE_PAYLOAD feeds the plain default too)" || fail "bare install missing base machinery"
+    grep -q 'nothing to refresh' "$O10OUT2" && pass "bare init printed the one-line pointer at status" || fail "no 'nothing to refresh' in bare-init stdout ($(cat "$O10OUT2"))"
+    [ -e "$O10TGT2/.omakase" ] && fail "bare init placed base machinery despite nothing remembered" || pass "bare init placed nothing (no silent base-machinery install)"
 fi
 
 rm -rf "$TMP"

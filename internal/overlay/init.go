@@ -188,6 +188,18 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		sourceSub = clean
 	}
 
+	// ---- nothing to refresh (the newcomer first-run) ----
+	// No source (given or remembered) and no OMAKASE_PAYLOAD override means
+	// there is no harness to refresh: place nothing and point at status.
+	// Silently installing the base machinery here — or erroring with the
+	// binary-relative cache path — was wrong first-run behavior (#123).
+	// OMAKASE_BASE_PAYLOAD does not count as intent: it is the merge base
+	// the shims always export, never a request to install.
+	if source == "" && os.Getenv("OMAKASE_PAYLOAD") == "" {
+		fmt.Fprintln(stdout, "omakase: nothing to refresh — no harness is installed in this repo. See what's steering agents here:  omakase status")
+		return 0
+	}
+
 	// ---- payload resolution: --source merge, or the plain default ----
 	// A non-empty (post-expansion) source fetches into the disposable cache
 	// and merges the base payload under the source delta; otherwise the

@@ -51,7 +51,7 @@ fi
 newrepo(){
   rm -rf "$1"; mkdir -p "$1"
   ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init )
-  ( cd "$1" && bash "$INIT" ) >/dev/null 2>&1 || fail "setup: init failed in $1"
+  ( cd "$1" && OMAKASE_PAYLOAD="$HERE/../payload" bash "$INIT" ) >/dev/null 2>&1 || fail "setup: init failed in $1"
 }
 
 # A fixture HOME whose stable path carries the real omakase binary. $1 = home dir.

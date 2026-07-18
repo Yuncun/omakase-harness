@@ -5,6 +5,14 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Changed
+- **Bare `init` with nothing remembered now installs nothing** (#123). It prints
+  one line pointing at `omakase status` and exits 0. Previously the plugin path
+  silently installed the base machinery and a cache-resident binary errored with
+  an internal path ("payload dir not found"). A remembered source still
+  refreshes, and the `OMAKASE_PAYLOAD` override still installs, exactly as
+  before.
+
 ## [0.20.0] — 2026-07-16
 
 ### Changed

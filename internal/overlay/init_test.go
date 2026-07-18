@@ -999,6 +999,39 @@ func TestPayloadNotFound(t *testing.T) {
 	eq(t, "stderr", stderr.String(), "omakase: payload dir not found at "+missing+"\n")
 }
 
+// Bare init with nothing remembered places NOTHING: no remembered source and
+// no OMAKASE_PAYLOAD override means there is no harness to refresh, so init
+// prints one line pointing at status and exits 0 (#123 item 1). A base
+// payload being available (the shims always export OMAKASE_BASE_PAYLOAD) is
+// merge-base plumbing, never install intent — it must not trigger the old
+// silent base-machinery install.
+func TestBareInitNothingRemembered(t *testing.T) {
+	dir, repo := initRepo(t)
+	clearBasePayloadOverride(t)
+	base := t.TempDir()
+	writeFile(t, filepath.Join(base, ".omakase", "bin", "omakase-banner.sh"), "base\n")
+	t.Setenv("OMAKASE_BASE_PAYLOAD", base)
+	t.Setenv("OMAKASE_PAYLOAD", "")
+
+	var stdout, stderr strings.Builder
+	code := RunInit(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "stdout", stdout.String(),
+		"omakase: nothing to refresh — no harness is installed in this repo. See what's steering agents here:  omakase status\n")
+	eq(t, "stderr", stderr.String(), "")
+	if _, err := os.Stat(filepath.Join(dir, ".omakase")); !os.IsNotExist(err) {
+		t.Error("base machinery placed on a bare init with nothing remembered")
+	}
+	if fileRegular(filepath.Join(repo.OMK, "placed.tsv")) {
+		t.Error("placed.tsv written — install state created without an install")
+	}
+	if fileRegular(filepath.Join(repo.CommonDir, "hooks", "pre-commit")) {
+		t.Error("hook dispatcher written without an install")
+	}
+}
+
 // ---------------------------------------------------- source precedence
 // The full --source flow (cache, manifest, ref pin, base+delta merge, source
 // memory) is covered in source_test.go. These two pin the precedence edges the

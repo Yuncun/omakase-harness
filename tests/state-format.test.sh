@@ -60,7 +60,7 @@ check_placed_format(){
 # ---------- S1: plain init (plugin-style payload from the repo checkout) ----------
 echo "== S1: plain init writes a well-formed placed.tsv =="
 REPO="$TMP/repoS1"; newrepo "$REPO"
-( cd "$REPO" && bash "$INIT" ) >/dev/null 2>&1 || fail "S1: plain init exited non-zero"
+( cd "$REPO" && OMAKASE_PAYLOAD="$HERE/../payload" bash "$INIT" ) >/dev/null 2>&1 || fail "S1: plain init exited non-zero"
 check_placed_format "$(common_of "$REPO")/omakase/placed.tsv" "S1"
 
 # ---------- S2: --source install with a payload symlink ----------
@@ -85,8 +85,8 @@ want="$(sha_str AGENTS.md)"
 # ---------- S3: re-init — format holds, no duplicate path rows ----------
 echo "== S3: re-init keeps the format and never duplicates a path row =="
 REPO="$TMP/repoS3"; newrepo "$REPO"
-( cd "$REPO" && bash "$INIT" ) >/dev/null 2>&1
-( cd "$REPO" && bash "$INIT" ) >/dev/null 2>&1 || fail "S3: re-init exited non-zero"
+( cd "$REPO" && OMAKASE_PAYLOAD="$HERE/../payload" bash "$INIT" ) >/dev/null 2>&1
+( cd "$REPO" && OMAKASE_PAYLOAD="$HERE/../payload" bash "$INIT" ) >/dev/null 2>&1 || fail "S3: re-init exited non-zero"
 PLACED="$(common_of "$REPO")/omakase/placed.tsv"
 check_placed_format "$PLACED" "S3"
 dups="$(cut -f1 "$PLACED" 2>/dev/null | sort | uniq -d)"
@@ -95,7 +95,7 @@ dups="$(cut -f1 "$PLACED" 2>/dev/null | sort | uniq -d)"
 # ---------- S4: gate runs write 4-column ledger.tsv rows ----------
 echo "== S4: gate runs write 4-column ledger rows (epoch name verdict sha) =="
 REPO="$TMP/repoS4"; newrepo "$REPO"
-( cd "$REPO" && bash "$INIT" ) >/dev/null 2>&1
+( cd "$REPO" && OMAKASE_PAYLOAD="$HERE/../payload" bash "$INIT" ) >/dev/null 2>&1
 [ -f "$REPO/omakase.manifest" ] || fail "S4: init did not place omakase.manifest"
 # A real commit fires the wired pre-commit gate, which appends a ledger row. The
 # commit hook execs the binary init self-installed into $XDG_CACHE_HOME (set above).

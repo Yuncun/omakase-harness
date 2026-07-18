@@ -49,7 +49,7 @@ mkdir -p "$TMP"
 
 # ---------- shared plain-init fixture for V (fail-closed) + H (heal) ----------
 REPO="$TMP/repoHV"; newrepo "$REPO"
-( cd "$REPO" && bash "$INIT" ) >/dev/null 2>&1 || fail "setup: plain init exited non-zero"
+( cd "$REPO" && OMAKASE_PAYLOAD="$HERE/../payload" bash "$INIT" ) >/dev/null 2>&1 || fail "setup: plain init exited non-zero"
 OMK="$(common_of "$REPO")/omakase"
 PLACED="$OMK/placed.tsv"
 # One *.sh row to heal (it also pins the exec-bit contract) and a DIFFERENT row to

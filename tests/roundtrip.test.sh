@@ -111,7 +111,7 @@ check_restored(){ # $1 = repo root, $2 = capture prefix, $3 = label
 echo "== R1: plain init -> remove — byte-identical restoration =="
 REPO1="$TMP/repoR1"; newrepo "$REPO1"
 seed_and_capture "$REPO1" "$TMP/R1"
-( cd "$REPO1" && bash "$INIT" ) >/dev/null 2>&1 || fail "R1: plain init exited non-zero"
+( cd "$REPO1" && OMAKASE_PAYLOAD="$HERE/../payload" bash "$INIT" ) >/dev/null 2>&1 || fail "R1: plain init exited non-zero"
 [ -s "$(common_of "$REPO1")/omakase/placed.tsv" ] \
   && pass "R1: init installed an overlay (placed.tsv non-empty) — the round trip is meaningful" \
   || fail "R1: init placed nothing (placed.tsv missing/empty) — restoration would be vacuous"
