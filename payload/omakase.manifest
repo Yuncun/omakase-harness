@@ -1,5 +1,5 @@
 name: omakase-base
-version: 0.20.0
+version: 0.21.0
 
 # The harness declares its gates here. omakase runs each gate at the named git
 # hook: it reports the run in the scorecard (omakase status), passes the check's
