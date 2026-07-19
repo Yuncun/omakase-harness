@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-07-18
+
 ### Added
 - **`status` classifies "yours, unmanaged"** (#123): untracked agent config at
   the known paths that is neither committed nor placed by omakase — files that
