@@ -12,7 +12,7 @@ func notice(t *testing.T, repo, session string) string {
 	t.Helper()
 	var out bytes.Buffer
 	stdin := strings.NewReader(`{"cwd":` + jsonStr(repo) + `,"session_id":` + jsonStr(session) + `}`)
-	if code := runStopNotice(stdin, &out); code != 0 {
+	if code := runStopNotice(stdin, &out, false); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	return out.String()

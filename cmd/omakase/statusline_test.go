@@ -122,3 +122,20 @@ func jsonStr(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+
+// Copilot CLI's stdin shape: snake_case JSON with a top-level cwd plus keys
+// we ignore (context_window, model, cost). The existing top-level-cwd
+// fallback carries it (#85 Copilot arm) — this vector pins the real payload
+// shape so a parser change can't silently drop the host.
+func TestStatuslineVerbCopilotStdinShape(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	repo := harnessRepo(t)
+	stdin := strings.NewReader(`{"cwd":` + jsonStr(repo) + `,"context_window":{"used":1000,"max":200000},"model":{"display_name":"gpt"},"cost":{"total_usd":0.01}}`)
+	var out bytes.Buffer
+	if code := runStatusline(stdin, &out); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(out.String(), filepath.Base(repo)) {
+		t.Fatalf("segment = %q", out.String())
+	}
+}

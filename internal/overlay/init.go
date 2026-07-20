@@ -866,12 +866,12 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	if stable == "" {
 		stable = "omakase" // no resolvable home: fall back to PATH wiring
 	}
-	fmt.Fprintln(stdout, "omakase: status bar (optional) — one machine-wide segment for every omakase repo; it")
-	fmt.Fprintln(stdout, "         shows this harness's verified state and goes dark elsewhere. Wire your status")
-	fmt.Fprintln(stdout, "         line to run:")
-	fmt.Fprintf(stdout, "           %s statusline\n", stable)
-	fmt.Fprintln(stdout, "         Claude Code: statusLine.command in ~/.claude/settings.json. ccstatusline: a")
-	fmt.Fprintln(stdout, "         custom-command widget. Copilot CLI: statusLine in ~/.copilot/settings.json.")
+	// One line, only while a host is missing a status bar — the --wire verb
+	// carries the details (per-host, backup, never replaces an existing bar).
+	if !statuslineWired() {
+		fmt.Fprintln(stdout, "omakase: status bar (optional) — one machine-wide segment for every omakase repo,")
+		fmt.Fprintf(stdout, "         dark elsewhere. Wire it:  %s statusline --wire\n", stable)
+	}
 	fmt.Fprintln(stdout, "omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line harness status when")
 	fmt.Fprintln(stdout, "         a turn ends. Enable by adding a Stop hook to .claude/settings.json:")
 	fmt.Fprintf(stdout, "           %s stop-notice\n", stable)
@@ -892,6 +892,28 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, render.InitVerdict(verdict))
 	return 0
+}
+
+// statuslineWired reports whether every host config dir that exists already
+// carries a statusLine in its settings.json — when one is missing a bar,
+// init prints the --wire pointer. A missing HOME counts as wired (nothing
+// to point at).
+func statuslineWired() bool {
+	home := os.Getenv("HOME")
+	if home == "" {
+		return true
+	}
+	for _, host := range []string{".claude", ".copilot"} {
+		dir := filepath.Join(home, host)
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			continue // host not on this machine
+		}
+		b, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+		if err != nil || !strings.Contains(string(b), `"statusLine"`) {
+			return false
+		}
+	}
+	return true
 }
 
 // placeFile places one payload file at root/rel: creates the dest parent,

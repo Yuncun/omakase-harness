@@ -40,12 +40,13 @@ var schemeRe = regexp.MustCompile(`^[a-z][a-z]*://`)
 // Statusline renders the one-line status-bar segment, or "" (a dark
 // segment) when st is nil or the harness is not installed here.
 //
-// Shape: `<icon> <project> ⎇<branch> · <harness>` followed by the state —
-// ✓ on a green pill when all three proofs pass, one problem fact and its
-// fix on an amber pill, or a dim "unverified" when a proof could not run.
-// ⎇ always carries the branch (its conventional meaning): a worktree's
-// FOLDER name is frozen at creation and goes stale as branches change
-// inside it.
+// Shape: `<icon> <project>[:<worktree>] ⎇<branch> · <harness>` followed by
+// the state — ✓ on a green pill (with a live `· <gate> 12s…` suffix while a
+// gate runs), one problem fact and its fix on an amber pill, or a dim
+// "unverified" when a proof could not run. ⎇ always carries the branch (its
+// conventional meaning): a worktree's FOLDER name is frozen at creation and
+// goes stale as branches change inside it — which is exactly why it appears
+// in the location slot, not the branch slot.
 //
 // The amber state is one fact + one fix, never counts or a fact list —
 // counts and per-file detail belong to `omakase status` (#85 field audit:
@@ -69,12 +70,26 @@ func Statusline(st *probe.State, o Opts) string {
 		icon = "🥡"
 	}
 
+	// The location slot is repo[:worktree] — the worktree name marks it
+	// unmistakably as "where this bar is looking", since the segment tracks
+	// the session's live cwd by design (#85).
 	identity := icon + " " + st.Project
+	if st.Worktree != "" {
+		identity += ":" + st.Worktree
+	}
 	if st.Branch != "" {
 		identity += " ⎇" + st.Branch
 	}
 	if h := HarnessSlot(st); h != "" {
 		identity += " · " + h
+	}
+
+	// The live heartbeat: shown only on the healthy pill — while a gate
+	// runs, the last proven state is still the truth of the bar, and a
+	// problem fact outranks progress detail.
+	running := ""
+	if st.Running != nil {
+		running = fmt.Sprintf(" · %s %ds…", st.Running.Name, st.Running.Seconds)
 	}
 
 	problem := problemFact(st)
@@ -86,7 +101,7 @@ func Statusline(st *probe.State, o Opts) string {
 	case unknown:
 		return pill(identity+" · unverified ", dimOn, o.Color)
 	default:
-		return pill(identity+" ✓ ", greenOn, o.Color)
+		return pill(identity+" ✓"+running+" ", greenOn, o.Color)
 	}
 }
 

@@ -39,8 +39,9 @@ worktrees are active — the pre-edit half of worktree discipline; a commit-time
 gate is the fail-closed half). Wire them only if you want them — skip them and your
 harness still works. Do not build wiring that depends on their names being stable.
 The status-bar segment and the Stop-hook notice are **binary subcommands**, not placed
-scripts: `omakase statusline` and `omakase stop-notice` (init prints the wiring). They
-probe the shared ledger and hooks, so a custom harness gets them for free.
+scripts: `omakase statusline` and `omakase stop-notice` (`omakase statusline --wire`
+connects the bar; see [Reference](reference.md)). They probe the shared ledger and
+hooks, so a custom harness gets them for free.
 
 A gate whose `run:` names a payload script (`.omakase/…` or `gates/…`) is validated at
 install: `init` refuses any harness that references a script it does not ship, so a drift

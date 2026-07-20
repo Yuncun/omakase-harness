@@ -6,6 +6,22 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 ## [Unreleased]
 
 ### Added
+- **Live status bar** (#85): the statusline segment now shows the location as
+  `repo:worktree` in linked worktrees and appends `· <gate> 12s…` while a gate
+  runs — a heartbeat file the gate runner writes, shown only while the gate's
+  process is alive, so a killed gate can never stick. New `omakase statusline
+  --wire` writes the statusLine block into `~/.claude/settings.json` and (with
+  the STATUS_LINE feature flag) `~/.copilot/settings.json` — per host, only
+  where the host's config dir exists, with a backup, and never replacing an
+  existing bar. `init` now points at `--wire` in one line only while a host is
+  missing a bar (replacing the six-line manual-wiring stanza).
+- **Copilot CLI end-of-turn notice** (#85): the base payload places
+  `.github/hooks/omakase.json` — an `agentStop` hook running the new
+  `omakase stop-notice --plain` (bare text; the default output stays Claude
+  Code's Stop-hook JSON envelope). Documented caveats: the bar reads cached
+  facts (a wiped cache = dark segment until the next init; `omakase status`
+  is the truth surface), and Copilot refreshes its bar per response, so the
+  live gate counter is coarser there.
 - **Gate blocks take an optional `purpose:` key** (#131): what the gate enforces, in
   the author's words (≤6 words, concrete). The status guards table renders it as the
   ENFORCES column; when any gate declares one, the scheduling mechanics move to their
