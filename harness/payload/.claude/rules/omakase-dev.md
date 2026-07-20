@@ -1,8 +1,8 @@
-# omakase development conventions (placed by the starter harness)
+# omakase development conventions (placed by omakase-harness-harness)
 
 This file is a gitignored overlay — placed by `omakase init`, never committed, deleted by
 `omakase remove`. Durable edits go in the harness source at
-`examples/starter-harness/payload/`, followed by a re-init; an edit made here in place is
+`harness/payload/`, followed by a re-init; an edit made here in place is
 overwritten on the next init.
 
 - Write conventional commit messages: `feat(scope): …`, `fix: …`, `docs: …`, `chore: …`.

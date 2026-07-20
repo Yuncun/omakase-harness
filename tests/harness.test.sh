@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Proof that the shipped examples/starter-harness installs and works end-to-end.
+# Proof that the shipped harness installs and works end-to-end.
 # The example is the CONTENTS of a harness source, so the test does what an adopter does:
 # copy it into a git repo, then `init --source` that repo. It checks:
 #   - the overlay is placed and gitignored (both rules files, the gates, the manifest)
@@ -16,7 +16,7 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
 REMOVE="$HERE/../bin/remove.sh"
-STARTER="$(cd "$HERE/../examples/starter-harness" && pwd)"
+STARTER="$(cd "$HERE/../harness" && pwd)"
 TMP="${TMPDIR:-/tmp}/omakase-starter-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
@@ -36,7 +36,7 @@ fi
 
 newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init && git branch -M main ); }
 
-echo "== starter-harness: copy into a repo, install via --source, gates fire =="
+echo "== harness: copy into a repo, install via --source, gates fire =="
 
 # 1) The example is the contents of a harness source — put it in a git repo (what an adopter does).
 SRC="$TMP/starter-harness"
@@ -48,7 +48,7 @@ SRC="$(cd "$SRC" && pwd)"
 # 2) Install into a fresh project.
 REPO="$TMP/repo"; newrepo "$REPO"
 ( cd "$REPO" && bash "$INIT" --source "$SRC" ) >/dev/null 2>&1 \
-  && pass "init --source <starter> exits 0" || fail "init --source <starter> failed"
+  && pass "init --source <harness> exits 0" || fail "init --source <harness> failed"
 
 # 3) Overlay placed and gitignored.
 [ -f "$REPO/.claude/rules/omakase-dev.md" ] && pass "Claude rules placed" || fail "Claude rules missing"
@@ -61,7 +61,7 @@ grep -q 'omakase-harness' "$REPO/.git/info/exclude" 2>/dev/null && pass "exclude
 ( cd "$REPO" && git ls-files --error-unmatch .claude/rules/omakase-dev.md ) >/dev/null 2>&1 \
   && fail "rules file is tracked (must be gitignored)" || pass "rules file not tracked"
 
-# 4) Base layering: machinery the starter does NOT ship is present from the base layer.
+# 4) Base layering: machinery the harness does NOT ship is present from the base layer.
 [ -f "$REPO/.omakase/bin/omakase-banner.sh" ] && pass "base machinery layered in (omakase-banner.sh)" || fail "base machinery missing"
 
 # 5) A clean non-Go commit passes (block-marker ran; go-checks self-skips with no staged .go).
@@ -147,4 +147,4 @@ fi
 grep -q 'omakase-harness' "$REPO/.git/info/exclude" 2>/dev/null && fail "exclude block survived remove" || pass "exclude block stripped"
 
 rm -rf "$TMP"
-[ "$FAILED" -eq 0 ] && echo "starter-harness.test.sh: ALL PASS" || { echo "starter-harness.test.sh: FAILURES"; exit 1; }
+[ "$FAILED" -eq 0 ] && echo "harness.test.sh: ALL PASS" || { echo "harness.test.sh: FAILURES"; exit 1; }
