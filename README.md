@@ -22,7 +22,7 @@ manifest; its skill names are not `omakase:`-prefixed):
 
     /plugin marketplace add yuncun/omakase-harness
     /plugin install omakase@omakase
-    /omakase:init
+    /omakase:init <owner/repo>    # adopt a harness — e.g. Yuncun/omakase-harness/harness
 
 Any other environment, or a plain shell:
 

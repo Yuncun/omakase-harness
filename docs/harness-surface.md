@@ -1,7 +1,9 @@
 # Harness surface — what omakase recognizes
 
 The paths omakase treats as agent-harness, and the `kind` it records for each. This is the
-human view of [`bin/lib-harness-paths.sh`](../bin/lib-harness-paths.sh) (the source of truth).
+human view of [`bin/lib-harness-paths.sh`](../bin/lib-harness-paths.sh) (the source of
+truth, mirrored verbatim in Go at [`internal/harness/paths.go`](../internal/harness/paths.go)
+for the binary's `status`).
 Anything not listed falls to `other` and is left to the project — that boundary is deliberate
 (omakase must never mistake `.github/workflows`, dependabot config, etc. for harness).
 
@@ -42,5 +44,6 @@ every `HARNESS_LOC_DIRS` entry classifies to a real kind, so a new capture-dir w
 ## Adding another agent (Cursor, Gemini, …)
 
 Add its rows to the table in `lib-harness-paths.sh` (`kind_of` case + `HARNESS_LOC_*` +
-`HARNESS_COMMITTED_GLOBS`) and an assertion here. Nothing else in the base harness branches on host —
+`HARNESS_COMMITTED_GLOBS`), mirror them in `internal/harness/paths.go` and its test
+vectors (`paths_test.go`, `tests/harness-paths.test.sh`), and add an assertion here. Nothing else in the base harness branches on host —
 omakase injects whatever a payload contains; this table is the only host-aware part.
