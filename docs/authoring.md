@@ -27,7 +27,7 @@ exactly that, end to end; this document is the conceptual reference behind it.
 ## Public surface (the stability contract)
 
 The stable surface a custom harness authors against is the **`omakase.manifest` schema** —
-the `gate:` block and its keys (`hook:`, `run:`, `glob:`, `cacheable:`; see
+the `gate:` block and its keys (`hook:`, `run:`, `glob:`, `cacheable:`, `purpose:`; see
 [Reference](reference.md#manifest)). Those key names and their meanings will not be renamed
 or repurposed out from under your manifest; anything else is an internal refactor you never
 see.
@@ -63,6 +63,8 @@ A block opens with `gate: <name>` and carries these keys:
   Use for expensive steps or for a check that runs out of band: a blocking `run:` refuses
   the push until the check records its own pass via `omakase record <name>`.
 - `glob:` — space-separated path globs; skip the gate when no changed file matches.
+- `purpose:` — what the gate enforces, in your words (≤6 words, concrete — "tests green
+  before push"). Shown as the ENFORCES column of the status guards table.
 
 ## Wrapping a third-party check
 

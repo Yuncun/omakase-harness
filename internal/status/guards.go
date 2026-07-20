@@ -82,18 +82,37 @@ func awkNumeric(s string) int64 {
 	return n
 }
 
-type guardRow struct{ hook, guard, enf, verdict string }
+type guardRow struct{ hook, guard, enf, runs, verdict string }
 
 // renderGuardsChart builds one row per declared gate (in manifest order),
 // joins each to its latest ledger verdict, then emits a markdown table (md) or
 // a width-aligned terminal table. now is the age reference.
+//
+// The ENFORCES column answers "what does this gate do to me": the gate's
+// purpose: line when declared, else the scheduling mechanics (today's text).
+// When any gate declares a purpose, the mechanics move to their own RUNS
+// column so the two facts never share a cell; with no purposes anywhere the
+// RUNS column is omitted and the table is unchanged from before the key
+// existed (#131 gripe 1).
 func renderGuardsChart(w io.Writer, gates []gate.Gate, verds map[string]state.Verdict, now int64, md bool) {
+	anyPurpose := false
+	for _, g := range gates {
+		if g.Purpose != "" {
+			anyPurpose = true
+			break
+		}
+	}
+
 	// Term widths start at the header label lengths.
-	wH, wG, wE := utf8.RuneCountInString("RUN WHEN"), utf8.RuneCountInString("GUARD"), utf8.RuneCountInString("ENFORCES")
+	wH, wG, wE, wR := utf8.RuneCountInString("RUN WHEN"), utf8.RuneCountInString("GUARD"), utf8.RuneCountInString("ENFORCES"), utf8.RuneCountInString("RUNS")
 
 	var rows []guardRow
 	for _, g := range gates {
 		enf := enforces(g)
+		if g.Purpose != "" {
+			enf = g.Purpose
+		}
+		runs := runsCell(g)
 
 		var vc string
 		if v, ok := verds[g.Name]; ok { // has a ledger row
@@ -106,7 +125,7 @@ func renderGuardsChart(w io.Writer, gates []gate.Gate, verds map[string]state.Ve
 			vc = "- not yet run"
 		}
 
-		rows = append(rows, guardRow{g.Hook, g.Name, enf, vc})
+		rows = append(rows, guardRow{g.Hook, g.Name, enf, runs, vc})
 		if l := utf8.RuneCountInString(g.Hook); l > wH {
 			wH = l
 		}
@@ -116,9 +135,20 @@ func renderGuardsChart(w io.Writer, gates []gate.Gate, verds map[string]state.Ve
 		if l := utf8.RuneCountInString(enf); l > wE {
 			wE = l
 		}
+		if l := utf8.RuneCountInString(runs); l > wR {
+			wR = l
+		}
 	}
 
 	if md {
+		if anyPurpose {
+			fmt.Fprintln(w, "| Run when | Guard | Enforces | Runs | Last verdict |")
+			fmt.Fprintln(w, "| --- | --- | --- | --- | --- |")
+			for _, r := range rows { // escape only Guard + Enforces + Runs
+				fmt.Fprintf(w, "| `%s` | %s | %s | %s | %s |\n", r.hook, mdcell(r.guard), mdcell(r.enf), mdcell(r.runs), r.verdict)
+			}
+			return
+		}
 		fmt.Fprintln(w, "| Run when | Guard | Enforces | Last verdict |")
 		fmt.Fprintln(w, "| --- | --- | --- | --- |")
 		for _, r := range rows { // escape only Guard + Enforces
@@ -127,10 +157,31 @@ func renderGuardsChart(w io.Writer, gates []gate.Gate, verds map[string]state.Ve
 		return
 	}
 	// Header + rows, verdict last and unpadded.
+	if anyPurpose {
+		fmt.Fprintf(w, "  %-*s   %-*s   %-*s   %-*s   %s\n", wH, "RUN WHEN", wG, "GUARD", wE, "ENFORCES", wR, "RUNS", "LAST VERDICT")
+		for _, r := range rows {
+			fmt.Fprintf(w, "  %-*s   %-*s   %-*s   %-*s   %s\n", wH, r.hook, wG, r.guard, wE, r.enf, wR, r.runs, r.verdict)
+		}
+		return
+	}
 	fmt.Fprintf(w, "  %-*s   %-*s   %-*s   %s\n", wH, "RUN WHEN", wG, "GUARD", wE, "ENFORCES", "LAST VERDICT")
 	for _, r := range rows {
 		fmt.Fprintf(w, "  %-*s   %-*s   %-*s   %s\n", wH, r.hook, wG, r.guard, wE, r.enf, r.verdict)
 	}
+}
+
+// runsCell is the compact scheduling-mechanics cell for the RUNS column:
+// the scope ("every fire", or the glob patterns), prefixed "cached · " when
+// a recorded PASS is reused for the same commit.
+func runsCell(g gate.Gate) string {
+	scope := "every fire"
+	if len(g.Glob) > 0 {
+		scope = strings.Join(g.Glob, " ")
+	}
+	if g.Cacheable {
+		return "cached · " + scope
+	}
+	return scope
 }
 
 // enforces describes a gate's scope from its declaration: a glob narrows it to

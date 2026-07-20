@@ -114,6 +114,11 @@ func TestParse(t *testing.T) {
 		{name: "bad gate name", manifest: "gate: bad name!\n  hook: pre-commit\n  run: x\n", wantErr: "not [A-Za-z0-9._-]+"},
 		{name: "bad cacheable value", manifest: "gate: g\n  hook: pre-commit\n  run: x\n  cacheable: yes\n", wantErr: "cacheable must be true or false"},
 		{name: "header only, no gates", manifest: "name: x\nversion: 1\n", want: nil},
+		{
+			name:     "purpose key",
+			manifest: "gate: go-test\n  hook: pre-push\n  run: go test ./...\n  purpose: tests green before push\n",
+			want:     []Gate{{Name: "go-test", Hook: "pre-push", Run: "go test ./...", Purpose: "tests green before push"}},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -690,5 +695,33 @@ func TestLedgerConcurrentAppendsDoNotTear(t *testing.T) {
 		if len(r) != 4 {
 			t.Fatalf("a concurrent append tore a row (not 4 fields): %v", r)
 		}
+	}
+}
+
+// --- LoadName -------------------------------------------------------------
+
+func TestLoadName(t *testing.T) {
+	cases := []struct {
+		name, manifest, want string
+	}{
+		{"declared", "name: omakase-harness-harness\nversion: 0.3.0\n\ngate: g\n  hook: pre-commit\n  run: true\n", "omakase-harness-harness"},
+		{"no name header", "version: 1\n\ngate: g\n  hook: pre-commit\n  run: true\n", ""},
+		{"comment and blank lines first", "# a comment\n\nname: h\n", "h"},
+		{"name only after gate blocks is not the header", "gate: g\n  hook: pre-commit\n  run: true\nname: late\n", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			omk := t.TempDir()
+			writeSnapshotManifest(t, omk, tc.manifest)
+			if got := LoadName(omk); got != tc.want {
+				t.Fatalf("LoadName = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoadNameMissingManifest(t *testing.T) {
+	if got := LoadName(t.TempDir()); got != "" {
+		t.Fatalf("LoadName on empty omk = %q, want \"\"", got)
 	}
 }

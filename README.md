@@ -67,11 +67,13 @@ gate: go-test
   run: go test ./...
   glob: *.go go.mod go.sum
   cacheable: true
+  purpose: tests green before push
 ```
 
 `hook:` is `pre-commit` or `pre-push`; `run:` is any command (run via `sh` from the repo
 root; non-zero blocks the commit or push); `glob:` scopes the gate to matching changed
-files; `cacheable:` reuses a PASS until HEAD moves. Skip one gate once with
+files; `cacheable:` reuses a PASS until HEAD moves; `purpose:` says what the gate
+enforces, in your words — `omakase status` shows it. Skip one gate once with
 `OMAKASE_SKIP_<NAME>=1`, or every gate once with `OMAKASE_SKIP_GATES=1` (both audited).
 
 Editing a placed file is expected, not an error: the status surfaces turn amber,

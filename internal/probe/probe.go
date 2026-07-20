@@ -68,6 +68,7 @@ type State struct {
 	Branch       string // current branch, or the short sha when detached
 	Source       string // $OMK/source first line; "" = bare base install
 	NameOverride string // $OMAKASE_NAME, else .omakase/NAME; "" = none
+	ManifestName string // snapshot manifest's name: header; "" = none declared
 	BaseVersion  string // .omakase/VERSION first line
 
 	// Proofs. "Installed" follows the field's vocabulary — no coined words
@@ -127,6 +128,7 @@ func Collect(cwd string) (*State, error) {
 		n := state.FirstLine(filepath.Join(repo.Root, ".omakase", "NAME"))
 		st.NameOverride = strings.TrimSpace(n)
 	}
+	st.ManifestName = gate.LoadName(repo.OMK)
 
 	// Proofs.
 	st.HooksInstalled, st.HookIssue = hooksInstalled(repo.Root)

@@ -132,3 +132,34 @@ func TestRenderGuardsFromManifest(t *testing.T) {
 		t.Errorf("RenderGuards chart mismatch\n--- got ---\n%q\n--- want ---\n%q", got, wantGuardsTerm)
 	}
 }
+
+// When any gate declares a purpose:, ENFORCES carries it (falling back to the
+// mechanics text for gates without one) and the mechanics get their own RUNS
+// column (#131 gripe 1). fixtureGates carry no purposes, so the goldens above
+// double as the proof that a purpose-less manifest renders unchanged.
+func TestGuardsChartPurposeColumns(t *testing.T) {
+	gates := []gate.Gate{
+		{Name: "markers", Hook: "pre-commit", Run: "x", Purpose: "merge-conflict markers stay out"},
+		{Name: "tests", Hook: "pre-push", Run: "make check", Cacheable: true, Glob: []string{"a/*|b/*"}},
+	}
+	verds := verdictsFrom(t, fixtureLedger)
+
+	wantTerm := "  RUN WHEN     GUARD     ENFORCES                          RUNS               LAST VERDICT\n" +
+		"  pre-commit   markers   merge-conflict markers stay out   every fire         ✓ pass - 5m ago\n" +
+		"  pre-push     tests     cached; scope: a/*|b/*            cached · a/*|b/*   ✗ fail - 2h ago\n"
+	var buf bytes.Buffer
+	renderGuardsChart(&buf, gates, verds, 2000000000, false)
+	if got := buf.String(); got != wantTerm {
+		t.Errorf("purpose chart (term) mismatch\n--- got ---\n%q\n--- want ---\n%q", got, wantTerm)
+	}
+
+	wantMD := "| Run when | Guard | Enforces | Runs | Last verdict |\n" +
+		"| --- | --- | --- | --- | --- |\n" +
+		"| `pre-commit` | markers | merge-conflict markers stay out | every fire | ✓ pass - 5m ago |\n" +
+		"| `pre-push` | tests | cached; scope: a/*\\|b/* | cached · a/*\\|b/* | ✗ fail - 2h ago |\n"
+	buf.Reset()
+	renderGuardsChart(&buf, gates, verds, 2000000000, true)
+	if got := buf.String(); got != wantMD {
+		t.Errorf("purpose chart (md) mismatch\n--- got ---\n%q\n--- want ---\n%q", got, wantMD)
+	}
+}

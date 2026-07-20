@@ -5,7 +5,23 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added
+- **Gate blocks take an optional `purpose:` key** (#131): what the gate enforces, in
+  the author's words (≤6 words, concrete). The status guards table renders it as the
+  ENFORCES column; when any gate declares one, the scheduling mechanics move to their
+  own RUNS column. A manifest with no `purpose:` lines renders exactly as before. The
+  repo's own harness and the base example gate now declare purposes.
+- **`status --global`**: the full personal-config listing (`~/.claude` + `~/.copilot`).
+  The status page itself now collapses the GLOBAL group to one count line — the list
+  repeats identically in every repo and drowned the page on machines with a large
+  personal setup (#131).
+
 ### Changed
+- **Status legibility batch** (#131): the harness header prefers the manifest's
+  declared `name:` over the source path's last folder; github.com sources with a
+  subpath display as the browsable `…/tree/<ref>/<subpath>` form (clicking the old
+  `//` form 404'd; the canonical `//` string is unchanged everywhere internal); and
+  the INJECTED group ends with an edit-affordance line (keep/restore, `/omakase:author`).
 - **`examples/starter-harness` is now `harness/`, named `omakase-harness-harness`** —
   it was never a starter template (there is no base template; the base machinery layers
   in automatically) but this repo's own development harness, and its old name and

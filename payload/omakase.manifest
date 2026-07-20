@@ -15,3 +15,4 @@ version: 0.21.0
 gate: markers
   hook: pre-commit
   run: .omakase/gates/example.sh
+  purpose: merge-conflict markers stay out
