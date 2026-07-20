@@ -34,6 +34,10 @@ not move on until the answer is clear. Three questions settle the block:
 3. **Does it only apply to some paths?** If yes, add `glob: <space-separated globs>`; the
    gate is skipped when no changed file matches.
 
+Also add a `purpose:` line — what the gate enforces in ≤6 concrete words, shown in the
+status table. Concrete beats clever: "tests green before push" reads; a coined label
+("no scratch marks slip in") confuses the first reader who meets it cold.
+
 Read the key set back in one line and confirm before wiring. Example: *"Pre-push, a blocking
 `run:` + `cacheable: true` (out-of-band judgment), `glob: src/*`. Wiring it?"*
 

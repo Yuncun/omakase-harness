@@ -43,7 +43,7 @@ directory is gitignored wholesale and will not reach a teammate.
 A gate is a check declared as a `gate:` block in `payload/omakase.manifest` and run by the
 omakase binary at a git hook. The block names the gate and gives it a `run:` command line, executed
 via `sh` from the repo root; exit 0 passes, non-zero blocks the commit or push. `hook:`
-picks the stage (`pre-commit` or `pre-push`). Two optional keys extend the behavior:
+picks the stage (`pre-commit` or `pre-push`). Three optional keys extend the behavior:
 
 - `cacheable: true`: once the `run:` passes for a given commit, subsequent runs at that
   commit skip it. Use for expensive checks, or when a check runs out of band: the `run:`
@@ -52,6 +52,8 @@ picks the stage (`pre-commit` or `pre-push`). Two optional keys extend the behav
   then allowed.
 - `glob: <pats>`: space-separated path globs; the gate is skipped when no changed file
   matches.
+- `purpose: <words>`: what the gate enforces, in the author's words (≤6 words, concrete).
+  `omakase status` shows it as the guards table's ENFORCES column.
 
 Every run appends to the scorecard, visible in `omakase status`. Audited bypasses exist:
 `OMAKASE_SKIP_<NAME>=1` (name upper-cased, `.`/`-`→`_`) skips one gate for one git command,

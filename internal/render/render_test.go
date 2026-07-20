@@ -174,16 +174,22 @@ func TestStatuslineBareInstallShowsNoHarnessSlot(t *testing.T) {
 }
 
 func TestHarnessSlot(t *testing.T) {
-	cases := []struct{ override, source, want string }{
-		{"acme", "https://github.com/x/y", "acme"},
-		{"", "https://github.com/Yuncun/pixterm-harness.git", "pixterm-harness"},
-		{"", "github.com/x/team-harness#v2", "team-harness"},
-		{"", "", ""},
+	cases := []struct{ override, manifest, source, want string }{
+		{"acme", "", "https://github.com/x/y", "acme"},
+		{"", "", "https://github.com/Yuncun/pixterm-harness.git", "pixterm-harness"},
+		{"", "", "github.com/x/team-harness#v2", "team-harness"},
+		{"", "", "", ""},
+		// The manifest's declared name: outranks the source's last folder
+		// (#131 gripe 5) but not the NAME override…
+		{"", "omakase-harness-harness", "github.com/Yuncun/omakase-harness//harness", "omakase-harness-harness"},
+		{"acme", "omakase-harness-harness", "github.com/Yuncun/omakase-harness//harness", "acme"},
+		// …and the base payload's own name: never names a bare install.
+		{"", "omakase-base", "", ""},
 	}
 	for _, c := range cases {
-		st := &probe.State{NameOverride: c.override, Source: c.source}
+		st := &probe.State{NameOverride: c.override, ManifestName: c.manifest, Source: c.source}
 		if got := HarnessSlot(st); got != c.want {
-			t.Fatalf("HarnessSlot(%q,%q) = %q, want %q", c.override, c.source, got, c.want)
+			t.Fatalf("HarnessSlot(%q,%q,%q) = %q, want %q", c.override, c.manifest, c.source, got, c.want)
 		}
 	}
 }

@@ -95,11 +95,16 @@ echo "$OUT" | grep -qiF "Agent config committed" && pass "Committed group prints
 echo "$OUT" | grep -q 'known paths for known tools' && pass "audit states its scan boundary (presence-only, not exhaustive)" || fail "scan-boundary line missing ($OUT)"
 echo "$OUT" | grep '\.claude/rules/team\.md' | grep -q 'rule' && pass "tracked harness file listed with kind rule" || fail "tracked rule missing or unkinded ($OUT)"
 echo "$OUT" | grep -q 'src/app.js' && fail "non-harness tracked file leaked into the inventory" || pass "non-harness tracked file excluded"
-echo "$OUT" | grep -qiF 'not installed by omakase' && pass "Global group prints on an uninstalled repo" || fail "no Global group when not installed"
-echo "$OUT" | grep 'rules/personal\.md' | grep -q 'rule' && pass "personal rule listed from \$HOME" || fail "personal rule missing ($OUT)"
-echo "$OUT" | grep 'CLAUDE\.md' | grep -q 'doc' && pass "personal CLAUDE.md listed as doc" || fail "personal CLAUDE.md missing"
-[ "$(echo "$OUT" | grep -c 'skills/myskill')" -eq 1 ] && pass "personal skill dir is ONE row (not its files)" || fail "skill dir rows != 1"
-echo "$OUT" | grep 'skills/myskill' | grep -q 'skill' && pass "personal skill dir carries kind skill" || fail "skill dir unkinded"
+# The page collapses Global to one count line (#131 gripe 4); the enumeration lives
+# behind --global.
+echo "$OUT" | grep -q 'steer every repo (list: omakase status --global)' && pass "Global collapses to a count line on an uninstalled repo" || fail "no Global count line when not installed ($OUT)"
+echo "$OUT" | grep -q 'skills/myskill' && fail "page still enumerates global rows" || pass "page no longer enumerates global rows"
+OUTG="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --global 2>&1 )"
+echo "$OUTG" | grep -qiF 'not installed by omakase' && pass "--global prints the Global group header" || fail "--global missing header ($OUTG)"
+echo "$OUTG" | grep 'rules/personal\.md' | grep -q 'rule' && pass "personal rule listed from \$HOME" || fail "personal rule missing ($OUTG)"
+echo "$OUTG" | grep 'CLAUDE\.md' | grep -q 'doc' && pass "personal CLAUDE.md listed as doc" || fail "personal CLAUDE.md missing"
+[ "$(echo "$OUTG" | grep -c 'skills/myskill')" -eq 1 ] && pass "personal skill dir is ONE row (not its files)" || fail "skill dir rows != 1"
+echo "$OUTG" | grep 'skills/myskill' | grep -q 'skill' && pass "personal skill dir carries kind skill" || fail "skill dir unkinded"
 OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --markdown 2>&1 )"
 { echo "$OUT" | grep -qi 'No omakase harness' && echo "$OUT" | grep -qiF "Agent config committed"; } \
   && pass "markdown not-installed keeps the message and the Committed group" || fail "markdown not-installed inventory wrong ($OUT)"
@@ -131,7 +136,7 @@ echo "$OUT" | grep -qi 'token' && fail "output mentions tokens (explicitly cut f
 OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --markdown 2>&1 )"
 echo "$OUT" | grep -qiF "The project's harness" && pass "markdown: Committed group" || fail "markdown missing Committed group"
 echo "$OUT" | grep -qiF 'Injected (omakase)' && pass "markdown: Injected group" || fail "markdown missing Injected group"
-echo "$OUT" | grep -qiF 'not installed by omakase' && pass "markdown: Global group" || fail "markdown missing Global group"
+echo "$OUT" | grep -q '^### Global — ' && pass "markdown: Global count line" || fail "markdown missing Global count line"
 echo "$OUT" | grep '\.claude/settings\.json' | grep -qi 'disabled' && pass "markdown: disabled marker carried" || fail "markdown lost the disabled marker"
 INJ="$(echo "$OUT" | awk '/^### Injected/{f=1;next} /^### /{f=0} f')"
 echo "$INJ" | grep -q '\.omakase/' && fail "markdown: machinery files under .omakase/ leaked into the Injected list" || pass "markdown: .omakase/ machinery files excluded from the Injected list"
@@ -144,10 +149,12 @@ gln=$(echo "$OUT" | grep -n '^### Guards' | head -1 | cut -d: -f1)
 iln=$(echo "$OUT" | grep -n '^### Injected' | head -1 | cut -d: -f1)
 { [ -n "$gln" ] && [ -n "$iln" ] && [ "$gln" -lt "$iln" ]; } && pass "Guards renders above the file inventory" || fail "Guards not promoted above Injected (g=$gln i=$iln)"
 
-# an empty Global group prints (none)
+# an empty HOME collapses to the no-config line on the page; --global still prints (none)
 HOMEE="$TMP/homeEmpty"; mkdir -p "$HOMEE"
 OUT="$( cd "$REPO" && HOME="$HOMEE" bash "$SHOW" 2>&1 )"
-echo "$OUT" | grep -i -A1 'not installed by omakase' | grep -q '(none)' && pass "empty Global group shows (none)" || fail "empty Global group not (none) ($OUT)"
+echo "$OUT" | grep -q 'GLOBAL — no personal config found' && pass "empty Global collapses to the no-config line" || fail "empty Global line wrong ($OUT)"
+OUT="$( cd "$REPO" && HOME="$HOMEE" bash "$SHOW" --global 2>&1 )"
+echo "$OUT" | grep -i -A1 'not installed by omakase' | grep -q '(none)' && pass "--global with empty HOME shows (none)" || fail "--global empty HOME not (none) ($OUT)"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
 # ---------- Scenario I2: machinery visibility — healthy hidden, unhealthy surfaces ----------

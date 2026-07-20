@@ -1,5 +1,5 @@
 name: omakase-harness-harness
-version: 0.2.0
+version: 0.3.0
 
 # This one file IS the harness's gate wiring — read it top to bottom to see
 # everything that runs. omakase runs each gate at its git hook, records the run
@@ -11,12 +11,14 @@ version: 0.2.0
 gate: block-marker
   hook: pre-commit
   run: .omakase/gates/block-marker.sh
+  purpose: DO-NOT-COMMIT stamps stay out
 
 # gofmt + go vet on staged Go files. The script exits 0 instantly when no .go
 # file is staged, so it costs nothing on docs-only commits and non-Go repos.
 gate: go-checks
   hook: pre-commit
   run: .omakase/gates/go-checks.sh
+  purpose: staged Go formatted + vetted
 
 # The whole test suite, once per commit: cacheable reuses a PASS until HEAD
 # moves; glob skips the run when the push changes no Go file.
@@ -25,3 +27,4 @@ gate: go-test
   run: go test ./...
   glob: *.go go.mod go.sum
   cacheable: true
+  purpose: tests green before push

@@ -194,18 +194,11 @@ INJECTED (omakase) — placed by omakase init, gitignored
     ! .omakase/internal.sh   (gate, from some/src; MISSING — run omakase init to restore)
     ~ .omakase/stale-gate.sh   (gate, from some/src; DRIFTED — differs from canonical, run omakase init to re-sync)
     + sixtab.txt   (doc, from some/src)
+    edit any of these directly — status offers keep/restore; to own the harness: /omakase:author
 YOURS, UNMANAGED — untracked agent config, only in this clone (not committed, not placed by omakase)
     + .claude/rules/local-tweak.md   (rule)
     To keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author
-GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)
-    + ~/.claude/CLAUDE.md   (doc)
-    + ~/.claude/settings.json   (config)
-    + ~/.claude/rules/alpha.md   (rule)
-    + ~/.claude/rules/beta.md   (rule)
-    + ~/.claude/commands/cmd1.md   (command)
-    + ~/.claude/agents/agent1.md   (agent)
-    + ~/.claude/skills/myskill/   (skill)
-    + ~/.copilot/skills/coskill/   (skill)
+GLOBAL — 8 files in ~/.claude + ~/.copilot steer every repo (list: omakase status --global)
 `
 
 // Markdown-mode inventory for the installed fixture: the RenderInventory slice.
@@ -223,20 +216,14 @@ const wantInventoryMDInstalled = "### The project's harness (committed — manag
 	"- `.omakase/stale-gate.sh` — gate, from some/src — **DRIFTED** (differs from canonical; `omakase init` to re-sync, or it may be an intentional local edit)\n" +
 	"- `sixtab.txt` — doc, from some/src\n" +
 	"\n" +
+	"_Edit any of these directly — status offers keep/restore; to own the harness: `/omakase:author`._\n" +
+	"\n" +
 	"### Yours, unmanaged — untracked agent config, only in this clone (not committed, not placed by omakase)\n" +
 	"- `.claude/rules/local-tweak.md` — rule\n" +
 	"\n" +
 	"_To keep or share one beyond this clone, add it to a harness — the author skill (`/omakase:author`)._\n" +
 	"\n" +
-	"### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)\n" +
-	"- `~/.claude/CLAUDE.md` — doc\n" +
-	"- `~/.claude/settings.json` — config\n" +
-	"- `~/.claude/rules/alpha.md` — rule\n" +
-	"- `~/.claude/rules/beta.md` — rule\n" +
-	"- `~/.claude/commands/cmd1.md` — command\n" +
-	"- `~/.claude/agents/agent1.md` — agent\n" +
-	"- `~/.claude/skills/myskill/` — skill\n" +
-	"- `~/.copilot/skills/coskill/` — skill\n"
+	"### Global — 8 files in ~/.claude + ~/.copilot steer every repo (list: omakase status --global)\n"
 
 func TestRenderInventoryTermInstalled(t *testing.T) {
 	repo, home := buildInstalledFixture(t)
@@ -268,15 +255,7 @@ YOURS, UNMANAGED — untracked agent config, only in this clone (not committed, 
     + .claude/rules/local-tweak.md   (rule)
     + CLAUDE.local.md   (doc)
     To keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author
-GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)
-    + ~/.claude/CLAUDE.md   (doc)
-    + ~/.claude/settings.json   (config)
-    + ~/.claude/rules/alpha.md   (rule)
-    + ~/.claude/rules/beta.md   (rule)
-    + ~/.claude/commands/cmd1.md   (command)
-    + ~/.claude/agents/agent1.md   (agent)
-    + ~/.claude/skills/myskill/   (skill)
-    + ~/.copilot/skills/coskill/   (skill)
+GLOBAL — 8 files in ~/.claude + ~/.copilot steer every repo (list: omakase status --global)
 
 A presence check of known paths for known tools — not exhaustive; a file can be present and never read.
 Install a harness:  omakase init <owner/repo>
@@ -294,15 +273,7 @@ const wantNotInstalledMD = "**No omakase harness is installed in this repo.**\n"
 	"\n" +
 	"_To keep or share one beyond this clone, add it to a harness — the author skill (`/omakase:author`)._\n" +
 	"\n" +
-	"### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)\n" +
-	"- `~/.claude/CLAUDE.md` — doc\n" +
-	"- `~/.claude/settings.json` — config\n" +
-	"- `~/.claude/rules/alpha.md` — rule\n" +
-	"- `~/.claude/rules/beta.md` — rule\n" +
-	"- `~/.claude/commands/cmd1.md` — command\n" +
-	"- `~/.claude/agents/agent1.md` — agent\n" +
-	"- `~/.claude/skills/myskill/` — skill\n" +
-	"- `~/.copilot/skills/coskill/` — skill\n" +
+	"### Global — 8 files in ~/.claude + ~/.copilot steer every repo (list: omakase status --global)\n" +
 	"\n" +
 	"_A presence check of known paths for known tools — not exhaustive; a file can be present and never read._\n" +
 	"\n" +

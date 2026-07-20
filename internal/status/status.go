@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Yuncun/omakase-harness/internal/gate"
 	"github.com/Yuncun/omakase-harness/internal/state"
 	"github.com/Yuncun/omakase-harness/internal/tui"
 )
@@ -36,6 +37,7 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		"--markdown": true, "-m": true, "--plain": true,
 		"--disable": true, "--enable": true,
 		"--keep": true, "--restore": true,
+		"--global": true,
 	}
 	for _, a := range argv {
 		if a == "--help" || a == "-h" {
@@ -70,6 +72,12 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 				return 2
 			}
 			return runKeepRestore(argv[i] == "--keep", argv[i+1], stdout, stderr)
+		case "--global":
+			// The expansion of the page's collapsed GLOBAL line. Personal
+			// config lives under $HOME, not the repo, so this needs no repo
+			// discovery and works uninstalled too.
+			RenderGlobal(stdout, os.Getenv("HOME"), md)
+			return 0
 		}
 	}
 	// OMAKASE_ICON: default 🥡, used only in the md installed header.
@@ -103,9 +111,15 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	// Step 2 — identity.
+	// Step 2 — identity. The manifest's name: is the harness's declared
+	// identity; the source's last folder is only the fallback when the
+	// manifest declares none (#131 gripe 5). A bare base install (no source)
+	// keeps the plain header — the base manifest's own name: adds nothing.
 	src := state.FirstLine(filepath.Join(repo.OMK, "source"))
 	hname := harnessName(src)
+	if n := gate.LoadName(repo.OMK); n != "" && src != "" {
+		hname = n
+	}
 	srcdisp := srcDisplay(src)
 	basever := state.FirstLine(filepath.Join(repo.Root, ".omakase", "VERSION"))
 	if basever == "" {
@@ -157,13 +171,15 @@ func toggledOffSuffix(nToggledOff int) string {
 
 // printStatusUsage prints the `omakase status` flag surface.
 func printStatusUsage(w io.Writer) {
-	fmt.Fprint(w, `usage: omakase status [--markdown|--plain] [--disable NAME | --enable NAME]
+	fmt.Fprint(w, `usage: omakase status [--markdown|--plain|--global] [--disable NAME | --enable NAME]
                       [--keep PATH | --restore PATH]
 
   (no flags)      on a real terminal, open the interactive consent screen;
                   otherwise print the status page
   --markdown, -m  print the status page as markdown
   --plain         force the printed status page (never the interactive screen)
+  --global        list the personal config the page's GLOBAL line counts
+                  (~/.claude + ~/.copilot, applies to every repo)
   --disable NAME  turn a gate off, or remove a placed file/dir; NAME is a wired
                   gate name or a placed path. Recorded so commits/pushes skip it
                   until re-enabled.
@@ -246,9 +262,24 @@ func harnessName(src string) string {
 	return n
 }
 
-// srcDisplay is the source shown in the identity line: the source minus a
-// leading lowercase URL scheme and one trailing "/".
+// srcDisplay is the source shown in the identity line and the injected rows'
+// "from" annotations: the source minus a leading lowercase URL scheme and one
+// trailing "/". For a github.com source with a `//` subpath split, the
+// display form is the browsable web path (`/tree/HEAD/<subpath>` — HEAD
+// resolves to the default branch) because terminals auto-linkify it and the
+// canonical `//` form 404s on click (#131 gripe 2). The `//` string stays the
+// identity everywhere internal — remembered source, cache keys, ledger rows.
 func srcDisplay(src string) string {
 	d := schemeRe.ReplaceAllString(src, "")
-	return strings.TrimSuffix(d, "/")
+	d = strings.TrimSuffix(d, "/")
+	if repo, sub, ok := strings.Cut(d, "//"); ok && strings.HasPrefix(repo, "github.com/") {
+		ref := "HEAD"
+		if s, r, pinned := strings.Cut(sub, "#"); pinned && r != "" {
+			sub, ref = s, r
+		}
+		if sub != "" {
+			d = strings.TrimSuffix(repo, ".git") + "/tree/" + ref + "/" + sub
+		}
+	}
+	return d
 }

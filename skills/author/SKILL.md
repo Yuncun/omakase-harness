@@ -80,8 +80,8 @@ Three refusals to honor while collecting:
 ## Step 4 — gates
 
 One at a time, via the **add-gate** skill: it picks the keys (`hook:`, `run:`, `glob:`,
-`cacheable:`), pre-flights third-party tools, and wires the block into
-`payload/omakase.manifest`.
+`cacheable:`, a ≤6-concrete-word `purpose:`), pre-flights third-party tools, and wires the
+block into `payload/omakase.manifest`.
 
 ## Step 5 — prove it installs
 

@@ -158,11 +158,17 @@ func InitVerdict(st *probe.State) string {
 }
 
 // HarnessSlot is the harness identity shown after the repo facts: the NAME
-// override, else the source's short name, else "" for a bare base install
-// (the icon already says omakase; repeating it is noise).
+// override, else the manifest's declared name: (the harness's identity —
+// #131 gripe 5), else the source's short name, else "" for a bare base
+// install (the icon already says omakase; repeating it is noise). The base
+// payload's own name: ("omakase-base") is skipped like the bare install it
+// is — with no custom harness the icon already carries the identity.
 func HarnessSlot(st *probe.State) string {
 	if st.NameOverride != "" {
 		return st.NameOverride
+	}
+	if st.ManifestName != "" && st.Source != "" {
+		return st.ManifestName
 	}
 	if st.Source == "" {
 		return ""

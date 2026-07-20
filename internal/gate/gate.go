@@ -31,6 +31,7 @@ type Gate struct {
 	Run       string   // command line, executed via `sh -c` from the repo root
 	Glob      []string // space-split case patterns; nil = always in scope
 	Cacheable bool     // a recorded PASS for the exact HEAD sha short-circuits
+	Purpose   string   // author-written "what this enforces" (status display only)
 }
 
 // reGateName is the gate-name charset: [A-Za-z0-9._-]+.
@@ -38,7 +39,7 @@ var reGateName = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // blockKeys are the keys allowed inside a gate block; any other indented key
 // refuses the whole harness at init.
-var blockKeys = map[string]bool{"hook": true, "run": true, "glob": true, "cacheable": true}
+var blockKeys = map[string]bool{"hook": true, "run": true, "glob": true, "cacheable": true, "purpose": true}
 
 // Parse reads the gate: blocks out of a flat omakase.manifest. A `gate: <name>`
 // line at column 0 opens a block; indented `key: value` lines belong to it
@@ -105,6 +106,8 @@ func Parse(content []byte) ([]Gate, error) {
 			gates[cur].Run = val
 		case "glob":
 			gates[cur].Glob = strings.Fields(val)
+		case "purpose":
+			gates[cur].Purpose = val
 		case "cacheable":
 			switch val {
 			case "true":
@@ -202,6 +205,37 @@ func Load(omk string) ([]Gate, error) {
 		return nil, err
 	}
 	return Parse(content)
+}
+
+// LoadName returns the manifest header's `name:` value from the snapshot
+// manifest in the shared zone — the harness's declared identity. "" when the
+// manifest is missing or declares no name. Only column-0 lines before any
+// gate block are header lines; a `name:` inside a gate block is that block's
+// (refused) key, never the harness name.
+func LoadName(omk string) string {
+	content, err := os.ReadFile(snapshotManifest(omk))
+	if err != nil {
+		return ""
+	}
+	sc := bufio.NewScanner(bytes.NewReader(content))
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		raw := sc.Text()
+		if raw == "" || raw[0] == ' ' || raw[0] == '\t' || strings.HasPrefix(strings.TrimSpace(raw), "#") {
+			continue
+		}
+		key, val, ok := splitKV(raw)
+		if !ok {
+			continue
+		}
+		if key == "gate" {
+			return "" // gate blocks begin; no header name declared
+		}
+		if key == "name" {
+			return val
+		}
+	}
+	return ""
 }
 
 // ForHook returns the gates declared for one hook stage, in manifest order.

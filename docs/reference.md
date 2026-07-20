@@ -51,16 +51,21 @@ the payload no longer ships, unless it was edited locally.
   tracks, so the installed copy takes over. Guarded: refuses without
   `OMAKASE_CUTOVER_CONFIRM=1`.
 
-### `status.sh [--markdown | --plain | --disable <name> | --enable <name> | --keep <path> | --restore <path>]`
+### `status.sh [--markdown | --plain | --global | --disable <name> | --enable <name> | --keep <path> | --restore <path>]`
 
 On a real terminal, `status` opens the interactive consent screen: every steering
 file and gate as a row (arrows to move, Enter/Space to toggle, q to quit).
 Everywhere else — pipes, scripts, agents — it prints the same static page as
 always: the inventory grouped by origin (committed, injected, global), the hook
-wiring, the run ledger, and the paths hidden via `.git/info/exclude`.
+wiring, the run ledger, and the paths hidden via `.git/info/exclude`. The global
+group prints as one count line — the personal config under `~/.claude` +
+`~/.copilot` steers every repo identically, so the page states the fact and
+keeps the enumeration behind `--global`.
 
 - `--plain` — force the static page on a terminal too. Read-only.
 - `--markdown` — the static page as formatted Markdown. Read-only.
+- `--global` — list the personal config the page's GLOBAL line counts. Read-only;
+  reads only `$HOME`, so it prints the same in every repo.
 - `--disable <name>` / `--enable <name>` — the scriptable twins of the screen's
   toggle. `<name>` is a wired gate name, a placed path, or a placed top-level
   directory (a group). Disabling a FILE removes it from the working tree (the
@@ -181,6 +186,7 @@ binary runs each gate at its hook (see [Concepts](concepts.md#gates)).
 | `run:` | yes | a command line, run via `sh` from the repo root; exit 0 passes, non-zero blocks |
 | `glob:` | no | space-separated case-glob patterns (a single `*` spans directories); the gate runs only when a changed file in the range matches. Absent = always in scope |
 | `cacheable:` | no | `true` reuses a recorded PASS for the exact HEAD sha until HEAD moves |
+| `purpose:` | no | what the gate enforces, in the author's words (≤6 words, concrete — "tests green before push", not a clever label). Shown as the ENFORCES column of the status guards table; when any gate declares one, the scheduling mechanics move to their own RUNS column |
 
 At init, an unknown key, a missing required key, a duplicate name, or a bad hook stage
 refuses the whole harness (places nothing). If a `run:`'s first token is a payload path

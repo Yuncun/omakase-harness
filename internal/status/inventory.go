@@ -274,15 +274,17 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 		fmt.Fprintln(w)
 
 		fmt.Fprintln(w, "### Injected (omakase) — placed by `omakase init`, gitignored")
-		if !renderInjected(w, repo, placedPath, true) {
+		if renderInjected(w, repo, placedPath, true) {
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "_Edit any of these directly — status offers keep/restore; to own the harness: `/omakase:author`._")
+		} else {
 			fmt.Fprintln(w, "- _(none)_")
 		}
 		fmt.Fprintln(w)
 
 		renderUnmanaged(w, unmanaged, true)
 
-		fmt.Fprintln(w, "### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)")
-		renderPathRows(w, pers, true)
+		renderGlobalLine(w, len(pers), true)
 		return
 	}
 
@@ -290,12 +292,48 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 	renderPathRows(w, comm, false)
 
 	fmt.Fprintln(w, "INJECTED (omakase) — placed by omakase init, gitignored")
-	if !renderInjected(w, repo, placedPath, false) {
+	if renderInjected(w, repo, placedPath, false) {
+		fmt.Fprintln(w, "    edit any of these directly — status offers keep/restore; to own the harness: /omakase:author")
+	} else {
 		fmt.Fprintln(w, "    (none)")
 	}
 
 	renderUnmanaged(w, unmanaged, false)
 
+	renderGlobalLine(w, len(pers), false)
+}
+
+// renderGlobalLine is the page's whole GLOBAL section: one count line. The
+// FACT that personal config steers every repo belongs on the page; the
+// enumeration repeats identically in every repo and drowned it (#131 gripe 4)
+// — the list lives behind `omakase status --global` (RenderGlobal).
+func renderGlobalLine(w io.Writer, n int, md bool) {
+	var line string
+	switch {
+	case n == 0:
+		line = " — no personal config found in ~/.claude or ~/.copilot"
+	case n == 1:
+		line = " — 1 file in ~/.claude + ~/.copilot steers every repo (list: omakase status --global)"
+	default:
+		line = fmt.Sprintf(" — %d files in ~/.claude + ~/.copilot steer every repo (list: omakase status --global)", n)
+	}
+	if md {
+		fmt.Fprintln(w, "### Global"+line)
+		return
+	}
+	fmt.Fprintln(w, "GLOBAL"+line)
+}
+
+// RenderGlobal is the `omakase status --global` page: the full personal-config
+// listing the status page's GLOBAL line counts. It reads only home — no repo,
+// no ledger — so it renders the same everywhere, installed or not.
+func RenderGlobal(w io.Writer, home string, md bool) {
+	pers := PersonalList(home)
+	if md {
+		fmt.Fprintln(w, "### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)")
+		renderPathRows(w, pers, true)
+		return
+	}
 	fmt.Fprintln(w, "GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)")
 	renderPathRows(w, pers, false)
 }
@@ -358,6 +396,9 @@ func machineryNoteworthy(repo *state.Repo, row state.PlacedRow) bool {
 // visible at rest. Kept and drifted can coexist — an edit made after the
 // keep drifts from the ACCEPTED hash and renders both.
 func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, md bool) {
+	// The "from" annotation renders the browsable source form (see
+	// srcDisplay); the ledger keeps the canonical string.
+	row.Src = srcDisplay(row.Src)
 	full := filepath.Join(repo.Root, row.Rel)
 	drifted := state.IsDrifted(repo.Root, row.Rel, row.Hash, row.Enabled)
 	_, kerr := os.Lstat(filepath.Join(repo.OMK, "kept", row.Rel))
@@ -452,8 +493,7 @@ func RenderNotInstalled(w io.Writer, repo *state.Repo, home string, md bool) {
 		renderPathRows(w, comm, true)
 		fmt.Fprintln(w)
 		renderUnmanaged(w, unmanaged, true)
-		fmt.Fprintln(w, "### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)")
-		renderPathRows(w, pers, true)
+		renderGlobalLine(w, len(pers), true)
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "_A presence check of known paths for known tools — not exhaustive; a file can be present and never read._")
 		fmt.Fprintln(w)
@@ -466,8 +506,7 @@ func RenderNotInstalled(w io.Writer, repo *state.Repo, home string, md bool) {
 	fmt.Fprintln(w, "AGENT CONFIG COMMITTED IN THIS REPO (managed by git, not omakase)")
 	renderPathRows(w, comm, false)
 	renderUnmanaged(w, unmanaged, false)
-	fmt.Fprintln(w, "GLOBAL — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)")
-	renderPathRows(w, pers, false)
+	renderGlobalLine(w, len(pers), false)
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "A presence check of known paths for known tools — not exhaustive; a file can be present and never read.")
 	fmt.Fprintln(w, "Install a harness:  omakase init <owner/repo>") // two spaces around the verb
