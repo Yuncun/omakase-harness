@@ -1,6 +1,6 @@
 ---
 name: author
-description: Build a custom harness — or turn a repo's existing agent files (CLAUDE.md, rules, skills) into one others can install. Use when asked to "make/author a harness", "turn my setup into a harness", "package/publish my agent rules", or "share my setup without committing it to the project". Covers where the harness lives, laying out payload/ and its one manifest, judging what is portable, testing the install, and publishing. Gate wiring hands off to the add-gate skill.
+description: Build a custom harness — or turn a repo's existing agent files (CLAUDE.md, rules, skills) into one others can install. Use when asked to "make/author a harness", "turn my setup into a harness", "package/publish my agent rules", "share my setup without committing it to the project" — or when the intent is phrased without omakase words, "make this permanent", "I want this in all my projects", "keep this beyond this clone", "turn my setup into something installable". Covers where the harness lives, laying out payload/ and its one manifest, judging what is portable, testing the install, and publishing. Gate wiring hands off to the add-gate skill.
 ---
 
 # /omakase:author — build a custom harness
@@ -12,15 +12,17 @@ git, and layers the omakase base machinery underneath — so a harness ships onl
 You are creating or editing that source repo, NOT an installed overlay (edits to injected
 copies are overwritten on the next `init`).
 
-## Step 1 — decide where it lives (ask)
+## Step 1 — decide where it lives (recommend, then confirm)
 
-Two placements install identically; ask which the user wants:
+**Default: a subfolder of the user's personal harness repo** — one repo per user
+(`you/harness`, like a dotfiles repo), each subfolder a full harness
+(`omakase init you/harness/go` installs the harness at its `go/`). One place to organize
+everything, no dedicated repo per harness, private is fine (init clones with the user's git
+auth). Recommend this; create the repo if they don't have one yet.
 
-1. **A subfolder of a repo they already have** — one hub repo, many harnesses
-   (`you/hub/tools-harness` installs the harness at `hub`'s `tools-harness/`). Good default
-   for a personal collection; no dedicated repo per harness.
-2. **Its own repo** — `omakase init you/your-harness`. Right when the harness is the repo's
-   whole point or needs its own issues/releases.
+The alternative — **its own repo** (`omakase init you/your-harness`) — is right when the
+harness is the repo's whole point or needs its own issues/releases, e.g. a team harness the
+project's contributors will follow.
 
 ## Step 2 — lay out the skeleton
 
@@ -97,8 +99,8 @@ violating change, watch the commit block) before calling it done.
 
 Push, then hand out the install line:
 
+    omakase init you/harness/<name>          # subfolder of the personal harness repo (default)
     omakase init you/your-harness            # own repo
-    omakase init you/hub/path/to/harness     # subfolder of a hub repo
 
 Adopters re-run a bare `omakase init` to pick up your pushed changes; bump `version:` when
 the payload changes so installs report what they got.
