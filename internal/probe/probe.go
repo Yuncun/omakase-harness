@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/Yuncun/omakase-harness/internal/gate"
 	"github.com/Yuncun/omakase-harness/internal/hook"
@@ -65,6 +67,7 @@ type State struct {
 
 	// Identity facts.
 	Project      string // basename of the main worktree's root
+	Worktree     string // linked worktree's folder name; "" in the main worktree
 	Branch       string // current branch, or the short sha when detached
 	Source       string // $OMK/source first line; "" = bare base install
 	NameOverride string // $OMAKASE_NAME, else .omakase/NAME; "" = none
@@ -95,6 +98,12 @@ type State struct {
 
 	LastRun *RunSummary // nil when the ledger records no sha-bearing run
 
+	// Running is the gate executing right now: the $OMK/running heartbeat
+	// row (written by the gate runner, removed when the check ends) whose
+	// pid is still alive. nil otherwise — a heartbeat left by a killed
+	// gate process is dead evidence, not a running gate (#85).
+	Running *RunningGate
+
 	// Paths, for callers that persist per-repo state (the stop-notice marker).
 	Root string
 	OMK  string
@@ -118,8 +127,13 @@ func Collect(cwd string) (*State, error) {
 
 	// Identity. The project is named by the MAIN worktree's root (first
 	// WorktreeRoots entry), so a linked worktree still reports the project
-	// it belongs to, not its own folder name.
-	st.Project = filepath.Base(state.WorktreeRoots(repo.Root)[0])
+	// it belongs to; the worktree's own folder name is a separate fact so
+	// render can show the location as repo:worktree (#85).
+	roots := state.WorktreeRoots(repo.Root)
+	st.Project = filepath.Base(roots[0])
+	if repo.Root != roots[0] {
+		st.Worktree = filepath.Base(repo.Root)
+	}
 	st.Branch = branch(repo.Root)
 	st.Source = state.FirstLine(filepath.Join(repo.OMK, "source"))
 	st.BaseVersion = state.FirstLine(filepath.Join(repo.Root, ".omakase", "VERSION"))
@@ -137,7 +151,60 @@ func Collect(cwd string) (*State, error) {
 	st.Kept = keptCount(repo.OMK)
 
 	st.LastRun = lastRun(filepath.Join(repo.OMK, "ledger.tsv"))
+	st.Running = runningGate(repo.OMK)
 	return st, nil
+}
+
+// RunningGate is the heartbeat fact: which gate is executing and for how
+// long. Seconds is computed here (a duration is a fact) against OMAKASE_NOW
+// when set, so renders and tests stay deterministic.
+type RunningGate struct {
+	Name    string
+	Seconds int64 // since the gate started, clamped >= 0
+}
+
+// runningGate reads the $OMK/running heartbeat (`name \t pid \t epoch`).
+// Any parse failure or a dead pid yields nil — the file is best-effort
+// evidence and the next gate run overwrites it.
+func runningGate(omk string) *RunningGate {
+	b, err := os.ReadFile(filepath.Join(omk, "running"))
+	if err != nil {
+		return nil
+	}
+	f := strings.SplitN(strings.TrimRight(string(b), "\n"), "\t", 3)
+	if len(f) != 3 || f[0] == "" {
+		return nil
+	}
+	pid, err := strconv.Atoi(f[1])
+	if err != nil || pid <= 0 || !pidAlive(pid) {
+		return nil
+	}
+	start, err := strconv.ParseInt(f[2], 10, 64)
+	if err != nil {
+		return nil
+	}
+	secs := nowEpoch() - start
+	if secs < 0 {
+		secs = 0
+	}
+	return &RunningGate{Name: f[0], Seconds: secs}
+}
+
+// pidAlive is the signal-0 liveness check; EPERM means alive but not ours.
+func pidAlive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || err == syscall.EPERM
+}
+
+// nowEpoch is the heartbeat's clock: OMAKASE_NOW when set (the test hook
+// that pins the clock), else the current unix time.
+func nowEpoch() int64 {
+	if v := os.Getenv("OMAKASE_NOW"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return n
+		}
+	}
+	return time.Now().Unix()
 }
 
 // branch is the current branch name, or the short sha when detached, or ""

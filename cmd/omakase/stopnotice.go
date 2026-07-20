@@ -23,7 +23,11 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/render"
 )
 
-func runStopNotice(stdin io.Reader, stdout io.Writer) int {
+// plain selects the output envelope: false wraps the message in Claude
+// Code's Stop-hook {"systemMessage": …} JSON; true prints the bare text —
+// the form Copilot CLI's agentStop hook gets, where Claude's envelope would
+// surface as raw JSON.
+func runStopNotice(stdin io.Reader, stdout io.Writer, plain bool) int {
 	scrubGitEnv()
 	host := readHostJSON(stdin)
 	cwd := cwdFromHostJSON(host)
@@ -67,6 +71,10 @@ func runStopNotice(stdin io.Reader, stdout io.Writer) int {
 
 	msg := render.StopNotice(st, ranThisTurn)
 	if msg == "" {
+		return 0
+	}
+	if plain {
+		fmt.Fprintln(stdout, msg)
 		return 0
 	}
 	out, err := json.Marshal(map[string]string{"systemMessage": msg})

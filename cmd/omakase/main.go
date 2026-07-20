@@ -88,10 +88,21 @@ var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 		return overlay.RunRecord(argv[2:], stdout, stderr)
 	},
 	"statusline": func(argv []string, stdout, stderr io.Writer) int {
+		for _, a := range argv[2:] {
+			if a == "--wire" {
+				return runWire(stdout, stderr)
+			}
+		}
 		return runStatusline(os.Stdin, stdout)
 	},
 	"stop-notice": func(argv []string, stdout, stderr io.Writer) int {
-		return runStopNotice(os.Stdin, stdout)
+		plain := false
+		for _, a := range argv[2:] {
+			if a == "--plain" {
+				plain = true
+			}
+		}
+		return runStopNotice(os.Stdin, stdout, plain)
 	},
 }
 
@@ -109,7 +120,7 @@ const usage = `usage: omakase <command>
 commands used by your tools, not by you:
   hook <name>      run the git-hook logic (called by the hooks init installs)
   record <name>    record a PASS for HEAD for a deferred gate (out-of-band)
-  statusline       one-line status segment (wire into your status bar)
+  statusline       one-line status segment (--wire connects it to your hosts' bars)
   stop-notice      end-of-turn notice (wire as a Claude Code Stop hook)
   mcp              menu server (wire into your agent's MCP config)
 `

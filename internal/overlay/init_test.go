@@ -37,23 +37,19 @@ const verifiedLine = "omakase: verified — hooks installed ✓ · files present
 
 const gateContent = "#!/usr/bin/env bash\necho hi\n"
 
-// uxStanzas is the status-bar + stop-notice wiring block every successful
-// init appends after summaryTail (the features live in the binary, not the
-// payload, so the stanzas are unconditional). The path comes from
-// hook.StableBinPath() at call time, matching what RunInit printed under the
-// test's environment.
+// uxStanzas is the stop-notice wiring block every successful init appends
+// after summaryTail (the feature lives in the binary, not the payload, so
+// the stanza is unconditional). The statusline --wire pointer is NOT here:
+// it prints only when a host config dir exists without a statusLine, and
+// the test HOME has no host dirs (TestInitStatuslinePointer covers it). The
+// path comes from hook.StableBinPath() at call time, matching what RunInit
+// printed under the test's environment.
 func uxStanzas() string {
 	stable := hook.StableBinPath()
 	if stable == "" {
 		stable = "omakase"
 	}
-	return "omakase: status bar (optional) — one machine-wide segment for every omakase repo; it\n" +
-		"         shows this harness's verified state and goes dark elsewhere. Wire your status\n" +
-		"         line to run:\n" +
-		"           " + stable + " statusline\n" +
-		"         Claude Code: statusLine.command in ~/.claude/settings.json. ccstatusline: a\n" +
-		"         custom-command widget. Copilot CLI: statusLine in ~/.copilot/settings.json.\n" +
-		"omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line harness status when\n" +
+	return "omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line harness status when\n" +
 		"         a turn ends. Enable by adding a Stop hook to .claude/settings.json:\n" +
 		"           " + stable + " stop-notice\n"
 }
@@ -95,6 +91,10 @@ func initRepo(t *testing.T) (string, *state.Repo) {
 	runGitT(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
 	chdir(t, dir)
 	stubStableBin(t)
+	// A bare HOME (no host config dirs) so the init goldens never depend on
+	// the developer's real ~/.claude wiring (the statusline --wire pointer
+	// is host-conditional; TestInitStatuslinePointer covers it).
+	t.Setenv("HOME", t.TempDir())
 	repo, err := state.Discover(dir)
 	if err != nil {
 		t.Fatalf("discover: %v", err)
@@ -1290,12 +1290,6 @@ func TestUXStanzas(t *testing.T) {
 	wantOut := "omakase: placed 1 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
 		"  + .omakase/bin/omakase-worktree-guard.sh\n" +
 		summaryTail +
-		"omakase: status bar (optional) — one machine-wide segment for every omakase repo; it\n" +
-		"         shows this harness's verified state and goes dark elsewhere. Wire your status\n" +
-		"         line to run:\n" +
-		"           " + stable + " statusline\n" +
-		"         Claude Code: statusLine.command in ~/.claude/settings.json. ccstatusline: a\n" +
-		"         custom-command widget. Copilot CLI: statusLine in ~/.copilot/settings.json.\n" +
 		"omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line harness status when\n" +
 		"         a turn ends. Enable by adding a Stop hook to .claude/settings.json:\n" +
 		"           " + stable + " stop-notice\n" +
@@ -1673,5 +1667,36 @@ func TestReinitRefillsMissingKeptFile(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "left untouched): "+rel) {
 		t.Errorf("summary claims the refilled file was left untouched:\n%s", stdout.String())
+	}
+}
+
+// The statusline --wire pointer prints only while a host config dir exists
+// without a statusLine in its settings; a wired host silences it (#85).
+func TestInitStatuslinePointer(t *testing.T) {
+	_, _ = initRepo(t)
+	t.Setenv("OMAKASE_PAYLOAD", t.TempDir())
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "statusline --wire") {
+		t.Fatalf("pointer missing with an unwired host:\n%s", stdout.String())
+	}
+
+	// Wire the host: the pointer goes quiet.
+	writeFile(t, filepath.Join(home, ".claude", "settings.json"), `{"statusLine":{"type":"command","command":"x"}}`)
+	stdout.Reset()
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("re-init exit = %d; stderr=%q", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "statusline --wire") {
+		t.Fatalf("pointer printed for a wired host:\n%s", stdout.String())
 	}
 }

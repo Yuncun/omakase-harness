@@ -122,6 +122,37 @@ form. Register it from the target repo, e.g.:
 binary is on PATH, register the shim's stable path instead:
 `claude mcp add omakase -- /path/to/omakase-harness/bin/mcp.sh`.
 
+### `omakase statusline [--wire]`
+
+Binary-only verb: prints the one-line status-bar segment for the repo the host
+session is sitting in — `🥡 <repo>[:<worktree>] ⎇<branch> · <harness> ✓`, with
+the amber problem fact or a dim "unverified" when the proofs don't all pass,
+and a live `· <gate> 12s…` suffix while a gate is running (a heartbeat the
+gate runner writes; it shows only while the gate's process is alive, so a
+killed gate can never stick). The segment tracks the session's live working
+directory by design — it appears in omakase repos and goes dark everywhere
+else. Dark is also the honest degraded state: the segment reads cached facts
+only, so a wiped cache stays dark until the next `init`; `omakase status` is
+the truth surface.
+
+`--wire` connects the segment to the hosts' bars, per host and only where its
+config dir already exists: if no status line is configured, it backs the
+settings file up (`settings.json.omakase-bak`) and writes the block pointing
+at the machine-wide binary; an existing bar is never replaced (you get
+instructions for adding the segment to it instead). On Copilot CLI it also
+turns on the experimental `STATUS_LINE` feature flag; note Copilot refreshes
+its bar per response (no timer), so the live gate counter updates more
+coarsely there than on Claude Code.
+
+### `omakase stop-notice [--plain]`
+
+Binary-only verb: the end-of-turn one-liner (speaks only when something
+changed). Default output is Claude Code's Stop-hook `{"systemMessage": …}`
+envelope; `--plain` prints the bare text — the form Copilot CLI's `agentStop`
+hook wants. The base payload places `.github/hooks/omakase.json` wiring
+exactly that; on Claude Code the Stop hook stays opt-in (init prints the
+line to add).
+
 ### `remove.sh`
 
 Uninstalls hooks, deletes exactly the untracked files `init` placed, and strips the

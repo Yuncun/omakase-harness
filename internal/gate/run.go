@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -98,7 +99,9 @@ func runOne(g Gate, root, omk, sha string, disabled map[string]bool, stdin io.Re
 	}
 
 	// (5) run the check in a child shell from the repo root, record the run
-	// best-effort, and pass the exit code through unchanged.
+	// best-effort, and pass the exit code through unchanged. The heartbeat
+	// brackets only this step — a skipped gate was never running (#85).
+	writeHeartbeat(omk, g.Name)
 	cmd := exec.Command("sh", "-c", g.Run)
 	cmd.Dir = root
 	cmd.Stdin = stdin
@@ -108,6 +111,7 @@ func runOne(g Gate, root, omk, sha string, disabled map[string]bool, stdin io.Re
 	if err := cmd.Run(); err != nil {
 		rc = exitCode(err)
 	}
+	removeHeartbeat(omk)
 	verdict := "pass"
 	if rc != 0 {
 		verdict = "fail"
@@ -126,6 +130,19 @@ func Record(root, omk, name string) error {
 		return fmt.Errorf("could not write %s: %w", filepath.Join(omk, "ledger.tsv"), err)
 	}
 	return nil
+}
+
+// writeHeartbeat marks a gate as running right now: `name \t pid \t epoch`
+// at $OMK/running (#85). The statusline reads it and shows the live "gate
+// 12s…" state only while the pid is alive, so a killed gate can never stick.
+// Best-effort both ways — the heartbeat is ambient UX, never a gate outcome.
+func writeHeartbeat(omk, name string) {
+	_ = os.WriteFile(filepath.Join(omk, "running"),
+		[]byte(name+"\t"+strconv.Itoa(os.Getpid())+"\t"+now()+"\n"), 0o644)
+}
+
+func removeHeartbeat(omk string) {
+	_ = os.Remove(filepath.Join(omk, "running"))
 }
 
 // bypassVerb names the git verb whose --no-verify skips this hook, so a block

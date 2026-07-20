@@ -725,3 +725,45 @@ func TestLoadNameMissingManifest(t *testing.T) {
 		t.Fatalf("LoadName on empty omk = %q, want \"\"", got)
 	}
 }
+
+// --- heartbeat (#85) ------------------------------------------------------
+
+// While a check runs, $OMK/running carries `name \t pid \t epoch`; when the
+// check ends the heartbeat is gone. The check itself copies the file so the
+// test can read what existed mid-run.
+func TestRunHook_HeartbeatDuringCheck(t *testing.T) {
+	t.Setenv("OMAKASE_NOW", "1700000000")
+	root, omk := newRepo(t)
+
+	code, _, _ := run(t, root, omk, "pre-commit",
+		"gate: hb\n  hook: pre-commit\n  run: cp .git/omakase/running hb-copy\n", nil)
+	if code != 0 {
+		t.Fatalf("gate failed: %d", code)
+	}
+	b, err := os.ReadFile(filepath.Join(root, "hb-copy"))
+	if err != nil {
+		t.Fatalf("heartbeat not present during the check: %v", err)
+	}
+	f := strings.Split(strings.TrimRight(string(b), "\n"), "\t")
+	if len(f) != 3 || f[0] != "hb" || f[2] != "1700000000" {
+		t.Fatalf("heartbeat row = %q, want hb \\t <pid> \\t 1700000000", string(b))
+	}
+	if _, err := strconv.Atoi(f[1]); err != nil {
+		t.Fatalf("heartbeat pid %q is not a number", f[1])
+	}
+	if _, err := os.Stat(filepath.Join(omk, "running")); !os.IsNotExist(err) {
+		t.Fatal("heartbeat must be removed after the check ends")
+	}
+}
+
+// A failing check still removes its heartbeat.
+func TestRunHook_HeartbeatRemovedOnFailure(t *testing.T) {
+	root, omk := newRepo(t)
+	code, _, _ := run(t, root, omk, "pre-commit", "gate: f\n  hook: pre-commit\n  run: exit 3\n", nil)
+	if code != 3 {
+		t.Fatalf("want exit 3, got %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(omk, "running")); !os.IsNotExist(err) {
+		t.Fatal("heartbeat must be removed after a failing check")
+	}
+}

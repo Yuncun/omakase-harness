@@ -309,3 +309,31 @@ func TestInitVerdictKeptCount(t *testing.T) {
 		t.Errorf("problem verdict carries the kept count: %q", got)
 	}
 }
+
+// A linked worktree shows the location as repo:worktree; the branch slot is
+// unchanged (#85).
+func TestStatuslineWorktreeSlot(t *testing.T) {
+	st := proven()
+	st.Worktree = "feature-x"
+	got := plain(st)
+	if !strings.Contains(got, "pixterm-engine:feature-x ⎇main") {
+		t.Fatalf("worktree slot missing: %q", got)
+	}
+}
+
+// While a gate runs (live heartbeat), the healthy pill carries the gate name
+// and elapsed seconds; a problem state outranks the progress detail (#85).
+func TestStatuslineRunningGate(t *testing.T) {
+	st := proven()
+	st.Running = &probe.RunningGate{Name: "go-test", Seconds: 12}
+	got := plain(st)
+	if !strings.Contains(got, "✓ · go-test 12s…") {
+		t.Fatalf("running suffix missing: %q", got)
+	}
+
+	st.HooksInstalled = probe.Problem
+	got = plain(st)
+	if strings.Contains(got, "go-test 12s") {
+		t.Fatalf("running suffix must not decorate a problem pill: %q", got)
+	}
+}

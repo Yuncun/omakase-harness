@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -508,5 +509,87 @@ func TestCollectKeptCount(t *testing.T) {
 	}
 	if st := collect(t, dir); st.Kept != 0 {
 		t.Errorf("disabled row counted as kept: Kept = %d, want 0", st.Kept)
+	}
+}
+
+// ---------------------------------------------------------------- heartbeat
+
+// The $OMK/running heartbeat surfaces as the Running fact only while its pid
+// is alive; a dead pid or a malformed row is dead evidence, never a running
+// gate (#85).
+func TestCollectRunningGate(t *testing.T) {
+	root := newTestRepo(t)
+	omk := installHarness(t, root)
+	t.Setenv("OMAKASE_NOW", "2000000012")
+
+	writeFile(t, root, filepath.Join(".git", "omakase", "running"),
+		"go-test\t"+strconv.Itoa(os.Getpid())+"\t2000000000\n")
+	st := collect(t, root)
+	if st.Running == nil {
+		t.Fatal("Running: want non-nil for a live pid")
+	}
+	if st.Running.Name != "go-test" || st.Running.Seconds != 12 {
+		t.Fatalf("Running = %+v, want {go-test 12}", st.Running)
+	}
+
+	// A dead pid: pid 1 is init/launchd — alive but not ours (EPERM counts as
+	// alive), so use an impossibly-high pid instead.
+	writeFile(t, root, filepath.Join(".git", "omakase", "running"), "go-test\t99999999\t2000000000\n")
+	if st := collect(t, root); st.Running != nil {
+		t.Fatalf("Running = %+v, want nil for a dead pid", st.Running)
+	}
+
+	// Malformed rows.
+	for _, row := range []string{"", "just-a-name\n", "g\tnot-a-pid\t123\n", "g\t" + strconv.Itoa(os.Getpid()) + "\tnot-epoch\n"} {
+		writeFile(t, root, filepath.Join(".git", "omakase", "running"), row)
+		if st := collect(t, root); st.Running != nil {
+			t.Fatalf("Running = %+v, want nil for row %q", st.Running, row)
+		}
+	}
+
+	// Absent file.
+	os.Remove(filepath.Join(omk, "running"))
+	if st := collect(t, root); st.Running != nil {
+		t.Fatalf("Running = %+v, want nil with no heartbeat", st.Running)
+	}
+}
+
+// A started-in-the-future epoch clamps to 0, never negative.
+func TestCollectRunningClampsNegative(t *testing.T) {
+	root := newTestRepo(t)
+	installHarness(t, root)
+	t.Setenv("OMAKASE_NOW", "1000")
+	writeFile(t, root, filepath.Join(".git", "omakase", "running"),
+		"g\t"+strconv.Itoa(os.Getpid())+"\t2000\n")
+	st := collect(t, root)
+	if st.Running == nil || st.Running.Seconds != 0 {
+		t.Fatalf("Running = %+v, want Seconds 0", st.Running)
+	}
+}
+
+// ---------------------------------------------------------------- worktree fact
+
+// A linked worktree reports the project (main root's name) plus its own
+// folder name; the main worktree reports Worktree == "".
+func TestCollectWorktreeFact(t *testing.T) {
+	root := newTestRepo(t)
+	installHarness(t, root)
+
+	st := collect(t, root)
+	if st.Worktree != "" {
+		t.Fatalf("Worktree = %q in the main worktree, want empty", st.Worktree)
+	}
+
+	wt := filepath.Join(t.TempDir(), "feature-x")
+	runGit(t, root, "worktree", "add", "-q", wt)
+	// The linked worktree shares the common git dir, so the harness's
+	// placed.tsv is already visible there; its own placed files are not, but
+	// identity facts don't need them.
+	st = collect(t, wt)
+	if st.Project != filepath.Base(root) {
+		t.Fatalf("Project = %q, want main root name %q", st.Project, filepath.Base(root))
+	}
+	if st.Worktree != "feature-x" {
+		t.Fatalf("Worktree = %q, want feature-x", st.Worktree)
 	}
 }
