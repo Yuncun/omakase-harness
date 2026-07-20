@@ -5,6 +5,19 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Changed
+- **`examples/starter-harness` is now `harness/`, named `omakase-harness-harness`** —
+  it was never a starter template (there is no base template; the base machinery layers
+  in automatically) but this repo's own development harness, and its old name and
+  `examples/` location said otherwise. Install line is now
+  `omakase init Yuncun/omakase-harness/harness`; existing installs remembering the old
+  subpath re-point with one init at the new path.
+- **author skill: forking prose steering files from any repo is in scope** (#133) — the
+  third-party refusal now names what it always meant: executable content. Instruction
+  and rules files from a public repo can be taken into a harness with attribution and a
+  portability review; found when a fresh-session dogfood run over-refused
+  `microsoft/vscode`'s instruction files.
+
 ## [0.21.0] — 2026-07-18
 
 ### Added

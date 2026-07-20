@@ -1,8 +1,8 @@
-# starter-harness — the harness omakase development runs
+# omakase-harness-harness — this repo's own development harness
 
-The worked example of a custom harness — and not a demo: this is the real harness the
-omakase repo itself uses for its own development. Adopt it to see a harness working, then
-copy it and swap in your own rules and gates.
+Not a demo: this is the real harness omakase development runs, published the same way any
+custom harness is. Adopt it to see a working harness with gates, or copy it as a starting
+point for your own.
 
 It carries only its own **delta**; the base machinery it relies on (the run ledger, the
 status surfaces) is layered in underneath at install:
@@ -29,15 +29,14 @@ per-gate bypass is `OMAKASE_SKIP_<NAME>=1` with the name upper-cased and `-` map
 
 ## Try it
 
-This directory is a complete harness, and a harness can live in a **subfolder** of a git
-repo — so it is adoptable straight from GitHub. From any Go project, including a clone of
-this repo (that is the self-hosting use):
+A harness can live in a **subfolder** of a git repo — this one lives at `harness/` in the
+omakase repo itself. From any Go project, including a clone of this repo (that is the
+self-hosting use):
 
-    omakase init Yuncun/omakase-harness/examples/starter-harness    # Claude Code or Copilot CLI
+    omakase init Yuncun/omakase-harness/harness    # Claude Code or Copilot CLI
 
-(From a local clone, the same install is
-`omakase init --source <path-to-clone>//examples/starter-harness` — the `//` marks where
-the repo ends and the subfolder begins.)
+(From a local clone, the same install is `omakase init --source <path-to-clone>//harness`
+— the `//` marks where the repo ends and the subfolder begins.)
 
 `omakase status` lists what it placed; `omakase remove` deletes it all and restores the repo.
 

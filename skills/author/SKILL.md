@@ -1,6 +1,6 @@
 ---
 name: author
-description: Build a custom harness — or turn a repo's existing agent files (CLAUDE.md, rules, skills) into one others can install. Use when asked to "make/author a harness", "turn my setup into a harness", "package/publish my agent rules", "share my setup without committing it to the project" — or when the intent is phrased without omakase words, "make this permanent", "I want this in all my projects", "keep this beyond this clone", "turn my setup into something installable". Covers where the harness lives, laying out payload/ and its one manifest, judging what is portable, testing the install, and publishing. Gate wiring hands off to the add-gate skill.
+description: Build a custom harness — or turn existing agent files (CLAUDE.md, rules, skills; yours or another repo's) into one others can install. Use when asked to "make/author a harness", "turn my setup into a harness", "package/publish my agent rules", "share my setup without committing it to the project", "make my own version of this harness", "take <repo>'s instructions into a harness" — or when the intent is phrased without omakase words, "make this permanent", "I want this in all my projects", "keep this beyond this clone", "turn my setup into something installable". Covers where the harness lives, laying out payload/ and its one manifest, judging what is portable, testing the install, and publishing. Gate wiring hands off to the add-gate skill.
 ---
 
 # /omakase:author — build a custom harness
@@ -10,7 +10,9 @@ one manifest — identity (`name`, optional `version` / `recommends`) plus any `
 `init` copies `payload/` onto a target repo at verbatim paths, keeps every placed file out of
 git, and layers the omakase base machinery underneath — so a harness ships only its delta.
 You are creating or editing that source repo, NOT an installed overlay (edits to injected
-copies are overwritten on the next `init`).
+copies are overwritten on the next `init`). Starting from scratch is not the only entrance:
+to fork a harness installed here, `omakase status` names its source — copy that harness
+directory into the repo chosen in Step 1 and continue at Step 3.
 
 ## Step 1 — decide where it lives (recommend, then confirm)
 
@@ -70,7 +72,10 @@ Three refusals to honor while collecting:
   through the add-gate skill deliberately.
 - **Never lift executable config from a repo that didn't publish itself as a harness**
   (e.g. scraping another project's `.claude/settings.json` hooks). The manifest is the
-  "deliberately published to run" marker; only the owner adds it.
+  "deliberately published to run" marker; only the owner adds it. This refusal is about
+  executables only: prose steering files (instructions, rules) from any public repo may
+  be taken — same portability review, plus a license-attribution header, leaving behind
+  what only makes sense inside the source repo.
 
 ## Step 4 — gates
 

@@ -1,4 +1,4 @@
-name: starter-harness
+name: omakase-harness-harness
 version: 0.2.0
 
 # This one file IS the harness's gate wiring — read it top to bottom to see
