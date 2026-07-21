@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-07-20
+
 ### Added
 - **Live status bar** (#85): the statusline segment now shows the location as
   `repo:worktree` in linked worktrees and appends `· <gate> 12s…` while a gate
