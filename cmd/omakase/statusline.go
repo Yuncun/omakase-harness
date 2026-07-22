@@ -74,7 +74,7 @@ func readHostJSON(stdin io.Reader) map[string]any {
 
 // cwdFromHostJSON digs the working directory out of the shapes the hosts
 // send: workspace.current_dir / workspace.project_dir (Claude Code,
-// ccstatusline), then a top-level cwd (Stop hooks, other hosts).
+// ccstatusline), then a top-level cwd (Copilot CLI, other hosts).
 func cwdFromHostJSON(m map[string]any) string {
 	if m == nil {
 		return ""

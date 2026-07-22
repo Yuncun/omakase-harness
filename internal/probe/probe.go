@@ -1,6 +1,6 @@
 // Package probe collects the verifiable facts about the harness installed
 // in a repository — the data behind `omakase statusline` and `omakase
-// stop-notice`. It returns facts only: no display strings, no colors, no
+// statusline`. It returns facts only: no display strings, no colors, no
 // verdict words; internal/render owns every user-facing string (issue #85's
 // one-render-layer rule, so a wording change never touches a probe).
 //
@@ -104,7 +104,7 @@ type State struct {
 	// gate process is dead evidence, not a running gate (#85).
 	Running *RunningGate
 
-	// Paths, for callers that persist per-repo state (the stop-notice marker).
+	// Paths, for callers that persist per-repo state.
 	Root string
 	OMK  string
 }

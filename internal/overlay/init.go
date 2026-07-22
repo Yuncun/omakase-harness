@@ -859,7 +859,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "omakase: to customize, fork the harness source (clone -> edit -> publish) and")
 	fmt.Fprintln(stdout, "         init from your copy; do not edit injected files in place (overwritten on re-init).")
-	// The status-bar / stop-notice wiring runs the machine-wide binary copy
+	// The status-bar wiring runs the machine-wide binary copy
 	// (main() refreshes it on every real init), so these stanzas print
 	// unconditionally — the feature ships in the binary, not the payload.
 	stable := hook.StableBinPath()
@@ -872,9 +872,6 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "omakase: status bar (optional) — one machine-wide segment for every omakase repo,")
 		fmt.Fprintf(stdout, "         dark elsewhere. Wire it:  %s statusline --wire\n", stable)
 	}
-	fmt.Fprintln(stdout, "omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line harness status when")
-	fmt.Fprintln(stdout, "         a turn ends. Enable by adding a Stop hook to .claude/settings.json:")
-	fmt.Fprintf(stdout, "           %s stop-notice\n", stable)
 	if fileRegular(filepath.Join(root, ".omakase", "bin", "omakase-worktree-guard.sh")) {
 		fmt.Fprintln(stdout, "omakase: worktree guard (Claude Code only, opt-in) — while other worktrees are active,")
 		fmt.Fprintln(stdout, "         denies edits to product files in the MAIN checkout before they happen. Enable by")

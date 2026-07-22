@@ -17,7 +17,7 @@ import (
 )
 
 // StableBinPath is the machine-wide binary location the dispatchers (and
-// the statusline / stop-notice wiring) exec:
+// the statusline wiring) exec:
 // ${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase. "" when no
 // home directory can be resolved. It must mirror the sh interpolation baked
 // into Dispatcher — the dispatcher evaluates its env at fire time, this

@@ -45,7 +45,7 @@ func TestRunHelp(t *testing.T) {
 		}
 		out := stdout.String()
 		for _, want := range []string{"init", "status", "diff", "remove",
-			"commands used by your tools, not by you:", "hook", "statusline", "stop-notice", "mcp"} {
+			"commands used by your tools, not by you:", "hook", "statusline", "mcp"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("%s: usage missing %q:\n%s", arg, want, out)
 			}

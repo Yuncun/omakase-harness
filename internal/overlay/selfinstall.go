@@ -1,4 +1,4 @@
-// Self-install of the machine-wide binary copy. The statusline / stop-notice
+// Self-install of the machine-wide binary copy. The statusline
 // wiring printed by init — and, since issue #98, the permanent .git/hooks
 // dispatchers — must survive plugin updates and cache eviction, so they
 // point at ONE stable path (hook.StableBinPath) instead of a
