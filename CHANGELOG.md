@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-07-21
+
 ### Removed
 - **The end-of-turn notice is gone, both hosts** — the `stop-notice` verb, the
   placed Copilot `agentStop` hook (`.github/hooks/omakase.json`, new in 0.22.0),
