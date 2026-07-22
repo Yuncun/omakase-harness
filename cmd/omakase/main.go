@@ -1,6 +1,6 @@
 // Command omakase is the install-time binary: one static executable that
 // dispatches the human verbs (init, status, diff, remove) and the plumbing
-// verbs run by wired-up tools (hook, statusline, stop-notice, mcp).
+// verbs run by wired-up tools (hook, statusline, mcp).
 package main
 
 import (
@@ -95,15 +95,6 @@ var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 		}
 		return runStatusline(os.Stdin, stdout)
 	},
-	"stop-notice": func(argv []string, stdout, stderr io.Writer) int {
-		plain := false
-		for _, a := range argv[2:] {
-			if a == "--plain" {
-				plain = true
-			}
-		}
-		return runStopNotice(os.Stdin, stdout, plain)
-	},
 }
 
 // usage is the two-tier command list (issue #98 Part 2; chezmoi's grouped
@@ -121,7 +112,6 @@ commands used by your tools, not by you:
   hook <name>      run the git-hook logic (called by the hooks init installs)
   record <name>    record a PASS for HEAD for a deferred gate (out-of-band)
   statusline       one-line status segment (--wire connects it to your hosts' bars)
-  stop-notice      end-of-turn notice (wire as a Claude Code Stop hook)
   mcp              menu server (wire into your agent's MCP config)
 `
 

@@ -1,6 +1,5 @@
-// Package render turns a probe.State into the status-bar segment and the
-// stop-notice message. It is the ONLY place a user-facing string or color
-// for those surfaces exists (issue #85's one-render-layer rule): rewording
+// Package render turns a probe.State into the status-bar segment. It is
+// the ONLY place a user-facing string or color for that surface exists (issue #85's one-render-layer rule): rewording
 // the bar, changing the palette, or adding a host-specific flavor touches
 // this package and nothing else. Probes hand in facts; this package decides
 // how they read.
@@ -14,7 +13,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/Yuncun/omakase-harness/internal/probe"
 )
@@ -105,44 +103,6 @@ func Statusline(st *probe.State, o Opts) string {
 	}
 }
 
-// StopNotice renders the end-of-turn message body ("" = say nothing).
-// ranThisTurn adds the last-run summary line; the caller owns the
-// speak-on-change decision and the JSON envelope.
-func StopNotice(st *probe.State, ranThisTurn bool) string {
-	if st == nil || !st.Installed {
-		return ""
-	}
-	name := HarnessSlot(st)
-	if name == "" {
-		name = "omakase"
-	}
-
-	if st.HooksInstalled == probe.Problem {
-		return name + " is not active — hooks not installed · omakase init"
-	}
-	if st.GatesMigrated == probe.Problem {
-		return name + " — needs migration (initialized before the gate module) · omakase init"
-	}
-	if st.FilesPresent == probe.Problem || st.HashesMatch == probe.Problem {
-		return name + " — harness files changed · omakase init"
-	}
-
-	if st.HooksInstalled == probe.Unknown || st.GatesMigrated == probe.Unknown || st.FilesPresent == probe.Unknown || st.HashesMatch == probe.Unknown {
-		return name + " — state could not be verified"
-	}
-
-	msg := name + " is active ✓"
-	if ranThisTurn && st.LastRun != nil && st.LastRun.Checks > 0 {
-		at := clock(st.LastRun.Epoch)
-		if st.LastRun.Failed > 0 {
-			msg += fmt.Sprintf("\nLast run: %s failed at %s", countNoun(st.LastRun.Failed, "check"), at)
-		} else {
-			msg += fmt.Sprintf("\nLast run: %d/%d checks at %s", st.LastRun.Checks, st.LastRun.Checks, at)
-		}
-	}
-	return msg
-}
-
 // InitVerdict is the closing line of `omakase init`: the same three proofs
 // the status bar renders, run fresh after the install, so init ends with
 // evidence instead of an assertion (#85 — the asserted "hooks installed"
@@ -223,18 +183,4 @@ func pill(s, color string, on bool) string {
 		return strings.TrimRight(s, " ")
 	}
 	return color + s + colOff
-}
-
-// countNoun is "1 check" / "3 checks".
-func countNoun(n int, noun string) string {
-	if n == 1 {
-		return fmt.Sprintf("1 %s", noun)
-	}
-	return fmt.Sprintf("%d %ss", n, noun)
-}
-
-// clock formats an epoch as local wall-clock time ("3:42PM") — frozen text,
-// so a relative "Nm ago" would go stale in a printed notice.
-func clock(epoch int64) string {
-	return time.Unix(epoch, 0).Format("3:04PM")
 }

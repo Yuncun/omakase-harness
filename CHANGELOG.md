@@ -5,6 +5,14 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Removed
+- **The end-of-turn notice is gone, both hosts** — the `stop-notice` verb, the
+  placed Copilot `agentStop` hook (`.github/hooks/omakase.json`, new in 0.22.0),
+  and init's Claude Stop-hook pointer. A line printed at every turn's end was
+  too much surface for what it said; the status bar and `omakase status` carry
+  the same facts. On the next `init`, repos that got the 0.22.0 hook file have
+  it removed like any dropped payload file.
+
 ## [0.22.0] — 2026-07-20
 
 ### Added

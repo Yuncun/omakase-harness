@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # TDD spec for the harness STATUS SURFACES:
 #   - bin/status.sh : omakase status GUARDS chart (+ --markdown) and the inventory.
-# (The statusline segment and the Stop-hook notice are binary subcommands now —
-#  `omakase statusline` / `omakase stop-notice` — covered by the Go tests in
-#  internal/probe, internal/render and cmd/omakase.)
+# (The statusline segment is a binary subcommand now — `omakase statusline` —
+#  covered by the Go tests in internal/probe, internal/render and cmd/omakase.)
 # Ledger lines are TAB-separated (epoch, name, verdict, sha); assertions use
 # awk, not grep -P (BSD).
 set -u
@@ -111,8 +110,8 @@ OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --markdown 2>&1 )"
 
 # installed — injected rows come from the provenance ledger with source + kind.
 # Install a copy of the base payload PLUS a .claude/settings.json, so there is an injected
-# CONFIG row to hand-disable below. The base payload no longer ships one (the Stop-hook
-# end-of-turn notice is opt-in), so the fixture adds it here.
+# CONFIG row to hand-disable below. The base payload ships no .claude/settings.json, so
+# the fixture adds it here.
 PAYI="$TMP/payI"; rm -rf "$PAYI"; cp -R "$PAY/." "$PAYI/"; mkdir -p "$PAYI/.claude"
 printf '{ "hooks": {} }\n' > "$PAYI/.claude/settings.json"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAYI" bash "$INIT" ) >/dev/null 2>&1

@@ -144,15 +144,6 @@ turns on the experimental `STATUS_LINE` feature flag; note Copilot refreshes
 its bar per response (no timer), so the live gate counter updates more
 coarsely there than on Claude Code.
 
-### `omakase stop-notice [--plain]`
-
-Binary-only verb: the end-of-turn one-liner (speaks only when something
-changed). Default output is Claude Code's Stop-hook `{"systemMessage": …}`
-envelope; `--plain` prints the bare text — the form Copilot CLI's `agentStop`
-hook wants. The base payload places `.github/hooks/omakase.json` wiring
-exactly that; on Claude Code the Stop hook stays opt-in (init prints the
-line to add).
-
 ### `remove.sh`
 
 Uninstalls hooks, deletes exactly the untracked files `init` placed, and strips the

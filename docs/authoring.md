@@ -38,10 +38,10 @@ PreToolUse hook that denies edits to product files in the main checkout while ot
 worktrees are active — the pre-edit half of worktree discipline; a commit-time allowlist
 gate is the fail-closed half). Wire them only if you want them — skip them and your
 harness still works. Do not build wiring that depends on their names being stable.
-The status-bar segment and the Stop-hook notice are **binary subcommands**, not placed
-scripts: `omakase statusline` and `omakase stop-notice` (`omakase statusline --wire`
-connects the bar; see [Reference](reference.md)). They probe the shared ledger and
-hooks, so a custom harness gets them for free.
+The status-bar segment is a **binary subcommand**, not a placed
+script: `omakase statusline` (`omakase statusline --wire` connects the bar; see
+[Reference](reference.md)). It probes the shared ledger and hooks, so a custom
+harness gets it for free.
 
 A gate whose `run:` names a payload script (`.omakase/…` or `gates/…`) is validated at
 install: `init` refuses any harness that references a script it does not ship, so a drift

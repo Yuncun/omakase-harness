@@ -37,21 +37,13 @@ const verifiedLine = "omakase: verified — hooks installed ✓ · files present
 
 const gateContent = "#!/usr/bin/env bash\necho hi\n"
 
-// uxStanzas is the stop-notice wiring block every successful init appends
-// after summaryTail (the feature lives in the binary, not the payload, so
-// the stanza is unconditional). The statusline --wire pointer is NOT here:
-// it prints only when a host config dir exists without a statusLine, and
-// the test HOME has no host dirs (TestInitStatuslinePointer covers it). The
-// path comes from hook.StableBinPath() at call time, matching what RunInit
-// printed under the test's environment.
+// uxStanzas is the wiring block every successful init appends after
+// summaryTail. Currently empty: the statusline --wire pointer prints only
+// when a host config dir exists without a statusLine, and the test HOME has
+// no host dirs (TestInitStatuslinePointer covers it). Kept as the named
+// slot so a future unconditional stanza has one place to land.
 func uxStanzas() string {
-	stable := hook.StableBinPath()
-	if stable == "" {
-		stable = "omakase"
-	}
-	return "omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line harness status when\n" +
-		"         a turn ends. Enable by adding a Stop hook to .claude/settings.json:\n" +
-		"           " + stable + " stop-notice\n"
+	return ""
 }
 
 func sha256hex(b []byte) string {
@@ -1272,10 +1264,9 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 	}
 }
 
-// TestUXStanzas: the closing summary always appends the status-bar and
-// stop-notice wiring stanzas (those features live in the binary), with a
-// deterministic stable path under a pinned XDG_CACHE_HOME, and appends the
-// worktree-guard stanza iff that script exists in the repo after placement.
+// TestUXStanzas: the closing summary appends the worktree-guard stanza iff
+// that script exists in the repo after placement (conditional stanzas like
+// the statusline --wire pointer are covered by their own tests).
 func TestUXStanzas(t *testing.T) {
 	_, _ = initRepo(t)
 	p := t.TempDir()
@@ -1286,13 +1277,9 @@ func TestUXStanzas(t *testing.T) {
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	stable := hook.StableBinPath()
 	wantOut := "omakase: placed 1 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
 		"  + .omakase/bin/omakase-worktree-guard.sh\n" +
 		summaryTail +
-		"omakase: end-of-turn notice (Claude Code only, opt-in) — a one-line harness status when\n" +
-		"         a turn ends. Enable by adding a Stop hook to .claude/settings.json:\n" +
-		"           " + stable + " stop-notice\n" +
 		"omakase: worktree guard (Claude Code only, opt-in) — while other worktrees are active,\n" +
 		"         denies edits to product files in the MAIN checkout before they happen. Enable by\n" +
 		"         adding a PreToolUse hook (matcher \"Edit|Write\") to .claude/settings.json:\n" +

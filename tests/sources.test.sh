@@ -100,7 +100,7 @@ echo "== Scenario S3b: a file the source drops between versions is swept =="
 ( cd "$SRC" && git rm -q payload/.claude/rules/style.md && git commit -q -m v3 )
 ( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" ) >/dev/null 2>&1
 [ ! -e "$REPO/.claude/rules/style.md" ] && pass "dropped payload file deleted from the repo" || fail "dropped file left behind (silent residue)"
-# The base harness ships nothing under .claude/ (the Stop-hook end-of-turn notice is opt-in), so
+# The base harness ships nothing under .claude/, so
 # once the source's only .claude/ file is dropped, .claude/ is genuinely empty and is pruned.
 # Base machinery lives under .omakase/, which never empties — the prune clearing the emptied
 # .claude/ while leaving .omakase/ intact proves it removes orphaned dirs without over-pruning.
