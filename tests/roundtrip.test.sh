@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Phase 0 compat contract: init -> remove is an EXACT round trip (docs/v2-design.md
-# §10 gate 2 — "remove reverses everything exactly"). In a repo seeded with user
+# Phase 0 compat contract: init -> remove is an EXACT round trip (v2 design §10
+# gate 2, in git history: docs/v2-design.md — "remove reverses everything exactly"). In a repo seeded with user
 # state (two exclude lines, a committed file, an untracked file omakase does not
 # place), remove must restore byte-identical pre-init state, captured BEFORE any
 # omakase invocation and compared after:

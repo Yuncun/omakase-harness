@@ -57,7 +57,7 @@ kind_of() {
 
 # Harness-owned paths — the anti-drift lock's source list; tests/harness-paths.test.sh asserts
 # every HARNESS_LOC_DIRS entry classifies to a real kind above. No capture tool reads these
-# arrays today — a harness author places files by hand, see docs/harness-surface.md. Keep in
+# arrays today — a harness author places files by hand, per docs/authoring.md. Keep in
 # step with kind_of above.
 HARNESS_LOC_FILES=(AGENTS.md CLAUDE.md .github/copilot-instructions.md lefthook-local.yml lefthook.yml .pre-commit-config.yaml .claude/settings.json)
 HARNESS_LOC_DIRS=(.claude/rules .claude/skills .claude/commands .claude/agents .claude/hooks .github/skills .github/instructions .github/prompts .github/chatmodes .github/hooks .omakase .husky .githooks)
