@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Phase 0 compat contract: the byte-level FORMAT of the two TSV state files any
-# future writer (the Go rewrite) must reproduce exactly (docs/v2-design.md §5).
+# future writer must reproduce exactly (v2 design §5 — in git history, docs/v2-design.md).
 #   placed.tsv — EXACTLY 5 tab-separated columns: path kind source sha256 enabled.
 #     A 6th column is a defect: the sh readers parse `read -r rel kind src hash enabled`,
 #     so an extra column is absorbed into $enabled and flips verification fail-open.

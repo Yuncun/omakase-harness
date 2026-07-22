@@ -13,7 +13,7 @@ status surfaces) is layered in underneath at install:
     payload/.omakase/gates/block-marker.sh    gate: refuse a staged scratch marker
     payload/.omakase/gates/go-checks.sh       gate: gofmt + go vet on staged Go files
     payload/omakase.manifest                  the one manifest — identity (name + version)
-                                              and the gates (hook / run / glob / cacheable)
+                                              and the gates (hook / run / glob / cacheable / purpose)
 
 ## What runs
 

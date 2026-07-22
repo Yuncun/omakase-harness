@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Phase 0 compat contract: the exact BYTES of the .git/info/exclude block and the
 # $OMK layout ($OMK = $(git rev-parse --git-common-dir)/omakase) that any future
-# writer (the Go rewrite) must reproduce (docs/v2-design.md §5, §10).
+# writer must reproduce (v2 design §5, §10 — in git history, docs/v2-design.md).
 #
 # The exclude block is delimited by the byte-exact markers
 #   # >>> omakase-harness >>>   /   # <<< omakase-harness <<<
