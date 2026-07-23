@@ -1,12 +1,12 @@
 name: release
 
 # Runs only on a version-tag push. GoReleaser cross-compiles the binary
-# (.goreleaser.yaml) and uploads it to a DRAFT GitHub Release — a maintainer
-# reviews and clicks Publish. Runbook: docs/releasing.md.
+# (.goreleaser.yaml), publishes the GitHub Release, and updates the Homebrew
+# cask — pushing the tag IS publishing. Runbook: docs/releasing.md.
 on:
   push:
     # Semver only — a looser "v*" would also fire on habitual v2-* working tags
-    # and goreleaser would happily draft-release them.
+    # and goreleaser would happily publish them.
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
 permissions:
@@ -46,3 +46,4 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
