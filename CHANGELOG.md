@@ -5,6 +5,16 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added
+- **Homebrew install** (#132): each release now updates a cask in
+  `Yuncun/homebrew-tap`, so `brew install yuncun/tap/omakase` is the leading
+  install line in the README.
+
+### Changed
+- **Publishing is now the tag push.** The draft-review step is gone: the cask
+  must point at a published release, so the release publishes in the same
+  unattended run. Review happens before tagging, not after.
+
 ## [0.23.0] — 2026-07-21
 
 ### Removed

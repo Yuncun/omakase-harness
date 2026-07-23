@@ -1,9 +1,9 @@
 # Releasing
 
 How omakase ships. This is the single release runbook (CONTRIBUTING.md links
-here). The scaffolding is fully wired but nothing is outward-facing until a
-maintainer pushes a version tag AND publishes the draft — two deliberate steps,
-both manual.
+here). Nothing is outward-facing until a maintainer pushes a version tag — and
+that one deliberate step publishes: the release, and the Homebrew cask that
+points at it, ship in the same unattended run. Review comes before the tag.
 
 ## What is wired
 
@@ -14,7 +14,8 @@ both manual.
   archives each as `tar.gz`, and writes `checksums.txt`.
 - `.github/workflows/release.yml` runs on a semver tag push (`vX.Y.Z`),
   re-proves the tagged commit with the same checks as CI (Go vet/test/build +
-  every sh suite), then uploads everything to a **draft** GitHub Release.
+  every sh suite), then **publishes** the GitHub Release and updates the
+  Homebrew cask in `Yuncun/homebrew-tap`.
 
 ## Cutting a release
 
@@ -37,11 +38,13 @@ channels differ).
        git push origin v0.18.0
 
 4. The `release` workflow re-runs the full test suite against the tagged
-   commit, builds, and uploads a **draft** release.
-5. Review the draft on GitHub (artifacts, checksums, changelog), then click
-   **Publish**. Nothing is public before this click. If the draft is wrong,
-   fix, delete the tag, re-tag — the new run replaces the stale draft
-   (`replace_existing_draft`).
+   commit, builds, **publishes** the release, and pushes the updated cask to
+   `Yuncun/homebrew-tap`. Pushing the tag is the publish line — review the
+   changelog and diff BEFORE tagging; there is no draft step to catch a
+   mistake after.
+5. Verify: the release page shows the four tarballs plus `checksums.txt`, the
+   tap repo has a fresh cask commit, and `brew install yuncun/tap/omakase`
+   (or `brew upgrade omakase`) serves the new version.
 
 To test the build locally without touching GitHub:
 
@@ -66,23 +69,12 @@ Re-pin `bin/lib-omakase-bin.sh` to the release just published:
 The pin intentionally lags one commit: the pin for a version can only land after that
 version is published, since the hashes come from that release's own artifacts.
 
-## Enabling the Homebrew tap (not yet done)
+## The Homebrew tap
 
-1. Create the `Yuncun/homebrew-tap` repo (can be empty).
-2. Create a fine-grained PAT with write access to `homebrew-tap` only, store
-   it as a repo secret named `TAP_GITHUB_TOKEN`, and pass it to the GoReleaser
-   step in `release.yml`:
-
-       env:
-         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-         TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
-
-3. In `.goreleaser.yaml`, uncomment the `homebrew_casks:` block (it already
-   references that token) and set `release.draft: false`. The cask pushes in
-   the same unattended run that creates the release, so the draft gate cannot
-   stay: a cask pointing at a draft release 404s for users. From then on the
-   publish line moves back one step — pushing the tag IS publishing.
-
-After that, each release updates the cask and users run:
+`Yuncun/homebrew-tap` holds the cask; GoReleaser rewrites it on every release,
+authenticated by the `TAP_GITHUB_TOKEN` repo secret — a fine-grained PAT
+scoped to that one repo with Contents read/write. When the PAT expires, the
+release run fails at the cask-push step: mint a replacement scoped the same
+way and update the secret. Users install with:
 
     brew install yuncun/tap/omakase

@@ -13,7 +13,7 @@
 #      runs inside an if-condition's call chain — because a stale binary would
 #      mask Go breakage).
 #   3. dist/omakase — a prebuilt/vendored copy.
-#   4. `omakase` on PATH (brew or manual install).
+#   4. `omakase` on PATH (brew install yuncun/tap/omakase, or a manual install).
 #   5. The omakase-managed cached binary — fetched (tier 6, opt-in via $1=fetch)
 #      if absent. remove.sh never passes fetch: uninstall stays offline.
 # The fetch is a self-contained mirror of the Go binary's own release-fetch:

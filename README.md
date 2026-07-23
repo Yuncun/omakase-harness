@@ -42,9 +42,11 @@ nothing to commit, working tree clean
 
 ## Install
 
-<!-- brew tap goes first here once it's published (issue #132) -->
+```
+brew install yuncun/tap/omakase
+```
 
-Grab a binary from [releases](https://github.com/Yuncun/omakase-harness/releases)
+Or grab a binary from [releases](https://github.com/Yuncun/omakase-harness/releases)
 (checksums published), or build from source:
 
 ```

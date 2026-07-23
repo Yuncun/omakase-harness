@@ -56,7 +56,7 @@ omakase reaches users two ways, and they update differently:
   users until the version is bumped and published.**
 
 So any change adopters should pick up needs a version bump. The step-by-step
-runbook — version bumps, changelog, tagging, and the draft-release gate — is
+runbook — version bumps, changelog, tagging, and the publish line — is
 [docs/releasing.md](docs/releasing.md).
 
 ## Pull requests
