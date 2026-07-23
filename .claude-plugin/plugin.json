@@ -1,5 +1,5 @@
 {
   "name": "omakase",
-  "version": "0.23.0",
+  "version": "0.23.1",
   "description": "Inject a personal harness into any existing repo: overlay a file tree (rules, docs, gates), keep it out of git, and run gates on your git hooks. Zero committed footprint."
 }
