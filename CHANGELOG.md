@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.23.1] — 2026-07-22
+
 ### Added
 - **Homebrew install** (#132): each release now updates a cask in
   `Yuncun/homebrew-tap`, so `brew install yuncun/tap/omakase` is the leading
