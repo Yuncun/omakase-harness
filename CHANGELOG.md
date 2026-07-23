@@ -5,6 +5,13 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Fixed
+- **Brew-installed binary was killed by Gatekeeper** on macOS: Homebrew
+  quarantines cask downloads, and the unsigned binary got SIGKILLed on first
+  run. The cask now strips the quarantine attribute post-install (GoReleaser's
+  documented pattern for unsigned binaries); real signing/notarization stays
+  the eventual fix. 0.23.1's cask has the bug — this ships as 0.23.2.
+
 ## [0.23.1] — 2026-07-22
 
 ### Added

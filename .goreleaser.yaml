@@ -58,3 +58,13 @@ homebrew_casks:
     homepage: "https://github.com/Yuncun/omakase-harness"
     description: "Install a repo's local dev harness as a gitignored overlay"
     license: MIT
+    # The binary is unsigned (no Apple Developer ID), and Homebrew quarantines
+    # cask downloads — Gatekeeper SIGKILLs an unsigned quarantined binary on
+    # first run. This post-install hook is GoReleaser's documented pattern for
+    # exactly that case; proper signing/notarization is the eventual fix.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/omakase"]
+          end
