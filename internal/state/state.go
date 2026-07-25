@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -105,22 +106,30 @@ func runGit(dir string, args ...string) (string, error) {
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
-// PlacedRow is one row of $OMK/placed.tsv: path, kind, source, sha256,
-// enabled.
+// PlacedRow is one row of $OMK/placed.tsv: path and sha256. Everything else
+// the old 5-column format stored is derived on demand — kind from the path
+// (harness.KindOf), source from the single $OMK/source file, and Enabled
+// from the disabled-files sidecar. Enabled is populated by ReadPlaced, never
+// stored: "0" when the path is listed in $OMK/disabled-files (or by a legacy
+// 5-column row's own enabled field), "1" otherwise.
 type PlacedRow struct {
 	Rel     string
-	Kind    string
-	Src     string
 	Hash    string
 	Enabled string
 }
 
-// ReadPlaced reads $OMK/placed.tsv one line at a time, splitting each into
-// at most 5 tab-separated fields: a 6th tab is absorbed into Enabled rather
-// than split off, and missing trailing fields come back as empty strings.
-// An empty field is kept in place, not shifted, and a final row with no
-// trailing newline is still read. Rows with an empty Rel are dropped. A
-// missing file returns nil; order is preserved.
+// DisabledFilesName is the sidecar beside placed.tsv listing the placed
+// paths toggled off, one per line — the same existence-is-the-mark shape as
+// disabled-gates and the kept/ tree.
+const DisabledFilesName = "disabled-files"
+
+// ReadPlaced reads $OMK/placed.tsv one line at a time. The current format is
+// 2 tab-separated fields (rel, hash); the pre-0.26 format was 5 (rel, kind,
+// src, hash, enabled) and is still read — a row with 4+ fields takes its
+// hash from field 4 and its enabled from field 5. Enabled is then derived:
+// "0" if the legacy field said so or the disabled-files sidecar (read from
+// placed.tsv's directory) lists the path, else "1". Rows with an empty Rel
+// are dropped. A missing file returns nil; order is preserved.
 func ReadPlaced(path string) []PlacedRow {
 	f, err := os.Open(path)
 	if err != nil {
@@ -128,34 +137,59 @@ func ReadPlaced(path string) []PlacedRow {
 	}
 	defer f.Close()
 
+	disabled := DisabledFiles(filepath.Dir(path))
+
 	var rows []PlacedRow
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), maxLineBuf)
 	for sc.Scan() {
 		fields := strings.SplitN(sc.Text(), "\t", 5)
 		var row PlacedRow
-		switch len(fields) {
-		case 5:
-			row.Enabled = fields[4]
-			fallthrough
-		case 4:
-			row.Hash = fields[3]
-			fallthrough
-		case 3:
-			row.Src = fields[2]
-			fallthrough
-		case 2:
-			row.Kind = fields[1]
-			fallthrough
-		case 1:
+		row.Enabled = "1"
+		switch {
+		case len(fields) >= 4: // legacy 5-column row
 			row.Rel = fields[0]
+			row.Hash = fields[3]
+			// The legacy writer only ever wrote "0" or "1"; anything else
+			// (an absorbed 6th tab, hand-editing) is not a deliberate
+			// disable and reads enabled.
+			if len(fields) == 5 && fields[4] == "0" {
+				row.Enabled = "0"
+			}
+		default:
+			row.Rel = fields[0]
+			if len(fields) >= 2 {
+				row.Hash = fields[1]
+			}
 		}
 		if row.Rel == "" {
 			continue
 		}
+		if disabled[row.Rel] {
+			row.Enabled = "0"
+		}
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+// DisabledFiles is the set of placed paths currently toggled off, read from
+// dir's disabled-files sidecar. Missing file -> empty set.
+func DisabledFiles(dir string) map[string]bool {
+	m := map[string]bool{}
+	f, err := os.Open(filepath.Join(dir, DisabledFilesName))
+	if err != nil {
+		return m
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), maxLineBuf)
+	for sc.Scan() {
+		if l := strings.TrimSpace(sc.Text()); l != "" {
+			m[l] = true
+		}
+	}
+	return m
 }
 
 // CountNonEmptyLines counts non-empty lines in path; a final line without a
@@ -310,10 +344,12 @@ func FirstLine(path string) string {
 	return ""
 }
 
-// WritePlaced regenerates $OMK/placed.tsv wholesale: exactly 5 tab-separated,
-// non-empty fields per row, one "\n" per row, no trailing blank line. The
-// file is built in memory and written in one pass, replacing whatever was
-// there.
+// WritePlaced regenerates $OMK/placed.tsv wholesale: exactly 2 tab-separated,
+// non-empty fields per row (rel, hash), one "\n" per row, no trailing blank
+// line. Enabled is never written — the disabled-files sidecar is the store —
+// so writing a file read in the legacy 5-column format migrates it; the
+// caller is responsible for carrying any legacy enabled=0 rows into the
+// sidecar first (WriteDisabledFiles).
 //
 // It refuses — returns an error and writes nothing, not even a partial
 // prefix — if any row has an empty field or a field containing a tab or
@@ -322,7 +358,7 @@ func FirstLine(path string) string {
 func WritePlaced(path string, rows []PlacedRow) error {
 	var buf bytes.Buffer
 	for i, row := range rows {
-		fields := [...]string{row.Rel, row.Kind, row.Src, row.Hash, row.Enabled}
+		fields := [...]string{row.Rel, row.Hash}
 		for j, f := range fields {
 			if f == "" {
 				return fmt.Errorf("state.WritePlaced: row %d field %d: empty field", i, j)
@@ -338,4 +374,27 @@ func WritePlaced(path string, rows []PlacedRow) error {
 		return fmt.Errorf("state.WritePlaced: writing %q: %w", path, err)
 	}
 	return nil
+}
+
+// WriteDisabledFiles rewrites dir's disabled-files sidecar wholesale to the
+// sorted contents of set; an empty set removes the file. Paths containing a
+// newline are skipped (they cannot round-trip a line-oriented file).
+func WriteDisabledFiles(dir string, set map[string]bool) error {
+	var names []string
+	for n := range set {
+		if n == "" || strings.ContainsRune(n, '\n') {
+			continue
+		}
+		names = append(names, n)
+	}
+	path := filepath.Join(dir, DisabledFilesName)
+	if len(names) == 0 {
+		err := os.Remove(path)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	sort.Strings(names)
+	return os.WriteFile(path, []byte(strings.Join(names, "\n")+"\n"), 0o644)
 }

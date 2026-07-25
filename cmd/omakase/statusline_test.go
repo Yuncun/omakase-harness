@@ -62,8 +62,8 @@ func harnessRepo(t *testing.T) string {
 		t.Fatal(err)
 	}
 	rows := []state.PlacedRow{{
-		Rel: ".omakase/VERSION", Kind: "other", Src: "payload",
-		Hash: state.HashOf(filepath.Join(dir, ".omakase/VERSION")), Enabled: "1",
+		Rel:  ".omakase/VERSION",
+		Hash: state.HashOf(filepath.Join(dir, ".omakase/VERSION")),
 	}}
 	if err := state.WritePlaced(filepath.Join(omk, "placed.tsv"), rows); err != nil {
 		t.Fatal(err)

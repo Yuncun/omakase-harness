@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
 // The --source integration and unit tests. Path-bearing expectations are
@@ -101,7 +99,7 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 	cache := sourceCacheDir(src)
 	// merged lexical order: .claude/rules/r.md, .omakase/bin/base.sh, .omakase/gates/src.sh, omakase.manifest
 	wantOut := "omakase: source '" + src + "' (name: demo, version: 1.2.3) cached at " + cache + "\n" +
-		"omakase: placed 4 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
+		"omakase: placed 4 file(s), updated 0 to match the payload, skipped 0 committed path(s).\n" +
 		"  + .claude/rules/r.md\n" +
 		"  + .omakase/bin/base.sh\n" +
 		"  + .omakase/gates/src.sh\n" +
@@ -110,8 +108,8 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 		"omakase: no gates declared — no enforcement hooks installed.\n" +
 		"omakase: see the whole harness any time with  omakase status\n" +
 		"omakase: this harness recommends — install the widget plugin\n" +
-		"omakase: to customize, fork the harness source (clone -> edit -> publish) and\n" +
-		"         init from your copy; do not edit injected files in place (overwritten on re-init).\n" +
+		"omakase: to customize, edit an injected file in place (omakase diff shows the change;\n" +
+		"         keep or undo it via omakase status) — or fork the harness source and init from your copy.\n" +
 		uxStanzas() + steeringOnlyVerifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "")
@@ -121,12 +119,6 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 	eq(t, "delta gate", readFileT(t, filepath.Join(dir, ".omakase", "gates", "src.sh")), "src gate\n")
 	eq(t, "delta rule", readFileT(t, filepath.Join(dir, ".claude", "rules", "r.md")), "rule\n")
 
-	// placed.tsv column 3 = the source string on every row (base + delta).
-	for _, row := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
-		if row.Src != src {
-			t.Errorf("placed.tsv col3 = %q for %q, want %q", row.Src, row.Rel, src)
-		}
-	}
 	// remembered source written verbatim + newline.
 	eq(t, "OMK/source", readFileT(t, filepath.Join(repo.OMK, "source")), src+"\n")
 	// cache slug carries the source basename.
@@ -293,11 +285,6 @@ func TestSourceRefPinBranch(t *testing.T) {
 	}
 	eq(t, "branch-pinned content", readFileT(t, filepath.Join(dir, ".omakase", "gates", "g.sh")), "FEATURE\n")
 	eq(t, "remembered label pinned", readFileT(t, filepath.Join(repo.OMK, "source")), src+"#feature\n")
-	for _, row := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
-		if row.Src != src+"#feature" {
-			t.Errorf("placed.tsv col3 = %q, want %q", row.Src, src+"#feature")
-		}
-	}
 }
 
 // TestSourceRefPinTag: a tag ref resolves via fetch --tags; the tagged (older)
@@ -451,10 +438,10 @@ func TestSourceCacheRefreshPicksUpNewCommit(t *testing.T) {
 		t.Fatalf("init 2 exit = %d; stderr=%q", code, e2.String())
 	}
 	eq(t, "refreshed v2 content", readFileT(t, filepath.Join(dir, ".omakase", "gates", "g.sh")), "V2\n")
-	// The placed gate changed V1 -> V2, so the engine reports the overwrite on
+	// The placed gate changed V1 -> V2, so the engine reports the update on
 	// stderr (the injected copy is brought back to match the refreshed payload).
-	if !strings.Contains(e2.String(), "omakase: overwrote .omakase/gates/g.sh to match payload") {
-		t.Errorf("refresh did not report the overwrite:\n%s", e2.String())
+	if !strings.Contains(e2.String(), "omakase: updated .omakase/gates/g.sh to match the payload") {
+		t.Errorf("refresh did not report the update:\n%s", e2.String())
 	}
 }
 
@@ -980,7 +967,7 @@ func TestSourceSubpathMerge(t *testing.T) {
 
 	cache := sourceCacheDir(canonical)
 	wantOut := "omakase: source '" + canonical + "' (name: hubbed, version: 0.1) cached at " + cache + "\n" +
-		"omakase: placed 4 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
+		"omakase: placed 4 file(s), updated 0 to match the payload, skipped 0 committed path(s).\n" +
 		"  + .claude/rules/r.md\n" +
 		"  + .omakase/bin/base.sh\n" +
 		"  + .omakase/gates/src.sh\n" +
@@ -988,8 +975,8 @@ func TestSourceSubpathMerge(t *testing.T) {
 		"omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.\n" +
 		"omakase: no gates declared — no enforcement hooks installed.\n" +
 		"omakase: see the whole harness any time with  omakase status\n" +
-		"omakase: to customize, fork the harness source (clone -> edit -> publish) and\n" +
-		"         init from your copy; do not edit injected files in place (overwritten on re-init).\n" +
+		"omakase: to customize, edit an injected file in place (omakase diff shows the change;\n" +
+		"         keep or undo it via omakase status) — or fork the harness source and init from your copy.\n" +
 		uxStanzas() + steeringOnlyVerifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "")
@@ -998,11 +985,6 @@ func TestSourceSubpathMerge(t *testing.T) {
 	eq(t, "base file", readFileT(t, filepath.Join(dir, ".omakase", "bin", "base.sh")), "base\n")
 	if pathExists(filepath.Join(dir, "decoy.txt")) {
 		t.Error("root-level decoy payload was placed; subpath validation leaked to the clone root")
-	}
-	for _, row := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
-		if row.Src != canonical {
-			t.Errorf("placed.tsv col3 = %q for %q, want %q", row.Src, row.Rel, canonical)
-		}
 	}
 	eq(t, "OMK/source", readFileT(t, filepath.Join(repo.OMK, "source")), canonical+"\n")
 	// The slug carries the harness directory's basename, not the hub repo's.

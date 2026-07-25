@@ -5,6 +5,29 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Changed
+- **State stores only what can't be derived.** `placed.tsv` shrinks to two
+  columns (path, sha256): kind is derived from the path, the source label
+  from the remembered source, and file disables move to a `disabled-files`
+  marker file — the same shape as `disabled-gates` and `kept/`, so files
+  and gates now share one disable mechanism. Old 5-column ledgers are
+  still read; the first init or toggle rewrites them.
+- **`omakase init` refuses instead of overwriting.** A file in the way —
+  one omakase never placed, or a placed file you edited — now refuses the
+  whole init and names each path (edits point at `omakase diff` /
+  `--keep` / `--restore`) before anything is touched. Unedited files
+  still update in place and `.omakase/` machinery still heals to
+  canonical, so init remains the update verb. Nothing is ever overwritten
+  with content loss, so the `clobbered/` backup tree is gone.
+
+### Removed
+- The lefthook-era migration machinery (pre-gate-module snapshot
+  detection, the hook's stale-snapshot block, init's pre-#98 artifact
+  cleanup, remove's skeleton `lefthook.yml` sweep). The probe's
+  "needs migration" fact narrows to "manifest unreadable" — the one thing
+  it still proves. Detection of a project's own lefthook/husky config is
+  unchanged.
+
 ## [0.25.0] — 2026-07-25
 
 ### Removed

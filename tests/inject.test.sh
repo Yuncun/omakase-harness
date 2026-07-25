@@ -164,48 +164,49 @@ heal "$WTD" >/dev/null 2>&1
 [ -L "$WTD/CLAUDE.md" ] && pass "the native heal self-healed the symlink into a worktree" || fail "the heal did not carry the symlink"
 ( cd "$REPO" && git worktree remove --force "$WTD" ) 2>/dev/null; ( cd "$REPO" && git worktree prune ) 2>/dev/null
 
-# ---------- Scenario E: re-init always matches payload — overwrites divergent files + warns ----------
-echo "== Scenario E: re-init overwrites a changed injected file and warns =="
-# E1 — you edited a placed gate in place; re-init OVERWRITES it back to payload and warns.
+# ---------- Scenario E: re-init heals machinery, refuses over foreign files ----------
+echo "== Scenario E: machinery heals to canonical; foreign files refuse the init =="
+# E1 — a drifted MACHINERY file (the ledgered gate) is torn state, not a user
+# edit: re-init heals it back to the payload and says so. No backup tree — the
+# collision scan refuses before touching anything that would lose content.
 PAY="$TMP/payloadE1"; REPO="$TMP/repoE1"; mkpayload "$PAY"; newrepo "$REPO"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 echo 'MY EDIT' > "$REPO/.omakase/gates/example.sh"
 OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 )
-grep -q 'omakase-example-gate-ran' "$REPO/.omakase/gates/example.sh" && pass "re-init overwrote the edited gate back to payload" || fail "re-init did not overwrite the edit"
-grep -q 'MY EDIT' "$REPO/.omakase/gates/example.sh" && fail "re-init left the local edit in place" || pass "the local edit was replaced"
-echo "$OUT" | grep -qi 'overwrote' && pass "re-init warned that it overwrote a changed file" || fail "re-init did not warn about the overwrite"
-# the overwritten content is recoverable: init preserves the pre-overwrite copy under clobbered/
+grep -q 'omakase-example-gate-ran' "$REPO/.omakase/gates/example.sh" && pass "re-init healed the drifted machinery gate back to payload" || fail "re-init did not heal the machinery gate"
+grep -q 'MY EDIT' "$REPO/.omakase/gates/example.sh" && fail "re-init left the machinery drift in place" || pass "the machinery drift was replaced"
+echo "$OUT" | grep -qi 'updated .omakase/gates/example.sh' && pass "re-init reported the update" || fail "re-init did not report the update ($OUT)"
 CMN="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
-grep -q 'MY EDIT' "$CMN/omakase/clobbered/.omakase/gates/example.sh" 2>/dev/null && pass "pre-overwrite copy preserved under clobbered/ (recoverable)" || fail "overwritten content was destroyed with no backup"
-echo "$OUT" | grep -q 'clobbered/' && pass "the overwrite warning names the preserved-copy path" || fail "overwrite warning does not name the backup ($OUT)"
-[ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status still clean after an overwrite" || { fail "status not clean after overwrite"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
+[ ! -e "$CMN/omakase/clobbered" ] && pass "no clobbered/ backup tree (retired)" || fail "clobbered/ tree written after retirement"
+[ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status still clean after the heal" || { fail "status not clean after heal"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
 # E2 — payload changed upstream; re-init takes the new version (same overwrite path).
 PAY="$TMP/payloadE2"; REPO="$TMP/repoE2"; mkpayload "$PAY"; newrepo "$REPO"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 printf '#!/usr/bin/env bash\necho NEW-PAYLOAD-V2\nexit 0\n' > "$PAY/.omakase/gates/example.sh"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 grep -q 'NEW-PAYLOAD-V2' "$REPO/.omakase/gates/example.sh" && pass "re-init took the new payload version (upstream update)" || fail "upstream update did not apply"
-# E3 — FIRST install over a user's OWN pre-existing untracked file at a payload path. No prior
-# ledger exists, so the place-loop backup is the ONLY safety net (the collision guard is skipped).
+# E3 — FIRST install over a user's OWN pre-existing untracked file at a payload
+# path: never placed by omakase, so init REFUSES whole, names the file, and
+# changes nothing (the Stow rule: scan, then terminate without modifications).
 PAY="$TMP/payloadE3"; REPO="$TMP/repoE3"; mkpayload "$PAY"; newrepo "$REPO"
 mkdir -p "$REPO/.omakase/gates"; echo 'MY OWN FILE' > "$REPO/.omakase/gates/example.sh"
-OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 )
-grep -q 'omakase-example-gate-ran' "$REPO/.omakase/gates/example.sh" && pass "first install overwrote the user's pre-existing untracked file" || fail "first install did not overwrite"
-CMN="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
-grep -q 'MY OWN FILE' "$CMN/omakase/clobbered/.omakase/gates/example.sh" 2>/dev/null && pass "first-install: user's content preserved under clobbered/ (no prior ledger needed)" || fail "first-install backup missing — user file destroyed with no recovery"
-echo "$OUT" | grep -q 'clobbered/' && pass "first-install overwrite warning names the backup" || fail "no backup path in the warning ($OUT)"
-# E4 — an untracked SYMLINK-TO-DIRECTORY where the payload ships a regular file: init must replace
-# the symlink with the payload file, NOT write the file through into the linked dir (regression
-# guard for the bare-`-d`-follows-symlink bug), and back up the symlink.
+OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
+[ "$rc" -ne 0 ] && pass "first install over a foreign file refuses (exit $rc)" || fail "first install did not refuse"
+grep -q 'MY OWN FILE' "$REPO/.omakase/gates/example.sh" && pass "the user's file is untouched" || fail "the user's file was destroyed"
+echo "$OUT" | grep -q 'REFUSING init' && echo "$OUT" | grep -q '.omakase/gates/example.sh' && pass "refusal names the file in the way" || fail "refusal message wrong ($OUT)"
+# E4 — a SYMLINK-TO-DIRECTORY swapped in at a LEDGERED machinery path: the heal
+# must replace the symlink with the payload file, NOT write the file through
+# into the linked dir (regression guard for the bare-`-d`-follows-symlink bug).
+# Machinery is the reachable overwrite path now — everything else refuses first.
 PAY="$TMP/payloadE4"; REPO="$TMP/repoE4"; mkpayload "$PAY"; newrepo "$REPO"
-mkdir -p "$REPO/realdir" "$REPO/.omakase/gates"
+( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+mkdir -p "$REPO/realdir"
+rm -f "$REPO/.omakase/gates/example.sh"
 ( cd "$REPO/.omakase/gates" && ln -s ../../realdir example.sh )   # example.sh -> a directory
 OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 )
 [ ! -L "$REPO/.omakase/gates/example.sh" ] && pass "symlink-to-dir dest replaced (no longer a symlink)" || fail "symlink-to-dir dest left as a symlink"
 grep -q 'omakase-example-gate-ran' "$REPO/.omakase/gates/example.sh" 2>/dev/null && pass "payload file placed at the path" || fail "payload not placed at the path"
 [ ! -e "$REPO/realdir/example.sh" ] && pass "payload NOT written through into the linked directory" || fail "payload leaked into the linked dir (write-through bug)"
-CMN="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)"
-[ -L "$CMN/omakase/clobbered/.omakase/gates/example.sh" ] && pass "the user's symlink was backed up under clobbered/ (as a symlink)" || fail "symlink dest not backed up"
 
 # ---------- Scenario F: omakase status renders the installed harness ----------
 echo "== Scenario F: show renders the installed-but-invisible harness =="

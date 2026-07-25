@@ -352,6 +352,13 @@ func renderInjected(w io.Writer, repo *state.Repo, placedPath string, md bool) b
 	}
 
 	shown := false
+	// The "from" annotation is the remembered source ($OMK/source), shown in
+	// its browsable form; a plain install has no source file and reads
+	// "payload". One value for every row — the ledger stores none of this.
+	src := srcDisplay(state.FirstLine(filepath.Join(repo.OMK, "source")))
+	if src == "" {
+		src = "payload"
+	}
 	for _, row := range state.ReadPlaced(placedPath) {
 		if row.Rel == "" {
 			continue
@@ -360,7 +367,7 @@ func renderInjected(w io.Writer, repo *state.Repo, placedPath string, md bool) b
 			continue
 		}
 		shown = true
-		writeInjectedRow(w, repo, row, md)
+		writeInjectedRow(w, repo, row, src, md)
 	}
 	return shown
 }
@@ -395,10 +402,9 @@ func machineryNoteworthy(repo *state.Repo, row state.PlacedRow) bool {
 // their own edit, #98 Part 2) carries its own state marker: consent must be
 // visible at rest. Kept and drifted can coexist — an edit made after the
 // keep drifts from the ACCEPTED hash and renders both.
-func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, md bool) {
-	// The "from" annotation renders the browsable source form (see
-	// srcDisplay); the ledger keeps the canonical string.
-	row.Src = srcDisplay(row.Src)
+func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, src string, md bool) {
+	// Kind is a pure function of the path; the ledger stores only rel + hash.
+	kind := harness.KindOf(row.Rel)
 	full := filepath.Join(repo.Root, row.Rel)
 	drifted := state.IsDrifted(repo.Root, row.Rel, row.Hash, row.Enabled)
 	_, kerr := os.Lstat(filepath.Join(repo.OMK, "kept", row.Rel))
@@ -413,7 +419,13 @@ func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, md boo
 	if md {
 		dz, kz := "", ""
 		if drifted {
-			dz = " — **DRIFTED** (differs from canonical; `omakase init` to re-sync, or it may be an intentional local edit)"
+			// A drifted machinery file is torn state and init re-places it;
+			// a drifted user-facing file is a local edit and belongs to the
+			// edit lifecycle (init refuses to overwrite it).
+			dz = " — **DRIFTED** (differs from canonical; see `omakase diff` — keep it (`omakase status --keep`) or put the harness version back (`omakase status --restore`))"
+			if harness.IsMachinery(row.Rel) {
+				dz = " — **DRIFTED** (differs from canonical; `omakase init` to re-sync)"
+			}
 			if kept {
 				dz = " — **DRIFTED** (differs from your accepted version; see `omakase diff`)"
 			}
@@ -427,16 +439,16 @@ func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, md boo
 			if keptMark {
 				note = "; a kept version of yours is saved — `omakase status --enable` brings it back"
 			}
-			fmt.Fprintf(w, "- `%s` — %s, from %s — disabled (not restored, not verified%s)\n", row.Rel, row.Kind, row.Src, note)
+			fmt.Fprintf(w, "- `%s` — %s, from %s — disabled (not restored, not verified%s)\n", row.Rel, kind, src, note)
 		case isSymlink:
 			target, _ := os.Readlink(full)
-			fmt.Fprintf(w, "- `%s` → `%s` — %s, from %s%s%s\n", row.Rel, target, row.Kind, row.Src, kz, dz)
+			fmt.Fprintf(w, "- `%s` → `%s` — %s, from %s%s%s\n", row.Rel, target, kind, src, kz, dz)
 		case present:
-			fmt.Fprintf(w, "- `%s` — %s, from %s%s%s\n", row.Rel, row.Kind, row.Src, kz, dz)
+			fmt.Fprintf(w, "- `%s` — %s, from %s%s%s\n", row.Rel, kind, src, kz, dz)
 		case kept:
-			fmt.Fprintf(w, "- `%s` — %s, from %s — **MISSING** (your kept version is saved; restored on the next checkout, or run `omakase init`)\n", row.Rel, row.Kind, row.Src)
+			fmt.Fprintf(w, "- `%s` — %s, from %s — **MISSING** (your kept version is saved; restored on the next checkout, or run `omakase init`)\n", row.Rel, kind, src)
 		default:
-			fmt.Fprintf(w, "- `%s` — %s, from %s — **MISSING** (run `omakase init` to restore)\n", row.Rel, row.Kind, row.Src)
+			fmt.Fprintf(w, "- `%s` — %s, from %s — **MISSING** (run `omakase init` to restore)\n", row.Rel, kind, src)
 		}
 		return
 	}
@@ -447,7 +459,10 @@ func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, md boo
 		mk = "="
 	}
 	if drifted {
-		dz = "; DRIFTED — differs from canonical, run omakase init to re-sync"
+		dz = "; DRIFTED — differs from canonical, see omakase diff (then --keep or --restore)"
+		if harness.IsMachinery(row.Rel) {
+			dz = "; DRIFTED — differs from canonical, run omakase init to re-sync"
+		}
 		if kept {
 			dz = "; DRIFTED — differs from your accepted version, see omakase diff"
 		}
@@ -459,16 +474,16 @@ func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, md boo
 		if keptMark {
 			note = "; kept version of yours saved — omakase status --enable brings it back"
 		}
-		fmt.Fprintf(w, "    - %s   (%s, from %s; disabled — not restored, not verified%s)\n", row.Rel, row.Kind, row.Src, note)
+		fmt.Fprintf(w, "    - %s   (%s, from %s; disabled — not restored, not verified%s)\n", row.Rel, kind, src, note)
 	case isSymlink:
 		target, _ := os.Readlink(full)
-		fmt.Fprintf(w, "    %s %s -> %s   (%s, from %s%s%s)\n", mk, row.Rel, target, row.Kind, row.Src, kz, dz)
+		fmt.Fprintf(w, "    %s %s -> %s   (%s, from %s%s%s)\n", mk, row.Rel, target, kind, src, kz, dz)
 	case present:
-		fmt.Fprintf(w, "    %s %s   (%s, from %s%s%s)\n", mk, row.Rel, row.Kind, row.Src, kz, dz)
+		fmt.Fprintf(w, "    %s %s   (%s, from %s%s%s)\n", mk, row.Rel, kind, src, kz, dz)
 	case kept:
-		fmt.Fprintf(w, "    ! %s   (%s, from %s; MISSING — your kept version is saved; restored on next checkout, or omakase init)\n", row.Rel, row.Kind, row.Src)
+		fmt.Fprintf(w, "    ! %s   (%s, from %s; MISSING — your kept version is saved; restored on next checkout, or omakase init)\n", row.Rel, kind, src)
 	default:
-		fmt.Fprintf(w, "    ! %s   (%s, from %s; MISSING — run omakase init to restore)\n", row.Rel, row.Kind, row.Src)
+		fmt.Fprintf(w, "    ! %s   (%s, from %s; MISSING — run omakase init to restore)\n", row.Rel, kind, src)
 	}
 }
 

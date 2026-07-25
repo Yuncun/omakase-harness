@@ -64,8 +64,8 @@ func installHarness(t *testing.T, root string) string {
 	writeFile(t, root, ".omakase/VERSION", "0.18.1\n")
 	writeFile(t, root, ".omakase/bin/omakase-gate.sh", "#!/bin/sh\n")
 	rows := []state.PlacedRow{
-		{Rel: ".omakase/VERSION", Kind: "other", Src: "payload", Hash: state.HashOf(filepath.Join(root, ".omakase/VERSION")), Enabled: "1"},
-		{Rel: ".omakase/bin/omakase-gate.sh", Kind: "other", Src: "payload", Hash: state.HashOf(filepath.Join(root, ".omakase/bin/omakase-gate.sh")), Enabled: "1"},
+		{Rel: ".omakase/VERSION", Hash: state.HashOf(filepath.Join(root, ".omakase/VERSION"))},
+		{Rel: ".omakase/bin/omakase-gate.sh", Hash: state.HashOf(filepath.Join(root, ".omakase/bin/omakase-gate.sh"))},
 	}
 	if err := state.WritePlaced(filepath.Join(omk, "placed.tsv"), rows); err != nil {
 		t.Fatal(err)
@@ -346,9 +346,7 @@ func TestCollectTrackedFileNeverDrifts(t *testing.T) {
 func TestCollectDisabledRowIgnored(t *testing.T) {
 	root := newTestRepo(t)
 	omk := installHarness(t, root)
-	rows := state.ReadPlaced(filepath.Join(omk, "placed.tsv"))
-	rows[1].Enabled = "0"
-	if err := state.WritePlaced(filepath.Join(omk, "placed.tsv"), rows); err != nil {
+	if err := state.WriteDisabledFiles(omk, map[string]bool{".omakase/bin/omakase-gate.sh": true}); err != nil {
 		t.Fatal(err)
 	}
 	os.Remove(filepath.Join(root, ".omakase", "bin", "omakase-gate.sh"))
@@ -363,8 +361,8 @@ func TestCollectEmptyLedgerHashSkipsDrift(t *testing.T) {
 	omk := installHarness(t, root)
 	// A short row (no hash field) comes back from ReadPlaced with Hash "";
 	// drift cannot be judged without a ledger hash, so the row is skipped.
-	raw := ".omakase/VERSION\tother\tpayload\t" + state.HashOf(filepath.Join(root, ".omakase/VERSION")) + "\t1\n" +
-		".omakase/bin/omakase-gate.sh\tother\tpayload\n"
+	raw := ".omakase/VERSION\t" + state.HashOf(filepath.Join(root, ".omakase/VERSION")) + "\n" +
+		".omakase/bin/omakase-gate.sh\n"
 	if err := os.WriteFile(filepath.Join(omk, "placed.tsv"), []byte(raw), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -374,36 +372,37 @@ func TestCollectEmptyLedgerHashSkipsDrift(t *testing.T) {
 	}
 }
 
-// -------------------------------------------------------- gate migration
+// -------------------------------------------------------- manifest readability
 
-// A pre-gate-module (lefthook-era) snapshot — lefthook-local.yml in the
-// snapshot, no gate-bearing manifest — must read as a Problem even while every
-// other proof stays green (the #72 status-lie the hook now fails closed on).
-func TestCollectStaleLefthookSnapshotIsProblem(t *testing.T) {
+// An unreadable (unparseable) snapshot manifest must read as a Problem even
+// while every other proof is green: the hook fails closed on the same fact
+// (the #72 green-while-broken lesson).
+func TestCollectUnreadableManifestIsProblem(t *testing.T) {
 	root := newTestRepo(t)
 	omk := installHarness(t, root)
 	snap := filepath.Join(omk, "payload-snapshot")
 	if err := os.MkdirAll(snap, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(snap, "lefthook-local.yml"), []byte("pre-commit:\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(snap, "omakase.manifest"), []byte("gate: g\n  bogus-key: x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	st := collect(t, root)
-	if st.GatesMigrated != Problem {
-		t.Fatalf("GatesMigrated = %v, want Problem on a lefthook-era snapshot", st.GatesMigrated)
+	if st.ManifestOK != Problem {
+		t.Fatalf("ManifestOK = %v, want Problem on an unparseable manifest", st.ManifestOK)
 	}
-	// The other proofs still read green — the probe added a NEW signal instead
-	// of leaning on an existing one.
 	if st.HooksInstalled != OK || st.FilesPresent != OK || st.HashesMatch != OK {
 		t.Fatalf("expected the other proofs green (hooks=%v files=%v hashes=%v)", st.HooksInstalled, st.FilesPresent, st.HashesMatch)
 	}
 }
 
-// A migrated snapshot (a gate-bearing manifest, no lefthook marker) is OK.
-func TestCollectMigratedSnapshotIsOK(t *testing.T) {
+// A readable gate-bearing manifest — and a missing one — are both OK.
+func TestCollectManifestOK(t *testing.T) {
 	root := newTestRepo(t)
 	omk := installHarness(t, root)
+	if st := collect(t, root); st.ManifestOK != OK {
+		t.Fatalf("ManifestOK = %v, want OK with no manifest", st.ManifestOK)
+	}
 	snap := filepath.Join(omk, "payload-snapshot")
 	if err := os.MkdirAll(snap, 0o755); err != nil {
 		t.Fatal(err)
@@ -411,8 +410,8 @@ func TestCollectMigratedSnapshotIsOK(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(snap, "omakase.manifest"), []byte("gate: g\n  hook: pre-commit\n  run: true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if st := collect(t, root); st.GatesMigrated != OK {
-		t.Fatalf("GatesMigrated = %v, want OK on a migrated snapshot", st.GatesMigrated)
+	if st := collect(t, root); st.ManifestOK != OK {
+		t.Fatalf("ManifestOK = %v, want OK on a readable manifest", st.ManifestOK)
 	}
 }
 
@@ -532,8 +531,7 @@ func TestCollectKeptCount(t *testing.T) {
 
 	// A kept copy behind a DISABLED row does not count.
 	rows = state.ReadPlaced(ledger)
-	rows[0].Enabled = "0"
-	if err := state.WritePlaced(ledger, rows); err != nil {
+	if err := state.WriteDisabledFiles(omk, map[string]bool{rows[0].Rel: true}); err != nil {
 		t.Fatal(err)
 	}
 	if st := collect(t, dir); st.Kept != 0 {

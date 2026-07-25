@@ -54,8 +54,8 @@ func buildStatusFixture(t *testing.T) (*state.Repo, string) {
 	normalHash := sha256Hex(normalContent)
 
 	writeFile(t, dir, "omakase.manifest", fixtureManifest)
-	placedTSV := "normal.txt\tdoc\tacme/harness\t" + normalHash + "\t1\n" +
-		"omakase.manifest\tgate\tacme/harness\t" + sha256Hex(fixtureManifest) + "\t1\n"
+	placedTSV := "normal.txt\t" + normalHash + "\n" +
+		"omakase.manifest\t" + sha256Hex(fixtureManifest) + "\n"
 	writeOMK(t, repo.OMK, "placed.tsv", placedTSV)
 	writeOMK(t, repo.OMK, "source", "acme/harness\n")
 	writeOMK(t, repo.OMK, "ledger.tsv", fixtureLedger)
@@ -96,16 +96,16 @@ func withRoot(golden, root string) string {
 // buildStatusFixture.
 
 // Markdown output for the installed fixture.
-const wantFullMD = "## 🥡 acme-dev-harness\n\n`acme/harness` · base omakase 0.11.3 · installed in `{{ROOT}}`\n\n**Zero footprint** — 2 file(s) injected, 0 committed; all gitignored via `.git/info/exclude` (invisible to git).\n\n### Guards — what runs when you commit / push\n\n| Run when | Guard | Enforces | Last verdict |\n| --- | --- | --- | --- |\n| `pre-commit` | markers | runs every fire | ✓ pass - 5m ago |\n| `pre-push` | tests | cached; scope: a/*\\|b/* | ✗ fail - 2h ago |\n| `pre-push` | review | cached; scope: src/* | - not yet run |\n\n### The project's harness (committed — managed by git, not omakase)\n- `.claude/rules/team.md` — rule\n- `CLAUDE.md` — doc\n\n### Injected (omakase) — placed by `omakase init`, gitignored\n- `normal.txt` — doc, from acme/harness\n\n_Edit any of these directly — status offers keep/restore; to own the harness: `/omakase:author`._\n\n### Global — 8 files in ~/.claude + ~/.copilot steer every repo (list: omakase status --global)\n\n_Refresh:_ `omakase init`  ·  _Remove:_ `omakase remove`  ·  _read-only; running status changes nothing._\n"
+const wantFullMD = "## 🥡 acme-dev-harness\n\n`acme/harness` · base omakase 0.11.3 · installed in `{{ROOT}}`\n\n**Zero footprint** — 2 file(s) injected, 0 committed; all gitignored via `.git/info/exclude` (invisible to git).\n\n### Guards — what runs when you commit / push\n\n| Run when | Guard | Enforces | Last verdict |\n| --- | --- | --- | --- |\n| `pre-commit` | markers | runs every fire | ✓ pass - 5m ago |\n| `pre-push` | tests | cached; scope: a/*\\|b/* | ✗ fail - 2h ago |\n| `pre-push` | review | cached; scope: src/* | - not yet run |\n\n### The project's harness (committed — managed by git, not omakase)\n- `.claude/rules/team.md` — rule\n- `CLAUDE.md` — doc\n\n### Injected (omakase) — placed by `omakase init`, gitignored\n- `normal.txt` — other, from acme/harness\n\n_Edit any of these directly — status offers keep/restore; to own the harness: `/omakase:author`._\n\n### Global — 8 files in ~/.claude + ~/.copilot steer every repo (list: omakase status --global)\n\n_Refresh:_ `omakase init`  ·  _Remove:_ `omakase remove`  ·  _read-only; running status changes nothing._\n"
 
 // Terminal output for the installed fixture, no banner.
-const wantFullTerm = "acme-dev-harness — acme/harness · base omakase 0.11.3 · installed in {{ROOT}}\nzero footprint: 2 injected, 0 committed, all gitignored (.git/info/exclude)\n\nGUARDS — what runs when you commit / push\n  RUN WHEN     GUARD     ENFORCES                 LAST VERDICT\n  pre-commit   markers   runs every fire          ✓ pass - 5m ago\n  pre-push     tests     cached; scope: a/*|b/*   ✗ fail - 2h ago\n  pre-push     review    cached; scope: src/*     - not yet run\n\nTHE PROJECT'S HARNESS (committed — managed by git, not omakase)\n    + .claude/rules/team.md   (rule)\n    + CLAUDE.md   (doc)\nINJECTED (omakase) — placed by omakase init, gitignored\n    + normal.txt   (doc, from acme/harness)\n    edit any of these directly — status offers keep/restore; to own the harness: /omakase:author\nGLOBAL — 8 files in ~/.claude + ~/.copilot steer every repo (list: omakase status --global)\n\nRestore the harness (replaces missing or changed files; removes dropped ones):   omakase init\nUndo everything:                                                                 omakase remove\n"
+const wantFullTerm = "acme-dev-harness — acme/harness · base omakase 0.11.3 · installed in {{ROOT}}\nzero footprint: 2 injected, 0 committed, all gitignored (.git/info/exclude)\n\nGUARDS — what runs when you commit / push\n  RUN WHEN     GUARD     ENFORCES                 LAST VERDICT\n  pre-commit   markers   runs every fire          ✓ pass - 5m ago\n  pre-push     tests     cached; scope: a/*|b/*   ✗ fail - 2h ago\n  pre-push     review    cached; scope: src/*     - not yet run\n\nTHE PROJECT'S HARNESS (committed — managed by git, not omakase)\n    + .claude/rules/team.md   (rule)\n    + CLAUDE.md   (doc)\nINJECTED (omakase) — placed by omakase init, gitignored\n    + normal.txt   (other, from acme/harness)\n    edit any of these directly — status offers keep/restore; to own the harness: /omakase:author\nGLOBAL — 8 files in ~/.claude + ~/.copilot steer every repo (list: omakase status --global)\n\nRestore the harness (replaces missing or changed files; removes dropped ones):   omakase init\nUndo everything:                                                                 omakase remove\n"
 
 // Terminal output for the installed fixture with a deterministic banner script
 // at .omakase/bin/omakase-banner.sh printing two lines — proves the banner exec
 // and multi-line stdout passthrough.
 const bannerScript = "#!/usr/bin/env bash\necho \"== omakase ==\"\necho \"banner line two\"\n"
-const wantFullTermBanner = "== omakase ==\nbanner line two\nacme-dev-harness — acme/harness · base omakase 0.11.3 · installed in {{ROOT}}\nzero footprint: 2 injected, 0 committed, all gitignored (.git/info/exclude)\n\nGUARDS — what runs when you commit / push\n  RUN WHEN     GUARD     ENFORCES                 LAST VERDICT\n  pre-commit   markers   runs every fire          ✓ pass - 5m ago\n  pre-push     tests     cached; scope: a/*|b/*   ✗ fail - 2h ago\n  pre-push     review    cached; scope: src/*     - not yet run\n\nTHE PROJECT'S HARNESS (committed — managed by git, not omakase)\n    + .claude/rules/team.md   (rule)\n    + CLAUDE.md   (doc)\nINJECTED (omakase) — placed by omakase init, gitignored\n    + normal.txt   (doc, from acme/harness)\n    edit any of these directly — status offers keep/restore; to own the harness: /omakase:author\nGLOBAL — 8 files in ~/.claude + ~/.copilot steer every repo (list: omakase status --global)\n\nRestore the harness (replaces missing or changed files; removes dropped ones):   omakase init\nUndo everything:                                                                 omakase remove\n"
+const wantFullTermBanner = "== omakase ==\nbanner line two\nacme-dev-harness — acme/harness · base omakase 0.11.3 · installed in {{ROOT}}\nzero footprint: 2 injected, 0 committed, all gitignored (.git/info/exclude)\n\nGUARDS — what runs when you commit / push\n  RUN WHEN     GUARD     ENFORCES                 LAST VERDICT\n  pre-commit   markers   runs every fire          ✓ pass - 5m ago\n  pre-push     tests     cached; scope: a/*|b/*   ✗ fail - 2h ago\n  pre-push     review    cached; scope: src/*     - not yet run\n\nTHE PROJECT'S HARNESS (committed — managed by git, not omakase)\n    + .claude/rules/team.md   (rule)\n    + CLAUDE.md   (doc)\nINJECTED (omakase) — placed by omakase init, gitignored\n    + normal.txt   (other, from acme/harness)\n    edit any of these directly — status offers keep/restore; to own the harness: /omakase:author\nGLOBAL — 8 files in ~/.claude + ~/.copilot steer every repo (list: omakase status --global)\n\nRestore the harness (replaces missing or changed files; removes dropped ones):   omakase init\nUndo everything:                                                                 omakase remove\n"
 
 func TestStatusRunMD(t *testing.T) {
 	repo, home := buildStatusFixture(t)
@@ -223,9 +223,10 @@ func TestStatusFootprintCountsConsentState(t *testing.T) {
 	repo, home := buildStatusFixture(t)
 	// Mark normal.txt disabled (as FileOff would), leaving the machinery
 	// manifest row enabled -> 1 injected, 1 toggled off.
-	placedTSV := "normal.txt\tdoc\tacme/harness\t" + sha256Hex("normal-body\n") + "\t0\n" +
-		"omakase.manifest\tgate\tacme/harness\t" + sha256Hex(fixtureManifest) + "\t1\n"
+	placedTSV := "normal.txt\t" + sha256Hex("normal-body\n") + "\n" +
+		"omakase.manifest\t" + sha256Hex(fixtureManifest) + "\n"
 	writeOMK(t, repo.OMK, "placed.tsv", placedTSV)
+	writeOMK(t, repo.OMK, "disabled-files", "normal.txt\n")
 	pinStatusEnv(t, repo, home)
 
 	var md, mdErr bytes.Buffer

@@ -334,43 +334,6 @@ func TestTrackedLefthookYmlPreserved(t *testing.T) {
 	eq(t, "tracked lefthook.yml preserved", readFileT(t, filepath.Join(dir, "lefthook.yml")), content)
 }
 
-// TestUntrackedLefthookYmlWithoutMarkerPreserved: an untracked lefthook.yml that
-// is the project's own real config (no "EXAMPLE USAGE" skeleton banner) must
-// survive -- remove only deletes the auto-created skeleton.
-func TestUntrackedLefthookYmlWithoutMarkerPreserved(t *testing.T) {
-	dir, _ := initRepo(t)
-	singleGatePayload(t)
-	mustInit(t)
-
-	content := "pre-commit:\n  jobs:\n    - run: echo hi\n"
-	writeFile(t, filepath.Join(dir, "lefthook.yml"), content)
-
-	var stdout, stderr strings.Builder
-	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
-		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
-	}
-	eq(t, "custom lefthook.yml preserved", readFileT(t, filepath.Join(dir, "lefthook.yml")), content)
-}
-
-// TestUntrackedSkeletonLefthookYmlDeleted: an untracked lefthook.yml carrying the
-// "EXAMPLE USAGE" banner (lefthook's own default, auto-created by `lefthook
-// install` when no config existed) is what remove deletes.
-func TestUntrackedSkeletonLefthookYmlDeleted(t *testing.T) {
-	dir, _ := initRepo(t)
-	singleGatePayload(t)
-	mustInit(t)
-
-	writeFile(t, filepath.Join(dir, "lefthook.yml"), "# EXAMPLE USAGE:\n#\n#   see https://lefthook.dev\n")
-
-	var stdout, stderr strings.Builder
-	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
-		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
-	}
-	if _, err := os.Lstat(filepath.Join(dir, "lefthook.yml")); !os.IsNotExist(err) {
-		t.Errorf("skeleton lefthook.yml not deleted: %v", err)
-	}
-}
-
 // ---------------------------------------------------------------- .worktreeinclude
 
 // TestWtincUserContentSurvivesBlockStripped: content outside the marked block is
@@ -524,27 +487,6 @@ func TestWtincStripModeMatchesBashFreshInode(t *testing.T) {
 
 // ---------------------------------------------------------------- lefthook.yml heal snapshot
 
-// TestLefthookSnapshotGoneAfterRemove: init snapshots the untracked lefthook.yml
-// skeleton to $OMK/lefthook.yml (issue #80); remove's whole-$OMK wipe takes it
-// with the rest of the shared dir, so no dedicated teardown is needed.
-// A stale $OMK/lefthook.yml heal snapshot from a pre-#98 install goes with
-// the rest of the $OMK wipe.
-func TestLefthookSnapshotGoneAfterRemove(t *testing.T) {
-	_, repo := initRepo(t)
-	singleGatePayload(t)
-	mustInit(t)
-	snap := filepath.Join(repo.OMK, "lefthook.yml")
-	writeFile(t, snap, "# EXAMPLE USAGE:\n#   stale pre-#98 snapshot\n")
-
-	var stdout, stderr strings.Builder
-	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
-		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
-	}
-	if _, err := os.Lstat(snap); !os.IsNotExist(err) {
-		t.Errorf("lefthook.yml snapshot survived remove: %v", err)
-	}
-}
-
 // ------------------------------------------------------------ removeF error propagation
 //
 // Both the skeleton lefthook.yml removal and the .worktreeinclude removal must
@@ -552,39 +494,6 @@ func TestLefthookSnapshotGoneAfterRemove(t *testing.T) {
 // removal failure (a non-empty, non-writable parent directory so the unlink
 // itself fails, not just a missing file, which removeF already treats as success)
 // and assert RunRemove now propagates it as exit 1 instead of exiting 0.
-
-// TestSkeletonLefthookYmlRemovalFailurePropagates: making the repo root read-only
-// means `rm -f lefthook.yml` cannot unlink the entry (removing a file requires
-// write permission on its parent directory, not the file itself) -- RunRemove
-// must report that failure as exit 1.
-//
-// Uses an empty payload (nothing placed) rather than singleGatePayload
-// deliberately: a nested placed path (e.g. .omakase/gates/example.sh) would make
-// the ledger-driven deletion loop, which runs before this step, prune
-// root/.omakase itself once its contents are gone -- rmdir-ing a direct child of
-// root needs write permission on root, so that step would fail first instead,
-// masking the site under test here. An empty payload keeps the ledger-driven loop
-// a no-op (zero rows), isolating the failure to the lefthook.yml removeF call.
-func TestSkeletonLefthookYmlRemovalFailurePropagates(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("root ignores directory write permission; this fixture needs a non-root unlink to fail")
-	}
-	dir, _ := initRepo(t)
-	t.Setenv("OMAKASE_PAYLOAD", t.TempDir()) // empty: nothing placed
-	mustInit(t)
-
-	writeFile(t, filepath.Join(dir, "lefthook.yml"), "# EXAMPLE USAGE:\n#\n#   see https://lefthook.dev\n")
-	if err := os.Chmod(dir, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(dir, 0o755) }) // let t.TempDir() clean up afterward
-
-	var stdout, stderr strings.Builder
-	code := RunRemove(nil, &stdout, &stderr)
-	if code != 1 {
-		t.Errorf("exit = %d, want 1 (rm -f failure must abort, matching set -e); stdout=%q stderr=%q", code, stdout.String(), stderr.String())
-	}
-}
 
 // ---------------------------------------------------------------- multi-worktree sweep (issue #84 gap 1)
 //
@@ -616,9 +525,8 @@ func TestRemoveFromMainSweepsLinkedWorktrees(t *testing.T) {
 	wt := addWorktree(t, dir, "wt-sibling")
 
 	// Hand-seed the state heal leaves in a linked worktree: the placed gate,
-	// the skeleton lefthook.yml, and a .worktreeinclude holding init's block.
+	// and a .worktreeinclude holding init's block.
 	writeFile(t, filepath.Join(wt, ".omakase", "gates", "example.sh"), gateContent)
-	writeFile(t, filepath.Join(wt, "lefthook.yml"), "# EXAMPLE USAGE:\n#   skeleton\n")
 	writeFile(t, filepath.Join(wt, ".worktreeinclude"), readFileT(t, filepath.Join(dir, ".worktreeinclude")))
 
 	var stdout, stderr strings.Builder
@@ -630,7 +538,6 @@ func TestRemoveFromMainSweepsLinkedWorktrees(t *testing.T) {
 
 	for _, p := range []string{
 		filepath.Join(wt, ".omakase"),
-		filepath.Join(wt, "lefthook.yml"),
 		filepath.Join(wt, ".worktreeinclude"),
 		filepath.Join(dir, ".omakase"),
 		filepath.Join(dir, ".worktreeinclude"),

@@ -3,7 +3,7 @@
 # clones a SOURCE (a git repo carrying payload/ + omakase.manifest) into a local
 # cache, validates it, and injects its payload through the normal flow.
 #   S1. install from a local source repo — cache under XDG_CACHE_HOME, files
-#       placed, ledger source column = the user's source string, remembered
+#       placed, the source string remembered in $OMK/source,
 #       source written, the gate verify passes, a real commit fires the gate
 #   S2. show renders the source string on the Injected rows
 #   S3. update flow — commit a payload change in the source; a bare init.sh
@@ -73,7 +73,8 @@ for d in "$CACHEHOME"/omakase/sources/*/; do [ -d "$d" ] && CACHE_DIR="${d%/}"; 
 echo "$CACHE_DIR" | grep -q 'src-harness' && pass "cache slug carries the source basename" || fail "cache slug missing the source basename ($CACHE_DIR)"
 [ -x "$REPO/.omakase/gates/example.sh" ] && pass "payload gate placed (executable)" || fail "gate not placed"
 [ -f "$REPO/.claude/rules/style.md" ] && pass "payload rule placed" || fail "rule not placed"
-awk -F'\t' -v s="$SRC" '$3!=s{bad=1} END{exit bad?1:0}' "$LEDGER" 2>/dev/null && pass "ledger source column is the user's source string on every row" || fail "ledger source column wrong"
+# The source string is no longer a ledger column — $OMK/source (checked
+# below) is the single record, and status derives its "from" labels there.
 [ "$(head -n1 "$COMMON/omakase/source" 2>/dev/null)" = "$SRC" ] && pass "remembered source written to \$COMMON/omakase/source" || fail "remembered source missing/wrong"
 verify "$REPO" >/dev/null 2>&1 && pass "the gate verify exits 0" || fail "the gate verify blocked a complete overlay"
 [ -z "$(cd "$REPO" && git status --porcelain)" ] && pass "git status clean (zero footprint)" || { fail "git status NOT clean"; (cd "$REPO" && git status --porcelain | sed 's/^/      /'); }
@@ -93,7 +94,7 @@ printf '#!/usr/bin/env bash\necho NEW-PAYLOAD-V2\nexit 0\n' > "$SRC/payload/.oma
 ( cd "$SRC" && git add -A && git commit -q -m v2 )
 ( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" ) >/dev/null 2>&1
 grep -q 'NEW-PAYLOAD-V2' "$REPO/.omakase/gates/example.sh" && pass "bare init pulled the new payload version from the remembered source" || fail "update did not apply"
-awk -F'\t' -v s="$SRC" '$3!=s{bad=1} END{exit bad?1:0}' "$LEDGER" 2>/dev/null && pass "ledger still records the source string after refresh" || fail "ledger source column lost on refresh"
+[ "$(head -n1 "$COMMON/omakase/source" 2>/dev/null)" = "$SRC" ] && pass "remembered source survives the refresh" || fail "remembered source lost on refresh"
 
 # ---------- Scenario S3b: orphan sweep — a dropped payload file is cleaned up ----------
 echo "== Scenario S3b: a file the source drops between versions is swept =="
@@ -128,10 +129,8 @@ PAYENV="$TMP/payload-env"; mkdir -p "$PAYENV"
 printf 'env marker\n' > "$PAYENV/ENVMARK.md"
 ( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" OMAKASE_PAYLOAD="$PAYENV" bash "$INIT" ) >/dev/null 2>&1
 [ -f "$REPO/ENVMARK.md" ] && pass "env payload placed (env beat the remembered source)" || fail "env payload not placed"
-awk -F'\t' '$3!="payload"{bad=1} END{exit bad?1:0}' "$LEDGER" 2>/dev/null && pass "env install records 'payload' in the source column" || fail "env install source column wrong"
 [ "$(head -n1 "$COMMON/omakase/source" 2>/dev/null)" = "$SRC" ] && pass "remembered source untouched by the env install" || fail "remembered source clobbered"
 ( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" ) >/dev/null 2>&1
-awk -F'\t' -v s="$SRC" '$3!=s{bad=1} END{exit bad?1:0}' "$LEDGER" 2>/dev/null && pass "bare re-run returned to the remembered source" || fail "bare re-run ignored the remembered source"
 [ ! -e "$REPO/ENVMARK.md" ] && pass "pristine env marker swept on the return to the source payload" || fail "env marker left behind"
 
 # ---------- Scenario S3d: corrupt cache self-recovers via a fresh clone ----------

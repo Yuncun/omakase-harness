@@ -123,6 +123,7 @@ func buildInstalledFixture(t *testing.T) (*state.Repo, string) {
 	linkedHash := sha256Hex(target) // matches: not drifted
 
 	writeFile(t, dir, "sixtab.txt", "sixtab-body\n")
+	sixtabHash := sha256Hex("sixtab-body\n")
 
 	// .omakase/ machinery rows, one per health state: healthy stays hidden,
 	// enabled-but-missing and drifted must surface (issue #84 gap 3).
@@ -135,17 +136,24 @@ func buildInstalledFixture(t *testing.T) (*state.Repo, string) {
 	staleLedgerHash := sha256Hex("old-gate-body\n")
 
 	placedTSV := "" +
-		"normal.txt\tdoc\tsome/src\t" + normalHash + "\t1\n" +
-		"disabled.txt\tdoc\tsome/src\tdeadbeef\t0\n" +
-		"missing.txt\tdoc\tsome/src\tdeadbeef\t1\n" +
-		"drifted.txt\tdoc\tsome/src\t" + driftedLedgerHash + "\t1\n" +
-		"linked.txt\tdoc\tsome/src\t" + linkedHash + "\t1\n" +
-		".omakase/internal.sh\tgate\tsome/src\tdeadbeef\t1\n" + // enabled but missing -> renders
-		".omakase/healthy.sh\tgate\tsome/src\t" + healthyHash + "\t1\n" + // healthy machinery -> hidden
-		".omakase/stale-gate.sh\tgate\tsome/src\t" + staleLedgerHash + "\t1\n" + // drifted -> renders
-		"sixtab.txt\tdoc\tsome/src\tanyhash\t1\textra\n" // 6th tab absorbed into Enabled
+		"normal.txt\t" + normalHash + "\n" +
+		"disabled.txt\tdeadbeef\n" + // listed in disabled-files below
+		"missing.txt\tdeadbeef\n" +
+		"drifted.txt\t" + driftedLedgerHash + "\n" +
+		"linked.txt\t" + linkedHash + "\n" +
+		".omakase/internal.sh\tdeadbeef\n" + // enabled but missing -> renders
+		".omakase/healthy.sh\t" + healthyHash + "\n" + // healthy machinery -> hidden
+		".omakase/stale-gate.sh\t" + staleLedgerHash + "\n" + // drifted -> renders
+		"sixtab.txt\t" + sixtabHash + "\textra\n" // 3rd field ignored
 
 	if err := os.WriteFile(filepath.Join(repo.OMK, "placed.tsv"), []byte(placedTSV), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The off switch is the sidecar; the "from" label is the source file.
+	if err := os.WriteFile(filepath.Join(repo.OMK, "disabled-files"), []byte("disabled.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo.OMK, "source"), []byte("some/src\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -186,14 +194,14 @@ const wantInventoryTermInstalled = `THE PROJECT'S HARNESS (committed — managed
     + .claude/rules/team.md   (rule)
     + CLAUDE.md   (doc)
 INJECTED (omakase) — placed by omakase init, gitignored
-    + normal.txt   (doc, from some/src)
-    - disabled.txt   (doc, from some/src; disabled — not restored, not verified)
-    ! missing.txt   (doc, from some/src; MISSING — run omakase init to restore)
-    ~ drifted.txt   (doc, from some/src; DRIFTED — differs from canonical, run omakase init to re-sync)
-    + linked.txt -> nonexistent-target.txt   (doc, from some/src)
-    ! .omakase/internal.sh   (gate, from some/src; MISSING — run omakase init to restore)
-    ~ .omakase/stale-gate.sh   (gate, from some/src; DRIFTED — differs from canonical, run omakase init to re-sync)
-    + sixtab.txt   (doc, from some/src)
+    + normal.txt   (other, from some/src)
+    - disabled.txt   (other, from some/src; disabled — not restored, not verified)
+    ! missing.txt   (other, from some/src; MISSING — run omakase init to restore)
+    ~ drifted.txt   (other, from some/src; DRIFTED — differs from canonical, see omakase diff (then --keep or --restore))
+    + linked.txt -> nonexistent-target.txt   (other, from some/src)
+    ! .omakase/internal.sh   (other, from some/src; MISSING — run omakase init to restore)
+    ~ .omakase/stale-gate.sh   (other, from some/src; DRIFTED — differs from canonical, run omakase init to re-sync)
+    + sixtab.txt   (other, from some/src)
     edit any of these directly — status offers keep/restore; to own the harness: /omakase:author
 YOURS, UNMANAGED — untracked agent config, only in this clone (not committed, not placed by omakase)
     + .claude/rules/local-tweak.md   (rule)
@@ -207,14 +215,14 @@ const wantInventoryMDInstalled = "### The project's harness (committed — manag
 	"- `CLAUDE.md` — doc\n" +
 	"\n" +
 	"### Injected (omakase) — placed by `omakase init`, gitignored\n" +
-	"- `normal.txt` — doc, from some/src\n" +
-	"- `disabled.txt` — doc, from some/src — disabled (not restored, not verified)\n" +
-	"- `missing.txt` — doc, from some/src — **MISSING** (run `omakase init` to restore)\n" +
-	"- `drifted.txt` — doc, from some/src — **DRIFTED** (differs from canonical; `omakase init` to re-sync, or it may be an intentional local edit)\n" +
-	"- `linked.txt` → `nonexistent-target.txt` — doc, from some/src\n" +
-	"- `.omakase/internal.sh` — gate, from some/src — **MISSING** (run `omakase init` to restore)\n" +
-	"- `.omakase/stale-gate.sh` — gate, from some/src — **DRIFTED** (differs from canonical; `omakase init` to re-sync, or it may be an intentional local edit)\n" +
-	"- `sixtab.txt` — doc, from some/src\n" +
+	"- `normal.txt` — other, from some/src\n" +
+	"- `disabled.txt` — other, from some/src — disabled (not restored, not verified)\n" +
+	"- `missing.txt` — other, from some/src — **MISSING** (run `omakase init` to restore)\n" +
+	"- `drifted.txt` — other, from some/src — **DRIFTED** (differs from canonical; see `omakase diff` — keep it (`omakase status --keep`) or put the harness version back (`omakase status --restore`))\n" +
+	"- `linked.txt` → `nonexistent-target.txt` — other, from some/src\n" +
+	"- `.omakase/internal.sh` — other, from some/src — **MISSING** (run `omakase init` to restore)\n" +
+	"- `.omakase/stale-gate.sh` — other, from some/src — **DRIFTED** (differs from canonical; `omakase init` to re-sync)\n" +
+	"- `sixtab.txt` — other, from some/src\n" +
 	"\n" +
 	"_Edit any of these directly — status offers keep/restore; to own the harness: `/omakase:author`._\n" +
 	"\n" +
@@ -571,8 +579,11 @@ func TestRenderInjectedKeptRow(t *testing.T) {
 	}
 	writeFile(t, dir, "AGENTS.md", "accepted\n")
 	writeFile(t, filepath.Join(repo.OMK, "kept"), "AGENTS.md", "accepted\n")
-	rows := "AGENTS.md\tdoc\tacme\t" + sha256Hex("accepted\n") + "\t1\n"
+	rows := "AGENTS.md\t" + sha256Hex("accepted\n") + "\n"
 	if err := os.WriteFile(filepath.Join(repo.OMK, "placed.tsv"), []byte(rows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo.OMK, "source"), []byte("acme\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

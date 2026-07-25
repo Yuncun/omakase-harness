@@ -80,28 +80,19 @@ COMMON="$(common_of "$REPO")"; LEDGER="$COMMON/omakase/placed.tsv"
 
 [ -f "$LEDGER" ] && pass "placed.tsv written" || fail "placed.tsv missing"
 [ ! -e "$COMMON/omakase/placed.list" ] && pass "old placed.list NOT written" || fail "placed.list still written"
-awk -F'\t' 'NF!=5{bad=1} END{exit bad?1:0}' "$LEDGER" && pass "every row has exactly 5 tab-separated fields" || fail "row with wrong field count"
+awk -F'\t' 'NF!=2{bad=1} END{exit bad?1:0}' "$LEDGER" && pass "every row has exactly 2 tab-separated fields (path, sha256)" || fail "row with wrong field count"
 n_rows=$(grep -c . "$LEDGER"); n_payload=$(find "$PAY" \( -type f -o -type l \) | wc -l | tr -d ' ')
 [ "$n_rows" -eq "$n_payload" ] && pass "one row per placed artifact ($n_rows)" || fail "row count $n_rows != payload file count $n_payload"
 
-[ "$(col "$LEDGER" .omakase/gates/example.sh 2)" = gate ]    && pass "kind: gate script -> gate" || fail "gate script kind wrong"
-[ "$(col "$LEDGER" omakase.manifest 2)" = gate ]             && pass "kind: omakase.manifest -> gate" || fail "omakase.manifest kind wrong"
-[ "$(col "$LEDGER" .claude/rules/style.md 2)" = rule ]       && pass "kind: .claude/rules -> rule" || fail "rule kind wrong"
-[ "$(col "$LEDGER" .claude/skills/demo/SKILL.md 2)" = skill ] && pass "kind: .claude/skills -> skill" || fail "skill kind wrong"
-[ "$(col "$LEDGER" .claude/commands/go.md 2)" = command ]    && pass "kind: .claude/commands -> command" || fail "command kind wrong"
-[ "$(col "$LEDGER" AGENTS.md 2)" = doc ]                     && pass "kind: AGENTS.md -> doc" || fail "AGENTS.md kind wrong"
-[ "$(col "$LEDGER" NOTES.md 2)" = doc ]                      && pass "kind: root *.md -> doc" || fail "root .md kind wrong"
-[ "$(col "$LEDGER" .claude/settings.json 2)" = config ]      && pass "kind: settings -> config" || fail "settings kind wrong"
-[ "$(col "$LEDGER" .omakase/bin/helper.sh 2)" = other ]      && pass "kind: unclassified helper -> other" || fail "helper kind wrong"
-
-awk -F'\t' '$3!="payload"{bad=1} END{exit bad?1:0}' "$LEDGER" && pass "source column is 'payload' on every row" || fail "non-payload source value"
-awk -F'\t' '$5!="1"{bad=1} END{exit bad?1:0}' "$LEDGER" && pass "enabled column is 1 on every row" || fail "row not enabled=1 at placement"
-[ "$(col "$LEDGER" .claude/rules/style.md 4)" = "$(sha_file "$REPO/.claude/rules/style.md")" ] && pass "sha256 matches the placed file content" || fail "sha256 mismatch"
+# Kind and source are no longer ledger columns — both are derived at read
+# time (harness.KindOf; $OMK/source). A fresh plain init writes neither a
+# source file nor a disabled-files sidecar.
+[ ! -e "$COMMON/omakase/disabled-files" ] && pass "no disabled-files sidecar after a fresh init" || fail "fresh init wrote a disabled-files sidecar"
+[ "$(col "$LEDGER" .claude/rules/style.md 2)" = "$(sha_file "$REPO/.claude/rules/style.md")" ] && pass "sha256 matches the placed file content" || fail "sha256 mismatch"
 
 # ---------- Scenario N: symlink row (CLAUDE.md -> AGENTS.md) ----------
 echo "== Scenario N: symlink row hashes the link target string and round-trips =="
-[ "$(col "$LEDGER" CLAUDE.md 2)" = doc ] && pass "kind: CLAUDE.md symlink -> doc" || fail "CLAUDE.md kind wrong"
-[ "$(col "$LEDGER" CLAUDE.md 4)" = "$(sha_str AGENTS.md)" ] && pass "symlink hash = sha256 of the target path string" || fail "symlink hash is not the target-string hash"
+[ "$(col "$LEDGER" CLAUDE.md 2)" = "$(sha_str AGENTS.md)" ] && pass "symlink hash = sha256 of the target path string" || fail "symlink hash is not the target-string hash"
 rm -f "$REPO/CLAUDE.md"
 heal "$REPO"
 { [ -L "$REPO/CLAUDE.md" ] && [ "$(readlink "$REPO/CLAUDE.md")" = AGENTS.md ]; } && pass "the heal restored the symlink AS a symlink" || fail "symlink did not round-trip"
@@ -109,7 +100,7 @@ heal "$REPO"
 # ---------- Scenario O: space-in-path row round-trips ----------
 echo "== Scenario O: a path containing a space survives every consumer =="
 nf=$(awk -F'\t' '$1==".claude/rules/my rule.md"{print NF; exit}' "$LEDGER")
-[ "${nf:-0}" -eq 5 ] && pass "space-in-path row intact (5 fields)" || fail "space-in-path row missing/split ($nf fields)"
+[ "${nf:-0}" -eq 2 ] && pass "space-in-path row intact (2 fields)" || fail "space-in-path row missing/split ($nf fields)"
 rm -f "$REPO/.claude/rules/my rule.md"
 ERR=$( verify "$REPO" 2>&1 ); rc=$?
 { [ "$rc" -ne 0 ] && echo "$ERR" | grep -q 'my rule.md'; } && pass "the gate verify blocks on the missing spaced path, names it" || fail "the verify missed the spaced path ($ERR)"
@@ -127,7 +118,7 @@ mkpayload "$PAY"; newrepo "$REPO"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 COMMON="$(common_of "$REPO")"; LEDGER="$COMMON/omakase/placed.tsv"
 # hand-disable the rule (and delete it: the user switched it off) + the skill (still on disk)
-awk -F'\t' -v OFS='\t' '$1==".claude/rules/style.md" || $1==".claude/skills/demo/SKILL.md" {$5=0} 1' "$LEDGER" > "$LEDGER.tmp" && mv "$LEDGER.tmp" "$LEDGER"
+printf '%s\n%s\n' ".claude/rules/style.md" ".claude/skills/demo/SKILL.md" > "$COMMON/omakase/disabled-files"
 rm -f "$REPO/.claude/rules/style.md"
 
 heal "$REPO"
@@ -158,7 +149,7 @@ COMMON="$(common_of "$REPO")"
 OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
 [ "$rc" -eq 0 ] && pass "re-init completes (warn, not block)" || fail "re-init failed ($OUT)"
 { echo "$OUT" | grep -qi 'WARNING' && echo "$OUT" | grep -q '.omakase/gates/example.sh'; } && pass "collision warning fired off the ledger, names the path" || fail "no ledger-keyed collision warning ($OUT)"
-grep -q 'omakase-example-gate-ran' "$COMMON/omakase/clobbered/.omakase/gates/example.sh" 2>/dev/null && pass "last-injected copy preserved under clobbered/" || fail "preserved copy missing"
+[ ! -e "$COMMON/omakase/clobbered" ] && pass "no clobbered/ backup tree (retired)" || fail "clobbered/ tree still written"
 
 # ---------- Scenario T: pre-0.10 placed.list migrates ----------
 echo "== Scenario T: stale placed.list regenerates into the ledger and is deleted =="

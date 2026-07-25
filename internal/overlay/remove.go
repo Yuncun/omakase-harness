@@ -4,7 +4,7 @@
 // hook is reported and never deleted, and a pre-#98 install additionally
 // gets its guard-block strip — the per-worktree sweep — placed-path deletion
 // (ledger-driven, or the pre-0.10 payload-enumeration fallback behind an
-// install-proof sentinel) plus the skeleton lefthook.yml and .worktreeinclude
+// install-proof sentinel) plus the .worktreeinclude
 // teardown, applied to every worktree git lists — the $OMK wipe, the
 // exclude-block strip, and the closing summary line.
 package overlay
@@ -151,10 +151,10 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	}
 
 	// A kept file is the USER'S content (they accepted their own edit —
-	// issue #98 Part 2), so remove leaves it on disk and says so, the same
-	// spirit as the clobber backup: never destroy a user's content. The
-	// $OMK teardown below still deletes the kept/ copies with everything
-	// else — the on-disk file is the surviving original.
+	// issue #98 Part 2), so remove leaves it on disk and says so: never
+	// destroy a user's content. The $OMK teardown below still deletes the
+	// kept/ copies with everything else — the on-disk file is the
+	// surviving original.
 	kept := map[string]bool{}
 	for _, rel := range rels {
 		if lexists(filepath.Join(omk, "kept", rel)) {
@@ -163,7 +163,7 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	}
 
 	// ---- per-worktree sweep ----
-	// Placed files, the skeleton lefthook.yml, and .worktreeinclude live
+	// Placed files and .worktreeinclude live
 	// per-checkout — heal copies them into every worktree — so remove sweeps
 	// every worktree git lists, not just the one it runs from; otherwise
 	// siblings keep orphaned copies that the exclude block, stripped below,
@@ -183,14 +183,6 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 				continue
 			}
 			if delErr := DeletePlaced(wtRoot, rel, wtTracked); delErr != nil {
-				return 1
-			}
-		}
-
-		// skeleton lefthook.yml removal
-		lefthookYml := filepath.Join(wtRoot, "lefthook.yml")
-		if fileRegular(lefthookYml) && !wtTracked("lefthook.yml") && fileContains(lefthookYml, "EXAMPLE USAGE") {
-			if err := removeF(lefthookYml); err != nil {
 				return 1
 			}
 		}

@@ -250,8 +250,8 @@ OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
 echo "$OUT" | grep -qi 'WARNING' && pass "init warns on the placed->tracked path" || fail "init silent on collision ($OUT)"
 echo "$OUT" | grep -q '.omakase/gates/example.sh' && pass "init warning names the file" || fail "init warning does not name the file ($OUT)"
 echo "$OUT" | grep -qi 'clobber' && pass "init warning explains the likely clobber" || fail "init warning missing clobber explanation ($OUT)"
-echo "$OUT" | grep -q 'clobbered/' && pass "init warning points at the preserved copy" || fail "init warning missing the preserved-copy path ($OUT)"
-grep -q 'omakase-example-gate-ran' "$COMMON/omakase/clobbered/.omakase/gates/example.sh" 2>/dev/null && pass "last-injected copy preserved under clobbered/" || fail "preserved copy missing or wrong"
+echo "$OUT" | grep -q 'harness source' && pass "init warning points at the harness source for the old version" || fail "init warning missing the harness-source pointer ($OUT)"
+[ ! -e "$COMMON/omakase/clobbered" ] && pass "no clobbered/ backup tree (retired — the harness version is reproducible from the source)" || fail "clobbered/ tree still written"
 
 # J3: no false warning on a clean re-init
 REPO2="$TMP/repoJ2"; newrepo "$REPO2"
