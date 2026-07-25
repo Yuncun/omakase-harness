@@ -45,13 +45,8 @@ else.
 
 ```
 $ omakase init Yuncun/omakase-harness/harness
-omakase: source 'https://github.com/Yuncun/omakase-harness//harness' (name: omakase-harness-harness, version: 0.3.0)
 omakase: placed 9 file(s), overwrote 0 to match payload, skipped 0 committed path(s).
-  + .claude/rules/omakase-dev.md
-  + .github/instructions/omakase-dev.instructions.md
-  + .omakase/gates/block-marker.sh
   ⋮
-omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.
 omakase: verified — hooks installed ✓ · files present ✓ · files match ✓
 
 $ git status
