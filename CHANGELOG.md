@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-07-25
+
 ### Removed
 - **The interactive menu is gone — both surfaces** (#156): the terminal screen
   (`internal/tui` and the vendored, patched bubbletea it required) and the MCP
