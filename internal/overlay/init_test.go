@@ -917,6 +917,40 @@ func TestSymlinkPayloadCarried(t *testing.T) {
 	}
 }
 
+// TestSymlinkDirExcludeNoSlash (#148): a payload symlink pointing at a
+// directory (.github/skills -> ../skills) must get a slash-free exclude
+// entry. Git matches a trailing-slash pattern against directories only, and
+// to git a symlink is a blob regardless of its target — a "/.github/skills/"
+// entry never matches, the link shows as untracked, and the zero-footprint
+// guarantee breaks.
+func TestSymlinkDirExcludeNoSlash(t *testing.T) {
+	dir, repo := initRepo(t)
+	p := t.TempDir()
+	t.Setenv("OMAKASE_PAYLOAD", p)
+	writeFile(t, filepath.Join(p, "skills", "demo", "SKILL.md"), "# demo\n")
+	if err := os.MkdirAll(filepath.Join(p, ".github"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../skills", filepath.Join(p, ".github", "skills")); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	exclude := readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude"))
+	if !strings.Contains(exclude, "/.github/skills\n") {
+		t.Errorf("exclude missing slash-free symlink entry:\n%s", exclude)
+	}
+	if strings.Contains(exclude, "/.github/skills/") {
+		t.Errorf("exclude has trailing slash on symlink entry (git will not match it):\n%s", exclude)
+	}
+	if out := gitStdout(dir, "status", "--porcelain", "--untracked-files=all"); out != "" {
+		t.Errorf("git status not clean (symlinked dir not excluded): %q", out)
+	}
+}
+
 // ---------------------------------------------------- usage / arg errors
 
 func TestUsageAndArgErrors(t *testing.T) {

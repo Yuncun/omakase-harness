@@ -607,7 +607,13 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	if wtincTracked {
 		fmt.Fprintln(stderr, "omakase: .worktreeinclude is tracked — leaving it untouched (re-run omakase init inside a new manual worktree to install it there).")
 	}
-	isDirRoot := func(p string) bool { return isDir(filepath.Join(root, p)) }
+	// A symlink never gets the trailing slash even when it targets a
+	// directory: git matches a "dir/" pattern against directories only, and
+	// to git a symlink is a blob — a slashed entry would never match (#148).
+	isDirRoot := func(p string) bool {
+		q := filepath.Join(root, p)
+		return !isSymlink(q) && isDir(q)
+	}
 	consented := append(append(append([]string{}, placed...), declinedKept...), keptOrder...)
 	prefixes := DerivePrefixes(consented, harness.SharedTopdirs, isDirRoot, wtincTracked)
 
