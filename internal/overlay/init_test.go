@@ -261,6 +261,26 @@ func TestSteeringOnlyInitHooks(t *testing.T) {
 	}
 }
 
+// With the machine-wide binary missing, a steering-only install must not
+// warn that commits will be blocked: no gate hook was written and the heal
+// hook fails open, so nothing blocks. (A gated install does warn — the
+// warning's whole point.)
+func TestSteeringOnlyNoBlockedCommitsWarning(t *testing.T) {
+	_, _ = initRepo(t)
+	steeringOnlyPayload(t)
+	if err := os.Remove(hook.StableBinPath()); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errb strings.Builder
+	if code := RunInit(nil, &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	if strings.Contains(errb.String(), "commits will be blocked") {
+		t.Errorf("blocked-commits warning printed for a heal-only install:\n%s", errb.String())
+	}
+}
+
 // A zero-gate harness has nothing to conflict over: an incumbent hook stops
 // the refusal from firing, is left byte-identical, and the heal hook is
 // skipped with the degrade printed.

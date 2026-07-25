@@ -806,10 +806,12 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	for _, name := range hook.Names() {
 		wantHook[name] = gateCount != 0 || (name == "post-checkout" && len(incumbent) == 0)
 	}
-	anyHook := false
+	gateHooks := false
 	for _, name := range hook.Names() {
 		if wantHook[name] {
-			anyHook = true
+			if hook.IsGate(name) {
+				gateHooks = true
+			}
 			if err := hook.Write(hooksDir, name); err != nil {
 				fmt.Fprintf(stderr, "omakase: could not write the %s hook: %v\n", name, err)
 				return 1
@@ -825,12 +827,14 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		}
 	}
 	// The dispatchers exec the machine-wide copy at StableBinPath, which is
-	// now load-bearing: a gate hook fails closed without it. main()
-	// self-installs it before RunInit; verify it actually landed — never
-	// leave fail-closed hooks silently pointing at nothing. (The probe's
-	// hook proof checks the same fact, so the verdict below and later
-	// status runs agree with what happens at commit time.)
-	if stable := hook.StableBinPath(); anyHook && (stable == "" || !fileExecutable(stable)) {
+	// load-bearing only for the gate hooks: they fail closed without it,
+	// while the post-checkout heal hook fails open (best-effort by
+	// contract), so a heal-only install gets no blocked-commits warning.
+	// main() self-installs the copy before RunInit; verify it actually
+	// landed — never leave fail-closed hooks silently pointing at nothing.
+	// (The probe's hook proof checks the same fact, so the verdict below
+	// and later status runs agree with what happens at commit time.)
+	if stable := hook.StableBinPath(); gateHooks && (stable == "" || !fileExecutable(stable)) {
 		fmt.Fprintf(stderr, "omakase: WARNING — the hooks run %s, which is missing or not executable; commits will be blocked until it exists. Re-run 'omakase init' with any installed omakase binary to restore it.\n", stable)
 	}
 
