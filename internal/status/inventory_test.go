@@ -197,7 +197,7 @@ INJECTED (omakase) — placed by omakase init, gitignored
     + normal.txt   (other, from some/src)
     - disabled.txt   (other, from some/src; disabled — not restored, not verified)
     ! missing.txt   (other, from some/src; MISSING — run omakase init to restore)
-    ~ drifted.txt   (other, from some/src; DRIFTED — differs from canonical, run omakase init to re-sync)
+    ~ drifted.txt   (other, from some/src; DRIFTED — differs from canonical, see omakase diff (then --keep or --restore))
     + linked.txt -> nonexistent-target.txt   (other, from some/src)
     ! .omakase/internal.sh   (other, from some/src; MISSING — run omakase init to restore)
     ~ .omakase/stale-gate.sh   (other, from some/src; DRIFTED — differs from canonical, run omakase init to re-sync)
@@ -218,10 +218,10 @@ const wantInventoryMDInstalled = "### The project's harness (committed — manag
 	"- `normal.txt` — other, from some/src\n" +
 	"- `disabled.txt` — other, from some/src — disabled (not restored, not verified)\n" +
 	"- `missing.txt` — other, from some/src — **MISSING** (run `omakase init` to restore)\n" +
-	"- `drifted.txt` — other, from some/src — **DRIFTED** (differs from canonical; `omakase init` to re-sync, or it may be an intentional local edit)\n" +
+	"- `drifted.txt` — other, from some/src — **DRIFTED** (differs from canonical; see `omakase diff` — keep it (`omakase status --keep`) or put the harness version back (`omakase status --restore`))\n" +
 	"- `linked.txt` → `nonexistent-target.txt` — other, from some/src\n" +
 	"- `.omakase/internal.sh` — other, from some/src — **MISSING** (run `omakase init` to restore)\n" +
-	"- `.omakase/stale-gate.sh` — other, from some/src — **DRIFTED** (differs from canonical; `omakase init` to re-sync, or it may be an intentional local edit)\n" +
+	"- `.omakase/stale-gate.sh` — other, from some/src — **DRIFTED** (differs from canonical; `omakase init` to re-sync)\n" +
 	"- `sixtab.txt` — other, from some/src\n" +
 	"\n" +
 	"_Edit any of these directly — status offers keep/restore; to own the harness: `/omakase:author`._\n" +

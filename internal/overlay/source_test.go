@@ -99,7 +99,7 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 	cache := sourceCacheDir(src)
 	// merged lexical order: .claude/rules/r.md, .omakase/bin/base.sh, .omakase/gates/src.sh, omakase.manifest
 	wantOut := "omakase: source '" + src + "' (name: demo, version: 1.2.3) cached at " + cache + "\n" +
-		"omakase: placed 4 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
+		"omakase: placed 4 file(s), updated 0 to match the payload, skipped 0 committed path(s).\n" +
 		"  + .claude/rules/r.md\n" +
 		"  + .omakase/bin/base.sh\n" +
 		"  + .omakase/gates/src.sh\n" +
@@ -108,8 +108,8 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 		"omakase: no gates declared — no enforcement hooks installed.\n" +
 		"omakase: see the whole harness any time with  omakase status\n" +
 		"omakase: this harness recommends — install the widget plugin\n" +
-		"omakase: to customize, fork the harness source (clone -> edit -> publish) and\n" +
-		"         init from your copy; do not edit injected files in place (overwritten on re-init).\n" +
+		"omakase: to customize, edit an injected file in place (omakase diff shows the change;\n" +
+		"         keep or undo it via omakase status) — or fork the harness source and init from your copy.\n" +
 		uxStanzas() + steeringOnlyVerifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "")
@@ -438,10 +438,10 @@ func TestSourceCacheRefreshPicksUpNewCommit(t *testing.T) {
 		t.Fatalf("init 2 exit = %d; stderr=%q", code, e2.String())
 	}
 	eq(t, "refreshed v2 content", readFileT(t, filepath.Join(dir, ".omakase", "gates", "g.sh")), "V2\n")
-	// The placed gate changed V1 -> V2, so the engine reports the overwrite on
+	// The placed gate changed V1 -> V2, so the engine reports the update on
 	// stderr (the injected copy is brought back to match the refreshed payload).
-	if !strings.Contains(e2.String(), "omakase: overwrote .omakase/gates/g.sh to match payload") {
-		t.Errorf("refresh did not report the overwrite:\n%s", e2.String())
+	if !strings.Contains(e2.String(), "omakase: updated .omakase/gates/g.sh to match the payload") {
+		t.Errorf("refresh did not report the update:\n%s", e2.String())
 	}
 }
 
@@ -967,7 +967,7 @@ func TestSourceSubpathMerge(t *testing.T) {
 
 	cache := sourceCacheDir(canonical)
 	wantOut := "omakase: source '" + canonical + "' (name: hubbed, version: 0.1) cached at " + cache + "\n" +
-		"omakase: placed 4 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
+		"omakase: placed 4 file(s), updated 0 to match the payload, skipped 0 committed path(s).\n" +
 		"  + .claude/rules/r.md\n" +
 		"  + .omakase/bin/base.sh\n" +
 		"  + .omakase/gates/src.sh\n" +
@@ -975,8 +975,8 @@ func TestSourceSubpathMerge(t *testing.T) {
 		"omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.\n" +
 		"omakase: no gates declared — no enforcement hooks installed.\n" +
 		"omakase: see the whole harness any time with  omakase status\n" +
-		"omakase: to customize, fork the harness source (clone -> edit -> publish) and\n" +
-		"         init from your copy; do not edit injected files in place (overwritten on re-init).\n" +
+		"omakase: to customize, edit an injected file in place (omakase diff shows the change;\n" +
+		"         keep or undo it via omakase status) — or fork the harness source and init from your copy.\n" +
 		uxStanzas() + steeringOnlyVerifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "")

@@ -149,7 +149,7 @@ COMMON="$(common_of "$REPO")"
 OUT=$( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" 2>&1 ); rc=$?
 [ "$rc" -eq 0 ] && pass "re-init completes (warn, not block)" || fail "re-init failed ($OUT)"
 { echo "$OUT" | grep -qi 'WARNING' && echo "$OUT" | grep -q '.omakase/gates/example.sh'; } && pass "collision warning fired off the ledger, names the path" || fail "no ledger-keyed collision warning ($OUT)"
-grep -q 'omakase-example-gate-ran' "$COMMON/omakase/clobbered/.omakase/gates/example.sh" 2>/dev/null && pass "last-injected copy preserved under clobbered/" || fail "preserved copy missing"
+[ ! -e "$COMMON/omakase/clobbered" ] && pass "no clobbered/ backup tree (retired)" || fail "clobbered/ tree still written"
 
 # ---------- Scenario T: pre-0.10 placed.list migrates ----------
 echo "== Scenario T: stale placed.list regenerates into the ledger and is deleted =="

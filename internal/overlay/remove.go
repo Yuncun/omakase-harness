@@ -151,10 +151,10 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	}
 
 	// A kept file is the USER'S content (they accepted their own edit —
-	// issue #98 Part 2), so remove leaves it on disk and says so, the same
-	// spirit as the clobber backup: never destroy a user's content. The
-	// $OMK teardown below still deletes the kept/ copies with everything
-	// else — the on-disk file is the surviving original.
+	// issue #98 Part 2), so remove leaves it on disk and says so: never
+	// destroy a user's content. The $OMK teardown below still deletes the
+	// kept/ copies with everything else — the on-disk file is the
+	// surviving original.
 	kept := map[string]bool{}
 	for _, rel := range rels {
 		if lexists(filepath.Join(omk, "kept", rel)) {

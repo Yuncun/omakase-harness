@@ -28,7 +28,7 @@ it off. `omakase remove` deletes everything it placed.
 ```
 $ omakase init Yuncun/omakase-harness/harness
 omakase: source 'https://github.com/Yuncun/omakase-harness//harness' (name: omakase-harness-harness, version: 0.3.0)
-omakase: placed 9 file(s), overwrote 0 to match payload, skipped 0 committed path(s).
+omakase: placed 9 file(s), updated 0 to match the payload, skipped 0 committed path(s).
   + .claude/rules/omakase-dev.md
   + .github/instructions/omakase-dev.instructions.md
   + .omakase/gates/block-marker.sh

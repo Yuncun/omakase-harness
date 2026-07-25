@@ -419,7 +419,13 @@ func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, src st
 	if md {
 		dz, kz := "", ""
 		if drifted {
-			dz = " — **DRIFTED** (differs from canonical; `omakase init` to re-sync, or it may be an intentional local edit)"
+			// A drifted machinery file is torn state and init re-places it;
+			// a drifted user-facing file is a local edit and belongs to the
+			// edit lifecycle (init refuses to overwrite it).
+			dz = " — **DRIFTED** (differs from canonical; see `omakase diff` — keep it (`omakase status --keep`) or put the harness version back (`omakase status --restore`))"
+			if harness.IsMachinery(row.Rel) {
+				dz = " — **DRIFTED** (differs from canonical; `omakase init` to re-sync)"
+			}
 			if kept {
 				dz = " — **DRIFTED** (differs from your accepted version; see `omakase diff`)"
 			}
@@ -453,7 +459,10 @@ func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, src st
 		mk = "="
 	}
 	if drifted {
-		dz = "; DRIFTED — differs from canonical, run omakase init to re-sync"
+		dz = "; DRIFTED — differs from canonical, see omakase diff (then --keep or --restore)"
+		if harness.IsMachinery(row.Rel) {
+			dz = "; DRIFTED — differs from canonical, run omakase init to re-sync"
+		}
 		if kept {
 			dz = "; DRIFTED — differs from your accepted version, see omakase diff"
 		}

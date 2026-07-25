@@ -395,6 +395,10 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 
 	// ---- guarded cut-over ----
+	// cutSet feeds the collision scan below: a just-untracked path was
+	// explicitly consented (OMAKASE_CUTOVER_CONFIRM=1), so the injected
+	// copy taking it over is the point, not a conflict.
+	cutSet := map[string]bool{}
 	if cutover {
 		var cut []string
 		for _, rel := range payloadRels {
@@ -425,6 +429,9 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			if runErr := cmd.Run(); runErr != nil {
 				return exitCode(runErr) // a git rm failure aborts with its code
 			}
+			for _, c := range cut {
+				cutSet[c] = true
+			}
 			fmt.Fprintf(stdout, "omakase: cut-over staged %d deletion(s) — review with 'git status' and commit them yourself.\n", len(cut))
 		}
 	}
@@ -445,24 +452,11 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		if !gitTracked(root, rel) {
 			continue
 		}
-		snap := filepath.Join(omk, "payload-snapshot", rel)
-		if lexists(snap) {
-			// The last-injected copy would be destroyed by the snapshot
-			// rebuild; preserve it under $OMK/clobbered/.
-			if mkErr := os.MkdirAll(filepath.Join(omk, "clobbered", filepath.Dir(rel)), 0o755); mkErr != nil {
-				return 1
-			}
-			if cpErr := CopyEntry(snap, filepath.Join(omk, "clobbered", rel)); cpErr != nil {
-				return 1
-			}
-		}
 		fmt.Fprintf(stderr, "omakase: WARNING — '%s' was injected (personal, gitignored) but is NOW TRACKED by the repo.\n", rel)
 		fmt.Fprintln(stderr, "  An upstream commit likely landed a file at this path; git silently overwrites ignored")
-		fmt.Fprintln(stderr, "  files on checkout/pull, so your personal copy was likely clobbered. Last-injected copy")
-		fmt.Fprintln(stderr, "  preserved at:")
-		fmt.Fprintf(stderr, "    %s\n", filepath.Join(omk, "clobbered", rel))
-		fmt.Fprintf(stderr, "  Diff it against the tracked file and reconcile: drop '%s' from your payload, or run\n", rel)
-		fmt.Fprintln(stderr, "  init --cut-over (guarded) to untrack the file and let the injected copy take over.")
+		fmt.Fprintln(stderr, "  files on checkout/pull, so your personal copy was likely clobbered. The harness's own")
+		fmt.Fprintf(stderr, "  version still lives in your harness source. Reconcile: drop '%s' from your payload,\n", rel)
+		fmt.Fprintln(stderr, "  or run init --cut-over (guarded) to untrack the file and let the injected copy take over.")
 	}
 
 	// ---- consent merge ----
@@ -478,11 +472,13 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// guard above warned) and drops out like any other tracked row.
 	keptPrior := map[string]state.PlacedRow{}
 	var keptOrder []string
+	priorHash := map[string]string{}
 	for _, row := range state.ReadPlaced(filepath.Join(omk, "placed.tsv")) {
-		// Machinery is never a consent item (the toggles refuse it), so an
-		// enabled=0 machinery row can only be a pre-guard binary's leftover —
+		priorHash[row.Rel] = row.Hash
+		// Machinery is never a consent item (the toggles refuse it), so a
+		// disabled machinery row can only be a pre-guard binary's leftover —
 		// honoring it would keep the gate primitive missing on every re-init.
-		// Ignore it: init re-places the file and the row returns to enabled=1.
+		// Ignore it: init re-places the file and the disable mark drops out.
 		if row.Enabled == "0" && !harness.IsMachinery(row.Rel) {
 			declined[row.Rel] = true
 		}
@@ -494,6 +490,52 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	var declinedKept []string
 
 	umask := currentUmask()
+
+	// ---- collision scan ----
+	// All conflicts are found first and the whole init refuses before any
+	// file is touched (the Stow rule: scan, then terminate without making
+	// modifications). A conflict is an untracked on-disk file at a payload
+	// path that differs from the payload AND is not omakase's to replace:
+	// either a local edit of a placed file (the ledger hash says the user
+	// changed it — the edit lifecycle owns that: diff, then keep or restore)
+	// or a file omakase never placed at all (never overwrite what was never
+	// consented). Two exemptions: a LEDGERED machinery row always heals to
+	// canonical (a drifted .omakase/ internal or manifest is torn state,
+	// not an edit — but on a fresh install a pre-existing file there is as
+	// foreign as anywhere else), and a path the cut-over above just
+	// untracked was explicitly consented. A file whose disk hash still
+	// matches its ledger row is just outdated and updates in place.
+	var conflicts []string
+	for _, rel := range payloadRels {
+		if gitTracked(root, rel) || declined[rel] || cutSet[rel] {
+			continue
+		}
+		if _, ok := keptPrior[rel]; ok {
+			continue
+		}
+		dest := filepath.Join(root, rel)
+		if !lexists(dest) || SameFile(dest, filepath.Join(payload, rel)) {
+			continue
+		}
+		if ph, ok := priorHash[rel]; ok {
+			if harness.IsMachinery(rel) {
+				continue // ledgered machinery: init owns it, heal to canonical
+			}
+			if h := state.HashOf(dest); ph != "" && h != "" && h == ph {
+				continue // unedited prior placement: a plain update
+			}
+			conflicts = append(conflicts, fmt.Sprintf("  %s — differs from what init placed (local edits?). See the change:  omakase diff %s  — then make it yours (omakase status --keep %s) or put the harness version back (omakase status --restore %s)", rel, rel, rel, rel))
+			continue
+		}
+		conflicts = append(conflicts, fmt.Sprintf("  %s — already exists and was not placed by omakase. Move it aside, or add it to your harness source, and re-run omakase init", rel))
+	}
+	if len(conflicts) > 0 {
+		fmt.Fprintln(stderr, "omakase: REFUSING init — files in the way (nothing was changed):")
+		for _, c := range conflicts {
+			fmt.Fprintln(stderr, c)
+		}
+		return 1
+	}
 
 	// ---- place loop ----
 	var placed, skipped, overwrote []string
@@ -539,27 +581,15 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			placed = append(placed, rel)
 			continue
 		}
-		// Differs and not committed: overwrite, preserving the pre-existing
-		// copy first (best-effort; a real directory dest is left for
-		// placeFile to refuse). A backup failure warns rather than aborting.
-		saved := ""
-		if !isDir(dest) || isSymlink(dest) {
-			if tryClobberBackup(dest, rel, omk) {
-				saved = filepath.Join(omk, "clobbered", rel)
-			} else {
-				fmt.Fprintf(stderr, "omakase: WARNING — could not back up pre-existing '%s' before overwriting it\n", rel)
-			}
-		}
+		// Differs and not committed: either canonical machinery or an
+		// unedited prior placement — the collision scan refused everything
+		// else before any file was touched — so replacing it loses nothing.
 		if code := placeFile(f, rel, root, umask, stderr); code != 0 {
 			return code
 		}
 		placed = append(placed, rel)
 		overwrote = append(overwrote, rel)
-		if saved != "" {
-			fmt.Fprintf(stderr, "omakase: overwrote %s to match payload (prior copy preserved at %s)\n", rel, saved)
-		} else {
-			fmt.Fprintf(stderr, "omakase: overwrote %s to match payload (any local edit was replaced)\n", rel)
-		}
+		fmt.Fprintf(stderr, "omakase: updated %s to match the payload\n", rel)
 	}
 
 	// A kept path the payload no longer ships never enters the place loop;
@@ -868,7 +898,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 
 	// ---- summary ----
-	fmt.Fprintf(stdout, "omakase: placed %d file(s), overwrote %d to match payload, skipped %d committed path(s).\n", len(placed), len(overwrote), len(skipped))
+	fmt.Fprintf(stdout, "omakase: placed %d file(s), updated %d to match the payload, skipped %d committed path(s).\n", len(placed), len(overwrote), len(skipped))
 	for _, p := range placed {
 		if p != "" {
 			fmt.Fprintf(stdout, "  + %s\n", p)
@@ -876,7 +906,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 	for _, o := range overwrote {
 		if o != "" {
-			fmt.Fprintf(stdout, "  ^ overwrote to match payload (any local edit replaced): %s\n", o)
+			fmt.Fprintf(stdout, "  ^ updated to match the payload: %s\n", o)
 		}
 	}
 	for _, k := range keptOrder {
@@ -918,8 +948,8 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	if recommends != "" {
 		fmt.Fprintf(stdout, "omakase: this harness recommends — %s\n", recommends)
 	}
-	fmt.Fprintln(stdout, "omakase: to customize, fork the harness source (clone -> edit -> publish) and")
-	fmt.Fprintln(stdout, "         init from your copy; do not edit injected files in place (overwritten on re-init).")
+	fmt.Fprintln(stdout, "omakase: to customize, edit an injected file in place (omakase diff shows the change;")
+	fmt.Fprintln(stdout, "         keep or undo it via omakase status) — or fork the harness source and init from your copy.")
 	// The status-bar wiring runs the machine-wide binary copy
 	// (main() refreshes it on every real init), so these stanzas print
 	// unconditionally — the feature ships in the binary, not the payload.
@@ -1000,19 +1030,6 @@ func placeFile(src, rel, root string, umask os.FileMode, stderr io.Writer) int {
 		}
 	}
 	return 0
-}
-
-// tryClobberBackup copies the live dest into $OMK/clobbered/rel, creating
-// the parent and removing any stale backup first. Returns true iff every
-// step succeeds.
-func tryClobberBackup(dest, rel, omk string) bool {
-	if err := os.MkdirAll(filepath.Join(omk, "clobbered", filepath.Dir(rel)), 0o755); err != nil {
-		return false
-	}
-	if err := removeF(filepath.Join(omk, "clobbered", rel)); err != nil {
-		return false
-	}
-	return CopyEntry(dest, filepath.Join(omk, "clobbered", rel)) == nil
 }
 
 // walkPayload lists the payload's regular files and symlinks as clean

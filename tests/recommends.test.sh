@@ -45,7 +45,7 @@ SRC="$(cd "$SRC" && pwd)"
 OUT=$( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$SRC" 2>&1 )
 echo "$OUT" | grep -q "this harness recommends" && echo "$OUT" | grep -qF "superpowers@superpowers-marketplace" \
   && pass "recommends line printed with the manifest value" || { fail "recommends line missing/wrong"; echo "$OUT" | sed 's/^/      /'; }
-echo "$OUT" | grep -q "to customize, fork the harness source" \
+echo "$OUT" | grep -q "to customize, edit an injected file in place" \
   && pass "fork-to-customize guidance printed" || fail "fork guidance missing"
 [ "$(echo "$OUT" | grep -c "this harness recommends")" = "1" ] \
   && pass "recommends surfaced exactly once" || fail "recommends printed more than once"
@@ -59,7 +59,7 @@ OUT2=$( cd "$REPO2" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT"
 echo "$OUT2" | grep -q "this harness recommends" \
   && { fail "recommends line printed when manifest has none"; echo "$OUT2" | sed 's/^/      /'; } \
   || pass "no recommends line when manifest omits it"
-echo "$OUT2" | grep -q "to customize, fork the harness source" \
+echo "$OUT2" | grep -q "to customize, edit an injected file in place" \
   && pass "fork-to-customize guidance still printed (generic, not per-source)" || fail "fork guidance missing"
 
 [ "$FAILED" = 0 ] && echo "ALL PASS" || echo "SOME FAILED"

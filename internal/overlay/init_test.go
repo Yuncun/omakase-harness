@@ -27,8 +27,8 @@ import (
 // +/^/~/- lines.
 const summaryTail = "omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.\n" +
 	"omakase: see the whole harness any time with  omakase status\n" +
-	"omakase: to customize, fork the harness source (clone -> edit -> publish) and\n" +
-	"         init from your copy; do not edit injected files in place (overwritten on re-init).\n"
+	"omakase: to customize, edit an injected file in place (omakase diff shows the change;\n" +
+	"         keep or undo it via omakase status) — or fork the harness source and init from your copy.\n"
 
 // verifiedLine is init's closing verdict — the three probes run fresh after
 // the install. All-OK here, because init writes the dispatchers directly and
@@ -161,7 +161,7 @@ func TestFreshInit(t *testing.T) {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
 
-	wantOut := "omakase: placed 1 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
+	wantOut := "omakase: placed 1 file(s), updated 0 to match the payload, skipped 0 committed path(s).\n" +
 		"  + .omakase/gates/example.sh\n" + summaryTail + uxStanzas() + verifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "")
@@ -393,7 +393,7 @@ func TestTrackedSkip(t *testing.T) {
 	}
 	// WalkDir lexical order: .omakase before AGENTS.md, so example.sh is placed
 	// (the sole + line) and AGENTS.md is skipped (the sole ~ line).
-	wantOut := "omakase: placed 1 file(s), overwrote 0 to match payload, skipped 1 committed path(s).\n" +
+	wantOut := "omakase: placed 1 file(s), updated 0 to match the payload, skipped 1 committed path(s).\n" +
 		"  + .omakase/gates/example.sh\n" +
 		"  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see init.sh --help): AGENTS.md\n" +
 		summaryTail + uxStanzas() + verifiedLine
@@ -405,52 +405,48 @@ func TestTrackedSkip(t *testing.T) {
 
 // ---------------------------------------------------------------- overwrite
 
-func TestOverwriteClobbered(t *testing.T) {
-	dir, repo := initRepo(t)
+func TestMachineryDriftHealedOnReinit(t *testing.T) {
+	dir, _ := initRepo(t)
 	singleGatePayload(t)
 
 	var o1, e1 strings.Builder
 	if code := RunInit(nil, &o1, &e1); code != 0 {
 		t.Fatalf("first init exit = %d", code)
 	}
-	// User edits the injected gate in place; re-init overwrites it back to payload.
+	// A drifted machinery file (the ledgered gate) is torn state, not a user
+	// edit: re-init heals it to canonical, with no backup tree.
 	writeFile(t, filepath.Join(dir, ".omakase", "gates", "example.sh"), "MY EDIT\n")
 
 	var stdout, stderr strings.Builder
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("re-init exit = %d; stderr=%q", code, stderr.String())
 	}
-	clob := filepath.Join(repo.OMK, "clobbered", ".omakase", "gates", "example.sh")
-	wantErr := "omakase: overwrote .omakase/gates/example.sh to match payload (prior copy preserved at " + clob + ")\n"
-	eq(t, "stderr", stderr.String(), wantErr)
+	eq(t, "stderr", stderr.String(), "omakase: updated .omakase/gates/example.sh to match the payload\n")
 	// summary carries the ^ line.
-	if !strings.Contains(stdout.String(), "  ^ overwrote to match payload (any local edit replaced): .omakase/gates/example.sh\n") {
+	if !strings.Contains(stdout.String(), "  ^ updated to match the payload: .omakase/gates/example.sh\n") {
 		t.Errorf("stdout missing ^ line:\n%s", stdout.String())
 	}
-	if !strings.HasPrefix(stdout.String(), "omakase: placed 1 file(s), overwrote 1 to match payload, skipped 0 committed path(s).\n") {
+	if !strings.HasPrefix(stdout.String(), "omakase: placed 1 file(s), updated 1 to match the payload, skipped 0 committed path(s).\n") {
 		t.Errorf("stdout summary count wrong:\n%s", stdout.String())
 	}
-	// gate restored to payload; the pre-overwrite copy preserved under clobbered/.
 	eq(t, "gate restored", readFileT(t, filepath.Join(dir, ".omakase", "gates", "example.sh")), gateContent)
-	eq(t, "clobbered backup", readFileT(t, clob), "MY EDIT\n")
 }
 
-// TestFirstInstallBacksUpUserFile: with no prior ledger, the place-loop backup
-// is the only thing preserving a user's own untracked file at a payload path.
-func TestFirstInstallBacksUpUserFile(t *testing.T) {
-	dir, repo := initRepo(t)
+// TestFirstInstallRefusesUserFile: with no prior ledger, a user's own
+// untracked file at a payload path is not omakase's to replace — init refuses
+// whole, names the file, and changes nothing (the Stow rule).
+func TestFirstInstallRefusesUserFile(t *testing.T) {
+	dir, _ := initRepo(t)
 	singleGatePayload(t)
 	writeFile(t, filepath.Join(dir, ".omakase", "gates", "example.sh"), "MY OWN FILE\n")
 
 	var stdout, stderr strings.Builder
-	if code := RunInit(nil, &stdout, &stderr); code != 0 {
-		t.Fatalf("exit = %d; stderr=%q", code, stderr.String())
+	if code := RunInit(nil, &stdout, &stderr); code != 1 {
+		t.Fatalf("exit = %d, want 1 (refusal); stderr=%q", code, stderr.String())
 	}
-	eq(t, "gate overwritten", readFileT(t, filepath.Join(dir, ".omakase", "gates", "example.sh")), gateContent)
-	clob := filepath.Join(repo.OMK, "clobbered", ".omakase", "gates", "example.sh")
-	eq(t, "backup", readFileT(t, clob), "MY OWN FILE\n")
-	if !strings.Contains(stderr.String(), "prior copy preserved at "+clob) {
-		t.Errorf("stderr missing backup path: %q", stderr.String())
+	eq(t, "file untouched", readFileT(t, filepath.Join(dir, ".omakase", "gates", "example.sh")), "MY OWN FILE\n")
+	if !strings.Contains(stderr.String(), "REFUSING init") || !strings.Contains(stderr.String(), ".omakase/gates/example.sh — already exists and was not placed by omakase") {
+		t.Errorf("stderr missing refusal naming the file: %q", stderr.String())
 	}
 }
 
@@ -606,20 +602,20 @@ func TestCollisionWarning(t *testing.T) {
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("re-init exit = %d; stderr=%q", code, stderr.String())
 	}
-	clob := filepath.Join(repo.OMK, "clobbered", ".omakase", "gates", "example.sh")
 	wantWarn := "omakase: WARNING — '.omakase/gates/example.sh' was injected (personal, gitignored) but is NOW TRACKED by the repo.\n" +
 		"  An upstream commit likely landed a file at this path; git silently overwrites ignored\n" +
-		"  files on checkout/pull, so your personal copy was likely clobbered. Last-injected copy\n" +
-		"  preserved at:\n" +
-		"    " + clob + "\n" +
-		"  Diff it against the tracked file and reconcile: drop '.omakase/gates/example.sh' from your payload, or run\n" +
-		"  init --cut-over (guarded) to untrack the file and let the injected copy take over.\n"
+		"  files on checkout/pull, so your personal copy was likely clobbered. The harness's own\n" +
+		"  version still lives in your harness source. Reconcile: drop '.omakase/gates/example.sh' from your payload,\n" +
+		"  or run init --cut-over (guarded) to untrack the file and let the injected copy take over.\n"
 	if !strings.Contains(stderr.String(), wantWarn) {
 		t.Errorf("collision warning bytes mismatch:\n got: %q\nwant substr: %q", stderr.String(), wantWarn)
 	}
-	// last-injected copy preserved; tracked file left untouched.
-	eq(t, "preserved copy", readFileT(t, clob), gateContent)
+	// tracked file left untouched; no backup tree is written (the harness
+	// version is reproducible from the source).
 	eq(t, "tracked file untouched", readFileT(t, filepath.Join(dir, ".omakase", "gates", "example.sh")), "UPSTREAM\n")
+	if _, err := os.Stat(filepath.Join(repo.OMK, "clobbered")); !os.IsNotExist(err) {
+		t.Errorf("clobbered/ backup tree written (err=%v); it was retired", err)
+	}
 }
 
 // ---------------------------------------------------------- incumbent guards
@@ -1321,8 +1317,11 @@ func TestPlaceFileRefusesRealDir(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
+	// The collision scan catches the directory before the place loop: an
+	// untracked something at a payload path that omakase never placed.
 	eq(t, "real-dir refusal", stderr.String(),
-		"omakase: refusing to overlay file '.omakase/gates/example.sh' — an untracked directory exists there; remove it and re-run\n")
+		"omakase: REFUSING init — files in the way (nothing was changed):\n"+
+			"  .omakase/gates/example.sh — already exists and was not placed by omakase. Move it aside, or add it to your harness source, and re-run omakase init\n")
 	if info, err := os.Stat(filepath.Join(dir, ".omakase", "gates", "example.sh")); err != nil || !info.IsDir() {
 		t.Errorf("the untracked directory was disturbed: %v", err)
 	}
@@ -1403,7 +1402,7 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 	}
 	eq(t, "stderr", stderr.String(), "")
 
-	wantOut := "omakase: placed 2 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
+	wantOut := "omakase: placed 2 file(s), updated 0 to match the payload, skipped 0 committed path(s).\n" +
 		"  + .omakase/gates/example.sh\n" +
 		"  + .worktreeinclude\n" + summaryTail + uxStanzas() + verifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
@@ -1446,7 +1445,7 @@ func TestUXStanzas(t *testing.T) {
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	wantOut := "omakase: placed 1 file(s), overwrote 0 to match payload, skipped 0 committed path(s).\n" +
+	wantOut := "omakase: placed 1 file(s), updated 0 to match the payload, skipped 0 committed path(s).\n" +
 		"  + .omakase/bin/omakase-worktree-guard.sh\n" +
 		summaryTail +
 		"omakase: worktree guard (Claude Code only, opt-in) — while other worktrees are active,\n" +
