@@ -5,6 +5,31 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-07-24
+
+### Changed
+- **Gates are opt-in per harness — zero gates means zero enforcement hooks**
+  (#149): a manifest that declares no gate blocks no longer installs the
+  `pre-commit`/`pre-push` dispatchers, and init no longer refuses a repo that
+  already has its own hooks (husky, pre-commit, …) when there is nothing to
+  enforce. The `post-checkout` heal hook is still installed when the slot is
+  free; if an incumbent hook occupies it, init skips it and prints the manual
+  fallback (bare `omakase init` after a checkout). Re-initing a harness that
+  dropped its gates removes omakase's own dispatchers — never a foreign hook.
+  `omakase status` and the init verdict read "no gates declared" instead of
+  reporting missing hooks as a problem. A missing or unparseable manifest keeps
+  the full wiring (fail closed).
+
+### Fixed
+- **Symlinked directories broke the git exclude** (#148): the exclude derivation
+  appended a trailing slash to any path that resolved to a directory, but git
+  matches trailing-slash patterns against real directories only — a symlink is
+  a blob to git, so symlinked payload directories were never excluded. Symlinks
+  no longer get the slash.
+- **Steering-only installs no longer warn "commits will be blocked"** when the
+  stable binary is missing: the warning now fires only when an enforcement hook
+  was actually installed.
+
 ## [0.23.2] — 2026-07-22
 
 ### Fixed
