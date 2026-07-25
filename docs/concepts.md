@@ -63,7 +63,7 @@ Declaring the first gate brings the hooks, and the incumbent-hook refusal, back.
 Every run appends to the scorecard, visible in `omakase status`. Audited bypasses exist:
 `OMAKASE_SKIP_<NAME>=1` (name upper-cased, `.`/`-`→`_`) skips one gate for one git command,
 `OMAKASE_SKIP_GATES=1` skips every gate for one git command, and a persistent per-gate
-toggle (`omakase status --disable <gate>`, the interactive screen, or the MCP menu) records
+toggle (`omakase status --disable <gate>`) records
 the gate in the git dir's `omakase/disabled-gates` until re-enabled. All announce the skip
 on every hook run — a bypassed gate is never silent.
 

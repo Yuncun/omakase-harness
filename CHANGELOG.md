@@ -5,6 +5,17 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Removed
+- **The interactive menu is gone — both surfaces** (#156): the terminal screen
+  (`internal/tui` and the vendored, patched bubbletea it required) and the MCP
+  menu server (`omakase mcp`, `internal/mcpserver`, `bin/mcp.sh`). A bare
+  `omakase status` on a terminal now prints the same static page as everywhere
+  else; `--plain` is kept as an accepted no-op for scripts. Toggles,
+  keep/restore, and diff were already plain flags and are unchanged. If a
+  future interactive surface is wanted, it will be designed fresh rather than
+  grown from this one. If you registered the MCP server, unregister it
+  (`claude mcp remove omakase`).
+
 ## [0.24.0] — 2026-07-24
 
 ### Changed

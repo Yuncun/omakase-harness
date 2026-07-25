@@ -12,7 +12,7 @@
 #
 # Standdowns, same as the gate: OMAKASE_SKIP_WORKTREE_DISCIPLINE=1 (audited, per
 # invocation) or a "worktree-discipline" line in the shared disabled-gates file (the
-# menu's persistent, visible disable).
+# persistent, visible disable via `omakase status --disable`).
 #
 # This layer fails OPEN: anything it cannot parse or resolve is allowed silently. It is
 # a pre-layer for the developer's attention; the commit-time gate is the layer that
@@ -44,7 +44,7 @@ case "${n:-0}" in ''|*[!0-9]*) exit 0;; esac
 main="$(printf '%s\n' "$wt" | awk '/^worktree /{sub(/^worktree /,""); print; exit}')"
 [ "$root" != "$main" ] && exit 0
 
-# The menu's persistent disable stands the guard down with the gate.
+# A persistent disable (status --disable) stands the guard down with the gate.
 gcd="$(git -C "$cwd" rev-parse --git-common-dir 2>/dev/null)" || exit 0
 common="$(cd "$cwd" 2>/dev/null && cd "$gcd" 2>/dev/null && pwd)" || exit 0
 grep -Fxq -- "worktree-discipline" "$common/omakase/disabled-gates" 2>/dev/null && exit 0

@@ -1,6 +1,6 @@
 // Command omakase is the install-time binary: one static executable that
 // dispatches the human verbs (init, status, diff, remove) and the plumbing
-// verbs run by wired-up tools (hook, statusline, mcp).
+// verbs run by wired-up tools (hook, statusline).
 package main
 
 import (
@@ -10,7 +10,6 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/Yuncun/omakase-harness/internal/mcpserver"
 	"github.com/Yuncun/omakase-harness/internal/overlay"
 	"github.com/Yuncun/omakase-harness/internal/status"
 )
@@ -78,9 +77,6 @@ var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 	"diff": func(argv []string, stdout, stderr io.Writer) int {
 		return overlay.RunDiff(argv[2:], stdout, stderr)
 	},
-	"mcp": func(argv []string, stdout, stderr io.Writer) int {
-		return mcpserver.Run(argv[2:], stdout, stderr)
-	},
 	"hook": func(argv []string, stdout, stderr io.Writer) int {
 		return overlay.RunHook(argv[2:], os.Stdin, stdout, stderr)
 	},
@@ -112,7 +108,6 @@ commands used by your tools, not by you:
   hook <name>      run the git-hook logic (called by the hooks init installs)
   record <name>    record a PASS for HEAD for a deferred gate (out-of-band)
   statusline       one-line status segment (--wire connects it to your hosts' bars)
-  mcp              menu server (wire into your agent's MCP config)
 `
 
 // run dispatches argv to a verb and returns the exit code, writing only to

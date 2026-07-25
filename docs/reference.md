@@ -2,13 +2,13 @@
 
 ## Commands
 
-`init.sh`, `status.sh`, `remove.sh`, and `mcp.sh` are thin shims onto the omakase Go
+`init.sh`, `status.sh`, and `remove.sh` are thin shims onto the omakase Go
 binary. Each resolves, in order: an `OMAKASE_BIN` override (must be executable, or
 resolution fails immediately) → a dev rebuild (`go.mod` + `go` on PATH) → a prebuilt
 `dist/omakase` → `omakase` on PATH → the pinned release binary, downloaded once per
 machine, sha256-verified against digests baked into the repo, and cached at
-`~/.cache/omakase/bin/<version>/` (`XDG_CACHE_HOME` respected). `init.sh`, `status.sh`,
-and `mcp.sh` may trigger that download on first run; `remove.sh` never fetches but
+`~/.cache/omakase/bin/<version>/` (`XDG_CACHE_HOME` respected). `init.sh` and `status.sh`
+may trigger that download on first run; `remove.sh` never fetches but
 reuses an already-cached binary, keeping uninstall offline. When nothing resolves, every
 shim fails closed: recovery guidance on stderr (install a binary, or point
 `OMAKASE_BIN=/path/to/omakase` at one) and exit 1 — there is no bash fallback.
@@ -63,21 +63,19 @@ the incumbent refusal — back.
 
 ### `status.sh [--markdown | --plain | --global | --disable <name> | --enable <name> | --keep <path> | --restore <path>]`
 
-On a real terminal, `status` opens the interactive consent screen: every steering
-file and gate as a row (arrows to move, Enter/Space to toggle, q to quit).
-Everywhere else — pipes, scripts, agents — it prints the same static page as
-always: the inventory grouped by origin (committed, injected, global), the hook
+`status` prints the static page: the inventory grouped by origin (committed,
+injected, global), the hook
 wiring, the run ledger, and the paths hidden via `.git/info/exclude`. The global
 group prints as one count line — the personal config under `~/.claude` +
 `~/.copilot` steers every repo identically, so the page states the fact and
 keeps the enumeration behind `--global`.
 
-- `--plain` — force the static page on a terminal too. Read-only.
+- `--plain` — accepted for script compatibility; same as no flags. Read-only.
 - `--markdown` — the static page as formatted Markdown. Read-only.
 - `--global` — list the personal config the page's GLOBAL line counts. Read-only;
   reads only `$HOME`, so it prints the same in every repo.
-- `--disable <name>` / `--enable <name>` — the scriptable twins of the screen's
-  toggle. `<name>` is a wired gate name, a placed path, or a placed top-level
+- `--disable <name>` / `--enable <name>` — per-item consent toggles. `<name>`
+  is a wired gate name, a placed path, or a placed top-level
   directory (a group). Disabling a FILE removes it from the working tree (the
   snapshot keeps a copy; `--enable` restores it; a locally edited file refuses
   the toggle rather than lose the edits). Disabling a GATE records it in the
@@ -116,21 +114,6 @@ addition), against the harness version — or against your accepted version
 once a file is kept. No paths = every changed enabled placed file; a path is
 a placed file or a directory of them (resolution as above). Exit 0 whether or
 not differences exist; unknown paths and any flag other than `--help` exit 2.
-
-### `omakase mcp`
-
-Binary-only verb (no `.sh` shim): a stdio MCP server that serves the same
-consent surface inside agent hosts. Tools: `status` (the read-only page) and
-`menu` (one nested form: a header row per dev-loop stage — set to keep as-is,
-all on, or all off, which applies to every row under it left unchanged —
-with a row per file and gate beneath; Space toggles a row). `expand=true`
-gives every file its own row instead of one row per directory. Rendered
-natively by hosts that support MCP elicitation — Claude Code and Copilot CLI
-both do; plain text elsewhere. Nothing applies until the human submits the
-form. Register it from the target repo, e.g.:
-`claude mcp add omakase -- /path/to/omakase mcp`. In a plugin install where no
-binary is on PATH, register the shim's stable path instead:
-`claude mcp add omakase -- /path/to/omakase-harness/bin/mcp.sh`.
 
 ### `omakase statusline [--wire]`
 

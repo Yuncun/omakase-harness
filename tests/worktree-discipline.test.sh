@@ -12,7 +12,7 @@
 #                                   *.md) plus paths that CANNOT leak into a commit
 #                                   (.omakase/** is force-excluded; .git/** isn't content).
 # Both honor OMAKASE_SKIP_WORKTREE_DISCIPLINE=1 and a "worktree-discipline" line in the
-# shared disabled-gates file (the menu's persistent, visible disable). The guard fails
+# shared disabled-gates file (the persistent, visible disable). The guard fails
 # OPEN on anything it cannot parse or resolve — it is a pre-layer; the commit gate is
 # the layer that must fail closed.
 set -u
@@ -75,7 +75,7 @@ OUT="$(guard "$ROOT" "$WTROOT/src/app.go")"
 OUT="$(guard "$WTROOT" "$WTROOT/src/app.go")"
 [ -z "$OUT" ] && pass "linked worktree -> allow" || fail "denied inside a worktree ($OUT)"
 
-# Bypasses: the audited skip env and the menu's persistent disable.
+# Bypasses: the audited skip env and the persistent disable (status --disable).
 OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/src/app.go"},"cwd":"%s"}' "$ROOT" "$ROOT" | OMAKASE_SKIP_WORKTREE_DISCIPLINE=1 bash "$GUARD")"
 [ -z "$OUT" ] && pass "OMAKASE_SKIP_WORKTREE_DISCIPLINE=1 -> allow" || fail "skip env ignored ($OUT)"
 COMMONB="$(common_of "$REPO")"; mkdir -p "$COMMONB/omakase"

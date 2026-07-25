@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # omakase-harness — resolution + self-provisioning of the omakase Go binary.
-# Sourced by bin/init.sh, bin/status.sh, bin/remove.sh, bin/mcp.sh. NOT executed
+# Sourced by bin/init.sh, bin/status.sh, bin/remove.sh. NOT executed
 # directly: it defines functions and runs nothing at source time. The sourcing
 # scripts own `set -euo pipefail`; everything here is safe under `set -u`.
 # Callers must set $HERE (their bin/ directory) before calling resolve_omakase.
@@ -179,7 +179,7 @@ fetch_omakase() {
 }
 
 # Resolve the omakase binary, setting $OMAKASE_BIN_RESOLVED. $1 = "fetch" enables
-# tier 6's network fetch (init/status/mcp pass it; remove does not — uninstall
+# tier 6's network fetch (init/status pass it; remove does not — uninstall
 # stays offline but still uses an already-cached binary). Returns non-zero when
 # nothing resolves. Requires $HERE = the caller's bin/ directory.
 resolve_omakase() {
