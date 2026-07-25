@@ -114,7 +114,7 @@ func TestStatusHelp(t *testing.T) {
 		if !strings.HasPrefix(out, "usage: omakase status") {
 			t.Errorf("status %s: stdout = %q, want a usage block", flag, out)
 		}
-		for _, want := range []string{"--markdown", "--plain", "--disable NAME", "--enable NAME", "--keep PATH", "--restore PATH", "interactive"} {
+		for _, want := range []string{"--markdown", "--plain", "--disable NAME", "--enable NAME", "--keep PATH", "--restore PATH"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("status %s usage missing %q:\n%s", flag, want, out)
 			}

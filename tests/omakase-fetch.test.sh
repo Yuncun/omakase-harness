@@ -16,7 +16,6 @@
 #       pre-seeded -> the cached stub is exec'd with the right verb
 #   O6. remove.sh never fetches (offline -> fail closed, nothing cached)
 #       but DOES use an already-cached binary when one is present
-#   O7. mcp.sh: resolution failure is stderr guidance + exit 1, with stdout
 #       left completely clean for the MCP stdio transport
 #   O8. (opt-in, OMAKASE_TEST_LIVE_FETCH=1) one real download from GitHub
 #   O9. tier 2's go build failure aborts the shim (exit nonzero, stale
@@ -195,7 +194,7 @@ echo "== Scenario O5: clone status.sh/init.sh fail closed offline and resolve vi
 REPO5="$TMP/repo-o5"; scratch_repo "$REPO5"
 
 # (a) Completely offline: empty cache, empty base URL -> fetch fails -> the shim
-# fails CLOSED, mirroring O7: guidance on stderr, exit 1, stdout untouched. There
+# fails CLOSED: guidance on stderr, exit 1, stdout untouched. There
 # is no bash fallback body — a silent one would mask binary-distribution failures.
 O5AHOME="$TMP/home-o5a"; O5ACACHE="$TMP/cache-o5a"; mkdir -p "$O5AHOME" "$O5ACACHE"
 O5AOUT="$TMP/o5a.out"; O5AERR="$TMP/o5a.err"
@@ -248,18 +247,6 @@ printf '#!/bin/sh\necho fixture-omakase "$@"\n' > "$STUB6B/omakase"; chmod +x "$
 OUT="$( cd "$REPO6" && env -i HOME="$O6BHOME" XDG_CACHE_HOME="$O6BCACHE" PATH="$CLEANPATH" \
   bash "$CLONE/bin/remove.sh" 2>&1 )"
 echo "$OUT" | grep -q 'fixture-omakase remove' && pass "clone remove.sh uses the cached binary without network" || fail "cached stub not used for remove ($OUT)"
-
-# ---------- Scenario O7: mcp.sh — guidance on stderr, exit 1, clean stdout ----------
-echo "== Scenario O7: clone mcp.sh reports guidance on stderr only and exits 1 =="
-O7HOME="$TMP/home-o7"; O7CACHE="$TMP/cache-o7"; mkdir -p "$O7HOME"
-OUTFILE="$TMP/o7.out"; ERRFILE="$TMP/o7.err"
-env -i HOME="$O7HOME" XDG_CACHE_HOME="$O7CACHE" PATH="$CLEANPATH" \
-  OMAKASE_RELEASE_BASE_URL="$TMP/empty-base-o7" \
-  bash "$CLONE/bin/mcp.sh" >"$OUTFILE" 2>"$ERRFILE"
-rc=$?
-[ "$rc" -eq 1 ] && pass "clone mcp.sh exits 1 when nothing resolves" || fail "mcp.sh exited $rc, expected 1"
-grep -q 'mcp needs the omakase binary' "$ERRFILE" && pass "mcp.sh prints guidance to stderr" || fail "no guidance on stderr ($(cat "$ERRFILE"))"
-[ ! -s "$OUTFILE" ] && pass "mcp.sh stdout stays empty (the stdio transport is never polluted)" || fail "mcp.sh wrote to stdout: $(cat "$OUTFILE")"
 
 # ---------- Scenario O8: opt-in live fetch of the real pinned release ----------
 echo "== Scenario O8: live fetch from GitHub (opt-in: OMAKASE_TEST_LIVE_FETCH=1) =="

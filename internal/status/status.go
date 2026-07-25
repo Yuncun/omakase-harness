@@ -16,7 +16,6 @@ import (
 
 	"github.com/Yuncun/omakase-harness/internal/gate"
 	"github.com/Yuncun/omakase-harness/internal/state"
-	"github.com/Yuncun/omakase-harness/internal/tui"
 )
 
 // schemeRe strips a leading lowercase URL scheme for srcDisplay.
@@ -27,9 +26,8 @@ var schemeRe = regexp.MustCompile(`^[a-z][a-z]*://`)
 // directory and writes the report to stdout. Outside a git repo it writes one
 // stderr line and exits 1; otherwise it exits 0.
 func Run(argv []string, stdout, stderr io.Writer) int {
-	// --help/-h short-circuits to usage — scanned first so `status --help` on
-	// a real terminal prints help rather than launching the interactive
-	// screen. Any other unrecognized dash-flag is an error: a typo like
+	// --help/-h short-circuits to usage — scanned first.
+	// Any other unrecognized dash-flag is an error: a typo like
 	// `--enabel smoke` must not exit 0 with the page (an automation would read
 	// that as "re-enabled, green"). Bare words keep falling through; `md` is a
 	// real alias.
@@ -52,14 +50,14 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 
 	md := len(argv) > 0 && (argv[0] == "--markdown" || argv[0] == "-m" || argv[0] == "md")
 
-	// --plain forces the static page; --disable/--enable are the scriptable
-	// twins of the interactive screen's Enter (agents cannot drive a TUI);
-	// --keep/--restore are their edit-lifecycle siblings (issue #98 Part 2).
-	plain := false
+	// --plain is kept as an accepted no-op for script compatibility: the plain
+	// page has been the only page since the interactive screen was removed
+	// (#156). --disable/--enable toggle consent; --keep/--restore are their
+	// edit-lifecycle siblings (issue #98 Part 2).
 	for i := 0; i < len(argv); i++ {
 		switch argv[i] {
 		case "--plain":
-			plain = true
+			// accepted, no effect — the plain page is the default
 		case "--disable", "--enable":
 			if i+1 >= len(argv) {
 				fmt.Fprintf(stderr, "omakase: %s needs a gate name or placed path\n", argv[i])
@@ -138,19 +136,6 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// Interactive dispatch: on a real terminal, and only for the default page
-	// (not --markdown, not the scriptable --plain), hand off to the live
-	// interactive screen. It sits after the placed.tsv-absent early returns
-	// above, so not-installed / pre-0.10 repos keep the plain page.
-	if !md && !plain && interactiveTerminal() {
-		hdr := hname
-		if srcdisp != "" {
-			hdr = hname + " · " + srcdisp
-		}
-		foot := fmt.Sprintf("%d injected%s · 0 committed · all gitignored (.git/info/exclude)", nInjected, toggledOffSuffix(nToggledOff))
-		return tui.Run(repo, hdr, foot)
-	}
-
 	if md {
 		renderMarkdown(stdout, repo, home, icon, hname, srcdisp, basever, nInjected, nToggledOff)
 		return 0
@@ -174,10 +159,9 @@ func printStatusUsage(w io.Writer) {
 	fmt.Fprint(w, `usage: omakase status [--markdown|--plain|--global] [--disable NAME | --enable NAME]
                       [--keep PATH | --restore PATH]
 
-  (no flags)      on a real terminal, open the interactive consent screen;
-                  otherwise print the status page
+  (no flags)      print the status page
   --markdown, -m  print the status page as markdown
-  --plain         force the printed status page (never the interactive screen)
+  --plain         same as no flags (kept for scripts)
   --global        list the personal config the page's GLOBAL line counts
                   (~/.claude + ~/.copilot, applies to every repo)
   --disable NAME  turn a gate off, or remove a placed file/dir; NAME is a wired

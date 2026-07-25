@@ -21,7 +21,7 @@ shows up in a pull request. `omakase status` lists each item and lets you turn
 it off. `omakase remove` deletes everything it placed.
 
 <!-- demo.gif slot — VHS tape to live at docs/tapes/demo.tape.
-     Storyboard: init → status menu opens, toggle one gate → a commit trips a gate
+     Storyboard: init → status page, disable one gate → a commit trips a gate
      → git status: clean. The transcript below is real v0.23 output (trimmed) and the
      tape replaces it. -->
 
@@ -73,9 +73,9 @@ omakase init you/harness  install that harness here: files in, gates wired, noth
 omakase remove            delete everything omakase placed, exactly
 ```
 
-Everything else is discovered, not memorized: toggles, keep/restore, and the diff view
-live in the status menu (also served inside Claude Code and Copilot CLI via
-`omakase mcp`), and authoring is done by your agent from intent — see
+Everything else hangs off `status`: per-item toggles (`--disable`/`--enable`),
+keep/restore for files you've edited, and `omakase diff` for what changed —
+`omakase status --help` lists them. Authoring is done by your agent from intent — see
 [Share your harness](#share-your-harness). An optional status bar
 (`omakase statusline --wire`) keeps the harness state visible in Claude Code and
 Copilot CLI, including which gate is running right now.
@@ -108,7 +108,7 @@ overlay, and anything you turned off stays off. A skipped gate prints that it
 was skipped.
 
 For scripts and agents, `omakase status --plain` prints a stable text page, and
-`--disable` / `--enable` do what the menu does.
+`--disable` / `--enable` toggle items on and off.
 
 ## Why not just commit these files?
 

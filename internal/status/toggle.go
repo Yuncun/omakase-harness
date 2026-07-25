@@ -15,9 +15,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Yuncun/omakase-harness/internal/gate"
+	"github.com/Yuncun/omakase-harness/internal/harness"
 	"github.com/Yuncun/omakase-harness/internal/overlay"
 	"github.com/Yuncun/omakase-harness/internal/state"
-	"github.com/Yuncun/omakase-harness/internal/tui"
 )
 
 // discoverRepo is the shared cwd->repo resolution of the scriptable consent
@@ -56,14 +57,14 @@ func placedTargets(rows []state.PlacedRow, name string) []string {
 }
 
 // refuseMachinery rejects any target that is harness machinery. Machinery
-// keeps the harness running and is never a consent item — the TUI and MCP
-// menu filter it out (tui.IsMachinery), so the scriptable surface must too.
-// Deleting the .omakase/ tree or lefthook wiring via --disable would brick
-// every commit with a raw hook error; --keep/--restore on it would bless or
-// revert gate plumbing behind the same one-word name. Refuse before any write.
+// keeps the harness running and is never a consent item, so the scriptable
+// surface refuses it. Deleting the .omakase/ tree or lefthook wiring via
+// --disable would brick every commit with a raw hook error; --keep/--restore
+// on it would bless or revert gate plumbing behind the same one-word name.
+// Refuse before any write.
 func refuseMachinery(targets []string, name string, stderr io.Writer) bool {
 	for _, rel := range targets {
-		if tui.IsMachinery(rel) {
+		if harness.IsMachinery(rel) {
 			fmt.Fprintf(stderr, "omakase: %s is harness machinery — it keeps the harness running; remove the harness with omakase remove\n", name)
 			return true
 		}
@@ -190,16 +191,17 @@ func runKeepRestore(keep bool, name string, stdout, stderr io.Writer) int {
 	return code
 }
 
-// wiredGateNames is the set of gate names the manifest declares, resolved from
-// the same source the interactive screen's gate rows use (tui.GateRows). It is
+// wiredGateNames is the set of gate names the snapshot manifest declares. It is
 // the authority for whether a --disable/--enable target that matched no placed
 // path is a real gate. No manifest -> empty set.
 func wiredGateNames(omk string) map[string]bool {
 	set := map[string]bool{}
-	for _, g := range tui.GateRows(omk) {
-		if g.Gate {
-			set[g.Name] = true
-		}
+	gates, err := gate.Load(omk)
+	if err != nil {
+		return set
+	}
+	for _, g := range gates {
+		set[g.Name] = true
 	}
 	return set
 }

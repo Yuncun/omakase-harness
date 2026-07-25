@@ -21,5 +21,4 @@ annotate. The script owns the format so the render stays deterministic. Run as a
 
 The write flags — `status.sh --disable <name>` / `--enable <name>` — toggle a placed
 file or a gate off/on. Use them only when the human explicitly asks for a specific
-toggle; the consent surfaces for choosing are the interactive screen (bare
-`omakase status` in the human's own terminal) and the MCP menu (`omakase mcp`).
+toggle; never toggle on your own judgment.

@@ -193,11 +193,10 @@ func TestStatusRunTermBannerCwd(t *testing.T) {
 	}
 }
 
-// TestPipedStatusNeverInteractive checks that status.Run given bytes.Buffer
-// writers (never *os.File) still emits the plain terminal page, never the TUI.
-// interactiveTerminal gates on the process's os.Stdin/os.Stdout, which under
-// `go test` is a pipe, not a terminal.
-func TestPipedStatusNeverInteractive(t *testing.T) {
+// TestPipedStatusPlainPage checks that a default (flagless) status.Run renders
+// the plain terminal page into the given writers — the only page since the
+// interactive screen was removed (#156).
+func TestPipedStatusPlainPage(t *testing.T) {
 	repo, home := buildStatusFixture(t)
 	pinStatusEnv(t, repo, home)
 

@@ -45,7 +45,7 @@ func TestRunHelp(t *testing.T) {
 		}
 		out := stdout.String()
 		for _, want := range []string{"init", "status", "diff", "remove",
-			"commands used by your tools, not by you:", "hook", "statusline", "mcp"} {
+			"commands used by your tools, not by you:", "hook", "statusline"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("%s: usage missing %q:\n%s", arg, want, out)
 			}
@@ -102,24 +102,18 @@ func TestRunRemoveDispatch(t *testing.T) {
 	}
 }
 
-// TestRunMcpDispatch proves the registry wires "mcp" to mcpserver.Run: run from
-// OUTSIDE any git repo (a fresh t.TempDir), it must reach mcpserver.Run's own
-// repo-discovery failure ("not inside a git repo", exit 1) rather than the
-// dispatcher's unknown-command path — mirrors TestRunRemoveDispatch, since mcp
-// has no --help/usage text to probe either.
-func TestRunMcpDispatch(t *testing.T) {
+// TestRunMcpRemoved pins the removal of the mcp verb (#156): "mcp" must take
+// the dispatcher's unknown-command path, not silently do something else.
+func TestRunMcpRemoved(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"omakase", "mcp"}, &stdout, &stderr)
 
-	if code != 1 {
-		t.Errorf("exit code = %d, want 1", code)
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
 	}
-	if got := stdout.String(); got != "" {
-		t.Errorf("stdout = %q, want empty", got)
-	}
-	if got, want := stderr.String(), "omakase: not inside a git repo\n"; got != want {
+	if got, want := stderr.String(), "omakase: unknown command \"mcp\" (see omakase --help)\n"; got != want {
 		t.Errorf("stderr = %q, want %q", got, want)
 	}
 }

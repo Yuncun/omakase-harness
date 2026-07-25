@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # tests/toggles.test.sh — e2e for `omakase status --plain | --disable <name> | --enable
-# <name>`: the scriptable twin of the interactive screen's per-item Enter (an agent
+# <name>`: the scriptable per-item consent toggle (an agent
 # cannot drive a TUI). Proves the whole chain end to end against a REAL installed
 # harness: a wired gate that blocks a real `git commit`, toggled off via the CLI
 # (the commit then succeeds, and the gate itself says so), toggled back on (blocks
 # again); a real placed FILE toggled off (deleted on disk, enabled=0 in placed.tsv,
 # STAYS gone across a re-init per Task 3's consent merge) and back on (restored,
 # enabled=1); the REFUSING guards (a tracked path, a locally-edited path) leave the
-# file untouched; and --plain still reaches the normal (non-interactive) render.
+# file untouched; and --plain still reaches the normal render.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
@@ -166,7 +166,7 @@ OUT="$( cd "$REPO" && "$SHOW" --help 2>&1 )"; RC=$?
   || fail "case11: --help ($RC: $OUT)"
 
 echo "== toggles: --plain still reaches the normal render =="
-# 8. --plain is a reachable no-op today (Task 8 wires the interactive dispatch); the
+# 8. --plain is an accepted no-op (the plain page is the only page); the
 #    normal identity line still renders as the first line of output.
 OUT="$( cd "$REPO" && "$SHOW" --plain 2>&1 | head -1 )"
 echo "$OUT" | grep -q "installed in" \
