@@ -1,8 +1,8 @@
 // Package-file toggle.go: the per-item consent backend behind `omakase status`
-// (interactive Enter and the --disable/--enable/--keep/--restore flags). Gates
-// toggle via $OMK/disabled-gates (read by internal/gate step 2); files toggle
-// via the placed.tsv enabled column + payload-snapshot restore; edits are
-// kept/restored via $OMK/kept (issue #98 Part 2).
+// (the --disable/--enable/--keep/--restore flags). Every off switch is a
+// marker: gates via $OMK/disabled-gates (read by internal/gate step 2), files
+// via $OMK/disabled-files + payload-snapshot restore, kept edits via the
+// $OMK/kept copy (issue #98 Part 2).
 package overlay
 
 import (
@@ -32,8 +32,7 @@ var (
 )
 
 // keptEntry is the accepted copy of a kept file. Its existence IS the kept
-// mark (mirroring disabled-gates): no placed.tsv format change, old readers
-// unaffected.
+// mark, the same shape as disabled-gates and disabled-files.
 func keptEntry(omk, rel string) string { return filepath.Join(omk, "kept", rel) }
 
 func disabledGatesPath(omk string) string { return filepath.Join(omk, "disabled-gates") }
@@ -106,8 +105,29 @@ func placedIndex(rows []state.PlacedRow, rel string) int {
 	return -1
 }
 
+// syncPlaced persists a toggle's outcome: the disabled-files sidecar is
+// updated to match the rows' Enabled state (which also migrates a legacy
+// 5-column ledger's in-row disables — WritePlaced drops that column), then
+// placed.tsv is rewritten in the 2-field format. Sidecar entries for paths
+// no longer in the ledger are preserved untouched (stale but harmless; init
+// rewrites the sidecar wholesale).
+func syncPlaced(omk string, rows []state.PlacedRow) error {
+	set := state.DisabledFiles(omk)
+	for _, r := range rows {
+		if r.Enabled == "0" {
+			set[r.Rel] = true
+		} else {
+			delete(set, r.Rel)
+		}
+	}
+	if err := state.WriteDisabledFiles(omk, set); err != nil {
+		return err
+	}
+	return state.WritePlaced(filepath.Join(omk, "placed.tsv"), rows)
+}
+
 // FileOff deletes a placed file (refusing tracked paths and local edits) and
-// records enabled=0 so repair/self-heal respect the choice.
+// lists it in disabled-files so repair/self-heal respect the choice.
 func FileOff(repo *state.Repo, rel string) error {
 	ledger := filepath.Join(repo.OMK, "placed.tsv")
 	rows := state.ReadPlaced(ledger)
@@ -128,11 +148,11 @@ func FileOff(repo *state.Repo, rel string) error {
 		}
 	}
 	rows[idx].Enabled = "0"
-	return state.WritePlaced(ledger, rows)
+	return syncPlaced(repo.OMK, rows)
 }
 
-// FileOn restores a toggled-off file from the payload snapshot and records
-// enabled=1 (hash refreshed from the restored copy).
+// FileOn restores a toggled-off file from the payload snapshot and delists it
+// from disabled-files (hash refreshed from the restored copy).
 func FileOn(repo *state.Repo, rel string) error {
 	ledger := filepath.Join(repo.OMK, "placed.tsv")
 	rows := state.ReadPlaced(ledger)
@@ -174,7 +194,7 @@ func FileOn(repo *state.Repo, rel string) error {
 	}
 	rows[idx].Enabled = "1"
 	rows[idx].Hash = state.HashOf(full)
-	return state.WritePlaced(ledger, rows)
+	return syncPlaced(repo.OMK, rows)
 }
 
 // FileKeep accepts the current on-disk version of a placed file as the
@@ -213,7 +233,7 @@ func FileKeep(repo *state.Repo, rel string) error {
 	// "make the current on-disk version yours" implies it is managed again.
 	rows[idx].Enabled = "1"
 	rows[idx].Hash = h
-	return state.WritePlaced(ledger, rows)
+	return syncPlaced(repo.OMK, rows)
 }
 
 // FileRestore puts the harness's version back: the payload-snapshot copy is
@@ -249,5 +269,5 @@ func FileRestore(repo *state.Repo, rel string) error {
 	}
 	rows[idx].Enabled = "1"
 	rows[idx].Hash = state.HashOf(full)
-	return state.WritePlaced(ledger, rows)
+	return syncPlaced(repo.OMK, rows)
 }

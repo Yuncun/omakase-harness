@@ -64,8 +64,8 @@ func installHarness(t *testing.T, root string) string {
 	writeFile(t, root, ".omakase/VERSION", "0.18.1\n")
 	writeFile(t, root, ".omakase/bin/omakase-gate.sh", "#!/bin/sh\n")
 	rows := []state.PlacedRow{
-		{Rel: ".omakase/VERSION", Kind: "other", Src: "payload", Hash: state.HashOf(filepath.Join(root, ".omakase/VERSION")), Enabled: "1"},
-		{Rel: ".omakase/bin/omakase-gate.sh", Kind: "other", Src: "payload", Hash: state.HashOf(filepath.Join(root, ".omakase/bin/omakase-gate.sh")), Enabled: "1"},
+		{Rel: ".omakase/VERSION", Hash: state.HashOf(filepath.Join(root, ".omakase/VERSION"))},
+		{Rel: ".omakase/bin/omakase-gate.sh", Hash: state.HashOf(filepath.Join(root, ".omakase/bin/omakase-gate.sh"))},
 	}
 	if err := state.WritePlaced(filepath.Join(omk, "placed.tsv"), rows); err != nil {
 		t.Fatal(err)
@@ -346,9 +346,7 @@ func TestCollectTrackedFileNeverDrifts(t *testing.T) {
 func TestCollectDisabledRowIgnored(t *testing.T) {
 	root := newTestRepo(t)
 	omk := installHarness(t, root)
-	rows := state.ReadPlaced(filepath.Join(omk, "placed.tsv"))
-	rows[1].Enabled = "0"
-	if err := state.WritePlaced(filepath.Join(omk, "placed.tsv"), rows); err != nil {
+	if err := state.WriteDisabledFiles(omk, map[string]bool{".omakase/bin/omakase-gate.sh": true}); err != nil {
 		t.Fatal(err)
 	}
 	os.Remove(filepath.Join(root, ".omakase", "bin", "omakase-gate.sh"))
@@ -363,8 +361,8 @@ func TestCollectEmptyLedgerHashSkipsDrift(t *testing.T) {
 	omk := installHarness(t, root)
 	// A short row (no hash field) comes back from ReadPlaced with Hash "";
 	// drift cannot be judged without a ledger hash, so the row is skipped.
-	raw := ".omakase/VERSION\tother\tpayload\t" + state.HashOf(filepath.Join(root, ".omakase/VERSION")) + "\t1\n" +
-		".omakase/bin/omakase-gate.sh\tother\tpayload\n"
+	raw := ".omakase/VERSION\t" + state.HashOf(filepath.Join(root, ".omakase/VERSION")) + "\n" +
+		".omakase/bin/omakase-gate.sh\n"
 	if err := os.WriteFile(filepath.Join(omk, "placed.tsv"), []byte(raw), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -532,8 +530,7 @@ func TestCollectKeptCount(t *testing.T) {
 
 	// A kept copy behind a DISABLED row does not count.
 	rows = state.ReadPlaced(ledger)
-	rows[0].Enabled = "0"
-	if err := state.WritePlaced(ledger, rows); err != nil {
+	if err := state.WriteDisabledFiles(omk, map[string]bool{rows[0].Rel: true}); err != nil {
 		t.Fatal(err)
 	}
 	if st := collect(t, dir); st.Kept != 0 {

@@ -179,7 +179,7 @@ func TestFreshInit(t *testing.T) {
 	eq(t, "wtinc", readFileT(t, filepath.Join(dir, ".worktreeinclude")), wantWtinc)
 
 	// placed.tsv: one row (rel, kind, source label, sha256, 1).
-	wantPlaced := ".omakase/gates/example.sh\tgate\tpayload\t" + sha256hex([]byte(gateContent)) + "\t1\n"
+	wantPlaced := ".omakase/gates/example.sh\t" + sha256hex([]byte(gateContent)) + "\n"
 	eq(t, "placed.tsv", readFileT(t, filepath.Join(repo.OMK, "placed.tsv")), wantPlaced)
 
 	// snapshot is a byte-equal, executable copy of the placed file.
@@ -992,11 +992,11 @@ func TestMultiFilePlacedTsv(t *testing.T) {
 	// WalkDir lexical order: .claude/* , .github/* , .omakase/* , AGENTS.md.
 	h := func(s string) string { return sha256hex([]byte(s)) }
 	wantPlaced := "" +
-		".claude/rules/a.md\trule\tpayload\t" + h("rule a\n") + "\t1\n" +
-		".claude/skills/b/SKILL.md\tskill\tpayload\t" + h("skill b\n") + "\t1\n" +
-		".github/skills/foo/SKILL.md\tskill\tpayload\t" + h("gh skill\n") + "\t1\n" +
-		".omakase/gates/example.sh\tgate\tpayload\t" + h(gateContent) + "\t1\n" +
-		"AGENTS.md\tdoc\tpayload\t" + h("agents\n") + "\t1\n"
+		".claude/rules/a.md\t" + h("rule a\n") + "\n" +
+		".claude/skills/b/SKILL.md\t" + h("skill b\n") + "\n" +
+		".github/skills/foo/SKILL.md\t" + h("gh skill\n") + "\n" +
+		".omakase/gates/example.sh\t" + h(gateContent) + "\n" +
+		"AGENTS.md\t" + h("agents\n") + "\n"
 	eq(t, "multi placed.tsv", readFileT(t, filepath.Join(repo.OMK, "placed.tsv")), wantPlaced)
 
 	// exclude block: .claude owned (wholesale), .github shared (file-by-file),
@@ -1043,7 +1043,7 @@ func TestSymlinkPayloadCarried(t *testing.T) {
 		t.Errorf("snapshot dereferenced the symlink: target=%q err=%v", snapTarget, err)
 	}
 	// ledger row for the symlink uses the target-string digest.
-	wantRow := "CLAUDE.md\tdoc\tpayload\t" + sha256hex([]byte("AGENTS.md")) + "\t1\n"
+	wantRow := "CLAUDE.md\t" + sha256hex([]byte("AGENTS.md")) + "\n"
 	if !strings.Contains(readFileT(t, filepath.Join(repo.OMK, "placed.tsv")), wantRow) {
 		t.Errorf("placed.tsv missing symlink-digest row %q:\n%s", wantRow, readFileT(t, filepath.Join(repo.OMK, "placed.tsv")))
 	}

@@ -86,14 +86,16 @@ OUT="$( cd "$REPO" && echo two >> f.txt && git add f.txt && git commit -m c2 2>&
 [ "$RC" -ne 0 ] && pass "case3: the gate blocks again once re-enabled" || fail "case3: commit not blocked ($RC: $OUT)"
 
 echo "== toggles: file lifecycle (--disable/--enable a placed file, survives re-init) =="
-col5(){ awk -F'\t' -v n="$1" '$1==n{print $5}' "$OMK/placed.tsv"; }
+# The off switch moved from placed.tsv column 5 to the disabled-files
+# sidecar: listed = disabled ("0"), not listed = enabled ("1").
+col5(){ if grep -qxF "$1" "$OMK/disabled-files" 2>/dev/null; then echo 0; else echo 1; fi; }
 
 # 4. --disable AGENTS.md -> the file is deleted, placed.tsv records enabled=0; a
 #    re-init leaves it gone and still 0 (Task 3's consent merge).
 OUT="$( cd "$REPO" && "$SHOW" --disable AGENTS.md 2>&1 )"; RC=$?
 [ "$RC" -eq 0 ] && pass "case4: --disable AGENTS.md exits 0" || fail "case4: --disable AGENTS.md ($RC: $OUT)"
 [ ! -e "$REPO/AGENTS.md" ] && pass "case4: AGENTS.md removed from disk" || fail "case4: AGENTS.md still present"
-[ "$(col5 AGENTS.md)" = "0" ] && pass "case4: placed.tsv column 5 is 0" || fail "case4: placed.tsv col5 = '$(col5 AGENTS.md)'"
+[ "$(col5 AGENTS.md)" = "0" ] && pass "case4: listed in disabled-files" || fail "case4: disabled state = '$(col5 AGENTS.md)'"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$FIX" bash "$INIT" ) >/dev/null 2>&1
 [ ! -e "$REPO/AGENTS.md" ] && pass "case4: still gone after a re-init" || fail "case4: re-init resurrected AGENTS.md"
 [ "$(col5 AGENTS.md)" = "0" ] && pass "case4: still 0 after a re-init" || fail "case4: post-reinit col5 = '$(col5 AGENTS.md)'"
@@ -102,7 +104,7 @@ OUT="$( cd "$REPO" && "$SHOW" --disable AGENTS.md 2>&1 )"; RC=$?
 OUT="$( cd "$REPO" && "$SHOW" --enable AGENTS.md 2>&1 )"; RC=$?
 [ "$RC" -eq 0 ] && pass "case5: --enable AGENTS.md exits 0" || fail "case5: --enable AGENTS.md ($RC: $OUT)"
 [ -f "$REPO/AGENTS.md" ] && pass "case5: AGENTS.md restored to disk" || fail "case5: AGENTS.md missing after --enable"
-[ "$(col5 AGENTS.md)" = "1" ] && pass "case5: placed.tsv column 5 is back to 1" || fail "case5: placed.tsv col5 = '$(col5 AGENTS.md)'"
+[ "$(col5 AGENTS.md)" = "1" ] && pass "case5: delisted from disabled-files" || fail "case5: disabled state = '$(col5 AGENTS.md)'"
 
 echo "== toggles: REFUSING guards (tracked path, local edit) =="
 # 6. --disable on a NON-MACHINERY path the repo TRACKS -> rc 1, REFUSING, file

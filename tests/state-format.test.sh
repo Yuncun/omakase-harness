@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Phase 0 compat contract: the byte-level FORMAT of the two TSV state files any
 # future writer must reproduce exactly (v2 design §5 — in git history, docs/v2-design.md).
-#   placed.tsv — EXACTLY 5 tab-separated columns: path kind source sha256 enabled.
-#     A 6th column is a defect: the sh readers parse `read -r rel kind src hash enabled`,
-#     so an extra column is absorbed into $enabled and flips verification fail-open.
+#   placed.tsv — EXACTLY 2 tab-separated columns: path sha256. Everything else
+#     is derived (kind from the path, source from $OMK/source, disabled state
+#     from the disabled-files sidecar).
 #   ledger.tsv — exactly 4 tab-separated columns: epoch name verdict sha.
 # Scenarios (each in a fresh fixture repo):
 #   S1 plain init (plugin-style: payload from the repo checkout)
@@ -46,14 +46,12 @@ fi
 check_placed_format(){
   local f="$1" label="$2" bad
   if [ ! -s "$f" ]; then fail "$label: placed.tsv missing or empty ($f)"; return 1; fi
-  bad="$(awk -F'\t' 'NF!=5{printf "row %d has %d fields: %s\n", NR, NF, $0}' "$f")"
-  [ -z "$bad" ] && pass "$label: every row has exactly 5 tab-separated fields" || { fail "$label: row(s) without exactly 5 fields"; indent "$bad"; }
-  bad="$(awk -F'\t' '$1==""||$2==""||$3==""||$4==""{printf "row %d has an empty field: %s\n", NR, $0}' "$f")"
-  [ -z "$bad" ] && pass "$label: no empty path/kind/source/sha256 field" || { fail "$label: row(s) with an empty path/kind/source/sha256 field"; indent "$bad"; }
-  bad="$(awk -F'\t' '$5!="1"{printf "row %d enabled=%s: %s\n", NR, $5, $0}' "$f")"
-  [ -z "$bad" ] && pass "$label: enabled column is 1 on every row" || { fail "$label: row(s) with enabled != 1"; indent "$bad"; }
+  bad="$(awk -F'\t' 'NF!=2{printf "row %d has %d fields: %s\n", NR, NF, $0}' "$f")"
+  [ -z "$bad" ] && pass "$label: every row has exactly 2 tab-separated fields" || { fail "$label: row(s) without exactly 2 fields"; indent "$bad"; }
+  bad="$(awk -F'\t' '$1==""||$2==""{printf "row %d has an empty field: %s\n", NR, $0}' "$f")"
+  [ -z "$bad" ] && pass "$label: no empty path/sha256 field" || { fail "$label: row(s) with an empty path/sha256 field"; indent "$bad"; }
   # length()+class check, not /{64}/: interval expressions are not portable across awks
-  bad="$(awk -F'\t' 'length($4)!=64 || $4 !~ /^[0-9a-f]+$/{printf "row %d sha256=%s: %s\n", NR, $4, $0}' "$f")"
+  bad="$(awk -F'\t' 'length($2)!=64 || $2 !~ /^[0-9a-f]+$/{printf "row %d sha256=%s: %s\n", NR, $2, $0}' "$f")"
   [ -z "$bad" ] && pass "$label: sha256 is 64 lowercase hex chars on every row" || { fail "$label: row(s) with a malformed sha256"; indent "$bad"; }
 }
 
@@ -77,7 +75,7 @@ REPO="$TMP/repoS2"; newrepo "$REPO"
 ( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$SRC" ) >/dev/null 2>&1 || fail "S2: --source init exited non-zero"
 PLACED="$(common_of "$REPO")/omakase/placed.tsv"
 check_placed_format "$PLACED" "S2"
-row_sha="$(awk -F'\t' '$1=="CLAUDE.md"{print $4; exit}' "$PLACED" 2>/dev/null)"
+row_sha="$(awk -F'\t' '$1=="CLAUDE.md"{print $2; exit}' "$PLACED" 2>/dev/null)"
 want="$(sha_str AGENTS.md)"
 [ -n "$row_sha" ] && pass "S2: symlink row present (CLAUDE.md)" || fail "S2: no CLAUDE.md row in placed.tsv"
 [ "$row_sha" = "$want" ] && pass "S2: symlink sha256 = digest of the readlink target STRING (AGENTS.md)" || fail "S2: symlink sha256 is '$row_sha', want '$want' (digest of the target string, not the dereferenced content)"

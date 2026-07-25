@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
 // The --source integration and unit tests. Path-bearing expectations are
@@ -121,12 +119,6 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 	eq(t, "delta gate", readFileT(t, filepath.Join(dir, ".omakase", "gates", "src.sh")), "src gate\n")
 	eq(t, "delta rule", readFileT(t, filepath.Join(dir, ".claude", "rules", "r.md")), "rule\n")
 
-	// placed.tsv column 3 = the source string on every row (base + delta).
-	for _, row := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
-		if row.Src != src {
-			t.Errorf("placed.tsv col3 = %q for %q, want %q", row.Src, row.Rel, src)
-		}
-	}
 	// remembered source written verbatim + newline.
 	eq(t, "OMK/source", readFileT(t, filepath.Join(repo.OMK, "source")), src+"\n")
 	// cache slug carries the source basename.
@@ -293,11 +285,6 @@ func TestSourceRefPinBranch(t *testing.T) {
 	}
 	eq(t, "branch-pinned content", readFileT(t, filepath.Join(dir, ".omakase", "gates", "g.sh")), "FEATURE\n")
 	eq(t, "remembered label pinned", readFileT(t, filepath.Join(repo.OMK, "source")), src+"#feature\n")
-	for _, row := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
-		if row.Src != src+"#feature" {
-			t.Errorf("placed.tsv col3 = %q, want %q", row.Src, src+"#feature")
-		}
-	}
 }
 
 // TestSourceRefPinTag: a tag ref resolves via fetch --tags; the tagged (older)
@@ -998,11 +985,6 @@ func TestSourceSubpathMerge(t *testing.T) {
 	eq(t, "base file", readFileT(t, filepath.Join(dir, ".omakase", "bin", "base.sh")), "base\n")
 	if pathExists(filepath.Join(dir, "decoy.txt")) {
 		t.Error("root-level decoy payload was placed; subpath validation leaked to the clone root")
-	}
-	for _, row := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
-		if row.Src != canonical {
-			t.Errorf("placed.tsv col3 = %q for %q, want %q", row.Src, row.Rel, canonical)
-		}
 	}
 	eq(t, "OMK/source", readFileT(t, filepath.Join(repo.OMK, "source")), canonical+"\n")
 	// The slug carries the harness directory's basename, not the hub repo's.

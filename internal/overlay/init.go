@@ -212,10 +212,9 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// ---- payload resolution: --source merge, or the plain default ----
 	// A non-empty (post-expansion) source fetches into the disposable cache
 	// and merges the base payload under the source delta; otherwise the
-	// payload is OMAKASE_PAYLOAD or the binary-relative default. sourceLabel
-	// (placed.tsv column 3), rememberedSource ($OMK/source), and recommends
-	// (the summary) are source-only.
-	sourceLabel := "payload" // the source arm overrides this
+	// payload is OMAKASE_PAYLOAD or the binary-relative default.
+	// rememberedSource ($OMK/source — also status's "from" label) and
+	// recommends (the summary) are source-only.
 	rememberedSource := ""
 	recommends := ""
 	var payload string
@@ -226,7 +225,6 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		}
 		defer os.RemoveAll(res.merged) // clean up the merge staging dir
 		payload = res.payload
-		sourceLabel = res.label
 		rememberedSource = res.remembered
 		recommends = res.recommends
 	} else {
@@ -729,11 +727,8 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		rows = append(rows, state.PlacedRow{
-			Rel:     rel,
-			Kind:    harness.KindOf(rel),
-			Src:     sourceLabel,
-			Hash:    state.HashOf(filepath.Join(root, rel)),
-			Enabled: "1",
+			Rel:  rel,
+			Hash: state.HashOf(filepath.Join(root, rel)),
 		})
 	}
 	for _, rel := range declinedKept {
@@ -747,11 +742,8 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		rows = append(rows, state.PlacedRow{
-			Rel:     rel,
-			Kind:    harness.KindOf(rel),
-			Src:     sourceLabel,
-			Hash:    state.HashOf(src), // hash of what would be placed (the payload copy)
-			Enabled: "0",
+			Rel:  rel,
+			Hash: state.HashOf(src), // hash of what would be placed (the payload copy)
 		})
 	}
 	// Kept rows: file untouched (skipped above), ledger row carried verbatim
@@ -776,6 +768,18 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		rows = append(rows, keptPrior[rel])
 	}
 	if err := os.RemoveAll(carry); err != nil {
+		return 1
+	}
+	// The disabled-files sidecar is rewritten wholesale to exactly the rows
+	// this init declined to place: a stale entry (a machinery leftover the
+	// consent merge ignored, or a path the payload no longer ships) drops
+	// out, and a legacy in-column disable is migrated in — after this write
+	// the sidecar is the only store of file-level consent.
+	declinedSet := map[string]bool{}
+	for _, rel := range declinedKept {
+		declinedSet[rel] = true
+	}
+	if err := state.WriteDisabledFiles(omk, declinedSet); err != nil {
 		return 1
 	}
 	if err := state.WritePlaced(filepath.Join(omk, "placed.tsv"), rows); err != nil {

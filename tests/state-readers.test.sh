@@ -70,7 +70,7 @@ if [ -f "$REPO/$REL" ]; then
   pass "H1: deleted file restored ($REL)"
   # Content contract: the healed copy hashes back to the LEDGERED sha256 — the heal
   # restores canonical content, not merely "a" file (catches a corrupt snapshot too).
-  [ "$(sha_file "$REPO/$REL")" = "$(col "$PLACED" "$REL" 4)" ] \
+  [ "$(sha_file "$REPO/$REL")" = "$(col "$PLACED" "$REL" 2)" ] \
     && pass "H1: healed content matches the ledgered sha256" \
     || fail "H1: healed content does not hash to the ledger row's sha256"
   # contract capture (v1 bash): the heal re-applies the exec bit to a healed *.sh
