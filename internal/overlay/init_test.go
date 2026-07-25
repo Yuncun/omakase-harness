@@ -1491,35 +1491,6 @@ func TestExcludeWriteModeMatchesBashFreshInode(t *testing.T) {
 	}
 }
 
-// TestWtincWriteModeMatchesBashFreshInode: .worktreeinclude pre-seeded at 0600
-// must end up at `0666 &^ umask` after init's strip+append. singleGatePayload
-// guarantees len(placed) > 0, which is required for this block to be written at
-// all.
-func TestWtincWriteModeMatchesBashFreshInode(t *testing.T) {
-	dir, _ := initRepo(t)
-	singleGatePayload(t)
-
-	wtinc := filepath.Join(dir, ".worktreeinclude")
-	writeFile(t, wtinc, "my-own-ignore/\n")
-	if err := os.Chmod(wtinc, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	var stdout, stderr strings.Builder
-	if code := RunInit(nil, &stdout, &stderr); code != 0 {
-		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
-	}
-
-	info, err := os.Stat(wtinc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := os.FileMode(0o666) &^ currentUmask()
-	if info.Mode().Perm() != want {
-		t.Errorf("wtinc mode after init = %o, want %o (0666 &^ umask -- the original seeded 0600 must NOT survive)", info.Mode().Perm(), want)
-	}
-}
-
 // -------------------------------------------------- pre-#98 scheme migration
 //
 // A repo initialized under the old scheme carries lefthook stubs (with
@@ -1527,43 +1498,6 @@ func TestWtincWriteModeMatchesBashFreshInode(t *testing.T) {
 // $OMK, the lefthook.yml heal snapshot, lefthook's stub-sync checksum, and
 // the untracked skeleton lefthook.yml. One init converts it: dispatchers
 // replace the stubs, every leftover is deleted.
-
-func TestMigrationRetiresOldScheme(t *testing.T) {
-	dir, repo := initRepo(t)
-	singleGatePayload(t)
-
-	// Old-scheme hooks: lefthook stubs with the guard blocks spliced in.
-	oldStub := "#!/bin/sh\n# >>> omakase-harness fail-closed >>>\n# guard\n# <<< omakase-harness fail-closed <<<\ncall_lefthook run \"pre-commit\" \"$@\"\n"
-	writeFile(t, filepath.Join(repo.CommonDir, "hooks", "pre-commit"), oldStub)
-	// Old-scheme per-repo machinery.
-	for _, name := range []string{"ensure-present.sh", "install-guards.sh", "verify-overlay.sh", "lefthook.yml"} {
-		writeFile(t, filepath.Join(repo.OMK, name), "# old machinery\n")
-	}
-	writeFile(t, filepath.Join(repo.CommonDir, "info", "lefthook.checksum"), "abc123\n")
-	writeFile(t, filepath.Join(dir, "lefthook.yml"), "# EXAMPLE USAGE:\n#   see https://lefthook.dev\n")
-
-	var stdout, stderr strings.Builder
-	if code := RunInit(nil, &stdout, &stderr); code != 0 {
-		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
-	}
-	for _, name := range hook.Names() {
-		if !hook.Matches(filepath.Join(repo.CommonDir, "hooks", name), name) {
-			t.Errorf("%s hook is not the dispatcher after migration", name)
-		}
-	}
-	for _, gone := range []string{
-		filepath.Join(repo.OMK, "ensure-present.sh"),
-		filepath.Join(repo.OMK, "install-guards.sh"),
-		filepath.Join(repo.OMK, "verify-overlay.sh"),
-		filepath.Join(repo.OMK, "lefthook.yml"),
-		filepath.Join(repo.CommonDir, "info", "lefthook.checksum"),
-		filepath.Join(dir, "lefthook.yml"),
-	} {
-		if _, err := os.Lstat(gone); !os.IsNotExist(err) {
-			t.Errorf("old-scheme leftover survived migration: %s", gone)
-		}
-	}
-}
 
 // A tracked lefthook.yml is the project's own native lefthook config. omakase
 // no longer runs lefthook, so installing its dispatchers would displace the

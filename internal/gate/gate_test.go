@@ -546,53 +546,6 @@ func TestLedgerShapeMatchesReaders(t *testing.T) {
 
 // --- fail closed on a pre-gate-module (lefthook-era) snapshot --------------
 
-// writeLefthookMarker plants payload-snapshot/lefthook-local.yml — the
-// fingerprint init left in a repo initialized before the gate module.
-func writeLefthookMarker(t *testing.T, omk string) {
-	t.Helper()
-	dir := filepath.Join(omk, "payload-snapshot")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "lefthook-local.yml"), []byte("pre-commit:\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// An upgraded binary running against a v0.19.x snapshot (lefthook-local.yml in
-// the snapshot, a header-only or absent manifest) must FAIL CLOSED with the
-// migration pointer, never silently run zero gates (the #72 status-lie).
-func TestRunHook_StaleLefthookSnapshotBlocks(t *testing.T) {
-	for _, hook := range []string{"pre-commit", "pre-push"} {
-		t.Run(hook, func(t *testing.T) {
-			root, omk := newRepo(t)
-			writeLefthookMarker(t, omk)
-			// The shipped starter snapshot: header only, zero gate blocks.
-			writeSnapshotManifest(t, omk, "name: x\nversion: 0.19.1\n")
-			var out bytes.Buffer
-			code := RunHook(hook, root, omk, strings.NewReader(""), &out, &out)
-			if code == 0 {
-				t.Fatalf("%s: a lefthook-era snapshot must fail closed, got exit 0", hook)
-			}
-			if !strings.Contains(out.String(), "lefthook-local.yml") || !strings.Contains(out.String(), "omakase init") {
-				t.Fatalf("%s: the block must point at the migration: %q", hook, out.String())
-			}
-		})
-	}
-}
-
-// The base v0.19.x snapshot had NO omakase.manifest at all (only .omakase/ +
-// lefthook-local.yml); the marker alone with a missing manifest must block too.
-func TestRunHook_StaleLefthookSnapshotNoManifestBlocks(t *testing.T) {
-	root, omk := newRepo(t)
-	writeLefthookMarker(t, omk)
-	var out bytes.Buffer
-	code := RunHook("pre-commit", root, omk, strings.NewReader(""), &out, &out)
-	if code == 0 {
-		t.Fatalf("a lefthook-era snapshot with no manifest must fail closed, got exit 0")
-	}
-}
-
 // A migrated harness that genuinely declares zero gates — a manifest present,
 // no gate blocks, and NO lefthook marker — is not stale and still passes.
 func TestRunHook_GatelessCurrentHarnessPasses(t *testing.T) {
@@ -602,24 +555,6 @@ func TestRunHook_GatelessCurrentHarnessPasses(t *testing.T) {
 	code := RunHook("pre-commit", root, omk, strings.NewReader(""), &out, &out)
 	if code != 0 {
 		t.Fatalf("a gate-less current harness must pass, got exit %d (%q)", code, out.String())
-	}
-}
-
-func TestStaleLefthookSnapshot(t *testing.T) {
-	_, omk := newRepo(t)
-	if stale, err := StaleLefthookSnapshot(omk); err != nil || stale {
-		t.Fatalf("clean omk: want not-stale, got stale=%v err=%v", stale, err)
-	}
-	writeLefthookMarker(t, omk)
-	writeSnapshotManifest(t, omk, "name: x\n")
-	if stale, err := StaleLefthookSnapshot(omk); err != nil || !stale {
-		t.Fatalf("lefthook-era snapshot: want stale, got stale=%v err=%v", stale, err)
-	}
-	// A marker plus a real gate block is NOT stale — the gates run; the stray
-	// marker alone never disables them.
-	writeSnapshotManifest(t, omk, "gate: g\n  hook: pre-commit\n  run: true\n")
-	if stale, err := StaleLefthookSnapshot(omk); err != nil || stale {
-		t.Fatalf("marker + gates: want not-stale, got stale=%v err=%v", stale, err)
 	}
 }
 

@@ -372,36 +372,37 @@ func TestCollectEmptyLedgerHashSkipsDrift(t *testing.T) {
 	}
 }
 
-// -------------------------------------------------------- gate migration
+// -------------------------------------------------------- manifest readability
 
-// A pre-gate-module (lefthook-era) snapshot — lefthook-local.yml in the
-// snapshot, no gate-bearing manifest — must read as a Problem even while every
-// other proof stays green (the #72 status-lie the hook now fails closed on).
-func TestCollectStaleLefthookSnapshotIsProblem(t *testing.T) {
+// An unreadable (unparseable) snapshot manifest must read as a Problem even
+// while every other proof is green: the hook fails closed on the same fact
+// (the #72 green-while-broken lesson).
+func TestCollectUnreadableManifestIsProblem(t *testing.T) {
 	root := newTestRepo(t)
 	omk := installHarness(t, root)
 	snap := filepath.Join(omk, "payload-snapshot")
 	if err := os.MkdirAll(snap, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(snap, "lefthook-local.yml"), []byte("pre-commit:\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(snap, "omakase.manifest"), []byte("gate: g\n  bogus-key: x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	st := collect(t, root)
-	if st.GatesMigrated != Problem {
-		t.Fatalf("GatesMigrated = %v, want Problem on a lefthook-era snapshot", st.GatesMigrated)
+	if st.ManifestOK != Problem {
+		t.Fatalf("ManifestOK = %v, want Problem on an unparseable manifest", st.ManifestOK)
 	}
-	// The other proofs still read green — the probe added a NEW signal instead
-	// of leaning on an existing one.
 	if st.HooksInstalled != OK || st.FilesPresent != OK || st.HashesMatch != OK {
 		t.Fatalf("expected the other proofs green (hooks=%v files=%v hashes=%v)", st.HooksInstalled, st.FilesPresent, st.HashesMatch)
 	}
 }
 
-// A migrated snapshot (a gate-bearing manifest, no lefthook marker) is OK.
-func TestCollectMigratedSnapshotIsOK(t *testing.T) {
+// A readable gate-bearing manifest — and a missing one — are both OK.
+func TestCollectManifestOK(t *testing.T) {
 	root := newTestRepo(t)
 	omk := installHarness(t, root)
+	if st := collect(t, root); st.ManifestOK != OK {
+		t.Fatalf("ManifestOK = %v, want OK with no manifest", st.ManifestOK)
+	}
 	snap := filepath.Join(omk, "payload-snapshot")
 	if err := os.MkdirAll(snap, 0o755); err != nil {
 		t.Fatal(err)
@@ -409,8 +410,8 @@ func TestCollectMigratedSnapshotIsOK(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(snap, "omakase.manifest"), []byte("gate: g\n  hook: pre-commit\n  run: true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if st := collect(t, root); st.GatesMigrated != OK {
-		t.Fatalf("GatesMigrated = %v, want OK on a migrated snapshot", st.GatesMigrated)
+	if st := collect(t, root); st.ManifestOK != OK {
+		t.Fatalf("ManifestOK = %v, want OK on a readable manifest", st.ManifestOK)
 	}
 }
 

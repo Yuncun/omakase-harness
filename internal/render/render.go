@@ -91,7 +91,7 @@ func Statusline(st *probe.State, o Opts) string {
 	}
 
 	problem := problemFact(st)
-	unknown := st.HooksInstalled == probe.Unknown || st.GatesMigrated == probe.Unknown || st.FilesPresent == probe.Unknown || st.HashesMatch == probe.Unknown
+	unknown := st.HooksInstalled == probe.Unknown || st.ManifestOK == probe.Unknown || st.FilesPresent == probe.Unknown || st.HashesMatch == probe.Unknown
 
 	switch {
 	case problem != "":
@@ -115,11 +115,11 @@ func InitVerdict(st *probe.State) string {
 	switch {
 	case st.HooksInstalled == probe.Problem:
 		return "omakase: NOT verified — hooks not installed — run omakase status"
-	case st.GatesMigrated == probe.Problem:
-		return "omakase: NOT verified — harness needs migration — run omakase status"
+	case st.ManifestOK == probe.Problem:
+		return "omakase: NOT verified — harness manifest unreadable — run omakase status"
 	case st.FilesPresent == probe.Problem || st.HashesMatch == probe.Problem:
 		return "omakase: NOT verified — harness files changed — run omakase status"
-	case st.HooksInstalled == probe.OK && st.GatesMigrated == probe.OK && st.FilesPresent == probe.OK && st.HashesMatch == probe.OK:
+	case st.HooksInstalled == probe.OK && st.ManifestOK == probe.OK && st.FilesPresent == probe.OK && st.HashesMatch == probe.OK:
 		s := "omakase: verified — hooks installed ✓ · files present ✓ · files match ✓"
 		// A steering-only harness deliberately has no enforcement hooks
 		// (#149) — claiming "hooks installed" would assert something init
@@ -174,8 +174,8 @@ func problemFact(st *probe.State) string {
 	switch {
 	case st.HooksInstalled == probe.Problem:
 		return "hooks not installed"
-	case st.GatesMigrated == probe.Problem:
-		return "harness needs migration"
+	case st.ManifestOK == probe.Problem:
+		return "harness manifest unreadable"
 	case st.FilesPresent == probe.Problem || st.HashesMatch == probe.Problem:
 		return "harness files changed"
 	}

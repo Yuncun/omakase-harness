@@ -872,31 +872,6 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "omakase: WARNING — the hooks run %s, which is missing or not executable; commits will be blocked until it exists. Re-run 'omakase init' with any installed omakase binary to restore it.\n", stable)
 	}
 
-	// ---- migration: retire the pre-#98 hook-time machinery ----
-	// A repo initialized under the old scheme carries per-repo copies of the
-	// hook-time scripts, the lefthook.yml heal snapshot, lefthook's stub-sync
-	// checksum, and (per worktree) the skeleton lefthook.yml that `lefthook
-	// install` wrote. Those jobs now live in the binary (`omakase hook`), and
-	// the dispatcher writes above replaced the lefthook stubs; delete the
-	// leftovers. Hooks live once in the shared git dir, so this one init
-	// converts every worktree.
-	for _, name := range []string{"ensure-present.sh", "install-guards.sh", "verify-overlay.sh", "lefthook.yml"} {
-		if err := removeF(filepath.Join(omk, name)); err != nil {
-			return 1
-		}
-	}
-	if err := removeF(filepath.Join(common, "info", "lefthook.checksum")); err != nil {
-		return 1
-	}
-	for _, wtRoot := range state.WorktreeRoots(root) {
-		skel := filepath.Join(wtRoot, "lefthook.yml")
-		if fileRegular(skel) && !gitTracked(wtRoot, "lefthook.yml") && fileContains(skel, "EXAMPLE USAGE") {
-			if err := removeF(skel); err != nil {
-				return 1
-			}
-		}
-	}
-
 	// ---- summary ----
 	fmt.Fprintf(stdout, "omakase: placed %d file(s), updated %d to match the payload, skipped %d committed path(s).\n", len(placed), len(overwrote), len(skipped))
 	for _, p := range placed {

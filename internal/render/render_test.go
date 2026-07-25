@@ -15,7 +15,7 @@ func proven() *probe.State {
 		Branch:         "main",
 		Source:         "https://github.com/Yuncun/pixterm-harness",
 		HooksInstalled: probe.OK,
-		GatesMigrated:  probe.OK,
+		ManifestOK:     probe.OK,
 		FilesPresent:   probe.OK,
 		HashesMatch:    probe.OK,
 	}
@@ -52,8 +52,8 @@ func TestStatuslineProvenIsGreenOnlyWhenAllProofsOK(t *testing.T) {
 	for _, mutate := range []func(*probe.State){
 		func(s *probe.State) { s.HooksInstalled = probe.Problem },
 		func(s *probe.State) { s.HooksInstalled = probe.Unknown },
-		func(s *probe.State) { s.GatesMigrated = probe.Problem },
-		func(s *probe.State) { s.GatesMigrated = probe.Unknown },
+		func(s *probe.State) { s.ManifestOK = probe.Problem },
+		func(s *probe.State) { s.ManifestOK = probe.Unknown },
 		func(s *probe.State) { s.FilesPresent = probe.Problem },
 		func(s *probe.State) { s.FilesPresent = probe.Unknown },
 		func(s *probe.State) { s.HashesMatch = probe.Problem },
@@ -107,13 +107,13 @@ func TestStatuslineFileProblemsCollapseToOneState(t *testing.T) {
 	}
 }
 
-// A stale (lefthook-era) snapshot is its own amber fact + fix, ranked between
-// hooks-not-installed and files-changed.
-func TestStatuslineStaleSnapshotIsMigrationFact(t *testing.T) {
+// An unreadable manifest is its own amber fact + fix, ranked between
+// hooks-not-installed and files-changed (the hook blocks on the same fact).
+func TestStatuslineUnreadableManifestFact(t *testing.T) {
 	st := proven()
-	st.GatesMigrated = probe.Problem
+	st.ManifestOK = probe.Problem
 	got := plain(st)
-	want := "🥡 pixterm-engine ⎇main · pixterm-harness ⚠ harness needs migration — omakase init"
+	want := "🥡 pixterm-engine ⎇main · pixterm-harness ⚠ harness manifest unreadable — omakase init"
 	if got != want {
 		t.Fatalf("migration plain:\n got %q\nwant %q", got, want)
 	}
@@ -210,7 +210,7 @@ func TestInitVerdict(t *testing.T) {
 	}{
 		{"proven", func(s *probe.State) {}, "omakase: verified — hooks installed ✓ · files present ✓ · files match ✓"},
 		{"hooks", func(s *probe.State) { s.HooksInstalled = probe.Problem }, "omakase: NOT verified — hooks not installed — run omakase status"},
-		{"migration", func(s *probe.State) { s.GatesMigrated = probe.Problem }, "omakase: NOT verified — harness needs migration — run omakase status"},
+		{"manifest", func(s *probe.State) { s.ManifestOK = probe.Problem }, "omakase: NOT verified — harness manifest unreadable — run omakase status"},
 		{"files", func(s *probe.State) { s.HashesMatch = probe.Problem }, "omakase: NOT verified — harness files changed — run omakase status"},
 		{"unknown", func(s *probe.State) { s.FilesPresent = probe.Unknown }, "omakase: could not verify the install — run omakase status"},
 	}
@@ -229,7 +229,7 @@ func TestInitVerdict(t *testing.T) {
 // The verified init verdict names kept files (consent visible at rest);
 // zero kept adds nothing, and a problem verdict never carries the count.
 func TestInitVerdictKeptCount(t *testing.T) {
-	ok := &probe.State{Installed: true, HooksInstalled: probe.OK, GatesMigrated: probe.OK, FilesPresent: probe.OK, HashesMatch: probe.OK}
+	ok := &probe.State{Installed: true, HooksInstalled: probe.OK, ManifestOK: probe.OK, FilesPresent: probe.OK, HashesMatch: probe.OK}
 	if got := InitVerdict(ok); strings.Contains(got, "kept") {
 		t.Errorf("zero kept rendered: %q", got)
 	}
