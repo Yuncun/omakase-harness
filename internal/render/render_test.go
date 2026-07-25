@@ -115,10 +115,10 @@ func TestStatuslineUnreadableManifestFact(t *testing.T) {
 	got := plain(st)
 	want := "🥡 pixterm-engine ⎇main · pixterm-harness ⚠ harness manifest unreadable — omakase init"
 	if got != want {
-		t.Fatalf("migration plain:\n got %q\nwant %q", got, want)
+		t.Fatalf("manifest-unreadable plain:\n got %q\nwant %q", got, want)
 	}
 	if c := colour(st); !strings.Contains(c, amberOn) {
-		t.Fatalf("migration color misses the amber pill: %q", c)
+		t.Fatalf("manifest-unreadable color misses the amber pill: %q", c)
 	}
 }
 

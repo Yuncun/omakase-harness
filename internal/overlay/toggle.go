@@ -111,6 +111,12 @@ func placedIndex(rows []state.PlacedRow, rel string) int {
 // placed.tsv is rewritten in the 2-field format. Sidecar entries for paths
 // no longer in the ledger are preserved untouched (stale but harmless; init
 // rewrites the sidecar wholesale).
+//
+// Write order is sidecar-first on purpose: a crash between the two writes
+// must never lose a DISABLE mark (ledger-first would leave a deleted file
+// unmarked, and the heal would resurrect it). The symmetric cost — a crash
+// mid-ENABLE over a still-legacy ledger re-derives the old in-column
+// disable — is self-healing on the next toggle and loses no content.
 func syncPlaced(omk string, rows []state.PlacedRow) error {
 	set := state.DisabledFiles(omk)
 	for _, r := range rows {

@@ -544,7 +544,7 @@ func TestLedgerShapeMatchesReaders(t *testing.T) {
 	}
 }
 
-// --- fail closed on a pre-gate-module (lefthook-era) snapshot --------------
+// --- gate-less current harness ---------------------------------------------
 
 // A migrated harness that genuinely declares zero gates — a manifest present,
 // no gate blocks, and NO lefthook marker — is not stale and still passes.
