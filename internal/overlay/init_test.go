@@ -35,6 +35,11 @@ const summaryTail = "omakase: ignores -> .git/info/exclude; new worktrees auto-i
 // plants the stable binary (initRepo) and just placed every file.
 const verifiedLine = "omakase: verified — hooks installed ✓ · files present ✓ · files match ✓\n"
 
+// steeringOnlyVerifiedLine is the same verdict for a harness whose manifest
+// declares zero gates: no enforcement hooks were installed, so none are
+// claimed (#149).
+const steeringOnlyVerifiedLine = "omakase: verified — no gates declared · files present ✓ · files match ✓\n"
+
 const gateContent = "#!/usr/bin/env bash\necho hi\n"
 
 // uxStanzas is the wiring block every successful init appends after
@@ -214,6 +219,116 @@ func TestInitWritesDispatchers(t *testing.T) {
 		if !hook.Matches(filepath.Join(repo.CommonDir, "hooks", name), name) {
 			t.Errorf("%s dispatcher missing after init", name)
 		}
+	}
+}
+
+// ---------------------------------------------------- opt-in wiring (#149)
+
+// steeringOnlyPayload returns a payload whose manifest declares zero gates
+// (instructions only) and points OMAKASE_PAYLOAD at it.
+func steeringOnlyPayload(t *testing.T) string {
+	t.Helper()
+	p := t.TempDir()
+	writeFile(t, filepath.Join(p, "omakase.manifest"), "name: steer-only\n")
+	writeFile(t, filepath.Join(p, "CLAUDE.md"), "# rules\n")
+	t.Setenv("OMAKASE_PAYLOAD", p)
+	return p
+}
+
+// A zero-gate manifest gets no enforcement dispatchers — only the heal hook
+// — and says so.
+func TestSteeringOnlyInitHooks(t *testing.T) {
+	_, repo := initRepo(t)
+	steeringOnlyPayload(t)
+
+	var out, errb strings.Builder
+	if code := RunInit(nil, &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	for _, name := range []string{"pre-commit", "pre-push"} {
+		if _, err := os.Stat(filepath.Join(repo.CommonDir, "hooks", name)); !os.IsNotExist(err) {
+			t.Errorf("%s hook written for a zero-gate harness (err=%v)", name, err)
+		}
+	}
+	if !hook.Matches(filepath.Join(repo.CommonDir, "hooks", "post-checkout"), "post-checkout") {
+		t.Error("post-checkout heal hook missing (clean repo keeps it)")
+	}
+	if !strings.Contains(out.String(), "omakase: no gates declared — no enforcement hooks installed.\n") {
+		t.Errorf("missing opt-in-wiring notice:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), steeringOnlyVerifiedLine) {
+		t.Errorf("verdict should not claim hooks:\n%s", out.String())
+	}
+}
+
+// A zero-gate harness has nothing to conflict over: an incumbent hook stops
+// the refusal from firing, is left byte-identical, and the heal hook is
+// skipped with the degrade printed.
+func TestSteeringOnlyInitWithIncumbent(t *testing.T) {
+	_, repo := initRepo(t)
+	steeringOnlyPayload(t)
+	incumbent := "#!/bin/sh\nexit 0\n"
+	writeFile(t, filepath.Join(repo.CommonDir, "hooks", "pre-commit"), incumbent)
+
+	var out, errb strings.Builder
+	if code := RunInit(nil, &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, want 0 (no refusal for zero gates); stderr=%q", code, errb.String())
+	}
+	if got := readFileT(t, filepath.Join(repo.CommonDir, "hooks", "pre-commit")); got != incumbent {
+		t.Errorf("incumbent pre-commit was touched: %q", got)
+	}
+	for _, name := range []string{"pre-push", "post-checkout"} {
+		if _, err := os.Stat(filepath.Join(repo.CommonDir, "hooks", name)); !os.IsNotExist(err) {
+			t.Errorf("%s hook written despite incumbent (err=%v)", name, err)
+		}
+	}
+	if !strings.Contains(out.String(), "omakase: ignores -> .git/info/exclude. Nothing to commit.\n") {
+		t.Errorf("worktree auto-install claimed without a heal hook:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "omakase: existing git hooks left untouched; without the heal hook, run a bare\n") {
+		t.Errorf("missing heal-degrade notice:\n%s", out.String())
+	}
+	// Placement itself proceeded normally.
+	if !strings.Contains(out.String(), "  + CLAUDE.md\n") {
+		t.Errorf("steering file not placed:\n%s", out.String())
+	}
+}
+
+// Re-init after a harness drops its last gate deletes omakase's own
+// enforcement dispatchers (never a foreign hook) and keeps the heal hook.
+func TestSteeringOnlyReinitRemovesDispatchers(t *testing.T) {
+	_, repo := initRepo(t)
+	p := t.TempDir()
+	t.Setenv("OMAKASE_PAYLOAD", p)
+	writeFile(t, filepath.Join(p, "omakase.manifest"),
+		"name: shrinker\n\ngate: g\n  hook: pre-commit\n  run: .omakase/gates/g.sh\n")
+	writeFile(t, filepath.Join(p, ".omakase", "gates", "g.sh"), gateContent)
+	if err := os.Chmod(filepath.Join(p, ".omakase", "gates", "g.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var o1, e1 strings.Builder
+	if code := RunInit(nil, &o1, &e1); code != 0 {
+		t.Fatalf("gated init exit = %d; stderr=%q", code, e1.String())
+	}
+	for _, name := range hook.Names() {
+		if !hook.Matches(filepath.Join(repo.CommonDir, "hooks", name), name) {
+			t.Fatalf("%s dispatcher missing after gated init", name)
+		}
+	}
+
+	writeFile(t, filepath.Join(p, "omakase.manifest"), "name: shrinker\n")
+	var o2, e2 strings.Builder
+	if code := RunInit(nil, &o2, &e2); code != 0 {
+		t.Fatalf("gateless re-init exit = %d; stderr=%q", code, e2.String())
+	}
+	for _, name := range []string{"pre-commit", "pre-push"} {
+		if _, err := os.Stat(filepath.Join(repo.CommonDir, "hooks", name)); !os.IsNotExist(err) {
+			t.Errorf("%s dispatcher survived the drop to zero gates (err=%v)", name, err)
+		}
+	}
+	if !hook.Matches(filepath.Join(repo.CommonDir, "hooks", "post-checkout"), "post-checkout") {
+		t.Error("post-checkout heal hook lost on gateless re-init")
 	}
 }
 

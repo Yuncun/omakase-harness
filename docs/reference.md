@@ -20,6 +20,16 @@ and installs one dispatcher per hook (no third-party runner). Skips paths the re
 installed (untracked) file to match payload and warns. Removes a previously placed file
 the payload no longer ships, unless it was edited locally.
 
+Hook wiring follows the manifest: a harness that declares **zero gates** gets no
+`pre-commit`/`pre-push` dispatchers, and — having nothing to conflict over — installs
+even where an incumbent hook manager (husky, pre-commit, an existing hook file) would
+otherwise be refused; the incumbent is left untouched. The `post-checkout` heal hook
+(worktree auto-install, file repair) is still written when the repo has no incumbent
+hooks; with one present it is skipped and init prints the fallback (bare `omakase init`
+after a checkout). A re-init after a harness drops its last gate deletes omakase's own
+enforcement dispatchers; a later gate added to the manifest brings the full wiring — and
+the incumbent refusal — back.
+
 - `<owner/repo[/subpath][#ref]>` — positional shorthand for
   `--source https://github.com/owner/repo`, optionally pinned to a branch or tag with
   `#ref`. This is the install line for a custom harness a repo publishes:

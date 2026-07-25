@@ -207,6 +207,23 @@ func Load(omk string) ([]Gate, error) {
 	return Parse(content)
 }
 
+// DeclaredCount is Load distinguishing absence: the number of gate blocks
+// in the snapshot manifest, or -1 when the manifest is missing or
+// unparseable. Load's missing-means-zero collapse is right for the runner
+// (nothing to run either way) but not for the probe, which must not read a
+// legacy manifest-less install as a deliberate steering-only one (#149).
+func DeclaredCount(omk string) int {
+	content, err := os.ReadFile(snapshotManifest(omk))
+	if err != nil {
+		return -1
+	}
+	gates, perr := Parse(content)
+	if perr != nil {
+		return -1
+	}
+	return len(gates)
+}
+
 // LoadName returns the manifest header's `name:` value from the snapshot
 // manifest in the shared zone — the harness's declared identity. "" when the
 // manifest is missing or declares no name. Only column-0 lines before any

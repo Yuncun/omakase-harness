@@ -264,6 +264,35 @@ func TestCollectHooksBinaryMissing(t *testing.T) {
 	}
 }
 
+// A snapshot manifest that declares zero gates makes the hook proof
+// vacuous (#149): init installed no enforcement hooks, so their absence —
+// or a foreign incumbent hook — is not a Problem. A missing snapshot
+// manifest stays on the strict path (covered by every fixture above, none
+// of which write one).
+func TestCollectSteeringOnlyVacuousHooks(t *testing.T) {
+	root := newTestRepo(t)
+	installHarness(t, root)
+	writeFile(t, root, ".git/omakase/payload-snapshot/omakase.manifest", "name: steer-only\n")
+	// No dispatchers at all — and a foreign hook in their place.
+	for _, h := range []string{"pre-commit", "pre-push"} {
+		if err := os.Remove(filepath.Join(root, ".git", "hooks", h)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(t, root, ".git/hooks/pre-commit", "#!/bin/sh\nexit 0\n")
+
+	st := collect(t, root)
+	if !st.SteeringOnly {
+		t.Fatalf("SteeringOnly = false, want true with a zero-gate snapshot manifest")
+	}
+	if st.HooksInstalled != OK {
+		t.Fatalf("HooksInstalled = %v, want vacuous OK for a steering-only harness", st.HooksInstalled)
+	}
+	if st.HookIssue != HookIssueNone {
+		t.Fatalf("HookIssue = %v, want HookIssueNone", st.HookIssue)
+	}
+}
+
 func TestCollectHooksInstalledHonorsCoreHooksPath(t *testing.T) {
 	root := newTestRepo(t)
 	installHarness(t, root)

@@ -100,7 +100,9 @@ agent reads them and excluded from git. Gates are declared in the harness's
 manifest — a name, a hook (`pre-commit` or `pre-push`), a command, optionally
 path globs and a per-commit cache — and omakase itself runs them from the git
 hooks it installs; there is no third-party hook runner. Hooks fire on commit and
-push regardless of what made the change: an agent, an IDE, or plain `git`. The
+push regardless of what made the change: an agent, an IDE, or plain `git`. A harness
+that declares no gates installs no hooks at all, so a steering-only harness drops into
+repos that already run husky or pre-commit without touching them. The
 source repo is remembered, so a bare `omakase init` repairs or refreshes the
 overlay, and anything you turned off stays off. A skipped gate prints that it
 was skipped.
