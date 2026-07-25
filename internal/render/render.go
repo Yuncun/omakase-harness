@@ -121,6 +121,12 @@ func InitVerdict(st *probe.State) string {
 		return "omakase: NOT verified — harness files changed — run omakase status"
 	case st.HooksInstalled == probe.OK && st.GatesMigrated == probe.OK && st.FilesPresent == probe.OK && st.HashesMatch == probe.OK:
 		s := "omakase: verified — hooks installed ✓ · files present ✓ · files match ✓"
+		// A steering-only harness deliberately has no enforcement hooks
+		// (#149) — claiming "hooks installed" would assert something init
+		// never did.
+		if st.SteeringOnly {
+			s = "omakase: verified — no gates declared · files present ✓ · files match ✓"
+		}
 		// Kept files read green by design (the ledger hash is the accepted
 		// hash); the verdict still names them so consent is visible at the
 		// moment init reports (#98 Part 2).

@@ -107,11 +107,12 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 		"  + .omakase/gates/src.sh\n" +
 		"  + omakase.manifest\n" +
 		"omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.\n" +
+		"omakase: no gates declared — no enforcement hooks installed.\n" +
 		"omakase: see the whole harness any time with  omakase status\n" +
 		"omakase: this harness recommends — install the widget plugin\n" +
 		"omakase: to customize, fork the harness source (clone -> edit -> publish) and\n" +
 		"         init from your copy; do not edit injected files in place (overwritten on re-init).\n" +
-		uxStanzas() + verifiedLine
+		uxStanzas() + steeringOnlyVerifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "")
 
@@ -985,10 +986,11 @@ func TestSourceSubpathMerge(t *testing.T) {
 		"  + .omakase/gates/src.sh\n" +
 		"  + omakase.manifest\n" +
 		"omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.\n" +
+		"omakase: no gates declared — no enforcement hooks installed.\n" +
 		"omakase: see the whole harness any time with  omakase status\n" +
 		"omakase: to customize, fork the harness source (clone -> edit -> publish) and\n" +
 		"         init from your copy; do not edit injected files in place (overwritten on re-init).\n" +
-		uxStanzas() + verifiedLine
+		uxStanzas() + steeringOnlyVerifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "")
 

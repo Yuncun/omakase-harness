@@ -266,6 +266,11 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// refuses the whole harness; a gate whose run: names a payload script the
 	// harness does not ship (or that is not executable) refuses too — the
 	// "nothing runs undeclared" check, moved here from the old yml scan.
+	// gateCount decides the wiring below (#149): 0 means a steering-only
+	// harness — no enforcement hooks, no incumbent refusal. -1 means no
+	// manifest at all (a legacy/dev payload shape; every published harness
+	// ships one) and keeps the full wiring.
+	gateCount := -1
 	if manifest := filepath.Join(payload, "omakase.manifest"); fileRegular(manifest) {
 		content, rerr := os.ReadFile(manifest)
 		if rerr != nil {
@@ -281,6 +286,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "omakase: %v. It would fail at commit time (exit 127). Nothing was changed.\n", verr)
 			return 1
 		}
+		gateCount = len(gates)
 	}
 
 	const begin = "# >>> omakase-harness >>>"
@@ -373,7 +379,11 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			incumbent = append(incumbent, base+": existing hook in "+hooksDir)
 		}
 	}
-	if len(incumbent) > 0 {
+	// A steering-only harness (zero declared gates) wants nothing in
+	// .git/hooks, so there is nothing to conflict over: the refusal is
+	// skipped and the incumbent list only decides whether the heal hook can
+	// be written (#149).
+	if len(incumbent) > 0 && gateCount != 0 {
 		fmt.Fprintln(stderr, "omakase: REFUSING to install — an incumbent hook manager is present:")
 		for _, i := range incumbent {
 			fmt.Fprintf(stderr, "  - %s\n", i)
@@ -787,10 +797,31 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// identical bytes and an upgrade refreshes the binary copy they exec, not
 	// the hook files. lefthook stops owning .git/hooks entirely: no
 	// `lefthook install`, no run-time stub sync, no skeleton lefthook.yml.
+	// Enforcement wiring is opt-in by content (#149): a harness that
+	// declares zero gates gets no pre-commit/pre-push dispatchers.
+	// post-checkout is the heal hook, not a gate — a steering-only harness
+	// keeps it (new worktrees still auto-install) unless an incumbent owns
+	// the hooks, in which case it is skipped and the degrade printed below.
+	wantHook := map[string]bool{}
 	for _, name := range hook.Names() {
-		if err := hook.Write(hooksDir, name); err != nil {
-			fmt.Fprintf(stderr, "omakase: could not write the %s hook: %v\n", name, err)
-			return 1
+		wantHook[name] = gateCount != 0 || (name == "post-checkout" && len(incumbent) == 0)
+	}
+	anyHook := false
+	for _, name := range hook.Names() {
+		if wantHook[name] {
+			anyHook = true
+			if err := hook.Write(hooksDir, name); err != nil {
+				fmt.Fprintf(stderr, "omakase: could not write the %s hook: %v\n", name, err)
+				return 1
+			}
+			continue
+		}
+		// A prior gated init may have written this dispatcher; delete only
+		// omakase's own bytes — a foreign hook is never touched.
+		if hf := filepath.Join(hooksDir, name); hook.Matches(hf, name) {
+			if err := removeF(hf); err != nil {
+				return 1
+			}
 		}
 	}
 	// The dispatchers exec the machine-wide copy at StableBinPath, which is
@@ -799,7 +830,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// leave fail-closed hooks silently pointing at nothing. (The probe's
 	// hook proof checks the same fact, so the verdict below and later
 	// status runs agree with what happens at commit time.)
-	if stable := hook.StableBinPath(); stable == "" || !fileExecutable(stable) {
+	if stable := hook.StableBinPath(); anyHook && (stable == "" || !fileExecutable(stable)) {
 		fmt.Fprintf(stderr, "omakase: WARNING — the hooks run %s, which is missing or not executable; commits will be blocked until it exists. Re-run 'omakase init' with any installed omakase binary to restore it.\n", stable)
 	}
 
@@ -857,7 +888,23 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see init.sh --help): %s\n", s)
 		}
 	}
-	fmt.Fprintln(stdout, "omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.")
+	// The worktree claim is only made while the heal hook is actually
+	// installed (a steering-only harness in a repo with incumbent hooks has
+	// no post-checkout to auto-install anything).
+	if wantHook["post-checkout"] {
+		fmt.Fprintln(stdout, "omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.")
+	} else {
+		fmt.Fprintln(stdout, "omakase: ignores -> .git/info/exclude. Nothing to commit.")
+	}
+	// Make the opt-in wiring legible (#149): say what was deliberately not
+	// installed, and — where the heal hook was skipped too — what replaces it.
+	if gateCount == 0 {
+		fmt.Fprintln(stdout, "omakase: no gates declared — no enforcement hooks installed.")
+		if !wantHook["post-checkout"] {
+			fmt.Fprintln(stdout, "omakase: existing git hooks left untouched; without the heal hook, run a bare")
+			fmt.Fprintln(stdout, "         'omakase init' after a checkout or in a new worktree to refresh the files.")
+		}
+	}
 	fmt.Fprintln(stdout, "omakase: see the whole harness any time with  omakase status")
 	// A source's manifest recommends: line; only a source install sets it.
 	if recommends != "" {

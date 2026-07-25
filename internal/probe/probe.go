@@ -76,7 +76,15 @@ type State struct {
 
 	// Proofs. "Installed" follows the field's vocabulary — no coined words
 	// like "armed" on any surface.
-	HooksInstalled Tri       // gate hooks are omakase dispatchers AND their binary target exists
+	//
+	// SteeringOnly: the snapshot manifest is present and declares zero
+	// gates — a deliberate instructions/skills-only harness, for which init
+	// installs no enforcement hooks (#149) and the hook proof holds
+	// vacuously. False for a missing or unparseable manifest (gates
+	// unknown — the hook proof stays demanded, fail closed), so the zero
+	// value is always the stricter reading.
+	SteeringOnly   bool
+	HooksInstalled Tri       // the hooks the harness requires are omakase dispatchers AND their binary target exists; vacuous OK when SteeringOnly
 	HookIssue      HookIssue // why HooksInstalled is Problem (HookIssueNone otherwise)
 	FilesPresent   Tri       // every enabled placed row exists in this worktree
 	HashesMatch    Tri       // no enabled row drifted from its ledger hash
@@ -145,7 +153,15 @@ func Collect(cwd string) (*State, error) {
 	st.ManifestName = gate.LoadName(repo.OMK)
 
 	// Proofs.
-	st.HooksInstalled, st.HookIssue = hooksInstalled(repo.Root)
+	st.SteeringOnly = gate.DeclaredCount(repo.OMK) == 0
+	if st.SteeringOnly {
+		// A steering-only harness installs no enforcement hooks (#149), so
+		// the hook proof holds vacuously — demanding dispatchers that were
+		// deliberately not written would render a permanent false amber.
+		st.HooksInstalled, st.HookIssue = OK, HookIssueNone
+	} else {
+		st.HooksInstalled, st.HookIssue = hooksInstalled(repo.Root)
+	}
 	st.FilesPresent, st.HashesMatch = files(repo.Root, repo.OMK)
 	st.GatesMigrated = gatesMigrated(repo.OMK)
 	st.Kept = keptCount(repo.OMK)

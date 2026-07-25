@@ -55,6 +55,11 @@ picks the stage (`pre-commit` or `pre-push`). Three optional keys extend the beh
 - `purpose: <words>`: what the gate enforces, in the author's words (≤6 words, concrete).
   `omakase status` shows it as the guards table's ENFORCES column.
 
+Gates are optional. A manifest that declares none makes a steering-only harness:
+`init` installs no enforcement hooks at all, so it coexists with a repo's existing hook
+manager (husky, pre-commit) instead of refusing — there is nothing to conflict over.
+Declaring the first gate brings the hooks, and the incumbent-hook refusal, back.
+
 Every run appends to the scorecard, visible in `omakase status`. Audited bypasses exist:
 `OMAKASE_SKIP_<NAME>=1` (name upper-cased, `.`/`-`→`_`) skips one gate for one git command,
 `OMAKASE_SKIP_GATES=1` skips every gate for one git command, and a persistent per-gate
