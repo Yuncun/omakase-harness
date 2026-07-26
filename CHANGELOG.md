@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.27.0] — 2026-07-27
+
 ### Fixed
 - **A standalone binary can now install harnesses.** brew, release-tarball,
   and `go install` binaries refused `omakase init <owner/repo>` because the
