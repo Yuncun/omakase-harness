@@ -48,6 +48,22 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	// A stray bare word (usually a path: `omakase status ~/proj`) must not be
+	// silently dropped — status would report on the CWD while looking like it
+	// answered for the argument (#164's host-agnostic finding). Value-taking
+	// flags consume the word after them; `md` is the one bare-word alias.
+	valueFlags := map[string]bool{"--disable": true, "--enable": true, "--keep": true, "--restore": true}
+	for i := 0; i < len(argv); i++ {
+		if valueFlags[argv[i]] {
+			i++ // the flag's name/path value, validated by its handler
+			continue
+		}
+		if a := argv[i]; !strings.HasPrefix(a, "-") && a != "md" {
+			fmt.Fprintf(stderr, "omakase: unexpected argument %q — status reports on the current directory; cd there first (see omakase status --help)\n", a)
+			return 2
+		}
+	}
+
 	md := len(argv) > 0 && (argv[0] == "--markdown" || argv[0] == "-m" || argv[0] == "md")
 
 	// --plain is kept as an accepted no-op for script compatibility: the plain
@@ -163,7 +179,7 @@ func printStatusUsage(w io.Writer) {
   --markdown, -m  print the status page as markdown
   --plain         same as no flags (kept for scripts)
   --global        list the personal config the page's GLOBAL line counts
-                  (~/.claude + ~/.copilot, applies to every repo)
+                  (~/.claude + ~/.copilot + ~/.agents, applies to every repo)
   --disable NAME  turn a gate off, or remove a placed file/dir; NAME is a wired
                   gate name or a placed path. Recorded so commits/pushes skip it
                   until re-enabled.

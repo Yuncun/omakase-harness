@@ -6,6 +6,23 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 ## [Unreleased]
 
 ### Fixed
+- **Copilot CLI host-audit fixes** (#164 C1–C4, C6): each skill's primary
+  command no longer relies on `${CLAUDE_PLUGIN_ROOT}` (Copilot doesn't set
+  it — the command was broken there); the worktree guard's deny now carries
+  both the top-level and nested output shapes so Copilot can't silently
+  drop it (fail open); `statusline --wire` stops writing Copilot's retired
+  `STATUS_LINE` feature flag; the dogfooding harness gives Copilot agents
+  the same rules as Claude agents (two had been lost — parity is now
+  tested); the superpowers example no longer ships an inert
+  `.github/copilot/settings.json` (Copilot has no project-scoped settings
+  file — per-repo plugin enablement is Claude-only, now said plainly).
+- **`status --global` sees Copilot's user-global config** (#164 C7):
+  `~/.copilot/copilot-instructions.md` (the peer of `~/.claude/CLAUDE.md`),
+  `~/.copilot/settings.json`, and `~/.agents/skills/` are now listed; the
+  page's GLOBAL count line names all three roots.
+- **`omakase status <path>` no longer silently ignores the argument** and
+  reports on the current directory anyway; a stray argument is a loud
+  error now.
 - **`status` now sees the whole committed agent surface.** The committed
   scan missed nested instruction files (`app/CLAUDE.md` at any depth) and
   the `.agents/skills/` project skill root — on a repo with a deep

@@ -44,11 +44,14 @@ func CommittedList(root string) []string {
 
 // PersonalList is a presence-only listing of the user's global harness config
 // under home, applying to every repo. Rows are {display path, kind},
-// root-qualified (~/.claude/…, ~/.copilot/…) in this order: CLAUDE.md, then
-// settings.json, then rules/*.md, commands/*.md, agents/*.md (each
-// individually existence-gated), then skills/*/ directories as one row each,
-// then ~/.copilot/skills/*/ directories (classified like a .github skill). A
-// missing ~/.claude or ~/.copilot yields no rows for that host.
+// root-qualified (~/.claude/…, ~/.copilot/…, ~/.agents/…) in this order:
+// CLAUDE.md, then settings.json, then rules/*.md, commands/*.md, agents/*.md
+// (each individually existence-gated), then skills/*/ directories as one row
+// each; then the ~/.copilot root: copilot-instructions.md (the user-global
+// instruction file, peer of ~/.claude/CLAUDE.md — #164 C7), settings.json,
+// and skills/*/ directories (classified like a .github skill); then
+// ~/.agents/skills/*/ (Copilot CLI's other documented personal skill root).
+// A missing root dir yields no rows for that root.
 //
 // The roots are built by string concatenation, not filepath.Join: with home
 // empty, concatenation yields the absolute "/.claude" (which almost never
@@ -82,8 +85,21 @@ func PersonalList(home string) [][2]string {
 
 	co := home + "/.copilot" // concat, not Join — see PersonalList
 	if isDir(co) {
+		if exists(filepath.Join(co, "copilot-instructions.md")) {
+			rows = append(rows, [2]string{"~/.copilot/copilot-instructions.md", harness.KindOf(".github/copilot-instructions.md")})
+		}
+		if exists(filepath.Join(co, "settings.json")) {
+			rows = append(rows, [2]string{"~/.copilot/settings.json", harness.KindOf(".claude/settings.json")})
+		}
 		for _, b := range globDirs(filepath.Join(co, "skills")) {
 			rows = append(rows, [2]string{"~/.copilot/skills/" + b + "/", harness.KindOf(".github/skills/" + b + "/")})
+		}
+	}
+
+	ag := home + "/.agents" // concat, not Join — see PersonalList
+	if isDir(ag) {
+		for _, b := range globDirs(filepath.Join(ag, "skills")) {
+			rows = append(rows, [2]string{"~/.agents/skills/" + b + "/", harness.KindOf(".agents/skills/" + b + "/")})
 		}
 	}
 
@@ -313,9 +329,9 @@ func renderGlobalLine(w io.Writer, n int, md bool) {
 	case n == 0:
 		line = " — no personal config found in ~/.claude or ~/.copilot"
 	case n == 1:
-		line = " — 1 file in ~/.claude + ~/.copilot steers every repo (list: omakase status --global)"
+		line = " — 1 file in ~/.claude + ~/.copilot + ~/.agents steers every repo (list: omakase status --global)"
 	default:
-		line = fmt.Sprintf(" — %d files in ~/.claude + ~/.copilot steer every repo (list: omakase status --global)", n)
+		line = fmt.Sprintf(" — %d files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list: omakase status --global)", n)
 	}
 	if md {
 		fmt.Fprintln(w, "### Global"+line)

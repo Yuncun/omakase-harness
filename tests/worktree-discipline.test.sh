@@ -45,6 +45,11 @@ OUT="$(guard "$ROOT" "$ROOT/src/app.go")"; RC=$?
 [ "$RC" -eq 0 ] && pass "deny exits 0 (decision travels in JSON)" || fail "deny exited $RC"
 echo "$OUT" | grep -q '"permissionDecision":"deny"' && pass "product file in main checkout -> deny" || fail "no deny for product file ($OUT)"
 echo "$OUT" | grep -q '"hookEventName":"PreToolUse"' && pass "deny names the PreToolUse event" || fail "malformed hook output ($OUT)"
+# Both output shapes must be present (#164 C3): Claude Code reads the nested
+# hookSpecificOutput; Copilot CLI without _vsCodeCompat reads only top-level keys and
+# silently drops a nested-only deny (fails open).
+echo "$OUT" | grep -q '^{"permissionDecision":"deny","permissionDecisionReason":' && pass "deny carries the top-level shape (Copilot)" || fail "top-level permissionDecision missing — Copilot would fail open ($OUT)"
+echo "$OUT" | grep -q '"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"' && pass "deny carries the nested shape (Claude)" || fail "nested hookSpecificOutput missing ($OUT)"
 echo "$OUT" | grep -q 'src/app.go' && pass "reason names the file" || fail "reason missing the file ($OUT)"
 echo "$OUT" | grep -q 'worktree' && pass "reason teaches the worktree rule" || fail "reason missing the rule ($OUT)"
 echo "$OUT" | grep -q 'OMAKASE_SKIP_WORKTREE_DISCIPLINE=1' && pass "reason names the bypass" || fail "reason missing the bypass ($OUT)"

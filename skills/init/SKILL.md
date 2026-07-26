@@ -12,16 +12,17 @@ git-hook dispatcher per hook so omakase runs the harness's manifest-declared gat
 third-party runner). `/omakase:remove` reverses it.
 
 Run this skill's self-locating `run.sh` — it finds the base harness's `bin/` and operates on the
-current repo. The argument selects the mode:
+current repo. `<skill-dir>` below is THIS skill's own directory — the path this SKILL.md was
+loaded from, which the host shows you. (Do not use `${CLAUDE_PLUGIN_ROOT}` in the command:
+Claude Code sets it but Copilot CLI does not, and an unset variable resolves to a broken path.)
+The argument selects the mode:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/skills/init/run.sh"                      # bare: refresh / re-overlay
-bash "${CLAUDE_PLUGIN_ROOT}/skills/init/run.sh" alice/harness        # adopt a published harness (GitHub shorthand)
-bash "${CLAUDE_PLUGIN_ROOT}/skills/init/run.sh" alice/harness#v1     # ...pinned to a branch or tag
-bash "${CLAUDE_PLUGIN_ROOT}/skills/init/run.sh" --source <url|path>  # ...any git URL or local clone
+bash <skill-dir>/run.sh                      # bare: refresh / re-overlay
+bash <skill-dir>/run.sh alice/harness        # adopt a published harness (GitHub shorthand)
+bash <skill-dir>/run.sh alice/harness#v1     # ...pinned to a branch or tag
+bash <skill-dir>/run.sh --source <url|path>  # ...any git URL or local clone
 ```
-
-(On Copilot CLI or a plain shell, run this skill directory's `run.sh` with the same args.)
 
 ## What each mode does
 

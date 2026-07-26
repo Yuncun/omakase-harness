@@ -120,9 +120,10 @@ func TestWireRefusesInvalidJSON(t *testing.T) {
 	}
 }
 
-// The Copilot arm writes the block AND turns on the STATUS_LINE feature
-// flag (the block alone is inert while the feature is experimental),
-// without duplicating a flag that is already on.
+// The Copilot arm writes the statusLine block and nothing else — the old
+// STATUS_LINE feature flag is gone from Copilot (GA since before 1.0.75,
+// #164 C4), so --wire must not write dead config, and existing
+// feature_flags content passes through untouched.
 func TestWireCopilotArm(t *testing.T) {
 	home := wireHome(t, map[string]string{".copilot": `{"feature_flags":{"enabled":["SOMETHING"]}}`})
 	var out, errB bytes.Buffer
@@ -136,8 +137,8 @@ func TestWireCopilotArm(t *testing.T) {
 		t.Fatalf("Copilot refreshes per-response; no refreshInterval expected: %v", sl)
 	}
 	enabled := m["feature_flags"].(map[string]any)["enabled"].([]any)
-	if len(enabled) != 2 || enabled[0] != "SOMETHING" || enabled[1] != "STATUS_LINE" {
-		t.Fatalf("feature_flags.enabled = %v", enabled)
+	if len(enabled) != 1 || enabled[0] != "SOMETHING" {
+		t.Fatalf("feature_flags.enabled = %v, want the prior [SOMETHING] untouched (no STATUS_LINE write)", enabled)
 	}
 }
 
