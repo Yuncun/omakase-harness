@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.26.0] — 2026-07-26
+
 ### Changed
 - **State stores only what can't be derived.** `placed.tsv` shrinks to two
   columns (path, sha256): kind is derived from the path, the source label
