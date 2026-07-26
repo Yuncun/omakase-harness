@@ -36,7 +36,9 @@ func newRepo(t *testing.T) (root, omk string) {
 
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	// Background maintenance off: a detached auto-gc can still be writing
+	// .git/objects when TempDir cleanup deletes the tree (flaked in CI).
+	cmd := exec.Command("git", append(append([]string{"-c", "gc.auto=0", "-c", "maintenance.auto=false"}, "-C", dir), args...)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}

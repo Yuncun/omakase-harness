@@ -393,7 +393,9 @@ func realGitRepo(t *testing.T) (dir string, isTracked func(string) bool) {
 
 func runGitT(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	// Background maintenance off: a detached auto-gc can still be writing
+	// .git/objects when TempDir cleanup deletes the tree (flaked in CI).
+	cmd := exec.Command("git", append([]string{"-c", "gc.auto=0", "-c", "maintenance.auto=false"}, args...)...)
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
