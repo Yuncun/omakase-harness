@@ -384,21 +384,17 @@ if [ -n "$O10BUILT" ]; then
     # negative control here); now the binary extracts its EMBEDDED base payload
     # into the machine cache and the install succeeds. The extraction dir
     # appearing under <cache>/omakase/basepayload/ proves the embedded path ran
-    # (leg 7's env handoff never creates it). HEAD build only: a pinned release
-    # binary from before the embed still lacks the fallback.
-    if [ "$O10BUILT" = "$O10/omakase-built" ]; then
-      O10TGT2="$O10/target-standalone"; scratch_repo "$O10TGT2"
-      O10SAOUT="$O10/standalone.out"; O10SAERR="$O10/standalone.err"
-      ( cd "$O10TGT2" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" \
-        "$O10BIN" init --source "$O10SRC" >"$O10SAOUT" 2>"$O10SAERR" )
-      rc=$?
-      [ "$rc" -eq 0 ] && pass "standalone binary (no shim, no OMAKASE_BASE_PAYLOAD) inits via the embedded base (#168)" || fail "standalone init exited $rc ($(cat "$O10SAERR"))"
-      [ -x "$O10TGT2/.omakase/bin/omakase-banner.sh" ] && pass "embedded base machinery placed" || fail "base machinery missing from standalone init"
-      [ -f "$O10TGT2/.omakase/O10-SOURCE-MARKER" ] && pass "source delta layered over the embedded base" || fail "source marker missing from standalone init"
-      [ -d "$XDG/omakase/basepayload" ] && pass "embedded base extracted into the machine cache" || fail "no basepayload extraction dir — embedded fallback did not run"
-    else
-      echo "  SKIP: leg 8 needs the HEAD-built binary (the pinned release predates the embedded base payload)"
-    fi
+    # (leg 7's env handoff never creates it). Runs on either binary source:
+    # the pinned release carries the embed since 0.27.0.
+    O10TGT2="$O10/target-standalone"; scratch_repo "$O10TGT2"
+    O10SAOUT="$O10/standalone.out"; O10SAERR="$O10/standalone.err"
+    ( cd "$O10TGT2" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" \
+      "$O10BIN" init --source "$O10SRC" >"$O10SAOUT" 2>"$O10SAERR" )
+    rc=$?
+    [ "$rc" -eq 0 ] && pass "standalone binary (no shim, no OMAKASE_BASE_PAYLOAD) inits via the embedded base (#168)" || fail "standalone init exited $rc ($(cat "$O10SAERR"))"
+    [ -x "$O10TGT2/.omakase/bin/omakase-banner.sh" ] && pass "embedded base machinery placed" || fail "base machinery missing from standalone init"
+    [ -f "$O10TGT2/.omakase/O10-SOURCE-MARKER" ] && pass "source delta layered over the embedded base" || fail "source marker missing from standalone init"
+    [ -d "$XDG/omakase/basepayload" ] && pass "embedded base extracted into the machine cache" || fail "no basepayload extraction dir — embedded fallback did not run"
 
     # ---- leg 9: bare init with nothing remembered places NOTHING (#123 item 1) ----
     # A fresh repo, no --source, no remembered source: there is no harness to
