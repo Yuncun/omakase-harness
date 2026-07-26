@@ -37,6 +37,17 @@ eq ".github/copilot-instructions.md"         doc
 eq ".github/workflows/ci.yml"                other
 eq ".github/dependabot.yml"                  other
 
+echo "== kind_of: .agents project skill root (Copilot CLI /skills) =="
+eq ".agents/skills/foo/SKILL.md"             skill
+eq ".agents/skills/a/b/c.md"                 skill   # deep skill subtree
+
+echo "== kind_of: nested instruction files (issue #165) =="
+eq "app/CLAUDE.md"                           doc
+eq "core/auth/CLAUDE.md"                     doc     # any depth, not just one level
+eq "app/AGENTS.md"                           doc
+# Near-miss boundary: a name that merely ends in CLAUDE.md is not an instruction file.
+eq "docs/MYCLAUDE.md"                        other
+
 echo "== kind_of: host-agnostic + catch-alls =="
 eq "lefthook-local.yml"                      gate
 eq ".omakase/gates/example.sh"               gate
@@ -58,6 +69,12 @@ has ".github/hooks"                   "${HARNESS_COMMITTED_GLOBS[@]}"
 has ".github/prompts"                 "${HARNESS_COMMITTED_GLOBS[@]}"
 has ".github/chatmodes"               "${HARNESS_COMMITTED_GLOBS[@]}"
 has ".github/copilot-instructions.md" "${HARNESS_COMMITTED_GLOBS[@]}"
+
+echo "== committed scan reaches nested instruction files + the .agents root (issue #165) =="
+has "*/AGENTS.md"                     "${HARNESS_COMMITTED_GLOBS[@]}"
+has "*/CLAUDE.md"                     "${HARNESS_COMMITTED_GLOBS[@]}"
+has ".agents"                         "${HARNESS_COMMITTED_GLOBS[@]}"
+has ".agents/skills"                  "${HARNESS_LOC_DIRS[@]}"
 
 # Anti-drift lock: every dir omakase IMPORTS (HARNESS_LOC_DIRS) must classify to a real kind.
 # This catches a new capture-dir added without a matching kind_of case — the exact bug where

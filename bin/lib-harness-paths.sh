@@ -16,7 +16,9 @@
 # the same on-disk layout drift apart.
 #
 #   Claude Code        : .claude/{rules,skills,commands,agents,hooks}, .claude/settings*.json, CLAUDE.md, AGENTS.md
-#   GitHub Copilot CLI : .github/{skills,instructions,prompts,chatmodes,hooks}, .github/copilot-instructions.md
+#                        (a nested CLAUDE.md/AGENTS.md at any depth is auto-loaded per directory)
+#   GitHub Copilot CLI : .github/{skills,instructions,prompts,chatmodes,hooks}, .github/copilot-instructions.md,
+#                        .agents/skills (the third documented project skill root, per /skills help)
 #       (Copilot CLI loads project skills from .github/skills live from disk — see
 #        https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills.
 #        .github/hooks holds Copilot's lifecycle hooks — preToolUse/sessionStart gates — and
@@ -45,10 +47,14 @@ kind_of() {
     .github/prompts/*|.github/chatmodes/*)            echo prompt;;
     .github/hooks/*)                                  echo gate;;
     .github/copilot-instructions.md)                  echo doc;;
+    # .agents/skills is Copilot CLI's third documented project skill root
+    # (/skills help: ".github/skills/, .agents/skills/, or .claude/skills/").
+    .agents/skills/*)                                 echo skill;;
     # --- host-agnostic ---
     lefthook-local.yml|lefthook.yml|.omakase/gates/*) echo gate;;
     .husky/*|.githooks/*)                             echo gate;;
     AGENTS.md|CLAUDE.md)                              echo doc;;
+    */AGENTS.md|*/CLAUDE.md)                          echo doc;;    # nested instruction file, any depth; MUST precede */*
     */*)                                              echo other;;  # nested, none of the above
     *.md)                                             echo doc;;    # remaining root-level *.md
     *)                                                echo other;;
@@ -60,11 +66,15 @@ kind_of() {
 # arrays today — a harness author places files by hand, per docs/authoring.md. Keep in
 # step with kind_of above.
 HARNESS_LOC_FILES=(AGENTS.md CLAUDE.md .github/copilot-instructions.md lefthook-local.yml lefthook.yml .pre-commit-config.yaml .claude/settings.json)
-HARNESS_LOC_DIRS=(.claude/rules .claude/skills .claude/commands .claude/agents .claude/hooks .github/skills .github/instructions .github/prompts .github/chatmodes .github/hooks .omakase .husky .githooks)
+HARNESS_LOC_DIRS=(.claude/rules .claude/skills .claude/commands .claude/agents .claude/hooks .github/skills .github/instructions .github/prompts .github/chatmodes .github/hooks .agents/skills .omakase .husky .githooks)
 
-# status.sh committed-surface scan — the tracked pathspecs it audits as the project's OWN
+# status committed-surface scan — the tracked pathspecs audited as the project's OWN
 # committed harness:  git ls-files -- "${HARNESS_COMMITTED_GLOBS[@]}"
-HARNESS_COMMITTED_GLOBS=(AGENTS.md CLAUDE.md CLAUDE.local.md .claude lefthook.yml lefthook-local.yml .lefthook .omakase .husky .githooks .github/copilot-instructions.md .github/instructions .github/skills .github/prompts .github/chatmodes .github/hooks)
+# In a default git pathspec `*` matches `/`, so */CLAUDE.md reaches ANY depth (core/auth/
+# CLAUDE.md), not just one level — intended, do not "correct" it. The bare root name is
+# still needed alongside (*/CLAUDE.md cannot match the root file). *CLAUDE.md would be
+# wrong: it also claims NOTCLAUDE.md and docs/MYCLAUDE.md (issue #165).
+HARNESS_COMMITTED_GLOBS=(AGENTS.md '*/AGENTS.md' CLAUDE.md '*/CLAUDE.md' CLAUDE.local.md .claude .agents lefthook.yml lefthook-local.yml .lefthook .omakase .husky .githooks .github/copilot-instructions.md .github/instructions .github/skills .github/prompts .github/chatmodes .github/hooks)
 
 # Top-level dirs omakase SHARES with the project rather than owning outright. An injected
 # path under one of these is excluded from git file-by-file in .git/info/exclude — never the

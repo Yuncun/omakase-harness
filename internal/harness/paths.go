@@ -14,8 +14,15 @@ var SharedTopdirs = []string{".github"}
 
 // CommittedGlobs lists the pathspecs for a project's own committed harness
 // surface (order matters: it is handed to `git ls-files -- globs...`).
+//
+// In a default git pathspec `*` matches `/`, so "*/CLAUDE.md" reaches ANY
+// depth (core/auth/CLAUDE.md), not just one level — intended, do not
+// "correct" it. The bare root name is still needed alongside ("*/CLAUDE.md"
+// cannot match the root file). "*CLAUDE.md" would be wrong: it also claims
+// NOTCLAUDE.md and docs/MYCLAUDE.md (issue #165).
 var CommittedGlobs = []string{
-	"AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", ".claude",
+	"AGENTS.md", "*/AGENTS.md", "CLAUDE.md", "*/CLAUDE.md", "CLAUDE.local.md",
+	".claude", ".agents",
 	"omakase.manifest", "lefthook.yml", "lefthook-local.yml", ".lefthook", ".omakase",
 	".husky", ".githooks", ".github/copilot-instructions.md",
 	".github/instructions", ".github/skills", ".github/prompts",
@@ -52,6 +59,10 @@ func KindOf(path string) string {
 		return "gate"
 	case bashGlobMatch(".github/copilot-instructions.md", path):
 		return "doc"
+	// .agents/skills is Copilot CLI's third documented project skill root
+	// (/skills help: ".github/skills/, .agents/skills/, or .claude/skills/").
+	case bashGlobMatch(".agents/skills/*", path):
+		return "skill"
 	// --- host-agnostic ---
 	case bashGlobMatch("omakase.manifest", path), bashGlobMatch(".omakase/gates/*", path):
 		return "gate"
@@ -59,6 +70,8 @@ func KindOf(path string) string {
 		return "gate"
 	case bashGlobMatch("AGENTS.md", path), bashGlobMatch("CLAUDE.md", path):
 		return "doc"
+	case bashGlobMatch("*/AGENTS.md", path), bashGlobMatch("*/CLAUDE.md", path):
+		return "doc" // nested instruction file, any depth; MUST precede */*
 	case bashGlobMatch("*/*", path):
 		return "other" // nested, none of the above
 	case bashGlobMatch("*.md", path):
