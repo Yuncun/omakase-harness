@@ -16,8 +16,12 @@
 #
 # This layer fails OPEN: anything it cannot parse or resolve is allowed silently. It is
 # a pre-layer for the developer's attention; the commit-time gate is the layer that
-# fails closed. Copilot CLI does not run PreToolUse hooks — this is Claude-Code-only
-# hardening, not the portable layer (that is the commit-time gate).
+# fails closed. Copilot CLI (1.0.75+) DOES run PreToolUse hooks via a plugin's
+# hooks/hooks.json — but it only reads the nested hookSpecificOutput shape when the hook
+# entry declares _vsCodeCompat; otherwise it looks for a top-level permissionDecision.
+# The deny below therefore emits BOTH shapes so a dropped deny can't fail open there
+# (#164 C3). Wiring it into Copilot is a separate step (#164 C5); Claude Code wiring is
+# unchanged.
 set -uo pipefail
 # A leaked GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR (exported for ANOTHER repo) would judge
 # the wrong repo's worktrees. Resolve from the hook's cwd only.
@@ -67,6 +71,9 @@ esac
 others=$((n - 1))
 reason="omakase worktree discipline: '$rel' is a product file and this is the MAIN checkout while $others other worktree(s) are active. Branches cut here inherit concurrent sessions' uncommitted work. Edit it in a worktree instead (the main checkout is for coordination: AGENTS.md, CLAUDE.md, .claude/**, root *.md). Bypass (audited): OMAKASE_SKIP_WORKTREE_DISCIPLINE=1."
 # JSON-escape (backslash, quote); rel is the only interpolated data.
+# Both output shapes on purpose: Claude Code reads the nested hookSpecificOutput block;
+# Copilot CLI without _vsCodeCompat reads only the top-level keys and would silently
+# drop a nested-only deny — the one failure mode a guard must not have (#164 C3).
 esc="$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$esc"
+printf '{"permissionDecision":"deny","permissionDecisionReason":"%s","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$esc" "$esc"
 exit 0

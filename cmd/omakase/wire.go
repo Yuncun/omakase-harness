@@ -31,17 +31,15 @@ func runWire(stdout, stderr io.Writer) int {
 	if dirExists(filepath.Join(home, ".claude")) {
 		wired += wireHost(stdout, stderr, "Claude Code",
 			filepath.Join(home, ".claude", "settings.json"),
-			map[string]any{"type": "command", "command": cmd, "padding": 0, "refreshInterval": 10},
-			nil)
+			map[string]any{"type": "command", "command": cmd, "padding": 0, "refreshInterval": 10})
 	}
 	if dirExists(filepath.Join(home, ".copilot")) {
-		// Copilot's status line is experimental: the block alone is inert
-		// until the STATUS_LINE feature flag is on, so --wire sets both.
+		// Copilot's status line is GA (the old STATUS_LINE feature flag is
+		// gone from the 1.0.75 bundle — #164 C4): the block alone is enough.
 		// Refresh is per-response there (no timer), so no refreshInterval.
 		wired += wireHost(stdout, stderr, "Copilot CLI",
 			filepath.Join(home, ".copilot", "settings.json"),
-			map[string]any{"type": "command", "command": cmd},
-			func(m map[string]any) { enableFeatureFlag(m, "STATUS_LINE") })
+			map[string]any{"type": "command", "command": cmd})
 	}
 	if wired == 0 {
 		fmt.Fprintln(stdout, "nothing wired — no host was missing a status line (or no host config dir exists)")
@@ -52,9 +50,8 @@ func runWire(stdout, stderr io.Writer) int {
 // wireHost wires one host's settings file and reports 1 if it wrote. A
 // configured statusLine is left untouched (manual instructions instead); an
 // unparseable settings file is refused loudly — never overwrite what we
-// cannot read. extra, when non-nil, mutates the settings map after the
-// statusLine is set (the Copilot feature flag).
-func wireHost(stdout, stderr io.Writer, host, path string, block map[string]any, extra func(map[string]any)) int {
+// cannot read.
+func wireHost(stdout, stderr io.Writer, host, path string, block map[string]any) int {
 	m := map[string]any{}
 	raw, err := os.ReadFile(path)
 	switch {
@@ -81,9 +78,6 @@ func wireHost(stdout, stderr io.Writer, host, path string, block map[string]any,
 		}
 	}
 	m["statusLine"] = block
-	if extra != nil {
-		extra(m)
-	}
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		fmt.Fprintf(stderr, "omakase: could not encode %s: %v\n", path, err)
@@ -99,24 +93,6 @@ func wireHost(stdout, stderr io.Writer, host, path string, block map[string]any,
 		fmt.Fprintf(stdout, "%s wired: statusLine written to %s\n", host, path)
 	}
 	return 1
-}
-
-// enableFeatureFlag appends name to feature_flags.enabled, creating the
-// structure as needed and never duplicating.
-func enableFeatureFlag(m map[string]any, name string) {
-	ff, _ := m["feature_flags"].(map[string]any)
-	if ff == nil {
-		ff = map[string]any{}
-	}
-	enabled, _ := ff["enabled"].([]any)
-	for _, v := range enabled {
-		if v == name {
-			m["feature_flags"] = ff
-			return
-		}
-	}
-	ff["enabled"] = append(enabled, name)
-	m["feature_flags"] = ff
 }
 
 func dirExists(path string) bool {

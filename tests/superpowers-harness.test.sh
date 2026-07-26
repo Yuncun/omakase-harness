@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Proof that the shipped examples/superpowers-harness installs and works end-to-end on BOTH
-# tools. The example is the CONTENTS of a harness repo, so the test does what an adopter does:
+# Proof that the shipped examples/superpowers-harness installs and works end-to-end.
+# The example is the CONTENTS of a harness repo, so the test does what an adopter does:
 # copy it into a git repo, then `init --source` that repo. It checks:
-#   - the overlay places BOTH settings files and gitignores them:
-#       .claude/settings.json          (Claude Code reads this)
-#       .github/copilot/settings.json  (Copilot CLI reads this — same JSON, different path)
-#   - each file registers the superpowers-marketplace and enables the plugin
+#   - the overlay places .claude/settings.json (Claude Code reads this; per-repo plugin
+#     enablement is Claude-only — Copilot has no project-scoped settings file, #164 C2)
+#     and gitignores it, and does NOT place the retired .github/copilot/settings.json
+#   - the file registers the superpowers-marketplace and enables the plugin
 #   - the base harness machinery is layered in (omakase-banner.sh)
 #   - init prints the manifest's `recommends:` fallback line
 #   - remove tears it all down, exclude block included
@@ -39,21 +39,17 @@ REPO="$TMP/repo"; newrepo "$REPO"
 OUT=$( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$SRC" 2>&1 ); rc=$?
 [ "$rc" -eq 0 ] && pass "init --source <superpowers> exits 0" || { fail "init --source failed (rc=$rc)"; echo "$OUT" | sed 's/^/      /'; }
 
-# 3) BOTH settings files placed and gitignored.
+# 3) The Claude settings file placed and gitignored; the retired Copilot path absent.
 CC="$REPO/.claude/settings.json"
-CP="$REPO/.github/copilot/settings.json"
 [ -f "$CC" ] && pass ".claude/settings.json placed (Claude)" || fail ".claude/settings.json missing"
-[ -f "$CP" ] && pass ".github/copilot/settings.json placed (Copilot)" || fail ".github/copilot/settings.json missing"
+# Copilot has no project-scoped settings file; .github/copilot/ is not a Copilot path.
+# An inert file here would silently promise Copilot users a plugin they don't get (#164 C2).
+[ -f "$REPO/.github/copilot/settings.json" ] && fail "retired .github/copilot/settings.json reappeared" || pass "no inert Copilot settings file placed"
 grep -q 'omakase-harness' "$REPO/.git/info/exclude" 2>/dev/null && pass "exclude block written" || fail "no exclude block"
-( cd "$REPO" && git ls-files --error-unmatch .github/copilot/settings.json ) >/dev/null 2>&1 \
-  && fail "Copilot settings is tracked (must be gitignored)" || pass "Copilot settings not tracked"
 
-# 4) Each file registers the marketplace and enables the plugin.
-for f in "$CC" "$CP"; do
-  label="$(basename "$(dirname "$(dirname "$f")")")/$(basename "$(dirname "$f")")"
-  grep -q 'obra/superpowers-marketplace' "$f" 2>/dev/null && pass "$label: registers superpowers-marketplace" || fail "$label: marketplace missing"
-  grep -q 'superpowers@superpowers-marketplace' "$f" 2>/dev/null && pass "$label: enables the plugin" || fail "$label: enabledPlugins entry missing"
-done
+# 4) The file registers the marketplace and enables the plugin.
+grep -q 'obra/superpowers-marketplace' "$CC" 2>/dev/null && pass ".claude/settings.json: registers superpowers-marketplace" || fail ".claude/settings.json: marketplace missing"
+grep -q 'superpowers@superpowers-marketplace' "$CC" 2>/dev/null && pass ".claude/settings.json: enables the plugin" || fail ".claude/settings.json: enabledPlugins entry missing"
 
 # 5) Base layering: machinery the example does NOT ship is present from the base layer.
 [ -f "$REPO/.omakase/bin/omakase-banner.sh" ] && pass "base machinery layered in (omakase-banner.sh)" || fail "base machinery missing"
@@ -65,7 +61,6 @@ echo "$OUT" | grep -q 'plugin install superpowers@superpowers-marketplace' && pa
 # 7) remove tears everything down.
 ( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$REMOVE" ) >/dev/null 2>&1
 [ -f "$CC" ] && fail ".claude/settings.json survived remove" || pass ".claude/settings.json removed"
-[ -f "$CP" ] && fail ".github/copilot/settings.json survived remove" || pass ".github/copilot/settings.json removed"
 [ -d "$REPO/.omakase" ] && fail ".omakase survived remove" || pass ".omakase removed"
 grep -q 'omakase-harness' "$REPO/.git/info/exclude" 2>/dev/null && fail "exclude block survived remove" || pass "exclude block stripped"
 

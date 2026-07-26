@@ -61,9 +61,11 @@ func sha256Hex(s string) string {
 
 // buildHomeFixture builds the fake HOME used across the golden tests: a
 // Claude Code personal layout (CLAUDE.md, settings.json, one rule/command/
-// agent file each, one skill dir) plus a Copilot CLI personal skill dir, with
-// commands/agents/copilot rows so every PersonalList branch is exercised. File
-// names are lowercase ASCII so bytewise sort.Strings gives a stable order.
+// agent file each, one skill dir), a Copilot CLI personal layout
+// (copilot-instructions.md, settings.json, one skill dir — #164 C7), and an
+// ~/.agents personal skill dir, so every PersonalList branch is exercised.
+// File names are lowercase ASCII so bytewise sort.Strings gives a stable
+// order.
 func buildHomeFixture(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
@@ -74,7 +76,10 @@ func buildHomeFixture(t *testing.T) string {
 	writeFile(t, home, ".claude/commands/cmd1.md", "cmd body\n")
 	writeFile(t, home, ".claude/agents/agent1.md", "agent body\n")
 	writeFile(t, home, ".claude/skills/myskill/SKILL.md", "skill body\n")
+	writeFile(t, home, ".copilot/copilot-instructions.md", "copilot doctrine\n")
+	writeFile(t, home, ".copilot/settings.json", "{}\n")
 	writeFile(t, home, ".copilot/skills/coskill/SKILL.md", "coskill body\n")
+	writeFile(t, home, ".agents/skills/agskill/SKILL.md", "agskill body\n")
 	return home
 }
 
@@ -208,7 +213,7 @@ INJECTED (omakase) — placed by omakase init, gitignored
 YOURS, UNMANAGED — untracked agent config, only in this clone (not committed, not placed by omakase)
     + .claude/rules/local-tweak.md   (rule)
     To keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author
-GLOBAL — 8 files in ~/.claude + ~/.copilot steer every repo (list: omakase status --global)
+GLOBAL — 11 files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list: omakase status --global)
 `
 
 // Markdown-mode inventory for the installed fixture: the RenderInventory slice.
@@ -233,7 +238,7 @@ const wantInventoryMDInstalled = "### The project's harness (committed — manag
 	"\n" +
 	"_To keep or share one beyond this clone, add it to a harness — the author skill (`/omakase:author`)._\n" +
 	"\n" +
-	"### Global — 8 files in ~/.claude + ~/.copilot steer every repo (list: omakase status --global)\n"
+	"### Global — 11 files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list: omakase status --global)\n"
 
 func TestRenderInventoryTermInstalled(t *testing.T) {
 	repo, home := buildInstalledFixture(t)
@@ -265,7 +270,7 @@ YOURS, UNMANAGED — untracked agent config, only in this clone (not committed, 
     + .claude/rules/local-tweak.md   (rule)
     + CLAUDE.local.md   (doc)
     To keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author
-GLOBAL — 8 files in ~/.claude + ~/.copilot steer every repo (list: omakase status --global)
+GLOBAL — 11 files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list: omakase status --global)
 
 A presence check of known paths for known tools — not exhaustive; a file can be present and never read.
 Install a harness:  omakase init <owner/repo>
@@ -283,7 +288,7 @@ const wantNotInstalledMD = "**No omakase harness is installed in this repo.**\n"
 	"\n" +
 	"_To keep or share one beyond this clone, add it to a harness — the author skill (`/omakase:author`)._\n" +
 	"\n" +
-	"### Global — 8 files in ~/.claude + ~/.copilot steer every repo (list: omakase status --global)\n" +
+	"### Global — 11 files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list: omakase status --global)\n" +
 	"\n" +
 	"_A presence check of known paths for known tools — not exhaustive; a file can be present and never read._\n" +
 	"\n" +
@@ -503,7 +508,10 @@ func TestPersonalList(t *testing.T) {
 		{"~/.claude/commands/cmd1.md", "command"},
 		{"~/.claude/agents/agent1.md", "agent"},
 		{"~/.claude/skills/myskill/", "skill"},
+		{"~/.copilot/copilot-instructions.md", "doc"},
+		{"~/.copilot/settings.json", "config"},
 		{"~/.copilot/skills/coskill/", "skill"},
+		{"~/.agents/skills/agskill/", "skill"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("PersonalList = %v, want %v", got, want)
