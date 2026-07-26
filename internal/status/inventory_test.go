@@ -450,6 +450,39 @@ func TestCommittedList(t *testing.T) {
 	}
 }
 
+// TestCommittedListDeepSurface pins the enumeration seam issue #165 found
+// untested: nested instruction files (git pathspecs anchor at the repo root,
+// so bare CLAUDE.md missed app/CLAUDE.md) and the .agents/skills project
+// skill root must be found, while near-miss names (NOTCLAUDE.md,
+// docs/MYCLAUDE.md — which the over-broad pathspec *CLAUDE.md would claim)
+// must not be.
+func TestCommittedListDeepSurface(t *testing.T) {
+	repo := newGitRepo(t)
+	for _, rel := range []string{
+		"CLAUDE.md", "app/CLAUDE.md", "core/auth/CLAUDE.md", "app/AGENTS.md",
+		".agents/skills/foo/SKILL.md",
+		"NOTCLAUDE.md", "docs/MYCLAUDE.md", "src/app.js",
+	} {
+		writeFile(t, repo, rel, "x\n")
+	}
+	runGitT(t, repo, "add", ".")
+	runGitT(t, repo, "commit", "-q", "-m", "deep committed surface")
+
+	got := CommittedList(repo)
+	want := []string{
+		".agents/skills/foo/SKILL.md", "CLAUDE.md", "app/AGENTS.md",
+		"app/CLAUDE.md", "core/auth/CLAUDE.md",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("CommittedList = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("CommittedList[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestCommittedListError(t *testing.T) {
 	dir := t.TempDir() // not a git repo
 	if got := CommittedList(dir); got != nil {

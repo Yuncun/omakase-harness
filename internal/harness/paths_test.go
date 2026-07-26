@@ -39,6 +39,19 @@ func TestKindOf(t *testing.T) {
 		{".github/workflows/ci.yml", "other"},
 		{".github/dependabot.yml", "other"},
 
+		// == kind_of: .agents project skill root (Copilot CLI /skills:
+		// ".github/skills/, .agents/skills/, or .claude/skills/") ==
+		{".agents/skills/foo/SKILL.md", "skill"},
+		{".agents/skills/a/b/c.md", "skill"}, // deep skill subtree
+
+		// == kind_of: nested instruction files (issue #165) ==
+		{"app/CLAUDE.md", "doc"},
+		{"core/auth/CLAUDE.md", "doc"}, // any depth, not just one level
+		{"app/AGENTS.md", "doc"},
+		// Near-miss boundary: a name that merely ends in CLAUDE.md is not an
+		// instruction file.
+		{"docs/MYCLAUDE.md", "other"},
+
 		// == kind_of: host-agnostic + catch-alls ==
 		{"omakase.manifest", "gate"},
 		{".omakase/gates/example.sh", "gate"},
@@ -62,6 +75,7 @@ func TestKindOf(t *testing.T) {
 var locDirs = []string{
 	".claude/rules", ".claude/skills", ".claude/commands", ".claude/agents", ".claude/hooks",
 	".github/skills", ".github/instructions", ".github/prompts", ".github/chatmodes", ".github/hooks",
+	".agents/skills",
 	".omakase", ".husky", ".githooks",
 }
 
@@ -116,7 +130,8 @@ func TestSharedTopdirs(t *testing.T) {
 // TestCommittedGlobs pins the CommittedGlobs entries and their order.
 func TestCommittedGlobs(t *testing.T) {
 	want := []string{
-		"AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", ".claude",
+		"AGENTS.md", "*/AGENTS.md", "CLAUDE.md", "*/CLAUDE.md", "CLAUDE.local.md",
+		".claude", ".agents",
 		"omakase.manifest", "lefthook.yml", "lefthook-local.yml", ".lefthook", ".omakase",
 		".husky", ".githooks", ".github/copilot-instructions.md",
 		".github/instructions", ".github/skills", ".github/prompts",
