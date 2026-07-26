@@ -5,6 +5,14 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Fixed
+- **`status` now sees the whole committed agent surface.** The committed
+  scan missed nested instruction files (`app/CLAUDE.md` at any depth) and
+  the `.agents/skills/` project skill root — on a repo with a deep
+  committed surface it under-reported by ~99%. Nested `CLAUDE.md`/
+  `AGENTS.md` now classify as docs and `.agents/skills/*` as skills;
+  near-miss names like `NOTCLAUDE.md` stay excluded. (#165)
+
 ## [0.26.0] — 2026-07-26
 
 ### Changed
