@@ -23,9 +23,10 @@
 #       if-condition's set -e suppression; a succeeding build still execs
 #   O10. issue #70 regression: the binary sits ALONE in the cache (a fetch /
 #        PATH install, no payload/ sibling); shim -> cached binary -> init
-#        --source finds the base merge payload only via the shim-exported
-#        OMAKASE_BASE_PAYLOAD. Its negative control runs the cached binary
-#        DIRECTLY with no such export and proves it fails fast, naming the path.
+#        --source finds the base merge payload via the shim-exported
+#        OMAKASE_BASE_PAYLOAD. Leg 8 runs the cached binary DIRECTLY with no
+#        such export — the brew/tarball shape — and proves it succeeds via
+#        the base payload EMBEDDED in the binary (issue #168).
 # HOME and XDG_CACHE_HOME point at fixture dirs so nothing touches the real machine.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -376,18 +377,28 @@ if [ -n "$O10BUILT" ]; then
     [ -x "$O10TGT/.omakase/bin/omakase-banner.sh" ] && pass "base payload file placed (OMAKASE_BASE_PAYLOAD located the merge base)" || fail "base machinery missing — base payload not located"
     [ -f "$O10TGT/.omakase/O10-SOURCE-MARKER" ] && pass "source marker placed (source delta layered over the base)" || fail "source marker missing"
 
-    # ---- leg 8: negative control — the cached binary DIRECTLY, no OMAKASE_BASE_PAYLOAD ----
-    # Proves the leg-7 assertions bite: with no shim to export OMAKASE_BASE_PAYLOAD,
-    # defaultPayload falls to the binary-relative ../payload — a non-existent
-    # <cache>/bin/payload — and the merge base is not found. This is the pre-#70
-    # failure mode, now a clear fail-fast BEFORE any clone. Same env as leg 7 minus
-    # the shim, so the ONLY difference is the absent OMAKASE_BASE_PAYLOAD export.
-    O10NCERR="$O10/negctl.err"
-    ( cd "$O10TGT" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" \
-      "$O10BIN" init --source "$O10SRC" >/dev/null 2>"$O10NCERR" )
-    rc=$?
-    [ "$rc" -eq 1 ] && pass "cached binary run WITHOUT OMAKASE_BASE_PAYLOAD exits 1 (the assertion bites)" || fail "negative control exited $rc, expected 1 ($(cat "$O10NCERR"))"
-    grep -q 'base payload not found at' "$O10NCERR" && pass "negative control fails fast, naming the base payload path it tried" || fail "no 'base payload not found at' on stderr ($(cat "$O10NCERR"))"
+    # ---- leg 8: the cached binary DIRECTLY, no OMAKASE_BASE_PAYLOAD (issue #168) ----
+    # The standalone-binary shape: brew / release tarball / go install — no shim
+    # runs, so nothing exports OMAKASE_BASE_PAYLOAD and no payload/ sibling
+    # exists. Before #168 this failed fast ("base payload not found", the old
+    # negative control here); now the binary extracts its EMBEDDED base payload
+    # into the machine cache and the install succeeds. The extraction dir
+    # appearing under <cache>/omakase/basepayload/ proves the embedded path ran
+    # (leg 7's env handoff never creates it). HEAD build only: a pinned release
+    # binary from before the embed still lacks the fallback.
+    if [ "$O10BUILT" = "$O10/omakase-built" ]; then
+      O10TGT2="$O10/target-standalone"; scratch_repo "$O10TGT2"
+      O10SAOUT="$O10/standalone.out"; O10SAERR="$O10/standalone.err"
+      ( cd "$O10TGT2" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" \
+        "$O10BIN" init --source "$O10SRC" >"$O10SAOUT" 2>"$O10SAERR" )
+      rc=$?
+      [ "$rc" -eq 0 ] && pass "standalone binary (no shim, no OMAKASE_BASE_PAYLOAD) inits via the embedded base (#168)" || fail "standalone init exited $rc ($(cat "$O10SAERR"))"
+      [ -x "$O10TGT2/.omakase/bin/omakase-banner.sh" ] && pass "embedded base machinery placed" || fail "base machinery missing from standalone init"
+      [ -f "$O10TGT2/.omakase/O10-SOURCE-MARKER" ] && pass "source delta layered over the embedded base" || fail "source marker missing from standalone init"
+      [ -d "$XDG/omakase/basepayload" ] && pass "embedded base extracted into the machine cache" || fail "no basepayload extraction dir — embedded fallback did not run"
+    else
+      echo "  SKIP: leg 8 needs the HEAD-built binary (the pinned release predates the embedded base payload)"
+    fi
 
     # ---- leg 9: bare init with nothing remembered places NOTHING (#123 item 1) ----
     # A fresh repo, no --source, no remembered source: there is no harness to

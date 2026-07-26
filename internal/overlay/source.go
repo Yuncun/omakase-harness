@@ -6,9 +6,10 @@
 // are wired through init.go.
 //
 // The merge base payload's location is handed over by the shims in
-// OMAKASE_BASE_PAYLOAD and resolves binary-relative only as a last resort
-// (see defaultPayload). OMAKASE_PAYLOAD is never honored here: that is the
-// plain-install override, not the merge base.
+// OMAKASE_BASE_PAYLOAD, resolves binary-relative when running from a plugin
+// checkout, and otherwise comes from the copy embedded in the binary itself
+// (see ensureBasePayload — issue #168). OMAKASE_PAYLOAD is never honored
+// here: that is the plain-install override, not the merge base.
 package overlay
 
 import (
@@ -23,7 +24,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+
+	basepayload "github.com/Yuncun/omakase-harness"
 )
 
 // reOwnerRepo is the owner/repo shorthand test: two path segments, each
@@ -39,25 +43,6 @@ var reOwnerRepoSub = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*)/([A-Za-z0
 // It is "" in production; tests set it because os.Executable points at the
 // test binary, not a deployed omakase.
 var basePayloadOverride string
-
-// defaultPayload resolves the base harness payload. Precedence:
-// basePayloadOverride (test seam, "" in production) > OMAKASE_BASE_PAYLOAD
-// (the shim handoff) > the binary-relative ../payload. A fetched or PATH
-// binary has no payload/ sibling, so the shims export the plugin's own
-// bin/../payload in OMAKASE_BASE_PAYLOAD. This is not the OMAKASE_PAYLOAD
-// override, which applies only to a plain install, never the merge base.
-func defaultPayload() string {
-	if basePayloadOverride != "" {
-		return basePayloadOverride
-	}
-	if v := os.Getenv("OMAKASE_BASE_PAYLOAD"); v != "" {
-		return v
-	}
-	if exe, err := os.Executable(); err == nil {
-		return filepath.Join(filepath.Dir(filepath.Dir(exe)), "payload")
-	}
-	return ""
-}
 
 // expandSource applies the shorthand / ref / subpath / local-dir-absolutize
 // rewrites, returning the clone root, the pinned ref ("" if none), and the
@@ -154,7 +139,7 @@ type sourceResult struct {
 // the staging dir is removed on every subsequent exit path.
 func runSource(source, sourceRef, sourceSub, basePayload string, stdout, stderr io.Writer) (sourceResult, int) {
 	// Fail before any clone/fetch when the merge base is absent: a missing
-	// base means the shim handoff (OMAKASE_BASE_PAYLOAD, see defaultPayload)
+	// base means an explicit handoff (OMAKASE_BASE_PAYLOAD, see ensureBasePayload)
 	// never happened. The message names the path so a bad handoff is
 	// diagnosable.
 	if info, err := os.Stat(basePayload); err != nil || !info.IsDir() {
@@ -497,4 +482,110 @@ func gitCacheOut(cache string, args ...string) string {
 		return ""
 	}
 	return strings.TrimRight(string(out), "\n")
+}
+
+// ensureBasePayload resolves the base harness payload to an on-disk
+// directory. This is not the OMAKASE_PAYLOAD override, which applies only
+// to a plain install, never the merge base. Per-tier failure behavior:
+//
+//   - basePayloadOverride (test seam) and OMAKASE_BASE_PAYLOAD (the shim
+//     handoff) are EXPLICIT: they are returned verbatim, even when the path
+//     is missing — a bad handoff must fail loudly downstream (runSource's
+//     stat guard), never be papered over with the embedded copy.
+//   - The binary-relative ../payload sibling is DERIVED, not configured: if
+//     it exists it wins (the plugin dev loop — edit payload/, re-init —
+//     keeps working); if not, this is a binary installed alone (brew,
+//     release tarball, go install — issue #168) and the embedded copy is
+//     extracted to the machine cache and used.
+func ensureBasePayload() (string, error) {
+	if basePayloadOverride != "" {
+		return basePayloadOverride, nil
+	}
+	if v := os.Getenv("OMAKASE_BASE_PAYLOAD"); v != "" {
+		return v, nil
+	}
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Join(filepath.Dir(filepath.Dir(exe)), "payload")
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return dir, nil
+		}
+	}
+	return extractEmbeddedBase()
+}
+
+// extractEmbeddedBase materializes basepayload.FS under
+// ${XDG_CACHE_HOME:-$HOME/.cache}/omakase/basepayload/<content-hash>/,
+// stripping the leading "payload/" so the returned dir is the payload root
+// itself. Scripts get the exec bit (placement re-adds it anyway; this keeps
+// the cache copy runnable for inspection). Extraction goes to a tmp dir
+// then renames, so a crash never leaves a half tree at the final path; a
+// concurrent extraction losing the rename race reuses the winner's dir.
+func extractEmbeddedBase() (string, error) {
+	cache := os.Getenv("XDG_CACHE_HOME")
+	if cache == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("no XDG_CACHE_HOME and no home dir: %w", err)
+		}
+		cache = filepath.Join(home, ".cache")
+	}
+
+	sum := sha256.New()
+	var rels []string
+	err := fs.WalkDir(basepayload.FS, "payload", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		data, err := fs.ReadFile(basepayload.FS, path)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(sum, "%s\x00%d\x00", path, len(data))
+		sum.Write(data)
+		rels = append(rels, strings.TrimPrefix(path, "payload/"))
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("read embedded base payload: %w", err)
+	}
+	if len(rels) == 0 {
+		return "", fmt.Errorf("embedded base payload is empty")
+	}
+
+	dest := filepath.Join(cache, "omakase", "basepayload", hex.EncodeToString(sum.Sum(nil))[:12])
+	if info, err := os.Stat(dest); err == nil && info.IsDir() {
+		return dest, nil // already extracted (same content hash = same bytes)
+	}
+
+	tmp := dest + ".tmp." + strconv.Itoa(os.Getpid())
+	for _, rel := range rels {
+		data, err := fs.ReadFile(basepayload.FS, "payload/"+rel)
+		if err != nil {
+			return "", err
+		}
+		mode := os.FileMode(0o644)
+		if strings.HasSuffix(rel, ".sh") {
+			mode = 0o755
+		}
+		full := filepath.Join(tmp, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			os.RemoveAll(tmp)
+			return "", err
+		}
+		if err := os.WriteFile(full, data, mode); err != nil {
+			os.RemoveAll(tmp)
+			return "", err
+		}
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		os.RemoveAll(tmp)
+		if info, statErr := os.Stat(dest); statErr == nil && info.IsDir() {
+			return dest, nil // lost the race to a concurrent extraction
+		}
+		return "", err
+	}
+	return dest, nil
 }

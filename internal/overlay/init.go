@@ -219,7 +219,14 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	recommends := ""
 	var payload string
 	if source != "" {
-		res, code := runSource(source, sourceRef, sourceSub, defaultPayload(), stdout, stderr)
+		base, baseErr := ensureBasePayload()
+		if baseErr != nil {
+			// Unreachable with a healthy binary: an on-disk base was absent
+			// AND the embedded copy could not be extracted to the cache.
+			fmt.Fprintf(stderr, "omakase: cannot materialize the base harness payload: %v\n", baseErr)
+			return 1
+		}
+		res, code := runSource(source, sourceRef, sourceSub, base, stdout, stderr)
 		if code != 0 {
 			return code // runSource printed the message + cleaned any staging dir
 		}

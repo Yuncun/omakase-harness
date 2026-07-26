@@ -152,7 +152,7 @@ installed harness, and `remove` always tears it down completely.
 | `OMAKASE_SKIP_GATES=1` | skip every gate for one git command — the explicit skip-all escape. Audited and printed. The overlay integrity check still runs; bypass it with git's own `--no-verify` |
 | `OMAKASE_CUTOVER_CONFIRM=1` | required to apply `init.sh --cut-over` |
 | `OMAKASE_PAYLOAD` | path to a payload tree to install, overriding the plugin payload. Lower precedence than `--source` |
-| `OMAKASE_BASE_PAYLOAD` | path to the base (plugin) payload tree, exported automatically by the bin/ shims. Needed when the binary resolves from the per-machine cache or PATH, away from a `payload/` sibling. A location hint only — unlike `OMAKASE_PAYLOAD` it never suppresses a remembered source |
+| `OMAKASE_BASE_PAYLOAD` | path to the base (plugin) payload tree, exported automatically by the bin/ shims. A location hint only — unlike `OMAKASE_PAYLOAD` it never suppresses a remembered source. Not needed for a standalone binary (brew, release tarball, `go install`): with no export and no `payload/` sibling, the binary extracts its own embedded copy of the base payload into the machine cache and uses that |
 | `OMAKASE_RELEASE_BASE_URL` | mirror for the omakase binary download, overriding the GitHub releases base URL |
 | `OMAKASE_BIN` | path to an omakase binary to use instead of dev rebuild, `dist/omakase`, PATH, or the fetched cache — must be executable, or resolution fails immediately |
 | `OMAKASE_NOW` | test hook: pins the ledger epoch (the timestamp on each recorded gate row) to a fixed value for reproducible runs |

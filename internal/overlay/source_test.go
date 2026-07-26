@@ -44,7 +44,7 @@ func useBasePayloadDir(t *testing.T) string {
 }
 
 // clearBasePayloadOverride empties basePayloadOverride for the duration of a test
-// (save/restore, like useBasePayloadDir), so defaultPayload falls through to the
+// (save/restore, like useBasePayloadDir), so ensureBasePayload falls through to the
 // OMAKASE_BASE_PAYLOAD env tier the shims export — the override would otherwise
 // short-circuit that tier.
 func clearBasePayloadOverride(t *testing.T) {
@@ -218,6 +218,98 @@ func TestSourceRootManifestRefused(t *testing.T) {
 	commitAll(t, src, "root-manifest")
 	assertSourceRefusal(t, src,
 		"omakase: source '"+src+"' has a root omakase.manifest, which omakase no longer reads — omakase reads one manifest: payload/omakase.manifest. Move name:/version:/recommends: there and delete the root file. Nothing was changed.\n")
+}
+
+// ---------------------------------------------------------------- embedded base (#168)
+
+// TestEnsureBasePayloadEmbedded: with no on-disk base payload anywhere (no
+// override, no OMAKASE_BASE_PAYLOAD, no binary-relative sibling), the base
+// resolves by extracting the embedded copy into the machine cache — the
+// brew/tarball/go-install situation of issue #168. The extraction carries
+// the real machinery files (dot-paths included — the go:embed all: prefix
+// regression this pins), marks scripts executable, and is idempotent.
+func TestEnsureBasePayloadEmbedded(t *testing.T) {
+	srcTestEnv(t)
+	clearBasePayloadOverride(t)
+
+	dir, err := ensureBasePayload()
+	if err != nil {
+		t.Fatalf("ensureBasePayload: %v", err)
+	}
+	cache := os.Getenv("XDG_CACHE_HOME")
+	if !strings.HasPrefix(dir, filepath.Join(cache, "omakase", "basepayload")+string(os.PathSeparator)) {
+		t.Fatalf("extracted to %q, want under %s/omakase/basepayload/", dir, cache)
+	}
+	for _, rel := range []string{
+		"omakase.manifest",
+		".omakase/VERSION",
+		".omakase/bin/omakase-banner.sh",
+		".omakase/bin/omakase-worktree-guard.sh",
+		".omakase/gates/example.sh",
+	} {
+		info, err := os.Stat(filepath.Join(dir, rel))
+		if err != nil {
+			t.Fatalf("extracted base missing %s: %v", rel, err)
+		}
+		if info.Size() == 0 {
+			t.Errorf("extracted %s is empty", rel)
+		}
+		if strings.HasSuffix(rel, ".sh") && info.Mode()&0o111 == 0 {
+			t.Errorf("extracted %s not executable (mode %v)", rel, info.Mode())
+		}
+	}
+
+	again, err := ensureBasePayload()
+	if err != nil {
+		t.Fatalf("second ensureBasePayload: %v", err)
+	}
+	if again != dir {
+		t.Errorf("second call = %q, want the same cached dir %q", again, dir)
+	}
+}
+
+// TestEnsureBasePayloadPrefersDisk: an on-disk base (the shim handoff /
+// dev loop) still wins over the embedded copy.
+func TestEnsureBasePayloadPrefersDisk(t *testing.T) {
+	srcTestEnv(t)
+	base := useBasePayloadDir(t)
+	dir, err := ensureBasePayload()
+	if err != nil {
+		t.Fatalf("ensureBasePayload: %v", err)
+	}
+	if dir != base {
+		t.Errorf("ensureBasePayload = %q, want the on-disk base %q", dir, base)
+	}
+}
+
+// TestSourceEmbeddedBaseFallback: the #168 end-to-end — `init --source` with
+// no on-disk base payload at all must succeed by falling back to the
+// embedded base, layering the real machinery under the source delta.
+func TestSourceEmbeddedBaseFallback(t *testing.T) {
+	dir, _ := initRepo(t)
+	srcTestEnv(t)
+	clearBasePayloadOverride(t)
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: demo\nversion: 1.2.3\n")
+	writeFile(t, filepath.Join(src, "payload", ".claude", "rules", "r.md"), "rule\n")
+	commitAll(t, src, "src")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0 (embedded base fallback); stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	// The source delta and the real embedded machinery are both placed.
+	for _, rel := range []string{
+		".claude/rules/r.md",
+		".omakase/bin/omakase-banner.sh",
+		".omakase/bin/omakase-worktree-guard.sh",
+		".omakase/gates/example.sh",
+	} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			t.Errorf("placed tree missing %s: %v", rel, err)
+		}
+	}
 }
 
 // TestSourceEmptyPayload: a source with no payload/ tree is refused — nothing to
@@ -823,18 +915,24 @@ func TestManifestField(t *testing.T) {
 
 // Since v0.18.0 the binary may run apart from the plugin (a fetched release cache
 // or a PATH install), so the shims hand the merge base's location over in
-// OMAKASE_BASE_PAYLOAD; the binary-relative $SCRIPT_DIR/../payload is a last
-// resort only. These tests run with basePayloadOverride cleared so defaultPayload
-// actually consults the env tier.
+// OMAKASE_BASE_PAYLOAD; the binary-relative $SCRIPT_DIR/../payload and the
+// embedded copy (#168) are fallbacks only. These tests run with
+// basePayloadOverride cleared so ensureBasePayload actually consults the
+// env tier.
 
-// TestDefaultPayloadHonorsBasePayloadEnv: with basePayloadOverride cleared,
-// OMAKASE_BASE_PAYLOAD is the resolved base.
-func TestDefaultPayloadHonorsBasePayloadEnv(t *testing.T) {
+// TestEnsureBasePayloadHonorsBasePayloadEnv: with basePayloadOverride
+// cleared, OMAKASE_BASE_PAYLOAD is the resolved base — returned verbatim,
+// never second-guessed by the embedded fallback.
+func TestEnsureBasePayloadHonorsBasePayloadEnv(t *testing.T) {
 	clearBasePayloadOverride(t)
 	dir := t.TempDir()
 	t.Setenv("OMAKASE_BASE_PAYLOAD", dir)
-	if got := defaultPayload(); got != dir {
-		t.Errorf("defaultPayload() = %q, want %q (OMAKASE_BASE_PAYLOAD)", got, dir)
+	got, err := ensureBasePayload()
+	if err != nil {
+		t.Fatalf("ensureBasePayload: %v", err)
+	}
+	if got != dir {
+		t.Errorf("ensureBasePayload() = %q, want %q (OMAKASE_BASE_PAYLOAD)", got, dir)
 	}
 }
 

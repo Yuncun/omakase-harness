@@ -29,13 +29,14 @@ import (
 func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	// ---- payload default/normalize ----
 	// The same rule as init's plain-install default: OMAKASE_PAYLOAD
-	// overrides; otherwise defaultPayload. Unlike init, remove does not
-	// validate that the payload dir exists — it is read only in the
-	// pre-0.10 enumeration fallback below, where a missing dir enumerates
-	// nothing.
+	// overrides; otherwise the base payload (on-disk, or the embedded copy
+	// — #168). Best-effort: it is read only in the pre-0.10 enumeration
+	// fallback below, where a missing dir enumerates nothing.
 	payload := os.Getenv("OMAKASE_PAYLOAD")
 	if payload == "" {
-		payload = defaultPayload()
+		if base, err := ensureBasePayload(); err == nil {
+			payload = base
+		}
 	}
 	payload = strings.TrimSuffix(payload, "/")
 
