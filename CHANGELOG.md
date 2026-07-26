@@ -6,6 +6,12 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 ## [Unreleased]
 
 ### Fixed
+- **A standalone binary can now install harnesses.** brew, release-tarball,
+  and `go install` binaries refused `omakase init <owner/repo>` because the
+  base harness payload only shipped inside the plugin (#168). The base
+  payload is now embedded in the binary at build time and extracted to the
+  machine cache when no on-disk copy exists; the plugin's shim handoff and
+  the dev loop (edit `payload/`, re-init) are unchanged and still win.
 - **Copilot CLI host-audit fixes** (#164 C1–C4, C6): each skill's primary
   command no longer relies on `${CLAUDE_PLUGIN_ROOT}` (Copilot doesn't set
   it — the command was broken there); the worktree guard's deny now carries
