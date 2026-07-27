@@ -5,6 +5,29 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added
+- **Resolved commit in the source line** (#38): every `--source` install and
+  bare re-run now prints the commit the payload came from —
+  `omakase: source '…' (name: …, commit a1b2c3d) cached at …` — so a bare
+  re-run's silent refresh-to-remote-HEAD names exactly what was just
+  adopted.
+
+### Fixed
+- **Payload symlinks that escape the repo are refused** (#30): a harness
+  payload carrying a symlink with an absolute target, or a relative target
+  that climbs out of the repo, refuses the whole install before anything is
+  placed. Installed verbatim, such a link would read or write outside the
+  repo while hidden from `git status` and re-materialized into every
+  worktree by the heal. In-tree relative links (`CLAUDE.md -> AGENTS.md`)
+  still round-trip. A source symlink shadowing a base-payload directory in
+  the merge is refused the same way.
+- **Editor/OS cruft is never placed** (#31): `.DS_Store` and `*.bak` files
+  in a payload are skipped — never placed, ledgered, or snapshotted.
+- **Untrusted manifest fields are sanitized** (#32): control bytes (ANSI
+  escapes, BEL, backspace) embedded in a source's `omakase.manifest`
+  name/version/recommends are stripped before those values reach the
+  terminal, closing an output-spoofing hole.
+
 ## [0.28.0] — 2026-07-27
 
 ### Added

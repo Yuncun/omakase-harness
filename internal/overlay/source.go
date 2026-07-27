@@ -203,6 +203,16 @@ func runSource(source, sourceRef, sourceSub, basePayload string, stdout, stderr 
 		return CopyEntry(filepath.Join(payloadDir, rel), dst)
 	}
 	for _, rel := range rels {
+		// A source symlink where the base put a real directory would delete
+		// the base files under it wholesale (and the walk never descends the
+		// link) — the silent machinery-drop of issue #30b. Refuse; a source
+		// replacing a base *file* is the normal delta-wins case.
+		if isSymlink(filepath.Join(payloadDir, rel)) &&
+			isDir(filepath.Join(merged, rel)) && !isSymlink(filepath.Join(merged, rel)) {
+			os.RemoveAll(merged)
+			fmt.Fprintf(stderr, "omakase: source ships '%s' as a symlink where the base payload has a directory — refusing to shadow the base files under it. Nothing was changed.\n", rel)
+			return sourceResult{}, 1
+		}
 		if err := overlayOne(rel); err != nil {
 			os.RemoveAll(merged)
 			fmt.Fprintf(stderr, "omakase: failed to overlay source payload file '%s' onto the base payload\n", rel)
@@ -333,7 +343,15 @@ func fetchSource(src, subpath, sourceRef string, stdout, stderr io.Writer) (payl
 	if ver != "" {
 		verPart = ", version: " + ver
 	}
-	fmt.Fprintf(stdout, "omakase: source '%s' (name: %s%s) cached at %s\n", canonical, name, verPart, cache)
+	// The resolved commit is the provenance a bare re-run otherwise hides: a
+	// remembered source is silently refreshed to remote HEAD before its
+	// payload (gates included) is re-placed, so the line names exactly what
+	// was just adopted (issue #38).
+	commitPart := ""
+	if c := gitCacheOut(cache, "rev-parse", "--short", "HEAD"); c != "" {
+		commitPart = ", commit " + c
+	}
+	fmt.Fprintf(stdout, "omakase: source '%s' (name: %s%s%s) cached at %s\n", canonical, name, verPart, commitPart, cache)
 	return payloadDir, recommends, 0
 }
 
@@ -406,7 +424,9 @@ func sanitizeBase(src string) string {
 // manifestField returns the value of the first line beginning "<key>:",
 // with whitespace after the colon and all trailing whitespace (including
 // CR) stripped, so a CRLF manifest never leaks a ^M downstream; "" when no
-// such line exists.
+// such line exists. Control bytes (C0 + DEL) are deleted: the manifest is
+// attacker-supplied and these values are echoed to the terminal, where an
+// embedded ESC/BEL could spoof the install output (issue #32).
 func manifestField(content []byte, key string) string {
 	prefix := key + ":"
 	const ws = " \t\r\n\v\f" // POSIX [[:space:]]
@@ -420,7 +440,12 @@ func manifestField(content []byte, key string) string {
 		v := line[len(prefix):]
 		v = strings.TrimLeft(v, ws)
 		v = strings.TrimRight(v, ws)
-		return v
+		return strings.Map(func(r rune) rune {
+			if r < 0x20 || r == 0x7f {
+				return -1
+			}
+			return r
+		}, v)
 	}
 	return ""
 }

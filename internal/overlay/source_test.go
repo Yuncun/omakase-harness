@@ -72,6 +72,18 @@ func commitAll(t *testing.T, dir, msg string) {
 	runGitT(t, dir, "commit", "-q", "-m", msg)
 }
 
+// shortHead returns dir's abbreviated HEAD hash — what the cached-at line
+// prints as the resolved commit (the cache clone's HEAD equals the fixture
+// source's HEAD).
+func shortHead(t *testing.T, dir string) string {
+	t.Helper()
+	out := gitCacheOut(dir, "rev-parse", "--short", "HEAD")
+	if out == "" {
+		t.Fatalf("could not resolve short HEAD in %s", dir)
+	}
+	return out
+}
+
 // ---------------------------------------------------------------- basic merge
 
 // TestSourceFlagBasicMerge: a --source flag clones a local source, merges the
@@ -98,7 +110,7 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 
 	cache := sourceCacheDir(src)
 	// merged lexical order: .claude/rules/r.md, .omakase/bin/base.sh, .omakase/gates/src.sh, omakase.manifest
-	wantOut := "omakase: source '" + src + "' (name: demo, version: 1.2.3) cached at " + cache + "\n" +
+	wantOut := "omakase: source '" + src + "' (name: demo, version: 1.2.3, commit " + shortHead(t, src) + ") cached at " + cache + "\n" +
 		"omakase: placed 4 file(s), updated 0 to match the payload, skipped 0 committed path(s).\n" +
 		"  + .claude/rules/r.md\n" +
 		"  + .omakase/bin/base.sh\n" +
@@ -150,7 +162,7 @@ func TestSourceNoRecommendsNoLine(t *testing.T) {
 		t.Errorf("recommends line printed with no recommends: manifest:\n%s", stdout.String())
 	}
 	// "cached at" line carries name only (no ", version:").
-	if !strings.Contains(stdout.String(), "omakase: source '"+src+"' (name: quiet) cached at "+sourceCacheDir(src)+"\n") {
+	if !strings.Contains(stdout.String(), "omakase: source '"+src+"' (name: quiet, commit "+shortHead(t, src)+") cached at "+sourceCacheDir(src)+"\n") {
 		t.Errorf("cached-at line wrong:\n%s", stdout.String())
 	}
 	_ = repo
@@ -335,7 +347,7 @@ func TestSourceCRLFManifest(t *testing.T) {
 	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	wantCached := "omakase: source '" + src + "' (name: crlf-harness, version: 2.3) cached at " + sourceCacheDir(src) + "\n"
+	wantCached := "omakase: source '" + src + "' (name: crlf-harness, version: 2.3, commit " + shortHead(t, src) + ") cached at " + sourceCacheDir(src) + "\n"
 	if !strings.HasPrefix(stdout.String(), wantCached) {
 		t.Errorf("cached-at line did not strip CR/whitespace:\n got: %q\nwant prefix: %q", stdout.String(), wantCached)
 	}
@@ -343,6 +355,235 @@ func TestSourceCRLFManifest(t *testing.T) {
 		t.Errorf("a ^M leaked into stdout:\n%q", stdout.String())
 	}
 	_ = repo
+}
+
+// TestSourceManifestControlBytesStripped: manifest fields are attacker-supplied
+// (an untrusted source repo); embedded control bytes — ANSI escapes, BEL,
+// backspace — must never reach the terminal through the cached-at or
+// recommends lines (issue #32).
+func TestSourceManifestControlBytesStripped(t *testing.T) {
+	initRepo(t)
+	srcTestEnv(t)
+	useBasePayloadDir(t)
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"),
+		"name: evil\x1b[2J\x07harness\nversion: 1.0\x08\nrecommends: run\x1b]0;spoof\x07 this\n")
+	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "g.sh"), "g\n")
+	commitAll(t, src, "hostile manifest")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	out := stdout.String() + stderr.String()
+	for _, bad := range []string{"\x1b", "\x07", "\x08"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("control byte %q leaked into output:\n%q", bad, out)
+		}
+	}
+	if !strings.Contains(stdout.String(), "(name: evil[2Jharness, version: 1.0, commit ") {
+		t.Errorf("cached-at line does not carry the stripped fields:\n%q", stdout.String())
+	}
+}
+
+// TestSourceCruftNeverPlaced: .DS_Store and *.bak files in a source payload
+// are ignored wholesale — never placed, ledgered, or snapshotted (issue #31;
+// the old build.sh pruned them and the merge did not).
+func TestSourceCruftNeverPlaced(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	useBasePayloadDir(t)
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: cruft\n")
+	writeFile(t, filepath.Join(src, "payload", ".claude", "rules", "r.md"), "rule\n")
+	writeFile(t, filepath.Join(src, "payload", ".claude", "rules", ".DS_Store"), "finder junk\n")
+	writeFile(t, filepath.Join(src, "payload", ".claude", "rules", "r.md.bak"), "stale\n")
+	commitAll(t, src, "cruft")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	for _, rel := range []string{".claude/rules/.DS_Store", ".claude/rules/r.md.bak"} {
+		if _, err := os.Lstat(filepath.Join(dir, rel)); err == nil {
+			t.Errorf("cruft file %s was placed into the repo", rel)
+		}
+		if _, err := os.Lstat(filepath.Join(repo.OMK, "payload-snapshot", rel)); err == nil {
+			t.Errorf("cruft file %s entered the payload snapshot", rel)
+		}
+	}
+	ledger, _ := os.ReadFile(filepath.Join(repo.OMK, "placed.tsv"))
+	if strings.Contains(string(ledger), ".DS_Store") || strings.Contains(string(ledger), ".bak") {
+		t.Errorf("cruft entered placed.tsv:\n%s", ledger)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "rules", "r.md")); err != nil {
+		t.Errorf("the real payload file was not placed: %v", err)
+	}
+}
+
+// TestPayloadSymlinkAbsoluteTargetRefused: a payload symlink with an absolute
+// target is refused before anything is placed — installed verbatim it would
+// read/write outside the repo, hidden from git status, and be re-materialized
+// into every worktree by the heal (issue #30a).
+func TestPayloadSymlinkAbsoluteTargetRefused(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	useBasePayloadDir(t)
+
+	outside := t.TempDir()
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: abs-link\n")
+	writeFile(t, filepath.Join(src, "payload", ".claude", "rules", "r.md"), "rule\n")
+	if err := os.Symlink(outside, filepath.Join(src, "payload", "logs")); err != nil {
+		t.Fatal(err)
+	}
+	commitAll(t, src, "hostile symlink")
+
+	var stdout, stderr strings.Builder
+	code := RunInit([]string{"--source", src}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "logs") || !strings.Contains(stderr.String(), "outside the repo") {
+		t.Errorf("refusal does not name the symlink and the escape:\n%s", stderr.String())
+	}
+	if _, err := os.Lstat(filepath.Join(dir, ".claude", "rules", "r.md")); err == nil {
+		t.Error("a payload file was placed despite the refusal (not fail-closed)")
+	}
+	if fileRegular(filepath.Join(repo.OMK, "placed.tsv")) {
+		t.Error("a ledger was written despite the refusal")
+	}
+}
+
+// TestPayloadSymlinkRelativeEscapeRefused: a relative symlink that lexically
+// climbs out of the repo (../..) is refused the same way (issue #30a).
+func TestPayloadSymlinkRelativeEscapeRefused(t *testing.T) {
+	_, _ = initRepo(t)
+	srcTestEnv(t)
+	useBasePayloadDir(t)
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: rel-link\n")
+	if err := os.Symlink("../../sibling/secret", filepath.Join(src, "payload", "peer")); err != nil {
+		t.Fatal(err)
+	}
+	commitAll(t, src, "escaping symlink")
+
+	var stdout, stderr strings.Builder
+	code := RunInit([]string{"--source", src}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "peer") {
+		t.Errorf("refusal does not name the symlink:\n%s", stderr.String())
+	}
+}
+
+// TestSourceSymlinkShadowingBaseDirRefused: a source entry that is a symlink
+// where the merged tree already has a real directory (from the base payload)
+// would silently drop the base files under it — refuse instead (issue #30b).
+func TestSourceSymlinkShadowingBaseDirRefused(t *testing.T) {
+	_, _ = initRepo(t)
+	srcTestEnv(t)
+	base := useBasePayloadDir(t)
+	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: shadow\n")
+	writeFile(t, filepath.Join(src, "payload", "docs", "real.md"), "x\n")
+	if err := os.Symlink("docs", filepath.Join(src, "payload", ".omakase")); err != nil {
+		t.Fatal(err)
+	}
+	commitAll(t, src, "dir shadow")
+
+	var stdout, stderr strings.Builder
+	code := RunInit([]string{"--source", src}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), ".omakase") {
+		t.Errorf("refusal does not name the shadowed path:\n%s", stderr.String())
+	}
+}
+
+// TestSourceBaseRowsLedgeredAndRemovable: base-payload files layered under a
+// source delta are first-class placements — ledgered with the source label,
+// snapshotted, and deleted by remove. A regression that placed base machinery
+// without recording it would leave it un-removable and un-healable while the
+// on-disk assertions stay green (issue #33 item 1).
+func TestSourceBaseRowsLedgeredAndRemovable(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	base := useBasePayloadDir(t)
+	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: ledgered\n")
+	writeFile(t, filepath.Join(src, "payload", ".claude", "rules", "r.md"), "rule\n")
+	commitAll(t, src, "src")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	ledger, _ := os.ReadFile(filepath.Join(repo.OMK, "placed.tsv"))
+	baseRow := ""
+	for _, line := range strings.Split(string(ledger), "\n") {
+		if strings.HasPrefix(line, ".omakase/bin/base.sh\t") {
+			baseRow = line
+		}
+	}
+	if baseRow == "" {
+		t.Fatalf("base-only path .omakase/bin/base.sh is not in placed.tsv:\n%s", ledger)
+	}
+	// The source string is stored once in $OMK/source (the 2-column ledger
+	// derives per-row source from it), so the base row is attributed to the
+	// source install through that file.
+	if got := strings.TrimSpace(readFileT(t, filepath.Join(repo.OMK, "source"))); got != src {
+		t.Errorf("$OMK/source = %q, want %q", got, src)
+	}
+	if _, err := os.Stat(filepath.Join(repo.OMK, "payload-snapshot", ".omakase", "bin", "base.sh")); err != nil {
+		t.Errorf("base-only path missing from payload-snapshot: %v", err)
+	}
+
+	var rout, rerr strings.Builder
+	if code := RunRemove(nil, &rout, &rerr); code != 0 {
+		t.Fatalf("remove exit = %d; stderr=%q", code, rerr.String())
+	}
+	if _, err := os.Lstat(filepath.Join(dir, ".omakase", "bin", "base.sh")); err == nil {
+		t.Error("remove left the base-layered file behind")
+	}
+}
+
+// TestSourceDirAtBaseFilePathRefused: a source shipping a *directory* at a
+// base *file* path (.omakase/VERSION/x) fails closed during the merge, names
+// the path, and places nothing (issue #33 item 4).
+func TestSourceDirAtBaseFilePathRefused(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	base := useBasePayloadDir(t)
+	writeFile(t, filepath.Join(base, ".omakase", "VERSION"), "0.0.0\n")
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: clash\n")
+	writeFile(t, filepath.Join(src, "payload", ".omakase", "VERSION", "x"), "boom\n")
+	commitAll(t, src, "dir at file path")
+
+	var stdout, stderr strings.Builder
+	code := RunInit([]string{"--source", src}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), ".omakase/VERSION") {
+		t.Errorf("refusal does not name the colliding path:\n%s", stderr.String())
+	}
+	if fileRegular(filepath.Join(repo.OMK, "placed.tsv")) {
+		t.Error("a ledger was written despite the refusal")
+	}
+	_ = dir
 }
 
 // ---------------------------------------------------------------- ref pin
@@ -458,7 +699,7 @@ func TestRememberedSourceRoundTrip(t *testing.T) {
 	eq(t, "roundtrip content", readFileT(t, filepath.Join(dir, ".omakase", "gates", "g.sh")), "PINNED\n")
 	eq(t, "roundtrip remembered", readFileT(t, filepath.Join(repo.OMK, "source")), src+"#v1\n")
 	// the bare run re-emitted the pinned "cached at" line (proves it re-fetched the remembered source).
-	if !strings.Contains(o2.String(), "omakase: source '"+src+"' (name: rt) cached at ") {
+	if !strings.Contains(o2.String(), "omakase: source '"+src+"' (name: rt, commit ") {
 		t.Errorf("bare re-run did not re-fetch the remembered source:\n%s", o2.String())
 	}
 }
@@ -744,6 +985,8 @@ func TestSourceLefthookLocalRefusalPostMerge(t *testing.T) {
 	dir, repo := initRepo(t)
 	srcTestEnv(t)
 	useBasePayloadDir(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
 
 	src := newSourceRepo(t)
 	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: legacy-wiring\n")
@@ -766,6 +1009,17 @@ func TestSourceLefthookLocalRefusalPostMerge(t *testing.T) {
 	// was placed and no source was remembered.
 	if _, err := os.Stat(filepath.Join(repo.OMK, "source")); err == nil {
 		t.Error("remembered a source despite the wiring refusal")
+	}
+	// The refusal fires after the merge staged — the staging dir must still be
+	// cleaned on this path, not only on success (issue #33 item 3).
+	entries, err := os.ReadDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "omakase-merge.") {
+			t.Errorf("merge staging dir leaked on the refusal path: %s", e.Name())
+		}
 	}
 }
 
@@ -1023,7 +1277,7 @@ func TestBareRunRememberedSourceSurvivesBasePayloadEnv(t *testing.T) {
 		readFileT(t, filepath.Join(dir, ".omakase", "gates", "src.sh")), "src delta\n")
 	// the bare run re-emitted the "cached at" line — it re-fetched the remembered
 	// source rather than doing a plain install off OMAKASE_BASE_PAYLOAD.
-	if !strings.Contains(o2.String(), "omakase: source '"+src+"' (name: remembered) cached at ") {
+	if !strings.Contains(o2.String(), "omakase: source '"+src+"' (name: remembered, commit ") {
 		t.Errorf("bare re-run did not take the remembered-source merge path:\n%s", o2.String())
 	}
 }
@@ -1058,7 +1312,7 @@ func TestSourceSubpathMerge(t *testing.T) {
 	}
 
 	cache := sourceCacheDir(canonical)
-	wantOut := "omakase: source '" + canonical + "' (name: hubbed, version: 0.1) cached at " + cache + "\n" +
+	wantOut := "omakase: source '" + canonical + "' (name: hubbed, version: 0.1, commit " + shortHead(t, src) + ") cached at " + cache + "\n" +
 		"omakase: placed 4 file(s), updated 0 to match the payload, skipped 0 committed path(s).\n" +
 		"  + .claude/rules/r.md\n" +
 		"  + .omakase/bin/base.sh\n" +
@@ -1197,7 +1451,7 @@ func TestSourceSubpathRememberedRoundTrip(t *testing.T) {
 	}
 	eq(t, "roundtrip content", readFileT(t, filepath.Join(dir, ".omakase", "gates", "g.sh")), "V2\n")
 	eq(t, "roundtrip remembered", readFileT(t, filepath.Join(repo.OMK, "source")), canonical+"\n")
-	if !strings.Contains(o2.String(), "omakase: source '"+canonical+"' (name: rt-sub) cached at ") {
+	if !strings.Contains(o2.String(), "omakase: source '"+canonical+"' (name: rt-sub, commit ") {
 		t.Errorf("bare re-run did not re-fetch the remembered subpath source:\n%s", o2.String())
 	}
 }

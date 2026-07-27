@@ -258,6 +258,15 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	// ---- symlink escape guard (issue #30) ----
+	// A payload symlink is placed verbatim, hidden from git status, and
+	// re-materialized into every worktree by the heal — so a target outside
+	// the repo is a persistent read/write hole. Refuse the whole payload
+	// before anything is placed; in-tree relative links stay allowed.
+	if code := checkPayloadSymlinks(payload, payloadRels, stderr); code != 0 {
+		return code
+	}
+
 	// ---- manifest gate guard (nothing runs undeclared) ----
 	// A harness that still ships lefthook-local.yml is from before the gate
 	// module; omakase no longer reads it. Refuse with migration instructions,
@@ -1011,9 +1020,39 @@ func placeFile(src, rel, root string, umask os.FileMode, stderr io.Writer) int {
 	return 0
 }
 
+// checkPayloadSymlinks refuses a payload carrying any symlink whose target is
+// absolute or lexically climbs out of the repo root (resolved from the link's
+// own parent directory). Placement copies symlinks verbatim (CopyEntry), so
+// this is the one point that keeps an untrusted payload from planting a link
+// that reads or writes outside the repo (issue #30). The check is lexical:
+// every payload entry is individually validated, so a chain through another
+// payload symlink is caught when that link is itself checked.
+func checkPayloadSymlinks(payload string, rels []string, stderr io.Writer) int {
+	for _, rel := range rels {
+		info, err := os.Lstat(filepath.Join(payload, rel))
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		target, err := os.Readlink(filepath.Join(payload, rel))
+		if err != nil {
+			fmt.Fprintf(stderr, "omakase: could not read payload symlink '%s'. Nothing was changed.\n", rel)
+			return 1
+		}
+		resolved := filepath.Clean(filepath.Join(filepath.Dir(rel), target))
+		if filepath.IsAbs(target) || resolved == ".." || strings.HasPrefix(resolved, ".."+string(filepath.Separator)) {
+			fmt.Fprintf(stderr, "omakase: refusing to install — payload symlink '%s' (-> %s) points outside the repo; a placed symlink must stay inside the repo it lands in. Nothing was changed.\n", rel, target)
+			return 1
+		}
+	}
+	return 0
+}
+
 // walkPayload lists the payload's regular files and symlinks as clean
 // payload-relative paths, in filepath.WalkDir's lexical order. Directories
 // and other special files are excluded; symlinks are never followed.
+// Editor/OS cruft (.DS_Store, *.bak) is skipped — a source repo that commits
+// it, or a local-dir payload carrying it untracked, must not see it placed,
+// ledgered, or snapshotted (issue #31).
 func walkPayload(payload string) ([]string, error) {
 	var rels []string
 	err := filepath.WalkDir(payload, func(path string, d fs.DirEntry, err error) error {
@@ -1021,6 +1060,9 @@ func walkPayload(payload string) ([]string, error) {
 			return err
 		}
 		if d.IsDir() {
+			return nil
+		}
+		if name := d.Name(); name == ".DS_Store" || strings.HasSuffix(name, ".bak") {
 			return nil
 		}
 		t := d.Type()
