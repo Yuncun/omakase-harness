@@ -39,8 +39,8 @@ var lfsHooks = map[string]bool{
 // is forwarded to the gate runner (pre-push ref lines). Gate hooks return
 // non-zero to block the commit/push; post-checkout always returns 0.
 func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(argv) < 1 || !hook.Known(argv[0]) {
-		fmt.Fprintln(stderr, "usage: omakase hook <pre-commit|pre-push|post-checkout> [hook args...]")
+	if len(argv) < 1 || !(hook.Known(argv[0]) || argv[0] == "session-start") {
+		fmt.Fprintln(stderr, "usage: omakase hook <pre-commit|pre-push|post-checkout|session-start> [hook args...]")
 		return 2
 	}
 	name := argv[0]
@@ -84,6 +84,17 @@ func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	if isGate {
 		return runGateHook(name, hookArgs, repo, stdin, stdout, stderr)
+	}
+
+	// session-start: the plugin's SessionStart hook — a host session event,
+	// not a git one. Heal only (no LFS forward), and say so on stdout when
+	// something was restored: a session opening on a wiped overlay is the one
+	// silent failure the git hooks never see (#164 C5). Always exits 0.
+	if name == "session-start" {
+		if n := healWorktree(repo, stderr); n > 0 {
+			fmt.Fprintf(stdout, "omakase: restored %d missing harness file(s) at session start — run `omakase status` to review.\n", n)
+		}
+		return 0
 	}
 
 	// post-checkout: heal, then forward git-lfs best-effort. Never fails the
@@ -179,8 +190,10 @@ func verifyPresent(root, omk string, stderr io.Writer) int {
 // upstream-collision and drift cases. Wholly best-effort — a failed step
 // warns or skips, never fails the checkout. Unlike the sh original this
 // refuses to create dest parents through a planted directory symlink
-// (safeMkdirAll), matching init's placement hardening.
-func healWorktree(repo *state.Repo, stderr io.Writer) {
+// (safeMkdirAll), matching init's placement hardening. Returns how many
+// missing files it restored (session-start reports; post-checkout ignores).
+func healWorktree(repo *state.Repo, stderr io.Writer) int {
+	restored := 0
 	root := repo.Root
 	snap := filepath.Join(repo.OMK, "payload-snapshot")
 	umask := currentUmask()
@@ -239,12 +252,14 @@ func healWorktree(repo *state.Repo, stderr io.Writer) {
 		if err := CopyEntry(snapEntry, dest); err != nil {
 			continue
 		}
+		restored++
 		if strings.HasSuffix(rel, ".sh") && !isSymlink(dest) {
 			if info, statErr := os.Stat(dest); statErr == nil {
 				os.Chmod(dest, info.Mode().Perm()|(0o111&^umask))
 			}
 		}
 	}
+	return restored
 }
 
 // first12 is the sh scripts' ${hash:0:12} — the digest prefix the drift

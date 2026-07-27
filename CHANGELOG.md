@@ -5,6 +5,16 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added
+- **Session-start heal** (#164 C5, narrow scope): the plugin now ships
+  `hooks/hooks.json` with a `SessionStart` hook — both hosts read it — that
+  runs `omakase hook session-start` when an agent session opens. It repairs
+  a wiped/partial overlay the way `post-checkout` does, closing the one gap
+  git events can't see (overlay deleted, then a new session starts, which
+  previously ran unguided until someone noticed). Contract: silent and
+  instant when there is nothing to do, one stdout line when files were
+  restored, exit 0 always, and no binary fetch at session start.
+
 ### Changed
 - **The base payload shrinks to content the product owns** (#172):
   `omakase.manifest` + `.omakase/VERSION`, nothing else. The branded status
