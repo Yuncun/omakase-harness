@@ -31,21 +31,21 @@ jobs:
           exit $rc
 
   tests-no-go:
-    # Covers the issue #70 machine shape: no Go toolchain, so the shim fetches the
-    # published release binary and drives init from it. GitHub's runners preinstall
-    # Go, so this runs in a slim Debian container that genuinely lacks one. The
-    # fetch suite needs no node: it drives the shim's own binary fetch, and no
-    # scenario that runs without Go invokes gates.
+    # Covers the plugin-only machine shape (issue #182): no Go toolchain, no
+    # binary — the shims must refuse with the one-line brew instruction, and
+    # a seeded stable machine copy must resolve offline. GitHub's runners
+    # preinstall Go, so this runs in a slim Debian container that genuinely
+    # lacks one.
     runs-on: ubuntu-latest
     container: debian:stable-slim
     steps:
-      # git and curl are absent from the slim image; ca-certificates lets curl
-      # verify TLS for the live GitHub download. Debian's base already carries
-      # bash, coreutils (sha256sum), tar, findutils, and mawk.
+      # git is absent from the slim image. Debian's base already carries bash,
+      # coreutils, tar, findutils, and mawk. Nothing here needs the network:
+      # resolution is local-only since #182.
       - name: Install suite dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git curl ca-certificates
+          apt-get install -y --no-install-recommends git
       - uses: actions/checkout@v4
       - name: Assert no Go toolchain
         run: |
@@ -55,9 +55,5 @@ jobs:
           fi
       - name: Trust the checkout despite the container's differing owner
         run: git config --global safe.directory '*'
-      # OMAKASE_TEST_LIVE_FETCH=1 turns on O8's one real download of the pinned
-      # release and lets O10 reuse that binary. The pin is only bumped AFTER a
-      # release ships (the two-PR release flow), so the download never races an
-      # unpublished version.
-      - name: Run the fetch suite with a live download
-        run: OMAKASE_TEST_LIVE_FETCH=1 bash tests/omakase-fetch.test.sh
+      - name: Run the resolution suite without a Go toolchain
+        run: bash tests/omakase-resolve.test.sh

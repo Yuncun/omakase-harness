@@ -5,13 +5,12 @@
 `init.sh`, `status.sh`, and `remove.sh` are thin shims onto the omakase Go
 binary. Each resolves, in order: an `OMAKASE_BIN` override (must be executable, or
 resolution fails immediately) → a dev rebuild (`go.mod` + `go` on PATH) → a prebuilt
-`dist/omakase` → `omakase` on PATH → the pinned release binary, downloaded once per
-machine, sha256-verified against digests baked into the repo, and cached at
-`~/.cache/omakase/bin/<version>/` (`XDG_CACHE_HOME` respected). `init.sh` and `status.sh`
-may trigger that download on first run; `remove.sh` never fetches but
-reuses an already-cached binary, keeping uninstall offline. When nothing resolves, every
-shim fails closed: recovery guidance on stderr (install a binary, or point
-`OMAKASE_BIN=/path/to/omakase` at one) and exit 1 — there is no bash fallback.
+`dist/omakase` → `omakase` on PATH → the stable machine copy at
+`~/.cache/omakase/bin/current/omakase` (`XDG_CACHE_HOME` respected — the path every
+real `omakase init` self-installs and the `.git/hooks` dispatchers exec). Resolution
+is local-only; the shims never download anything (#182). When nothing resolves, every
+shim fails closed: one line on stderr — install the binary with
+`brew install yuncun/tap/omakase` — and exit 1. There is no bash fallback.
 
 ### `init.sh [<owner/repo[/subpath][#ref]> | --source <git-url|path>] [--cut-over] [--help]`
 
@@ -159,10 +158,9 @@ installed harness, and `remove` always tears it down completely.
 | `OMAKASE_CUTOVER_CONFIRM=1` | required to apply `init.sh --cut-over` |
 | `OMAKASE_PAYLOAD` | path to a payload tree to install, overriding the plugin payload. Lower precedence than `--source` |
 | `OMAKASE_BASE_PAYLOAD` | dev/test override: path to a base payload tree to merge under a `--source` install. A location hint only — unlike `OMAKASE_PAYLOAD` it never suppresses a remembered source. Normally unset: the binary resolves a `payload/` sibling (dev loop) or extracts its own embedded copy into the machine cache |
-| `OMAKASE_RELEASE_BASE_URL` | mirror for the omakase binary download, overriding the GitHub releases base URL |
-| `OMAKASE_BIN` | path to an omakase binary to use instead of dev rebuild, `dist/omakase`, PATH, or the fetched cache — must be executable, or resolution fails immediately |
+| `OMAKASE_BIN` | path to an omakase binary to use instead of dev rebuild, `dist/omakase`, PATH, or the stable machine copy — must be executable, or resolution fails immediately |
 | `OMAKASE_NOW` | test hook: pins the ledger epoch (the timestamp on each recorded gate row) to a fixed value for reproducible runs |
-| `XDG_CACHE_HOME` | cache root for the fetched omakase binary (default `~/.cache`) |
+| `XDG_CACHE_HOME` | cache root for the stable machine binary copy and source clones (default `~/.cache`) |
 
 ## Manifest
 

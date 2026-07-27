@@ -3,19 +3,19 @@
 ## Layout
 
 The tool is shell entry points in `bin/` and a `payload/` tree copied into adopters.
-Four verbs — `init`, `remove`, `status`, and `mcp` — are implemented by a Go binary (module
-at the repo root) behind unchanged `bin/{init,remove,status,mcp}.sh` entry points: thin
+Three verbs — `init`, `remove`, and `status` — are implemented by a Go binary (module
+at the repo root) behind unchanged `bin/{init,remove,status}.sh` entry points: thin
 shims that resolve a runnable `omakase` in order — an `OMAKASE_BIN` override; a dev rebuild
 (`CGO_ENABLED=0 go build -o dist/omakase ./cmd/omakase`, when `go.mod` and `go` are both
-present); `dist/omakase`; `omakase` on `PATH`; then the pinned, checksum-verified release
-binary, fetched once per machine into a local cache (`init`, `status`, and `mcp` allow this
-fetch; `remove` does not, so uninstall stays offline). `bin/lib-omakase-bin.sh` implements
-every tier. When none of that resolves, every shim fails closed — recovery guidance on
-stderr (naming the `OMAKASE_BIN` override) and exit 1. There is no bash fallback body: a
-silent one would mask binary-distribution failures.
+present); `dist/omakase`; `omakase` on `PATH`; then the stable machine copy every real
+`omakase init` self-installs at `~/.cache/omakase/bin/current/omakase`.
+`bin/lib-omakase-bin.sh` implements every tier. Resolution is local-only — the shims
+never download a binary (#182). When none of that resolves, every shim fails closed —
+one line on stderr naming the fix (`brew install yuncun/tap/omakase`) and exit 1. There
+is no bash fallback body: a silent one would mask binary-distribution failures.
 
-- `bin/` — the installer (`init`), uninstaller (`remove`), inspector (`status`), and
-  MCP-server entry point (`mcp`), plus shared libraries.
+- `bin/` — the installer (`init`), uninstaller (`remove`), and inspector (`status`),
+  plus shared libraries.
 - `payload/` — the harness content copied into every target. Keep it minimal: anything
   added here ships to all adopters.
 - `tests/` — one `*.test.sh` per area.
@@ -28,8 +28,8 @@ Run the suite:
 
 With Go present, the suite exercises the `status`, `init`, and `remove` binary paths
 through the shims. Without Go, the shims resolve a real binary — `omakase` on `PATH`, or
-the pinned, checksum-verified release fetched once per machine — and fail closed (error +
-exit 1) when nothing resolves.
+the stable machine copy an earlier init self-installed — and fail closed (the brew
+instruction + exit 1) when nothing resolves.
 
 A change to the installer or the path model needs a matching test. The path classification
 in `bin/lib-harness-paths.sh` is the single source of truth for what is excluded and how;

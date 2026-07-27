@@ -5,6 +5,18 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Removed
+- **The shim fetch tier** (#182): a plugin-only install no longer downloads
+  the pinned release binary behind the scenes. The shims resolve locally —
+  override, dev build, `dist/`, PATH, the stable machine copy — and when
+  nothing resolves they print one line:
+  `install it with: brew install yuncun/tap/omakase`. This is the field's
+  plugin pattern (a plugin assumes the CLI, never fetches it), and it removes
+  the standing machinery the fetch required: the pinned version + 8 baked
+  hashes in `bin/lib-omakase-bin.sh`, and the re-pin PR after every release —
+  releases are now one PR and a tag. Uninstall was already offline; now
+  everything is.
+
 ### Added
 - **Resolved commit in the source line** (#38): every `--source` install and
   bare re-run now prints the commit the payload came from —
