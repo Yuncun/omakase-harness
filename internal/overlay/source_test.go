@@ -496,6 +496,84 @@ func TestSourceSymlinkShadowingBaseDirRefused(t *testing.T) {
 	}
 }
 
+// TestSourceBaseRowsLedgeredAndRemovable: base-payload files layered under a
+// source delta are first-class placements — ledgered with the source label,
+// snapshotted, and deleted by remove. A regression that placed base machinery
+// without recording it would leave it un-removable and un-healable while the
+// on-disk assertions stay green (issue #33 item 1).
+func TestSourceBaseRowsLedgeredAndRemovable(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	base := useBasePayloadDir(t)
+	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: ledgered\n")
+	writeFile(t, filepath.Join(src, "payload", ".claude", "rules", "r.md"), "rule\n")
+	commitAll(t, src, "src")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	ledger, _ := os.ReadFile(filepath.Join(repo.OMK, "placed.tsv"))
+	baseRow := ""
+	for _, line := range strings.Split(string(ledger), "\n") {
+		if strings.HasPrefix(line, ".omakase/bin/base.sh\t") {
+			baseRow = line
+		}
+	}
+	if baseRow == "" {
+		t.Fatalf("base-only path .omakase/bin/base.sh is not in placed.tsv:\n%s", ledger)
+	}
+	// The source string is stored once in $OMK/source (the 2-column ledger
+	// derives per-row source from it), so the base row is attributed to the
+	// source install through that file.
+	if got := strings.TrimSpace(readFileT(t, filepath.Join(repo.OMK, "source"))); got != src {
+		t.Errorf("$OMK/source = %q, want %q", got, src)
+	}
+	if _, err := os.Stat(filepath.Join(repo.OMK, "payload-snapshot", ".omakase", "bin", "base.sh")); err != nil {
+		t.Errorf("base-only path missing from payload-snapshot: %v", err)
+	}
+
+	var rout, rerr strings.Builder
+	if code := RunRemove(nil, &rout, &rerr); code != 0 {
+		t.Fatalf("remove exit = %d; stderr=%q", code, rerr.String())
+	}
+	if _, err := os.Lstat(filepath.Join(dir, ".omakase", "bin", "base.sh")); err == nil {
+		t.Error("remove left the base-layered file behind")
+	}
+}
+
+// TestSourceDirAtBaseFilePathRefused: a source shipping a *directory* at a
+// base *file* path (.omakase/VERSION/x) fails closed during the merge, names
+// the path, and places nothing (issue #33 item 4).
+func TestSourceDirAtBaseFilePathRefused(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	base := useBasePayloadDir(t)
+	writeFile(t, filepath.Join(base, ".omakase", "VERSION"), "0.0.0\n")
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: clash\n")
+	writeFile(t, filepath.Join(src, "payload", ".omakase", "VERSION", "x"), "boom\n")
+	commitAll(t, src, "dir at file path")
+
+	var stdout, stderr strings.Builder
+	code := RunInit([]string{"--source", src}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), ".omakase/VERSION") {
+		t.Errorf("refusal does not name the colliding path:\n%s", stderr.String())
+	}
+	if fileRegular(filepath.Join(repo.OMK, "placed.tsv")) {
+		t.Error("a ledger was written despite the refusal")
+	}
+	_ = dir
+}
+
 // ---------------------------------------------------------------- ref pin
 
 // TestSourceRefPinBranch: --source repo#branch checks the cache out to that
@@ -895,6 +973,8 @@ func TestSourceLefthookLocalRefusalPostMerge(t *testing.T) {
 	dir, repo := initRepo(t)
 	srcTestEnv(t)
 	useBasePayloadDir(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
 
 	src := newSourceRepo(t)
 	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: legacy-wiring\n")
@@ -917,6 +997,17 @@ func TestSourceLefthookLocalRefusalPostMerge(t *testing.T) {
 	// was placed and no source was remembered.
 	if _, err := os.Stat(filepath.Join(repo.OMK, "source")); err == nil {
 		t.Error("remembered a source despite the wiring refusal")
+	}
+	// The refusal fires after the merge staged — the staging dir must still be
+	// cleaned on this path, not only on success (issue #33 item 3).
+	entries, err := os.ReadDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "omakase-merge.") {
+			t.Errorf("merge staging dir leaked on the refusal path: %s", e.Name())
+		}
 	}
 }
 
