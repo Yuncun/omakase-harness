@@ -16,10 +16,10 @@ neither you nor the base harness ships, `init` refuses and places nothing — so
 at install, not as an exit-127 on commit.
 
 Start from the base harness repo or an existing custom harness, edit `payload/`, and publish. The
-worked example is [`harness/`](../harness/) — the harness
+worked example is [`omakase-harness-harness/`](../omakase-harness-harness/) — the harness
 omakase's own development runs: placed agent rules, two pre-commit gates, a cached pre-push
 test gate, and the `omakase.manifest` that declares them. Try it with
-`omakase init Yuncun/omakase-harness/harness`, then copy it and swap in your
+`omakase init Yuncun/omakase-harness/omakase-harness-harness`, then copy it and swap in your
 own rules and gates. There is no capture
 tool: build `payload/` and its one `omakase.manifest` (identity + gate wiring) by hand, moving
 in whatever files a project already has in place. The `author` skill walks an agent through
@@ -43,7 +43,7 @@ harness gets them for free and ships none of it.
 **Policy**, by contrast, ships in a harness. Anything that steers how people or
 agents work — editor hooks, workflow rules, discipline scripts — is payload
 content you place and recommend, never an omakase feature. The worked example is
-the worktree guard in [`harness/`](../harness/): a PreToolUse script this repo's
+the worktree guard in [`omakase-harness-harness/`](../omakase-harness-harness/): a PreToolUse script this repo's
 own harness ships (with a `recommends:` line teaching the wiring) that omakase
 itself knows nothing about.
 

@@ -354,11 +354,11 @@ func TestSrcDisplay(t *testing.T) {
 		"ssh://host/path/repo.git/":              "host/path/repo.git",
 		// The browsable transform: `//<sub>` → `/tree/HEAD/<sub>`; a #ref pin
 		// browses at that ref; non-GitHub `//` sources are untouched.
-		"https://github.com/Yuncun/omakase-harness//harness":     "github.com/Yuncun/omakase-harness/tree/HEAD/harness",
-		"https://github.com/Yuncun/omakase-harness.git//harness": "github.com/Yuncun/omakase-harness/tree/HEAD/harness",
-		"github.com/Yuncun/omakase-harness//harness#v2":          "github.com/Yuncun/omakase-harness/tree/v2/harness",
-		"https://gitlab.com/acme/harness//sub":                   "gitlab.com/acme/harness//sub",
-		"/Users/me/local-harness":                                "/Users/me/local-harness",
+		"https://github.com/Yuncun/omakase-harness//omakase-harness-harness":     "github.com/Yuncun/omakase-harness/tree/HEAD/omakase-harness-harness",
+		"https://github.com/Yuncun/omakase-harness.git//omakase-harness-harness": "github.com/Yuncun/omakase-harness/tree/HEAD/omakase-harness-harness",
+		"github.com/Yuncun/omakase-harness//omakase-harness-harness#v2":          "github.com/Yuncun/omakase-harness/tree/v2/omakase-harness-harness",
+		"https://gitlab.com/acme/harness//sub":                                   "gitlab.com/acme/harness//sub",
+		"/Users/me/local-harness":                                                "/Users/me/local-harness",
 	}
 	for src, want := range cases {
 		if got := srcDisplay(src); got != want {

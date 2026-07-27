@@ -3,7 +3,7 @@
 # commit-time gate (a custom harness's allowlist gate over `omakase hook`) stays the
 # fail-closed last line; this layer fires before it:
 #   - omakase-worktree-guard.sh : HARNESS POLICY (#172), shipped by the dogfood
-#                       harness (harness/payload), never by the omakase binary or base
+#                       harness (omakase-harness-harness/payload), never by the omakase binary or base
 #                       payload. An opt-in Claude Code PreToolUse hook (matcher
 #                       Edit|Write; the harness recommends the wiring). Denies edits to
 #                       product files in the MAIN checkout while other worktrees are
@@ -17,7 +17,7 @@
 # the layer that must fail closed.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GUARD="$HERE/../harness/payload/.omakase/bin/omakase-worktree-guard.sh"
+GUARD="$HERE/../omakase-harness-harness/payload/.omakase/bin/omakase-worktree-guard.sh"
 TMP="${TMPDIR:-/tmp}/omakase-wtdisc-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }

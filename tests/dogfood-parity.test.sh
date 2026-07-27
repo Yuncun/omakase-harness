@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The dogfooding harness must give Claude Code and Copilot CLI agents the SAME rules.
-# harness/payload ships the one rule set twice — .claude/rules/omakase-dev.md (Claude) and
+# omakase-harness-harness/payload ships the one rule set twice — .claude/rules/omakase-dev.md (Claude) and
 # .github/instructions/omakase-dev.instructions.md (Copilot, same body plus an applyTo
 # frontmatter). #164 C6 caught them drifted: the Copilot copy had silently lost two rules,
 # so a Copilot agent worked this repo with fewer conventions — the exact failure mode the
@@ -8,8 +8,8 @@
 # No git, no temp repo — pure file comparison, so it runs anywhere.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLAUDE="$HERE/../harness/payload/.claude/rules/omakase-dev.md"
-COPILOT="$HERE/../harness/payload/.github/instructions/omakase-dev.instructions.md"
+CLAUDE="$HERE/../omakase-harness-harness/payload/.claude/rules/omakase-dev.md"
+COPILOT="$HERE/../omakase-harness-harness/payload/.github/instructions/omakase-dev.instructions.md"
 
 FAILED=0
 pass(){ echo "  PASS: $1"; }

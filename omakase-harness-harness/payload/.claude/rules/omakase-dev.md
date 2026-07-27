@@ -2,7 +2,7 @@
 
 This file is a gitignored overlay — placed by `omakase init`, never committed, deleted by
 `omakase remove`. Durable edits go in the harness source at
-`harness/payload/`, followed by a re-init; an edit made here in place is
+`omakase-harness-harness/payload/`, followed by a re-init; an edit made here in place is
 overwritten on the next init.
 
 - Write conventional commit messages: `feat(scope): …`, `fix: …`, `docs: …`, `chore: …`.
