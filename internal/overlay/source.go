@@ -343,7 +343,15 @@ func fetchSource(src, subpath, sourceRef string, stdout, stderr io.Writer) (payl
 	if ver != "" {
 		verPart = ", version: " + ver
 	}
-	fmt.Fprintf(stdout, "omakase: source '%s' (name: %s%s) cached at %s\n", canonical, name, verPart, cache)
+	// The resolved commit is the provenance a bare re-run otherwise hides: a
+	// remembered source is silently refreshed to remote HEAD before its
+	// payload (gates included) is re-placed, so the line names exactly what
+	// was just adopted (issue #38).
+	commitPart := ""
+	if c := gitCacheOut(cache, "rev-parse", "--short", "HEAD"); c != "" {
+		commitPart = ", commit " + c
+	}
+	fmt.Fprintf(stdout, "omakase: source '%s' (name: %s%s%s) cached at %s\n", canonical, name, verPart, commitPart, cache)
 	return payloadDir, recommends, 0
 }
 

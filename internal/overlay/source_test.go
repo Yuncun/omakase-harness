@@ -72,6 +72,18 @@ func commitAll(t *testing.T, dir, msg string) {
 	runGitT(t, dir, "commit", "-q", "-m", msg)
 }
 
+// shortHead returns dir's abbreviated HEAD hash — what the cached-at line
+// prints as the resolved commit (the cache clone's HEAD equals the fixture
+// source's HEAD).
+func shortHead(t *testing.T, dir string) string {
+	t.Helper()
+	out := gitCacheOut(dir, "rev-parse", "--short", "HEAD")
+	if out == "" {
+		t.Fatalf("could not resolve short HEAD in %s", dir)
+	}
+	return out
+}
+
 // ---------------------------------------------------------------- basic merge
 
 // TestSourceFlagBasicMerge: a --source flag clones a local source, merges the
@@ -98,7 +110,7 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 
 	cache := sourceCacheDir(src)
 	// merged lexical order: .claude/rules/r.md, .omakase/bin/base.sh, .omakase/gates/src.sh, omakase.manifest
-	wantOut := "omakase: source '" + src + "' (name: demo, version: 1.2.3) cached at " + cache + "\n" +
+	wantOut := "omakase: source '" + src + "' (name: demo, version: 1.2.3, commit " + shortHead(t, src) + ") cached at " + cache + "\n" +
 		"omakase: placed 4 file(s), updated 0 to match the payload, skipped 0 committed path(s).\n" +
 		"  + .claude/rules/r.md\n" +
 		"  + .omakase/bin/base.sh\n" +
@@ -150,7 +162,7 @@ func TestSourceNoRecommendsNoLine(t *testing.T) {
 		t.Errorf("recommends line printed with no recommends: manifest:\n%s", stdout.String())
 	}
 	// "cached at" line carries name only (no ", version:").
-	if !strings.Contains(stdout.String(), "omakase: source '"+src+"' (name: quiet) cached at "+sourceCacheDir(src)+"\n") {
+	if !strings.Contains(stdout.String(), "omakase: source '"+src+"' (name: quiet, commit "+shortHead(t, src)+") cached at "+sourceCacheDir(src)+"\n") {
 		t.Errorf("cached-at line wrong:\n%s", stdout.String())
 	}
 	_ = repo
@@ -335,7 +347,7 @@ func TestSourceCRLFManifest(t *testing.T) {
 	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	wantCached := "omakase: source '" + src + "' (name: crlf-harness, version: 2.3) cached at " + sourceCacheDir(src) + "\n"
+	wantCached := "omakase: source '" + src + "' (name: crlf-harness, version: 2.3, commit " + shortHead(t, src) + ") cached at " + sourceCacheDir(src) + "\n"
 	if !strings.HasPrefix(stdout.String(), wantCached) {
 		t.Errorf("cached-at line did not strip CR/whitespace:\n got: %q\nwant prefix: %q", stdout.String(), wantCached)
 	}
@@ -370,7 +382,7 @@ func TestSourceManifestControlBytesStripped(t *testing.T) {
 			t.Errorf("control byte %q leaked into output:\n%q", bad, out)
 		}
 	}
-	if !strings.Contains(stdout.String(), "(name: evil[2Jharness, version: 1.0)") {
+	if !strings.Contains(stdout.String(), "(name: evil[2Jharness, version: 1.0, commit ") {
 		t.Errorf("cached-at line does not carry the stripped fields:\n%q", stdout.String())
 	}
 }
@@ -687,7 +699,7 @@ func TestRememberedSourceRoundTrip(t *testing.T) {
 	eq(t, "roundtrip content", readFileT(t, filepath.Join(dir, ".omakase", "gates", "g.sh")), "PINNED\n")
 	eq(t, "roundtrip remembered", readFileT(t, filepath.Join(repo.OMK, "source")), src+"#v1\n")
 	// the bare run re-emitted the pinned "cached at" line (proves it re-fetched the remembered source).
-	if !strings.Contains(o2.String(), "omakase: source '"+src+"' (name: rt) cached at ") {
+	if !strings.Contains(o2.String(), "omakase: source '"+src+"' (name: rt, commit ") {
 		t.Errorf("bare re-run did not re-fetch the remembered source:\n%s", o2.String())
 	}
 }
@@ -1265,7 +1277,7 @@ func TestBareRunRememberedSourceSurvivesBasePayloadEnv(t *testing.T) {
 		readFileT(t, filepath.Join(dir, ".omakase", "gates", "src.sh")), "src delta\n")
 	// the bare run re-emitted the "cached at" line — it re-fetched the remembered
 	// source rather than doing a plain install off OMAKASE_BASE_PAYLOAD.
-	if !strings.Contains(o2.String(), "omakase: source '"+src+"' (name: remembered) cached at ") {
+	if !strings.Contains(o2.String(), "omakase: source '"+src+"' (name: remembered, commit ") {
 		t.Errorf("bare re-run did not take the remembered-source merge path:\n%s", o2.String())
 	}
 }
@@ -1300,7 +1312,7 @@ func TestSourceSubpathMerge(t *testing.T) {
 	}
 
 	cache := sourceCacheDir(canonical)
-	wantOut := "omakase: source '" + canonical + "' (name: hubbed, version: 0.1) cached at " + cache + "\n" +
+	wantOut := "omakase: source '" + canonical + "' (name: hubbed, version: 0.1, commit " + shortHead(t, src) + ") cached at " + cache + "\n" +
 		"omakase: placed 4 file(s), updated 0 to match the payload, skipped 0 committed path(s).\n" +
 		"  + .claude/rules/r.md\n" +
 		"  + .omakase/bin/base.sh\n" +
@@ -1439,7 +1451,7 @@ func TestSourceSubpathRememberedRoundTrip(t *testing.T) {
 	}
 	eq(t, "roundtrip content", readFileT(t, filepath.Join(dir, ".omakase", "gates", "g.sh")), "V2\n")
 	eq(t, "roundtrip remembered", readFileT(t, filepath.Join(repo.OMK, "source")), canonical+"\n")
-	if !strings.Contains(o2.String(), "omakase: source '"+canonical+"' (name: rt-sub) cached at ") {
+	if !strings.Contains(o2.String(), "omakase: source '"+canonical+"' (name: rt-sub, commit ") {
 		t.Errorf("bare re-run did not re-fetch the remembered subpath source:\n%s", o2.String())
 	}
 }
