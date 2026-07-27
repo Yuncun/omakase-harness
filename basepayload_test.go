@@ -10,9 +10,8 @@ import (
 // a go:embed directive missing the all: prefix would silently drop.
 func TestEmbeddedPayloadComplete(t *testing.T) {
 	want := map[string]bool{
-		"payload/omakase.manifest":          false,
-		"payload/.omakase/VERSION":          false,
-		"payload/.omakase/gates/example.sh": false,
+		"payload/omakase.manifest": false,
+		"payload/.omakase/VERSION": false,
 	}
 	err := fs.WalkDir(FS, "payload", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {

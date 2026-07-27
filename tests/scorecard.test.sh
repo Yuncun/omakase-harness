@@ -31,6 +31,13 @@ else shastr(){ echo nodigest; }; shafile(){ echo nodigest; }; fi
 # control the personal inventory; $XDG_CACHE_HOME stays this fixture cache.
 export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
 mkdir -p "$HOME" "$XDG_CACHE_HOME"
+# Local fixture payload: the base payload ships no gates since #172, so suites
+# that need a wired gate carry their own (one markers gate + its script).
+FIXPAY="$TMP/fixpay"; mkdir -p "$FIXPAY/.omakase/gates"
+printf '#!/usr/bin/env bash\necho "example gate passed"\nexit 0\n' > "$FIXPAY/.omakase/gates/example.sh"
+chmod +x "$FIXPAY/.omakase/gates/example.sh"
+printf 'name: fixture-harness\nversion: 0.1.0\n\ngate: markers\n  hook: pre-commit\n  run: .omakase/gates/example.sh\n' > "$FIXPAY/omakase.manifest"
+
 
 # Freeze the Go module + build caches to their real locations: scenarios pin $HOME
 # to fixture dirs to control the personal inventory, which also relocates the
@@ -45,11 +52,11 @@ fi
 
 # ---------- Scenario S: omakase status surfaces a 4-col ledger verdict on the guards chart ----------
 # Since #23 `show` lists gates from the manifest WIRING, joined to the latest ledger verdict.
-# A 4-col row for the base payload's WIRED gate (markers) must surface with its verdict in both
-# modes. Asserts on gate-name + verdict, not the exact header.
+# A 4-col row for the fixture payload's WIRED gate (markers) must surface with its verdict in
+# both modes. Asserts on gate-name + verdict, not the exact header.
 echo "== Scenario S: show surfaces a 4-col verdict on the guards chart =="
 REPO="$TMP/repoS"; newrepo "$REPO"
-( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+( cd "$REPO" && OMAKASE_PAYLOAD="$FIXPAY" bash "$INIT" ) >/dev/null 2>&1
 LEDGER="$(ledger_of "$REPO")"; mkdir -p "$(dirname "$LEDGER")"
 HEAD="$(cd "$REPO" && git rev-parse HEAD)"
 printf '%s\tmarkers\tfail\t%s\n' $((NOW-60)) "$HEAD" >> "$LEDGER"
@@ -59,18 +66,18 @@ echo "$OUT" | grep 'markers' | grep -q 'fail' && pass "show shows a fail verdict
 OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW bash "$SHOW" --markdown 2>&1 )"
 echo "$OUT" | grep -qE '^\| *-+ *\|' && pass "markdown table renders" || fail "no markdown table"
 echo "$OUT" | grep -E 'markers' | grep -q 'fail' && pass "markdown fail row (4-col)" || fail "no fail row in markdown"
-( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
+( cd "$REPO" && OMAKASE_PAYLOAD="$FIXPAY" bash "$REMOVE" ) >/dev/null 2>&1
 
 # ---------- Scenario U: a real commit records a 4-col row through the wiring ----------
 echo "== Scenario U: a real commit writes a 4-col ledger row through the wiring =="
 REPO="$TMP/repoU"; newrepo "$REPO"
-( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
+( cd "$REPO" && OMAKASE_PAYLOAD="$FIXPAY" bash "$INIT" ) >/dev/null 2>&1
 LEDGER="$(ledger_of "$REPO")"
 ( cd "$REPO" && echo hi > f.txt && git add f.txt && git commit -m t ) >/dev/null 2>&1
 { [ -f "$LEDGER" ] && has_run "$LEDGER" markers pass; } && pass "real commit recorded the example gate" || { fail "no pass row after a real commit"; sed 's/^/      /' "$LEDGER" 2>/dev/null; }
 nf=$(awk -F'\t' '$2=="markers"{print NF; exit}' "$LEDGER")
 [ "$nf" -eq 4 ] && pass "real commit row has 4 fields" || fail "real commit row has $nf fields"
-( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
+( cd "$REPO" && OMAKASE_PAYLOAD="$FIXPAY" bash "$REMOVE" ) >/dev/null 2>&1
 
 # ---------- Scenario I: the inventory — every harness artifact, grouped by origin ----------
 # spec §3: show gains an inventory (Committed / Injected / Personal), both modes,

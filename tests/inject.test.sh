@@ -222,19 +222,6 @@ echo "$INJ" | grep -q '.claude/rules/style.md' && pass "show lists an injected h
 echo "$OUT" | grep -qi 'zero footprint' && pass "show states the zero-committed footprint" || fail "show missing the footprint line"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
-# ---------- Scenario G: the SHIPPED example gate blocks merge-conflict markers ----------
-echo "== Scenario G: shipped example gate is real and generic =="
-GATE="$HERE/../payload/.omakase/gates/example.sh"
-REPO="$TMP/repoG"; newrepo "$REPO"
-mkdir -p "$REPO/.omakase/gates"; cp "$GATE" "$REPO/.omakase/gates/example.sh"; chmod +x "$REPO/.omakase/gates/example.sh"
-( cd "$REPO" && printf 'hello\n' > a.txt && git add a.txt )
-( cd "$REPO" && bash .omakase/gates/example.sh ) >/dev/null 2>&1 && pass "example gate passes on clean staged input" || fail "example gate failed on clean input"
-( cd "$REPO" && printf '<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> branch\n' > b.txt && git add b.txt )
-( cd "$REPO" && bash .omakase/gates/example.sh ) >/dev/null 2>&1 && fail "example gate did NOT block a conflict marker" || pass "example gate blocked a staged conflict marker"
-# a lone ======= line is a Markdown/RST heading underline, NOT a conflict — must not block
-( cd "$REPO" && git rm -q --cached b.txt && rm -f b.txt && printf 'My Title\n=======\n\nbody\n' > c.md && git add c.md )
-( cd "$REPO" && bash .omakase/gates/example.sh ) >/dev/null 2>&1 && pass "example gate does not false-block a ======= heading underline" || fail "example gate false-blocked a Markdown heading underline"
-
 rm -rf "$TMP"
 echo ""
 [ "$FAILED" -eq 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }

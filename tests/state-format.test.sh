@@ -36,6 +36,13 @@ common_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)";
 # touches the real machine. S2 re-sets HOME/XDG inline to these same dirs.
 export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
 mkdir -p "$HOME" "$XDG_CACHE_HOME"
+# Local fixture payload: the base payload ships no gates since #172, so suites
+# that need a wired gate carry their own (one markers gate + its script).
+FIXPAY="$TMP/fixpay"; mkdir -p "$FIXPAY/.omakase/gates"
+printf '#!/usr/bin/env bash\necho "example gate passed"\nexit 0\n' > "$FIXPAY/.omakase/gates/example.sh"
+chmod +x "$FIXPAY/.omakase/gates/example.sh"
+printf 'name: fixture-harness\nversion: 0.1.0\n\ngate: markers\n  hook: pre-commit\n  run: .omakase/gates/example.sh\n' > "$FIXPAY/omakase.manifest"
+
 if command -v go >/dev/null 2>&1; then
   export GOMODCACHE="$(go env GOMODCACHE)"
   export GOCACHE="$(go env GOCACHE)"
@@ -93,7 +100,7 @@ dups="$(cut -f1 "$PLACED" 2>/dev/null | sort | uniq -d)"
 # ---------- S4: gate runs write 4-column ledger.tsv rows ----------
 echo "== S4: gate runs write 4-column ledger rows (epoch name verdict sha) =="
 REPO="$TMP/repoS4"; newrepo "$REPO"
-( cd "$REPO" && OMAKASE_PAYLOAD="$HERE/../payload" bash "$INIT" ) >/dev/null 2>&1
+( cd "$REPO" && OMAKASE_PAYLOAD="$FIXPAY" bash "$INIT" ) >/dev/null 2>&1
 [ -f "$REPO/omakase.manifest" ] || fail "S4: init did not place omakase.manifest"
 # A real commit fires the wired pre-commit gate, which appends a ledger row. The
 # commit hook execs the binary init self-installed into $XDG_CACHE_HOME (set above).

@@ -243,7 +243,6 @@ func TestEnsureBasePayloadEmbedded(t *testing.T) {
 	for _, rel := range []string{
 		"omakase.manifest",
 		".omakase/VERSION",
-		".omakase/gates/example.sh",
 	} {
 		info, err := os.Stat(filepath.Join(dir, rel))
 		if err != nil {
@@ -300,7 +299,6 @@ func TestSourceEmbeddedBaseFallback(t *testing.T) {
 	// The source delta and the real embedded machinery are both placed.
 	for _, rel := range []string{
 		".claude/rules/r.md",
-		".omakase/gates/example.sh",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Errorf("placed tree missing %s: %v", rel, err)
