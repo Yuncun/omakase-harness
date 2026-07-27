@@ -243,7 +243,6 @@ func TestEnsureBasePayloadEmbedded(t *testing.T) {
 	for _, rel := range []string{
 		"omakase.manifest",
 		".omakase/VERSION",
-		".omakase/bin/omakase-banner.sh",
 		".omakase/gates/example.sh",
 	} {
 		info, err := os.Stat(filepath.Join(dir, rel))
@@ -301,7 +300,6 @@ func TestSourceEmbeddedBaseFallback(t *testing.T) {
 	// The source delta and the real embedded machinery are both placed.
 	for _, rel := range []string{
 		".claude/rules/r.md",
-		".omakase/bin/omakase-banner.sh",
 		".omakase/gates/example.sh",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {

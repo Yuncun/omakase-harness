@@ -374,7 +374,7 @@ if [ -n "$O10BUILT" ]; then
     rc=$?
     [ "$rc" -eq 0 ] && pass "shim -> cached binary -> init --source exits 0 (fetched-binary init works)" || fail "probe exited $rc ($(cat "$O10ERR"))"
     grep -q 'cached at' "$O10OUT" && pass "the source was cached + injected (the full --source flow ran)" || fail "no 'cached at' in probe stdout ($(cat "$O10OUT"))"
-    [ -x "$O10TGT/.omakase/bin/omakase-banner.sh" ] && pass "base payload file placed (OMAKASE_BASE_PAYLOAD located the merge base)" || fail "base machinery missing — base payload not located"
+    [ -f "$O10TGT/.omakase/VERSION" ] && pass "base payload file placed (the merge base was located)" || fail "base payload file missing — base payload not located"
     [ -f "$O10TGT/.omakase/O10-SOURCE-MARKER" ] && pass "source marker placed (source delta layered over the base)" || fail "source marker missing"
 
     # ---- leg 8: the cached binary DIRECTLY, no OMAKASE_BASE_PAYLOAD (issue #168) ----
@@ -392,7 +392,7 @@ if [ -n "$O10BUILT" ]; then
       "$O10BIN" init --source "$O10SRC" >"$O10SAOUT" 2>"$O10SAERR" )
     rc=$?
     [ "$rc" -eq 0 ] && pass "standalone binary (no shim, no OMAKASE_BASE_PAYLOAD) inits via the embedded base (#168)" || fail "standalone init exited $rc ($(cat "$O10SAERR"))"
-    [ -x "$O10TGT2/.omakase/bin/omakase-banner.sh" ] && pass "embedded base machinery placed" || fail "base machinery missing from standalone init"
+    [ -f "$O10TGT2/.omakase/VERSION" ] && pass "embedded base payload placed" || fail "base payload missing from standalone init"
     [ -f "$O10TGT2/.omakase/O10-SOURCE-MARKER" ] && pass "source delta layered over the embedded base" || fail "source marker missing from standalone init"
     [ -d "$XDG/omakase/basepayload" ] && pass "embedded base extracted into the machine cache" || fail "no basepayload extraction dir — embedded fallback did not run"
 

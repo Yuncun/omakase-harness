@@ -7,7 +7,6 @@
 # awk, not grep -P (BSD).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BANNER_REL=".omakase/bin/omakase-banner.sh"
 SHOW="$HERE/../bin/status.sh"
 INIT="$HERE/../bin/init.sh"
 REMOVE="$HERE/../bin/remove.sh"
@@ -235,15 +234,14 @@ fi
 echo "== Scenario W: branding =="
 REPO="$TMP/repoW"; newrepo "$REPO"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
-BAN="$REPO/$BANNER_REL"
 VER="$(cat "$PAY/.omakase/VERSION")"
 PJV="$(grep -o '"version"[^,]*' "$HERE/../.claude-plugin/plugin.json" | grep -o '[0-9][0-9.]*')"
 [ "$PJV" = "$VER" ] && pass "payload VERSION matches plugin.json ($PJV)" || fail "VERSION drift: plugin.json=$PJV payload=$VER"
-OUT="$( cd "$REPO" && NO_COLOR=1 bash "$BAN" pre-commit )"
-echo "$OUT" | grep -q 'omakase-harness' && pass "banner shows the plugin name" || fail "banner missing name"
-echo "$OUT" | grep -q "v$VER" && pass "banner shows the version" || fail "banner missing version ($OUT)"
-OUT="$( cd "$REPO" && bash "$SHOW" 2>&1 )"
-echo "$OUT" | grep -q 'omakase-harness' && pass "show prints a branded header" || fail "show missing header"
+# The banner is built into the binary (#172): the status page opens with the
+# branded box carrying the harness name and the placed base VERSION.
+OUT="$( cd "$REPO" && NO_COLOR=1 bash "$SHOW" 2>&1 )"
+echo "$OUT" | grep -q 'omakase-harness' && pass "status prints a branded header" || fail "status missing header"
+echo "$OUT" | grep -q "v$VER" && pass "banner shows the placed base version" || fail "banner missing version ($OUT)"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
 rm -rf "$TMP"

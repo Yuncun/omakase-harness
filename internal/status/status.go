@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -213,18 +212,11 @@ func renderMarkdown(w io.Writer, repo *state.Repo, home, icon, hname, srcdisp, b
 	fmt.Fprintln(w, "_Refresh:_ `omakase init`  ·  _Remove:_ `omakase remove`  ·  _read-only; running status changes nothing._")
 }
 
-// renderTerminal prints the default status page: an optional branded banner,
-// then the same question-first order as markdown.
+// renderTerminal prints the default status page: the branded banner box
+// (built in since #172; see banner.go), then the same question-first order
+// as markdown.
 func renderTerminal(w io.Writer, repo *state.Repo, home, hname, srcdisp, basever string, nInjected, nToggledOff int) {
-	// Banner: if present, run it at the invocation cwd, pass its stdout
-	// through, discard stderr, and ignore failure.
-	banner := filepath.Join(repo.Root, ".omakase", "bin", "omakase-banner.sh")
-	if info, e := os.Stat(banner); e == nil && !info.IsDir() {
-		cmd := exec.Command("bash", banner)
-		cmd.Stdout = w
-		cmd.Stderr = io.Discard
-		_ = cmd.Run()
-	}
+	fmt.Fprint(w, statusBanner(hname, basever))
 
 	if srcdisp != "" {
 		fmt.Fprintf(w, "%s — %s · base omakase %s · installed in %s\n", hname, srcdisp, basever, repo.Root)

@@ -3,7 +3,7 @@
 # The example is the CONTENTS of a harness source, so the test does what an adopter does:
 # copy it into a git repo, then `init --source` that repo. It checks:
 #   - the overlay is placed and gitignored (both rules files, the gates, the manifest)
-#   - the base machinery the harness relies on is layered in (omakase-banner.sh)
+#   - the base payload is layered in (.omakase/VERSION)
 #   - block-marker: a clean commit passes; a commit staging the scratch marker is BLOCKED
 #   - go-checks: passes instantly with no staged .go; blocks a misformatted .go; passes
 #     once formatted (gofmt + go vet) [skipped when no Go toolchain]
@@ -62,7 +62,7 @@ grep -q 'omakase-harness' "$REPO/.git/info/exclude" 2>/dev/null && pass "exclude
   && fail "rules file is tracked (must be gitignored)" || pass "rules file not tracked"
 
 # 4) Base layering: machinery the harness does NOT ship is present from the base layer.
-[ -f "$REPO/.omakase/bin/omakase-banner.sh" ] && pass "base machinery layered in (omakase-banner.sh)" || fail "base machinery missing"
+[ -f "$REPO/.omakase/VERSION" ] && pass "base payload layered in (.omakase/VERSION)" || fail "base payload missing"
 
 # 5) A clean non-Go commit passes (block-marker ran; go-checks self-skips with no staged .go).
 OUT=$(cd "$REPO" && echo clean > ok.txt && git add ok.txt && git commit -m ok 2>&1); rc=$?
