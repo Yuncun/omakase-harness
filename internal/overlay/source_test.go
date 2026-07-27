@@ -375,6 +375,42 @@ func TestSourceManifestControlBytesStripped(t *testing.T) {
 	}
 }
 
+// TestSourceCruftNeverPlaced: .DS_Store and *.bak files in a source payload
+// are ignored wholesale — never placed, ledgered, or snapshotted (issue #31;
+// the old build.sh pruned them and the merge did not).
+func TestSourceCruftNeverPlaced(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	useBasePayloadDir(t)
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: cruft\n")
+	writeFile(t, filepath.Join(src, "payload", ".claude", "rules", "r.md"), "rule\n")
+	writeFile(t, filepath.Join(src, "payload", ".claude", "rules", ".DS_Store"), "finder junk\n")
+	writeFile(t, filepath.Join(src, "payload", ".claude", "rules", "r.md.bak"), "stale\n")
+	commitAll(t, src, "cruft")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	for _, rel := range []string{".claude/rules/.DS_Store", ".claude/rules/r.md.bak"} {
+		if _, err := os.Lstat(filepath.Join(dir, rel)); err == nil {
+			t.Errorf("cruft file %s was placed into the repo", rel)
+		}
+		if _, err := os.Lstat(filepath.Join(repo.OMK, "payload-snapshot", rel)); err == nil {
+			t.Errorf("cruft file %s entered the payload snapshot", rel)
+		}
+	}
+	ledger, _ := os.ReadFile(filepath.Join(repo.OMK, "placed.tsv"))
+	if strings.Contains(string(ledger), ".DS_Store") || strings.Contains(string(ledger), ".bak") {
+		t.Errorf("cruft entered placed.tsv:\n%s", ledger)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "rules", "r.md")); err != nil {
+		t.Errorf("the real payload file was not placed: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------- ref pin
 
 // TestSourceRefPinBranch: --source repo#branch checks the cache out to that

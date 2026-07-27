@@ -1014,6 +1014,9 @@ func placeFile(src, rel, root string, umask os.FileMode, stderr io.Writer) int {
 // walkPayload lists the payload's regular files and symlinks as clean
 // payload-relative paths, in filepath.WalkDir's lexical order. Directories
 // and other special files are excluded; symlinks are never followed.
+// Editor/OS cruft (.DS_Store, *.bak) is skipped — a source repo that commits
+// it, or a local-dir payload carrying it untracked, must not see it placed,
+// ledgered, or snapshotted (issue #31).
 func walkPayload(payload string) ([]string, error) {
 	var rels []string
 	err := filepath.WalkDir(payload, func(path string, d fs.DirEntry, err error) error {
@@ -1021,6 +1024,9 @@ func walkPayload(payload string) ([]string, error) {
 			return err
 		}
 		if d.IsDir() {
+			return nil
+		}
+		if name := d.Name(); name == ".DS_Store" || strings.HasSuffix(name, ".bak") {
 			return nil
 		}
 		t := d.Type()
