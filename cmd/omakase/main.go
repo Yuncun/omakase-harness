@@ -83,6 +83,9 @@ var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 	"record": func(argv []string, stdout, stderr io.Writer) int {
 		return overlay.RunRecord(argv[2:], stdout, stderr)
 	},
+	"guard": func(argv []string, stdout, stderr io.Writer) int {
+		return overlay.RunGuard(argv[2:], os.Stdin, stdout, stderr)
+	},
 	"statusline": func(argv []string, stdout, stderr io.Writer) int {
 		for _, a := range argv[2:] {
 			if a == "--wire" {
@@ -107,6 +110,7 @@ const usage = `usage: omakase <command>
 commands used by your tools, not by you:
   hook <name>      run the git-hook logic (called by the hooks init installs)
   record <name>    record a PASS for HEAD for a deferred gate (out-of-band)
+  guard            worktree-discipline check (a PreToolUse hook; reads hook JSON on stdin)
   statusline       one-line status segment (--wire connects it to your hosts' bars)
 `
 

@@ -244,7 +244,6 @@ func TestEnsureBasePayloadEmbedded(t *testing.T) {
 		"omakase.manifest",
 		".omakase/VERSION",
 		".omakase/bin/omakase-banner.sh",
-		".omakase/bin/omakase-worktree-guard.sh",
 		".omakase/gates/example.sh",
 	} {
 		info, err := os.Stat(filepath.Join(dir, rel))
@@ -303,7 +302,6 @@ func TestSourceEmbeddedBaseFallback(t *testing.T) {
 	for _, rel := range []string{
 		".claude/rules/r.md",
 		".omakase/bin/omakase-banner.sh",
-		".omakase/bin/omakase-worktree-guard.sh",
 		".omakase/gates/example.sh",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {

@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
-# TDD spec for the EARLIER-THAN-COMMIT worktree-discipline layers (issue #86). The
-# commit-time gate (a custom harness's allowlist gate over omakase-gate.sh) stays the
-# fail-closed last line; these two layers fire before it:
-# (The #86 soft layer — a statusline "main checkout" warning — was retired in the #85
-#  redesign: the base bar shows harness health only; worktree discipline is harness
-#  POLICY, carried by a custom harness's commit gate and this opt-in guard.)
-#   - omakase-worktree-guard.sh   : opt-in Claude Code PreToolUse hook (matcher Edit|Write).
-#                                   Denies edits to product files in the MAIN checkout while
-#                                   other worktrees are active; the allowlist mirrors the
-#                                   commit gate's (AGENTS.md, CLAUDE.md, .claude/**, root
-#                                   *.md) plus paths that CANNOT leak into a commit
-#                                   (.omakase/** is force-excluded; .git/** isn't content).
-# Both honor OMAKASE_SKIP_WORKTREE_DISCIPLINE=1 and a "worktree-discipline" line in the
+# TDD spec for the EARLIER-THAN-COMMIT worktree-discipline layer (issue #86). The
+# commit-time gate (a custom harness's allowlist gate over `omakase hook`) stays the
+# fail-closed last line; this layer fires before it:
+#   - `omakase guard` : the binary verb (#172; formerly the payload script
+#                       omakase-worktree-guard.sh) wired as an opt-in Claude Code
+#                       PreToolUse hook (matcher Edit|Write; init prints the wiring,
+#                       pointing at the stable machine-wide binary). Denies edits to
+#                       product files in the MAIN checkout while other worktrees are
+#                       active; the allowlist mirrors the commit gate's (AGENTS.md,
+#                       CLAUDE.md, .claude/**, root *.md) plus paths that CANNOT leak
+#                       into a commit (.omakase/** is force-excluded; .git/** isn't
+#                       content).
+# It honors OMAKASE_SKIP_WORKTREE_DISCIPLINE=1 and a "worktree-discipline" line in the
 # shared disabled-gates file (the persistent, visible disable). The guard fails
 # OPEN on anything it cannot parse or resolve — it is a pre-layer; the commit gate is
 # the layer that must fail closed.
+# (The Go unit tests in internal/overlay/guard_test.go cover the same contract; this
+#  suite proves it end-to-end through the built binary, hook-JSON on stdin and all.)
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GUARD="$HERE/../payload/.omakase/bin/omakase-worktree-guard.sh"
 TMP="${TMPDIR:-/tmp}/omakase-wtdisc-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
@@ -25,12 +26,16 @@ fail(){ echo "  FAIL: $1"; FAILED=1; }
 newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }
 common_of(){ ( cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd ); }
 
-# ---------- Scenario B: PreToolUse worktree guard ----------
-echo "== Scenario B: omakase-worktree-guard PreToolUse hook =="
+OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
+[ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
+mkdir -p "$TMP"
+
+# ---------- Scenario B: `omakase guard` as the PreToolUse worktree guard ----------
+echo "== Scenario B: omakase guard PreToolUse hook =="
 REPO="$TMP/repoB"; newrepo "$REPO"; mkdir -p "$REPO/.omakase"
 ROOT="$(cd "$REPO" && git rev-parse --show-toplevel)"   # physical path, matches worktree list
 guard(){ # $1=cwd $2=file_path -> guard stdout
-  printf '{"tool_name":"Edit","tool_input":{"file_path":"%s","old_string":"a","new_string":"b"},"cwd":"%s"}' "$2" "$1" | bash "$GUARD"
+  printf '{"tool_name":"Edit","tool_input":{"file_path":"%s","old_string":"a","new_string":"b"},"cwd":"%s"}' "$2" "$1" | "$OMAKASE" guard
 }
 
 # Before any other worktree exists: everything is allowed.
@@ -67,7 +72,7 @@ OUT="$(guard "$ROOT" "$ROOT/docs/notes.md")"
 echo "$OUT" | grep -q '"permissionDecision":"deny"' && pass "nested .md is NOT allowlisted" || fail "nested .md escaped ($OUT)"
 
 # Paths that cannot leak into a commit: the overlay (force-excluded) and the git dir.
-OUT="$(guard "$ROOT" "$ROOT/.omakase/gates/example.sh")"
+OUT="$(guard "$ROOT" "$ROOT/.omakase/gates/mine.sh")"
 [ -z "$OUT" ] && pass ".omakase/** -> allow (cannot leak into a commit)" || fail "overlay edit denied ($OUT)"
 OUT="$(guard "$ROOT" "$ROOT/.git/info/exclude")"
 [ -z "$OUT" ] && pass ".git/** -> allow (not committable content)" || fail "git-dir edit denied ($OUT)"
@@ -81,7 +86,7 @@ OUT="$(guard "$WTROOT" "$WTROOT/src/app.go")"
 [ -z "$OUT" ] && pass "linked worktree -> allow" || fail "denied inside a worktree ($OUT)"
 
 # Bypasses: the audited skip env and the persistent disable (status --disable).
-OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/src/app.go"},"cwd":"%s"}' "$ROOT" "$ROOT" | OMAKASE_SKIP_WORKTREE_DISCIPLINE=1 bash "$GUARD")"
+OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/src/app.go"},"cwd":"%s"}' "$ROOT" "$ROOT" | OMAKASE_SKIP_WORKTREE_DISCIPLINE=1 "$OMAKASE" guard)"
 [ -z "$OUT" ] && pass "OMAKASE_SKIP_WORKTREE_DISCIPLINE=1 -> allow" || fail "skip env ignored ($OUT)"
 COMMONB="$(common_of "$REPO")"; mkdir -p "$COMMONB/omakase"
 printf 'worktree-discipline\n' > "$COMMONB/omakase/disabled-gates"
@@ -91,9 +96,9 @@ rm -f "$COMMONB/omakase/disabled-gates"
 
 # Fail OPEN on anything unresolvable: no repo, no file_path in the payload.
 NOREPO="$TMP/norepo"; rm -rf "$NOREPO"; mkdir -p "$NOREPO"
-OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"/x/y.go"},"cwd":"%s"}' "$NOREPO" | bash "$GUARD")"; RC=$?
+OUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"/x/y.go"},"cwd":"%s"}' "$NOREPO" | "$OMAKASE" guard)"; RC=$?
 { [ "$RC" -eq 0 ] && [ -z "$OUT" ]; } && pass "outside any repo -> allow" || fail "guard fired outside a repo ($RC: $OUT)"
-OUT="$(printf '{"tool_name":"Edit","tool_input":{},"cwd":"%s"}' "$ROOT" | bash "$GUARD")"; RC=$?
+OUT="$(printf '{"tool_name":"Edit","tool_input":{},"cwd":"%s"}' "$ROOT" | "$OMAKASE" guard)"; RC=$?
 { [ "$RC" -eq 0 ] && [ -z "$OUT" ]; } && pass "no file_path -> allow (fail open)" || fail "guard fired with no file_path ($RC: $OUT)"
 
 rm -rf "$TMP"

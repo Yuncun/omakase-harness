@@ -226,7 +226,7 @@ export TMPDIR="$TMP/merge-tmp"; mkdir -p "$TMPDIR"
 ( cd "$REPO6" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$SRC6" ) >/dev/null 2>&1
 # base machinery the source did NOT ship is present (layered from the base harness's payload)
 [ -x "$REPO6/.omakase/bin/omakase-banner.sh" ] && pass "base banner layered in (source did not ship it)" || fail "base banner missing — base payload not layered under source"
-[ -x "$REPO6/.omakase/bin/omakase-worktree-guard.sh" ] && pass "base worktree-guard layered in (source did not ship it)" || fail "base worktree-guard missing — base payload not layered under source"
+[ -f "$REPO6/.omakase/VERSION" ] && pass "base VERSION layered in (source did not ship it)" || fail "base VERSION missing — base payload not layered under source"
 # the source's own gate is placed too
 [ -x "$REPO6/.omakase/gates/discipline.sh" ] && pass "source's own gate placed" || fail "source gate missing"
 grep -q 'SOURCE-OVERRODE-EXAMPLE' "$REPO6/.omakase/gates/example.sh" 2>/dev/null && pass "source wins over a base file at the same path (replace semantics, no write-through)" || fail "base file won over the source on overlap (merge write-through?)"

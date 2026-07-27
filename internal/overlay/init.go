@@ -945,12 +945,13 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "omakase: status bar (optional) — one machine-wide segment for every omakase repo,")
 		fmt.Fprintf(stdout, "         dark elsewhere. Wire it:  %s statusline --wire\n", stable)
 	}
-	if fileRegular(filepath.Join(root, ".omakase", "bin", "omakase-worktree-guard.sh")) {
-		fmt.Fprintln(stdout, "omakase: worktree guard (Claude Code only, opt-in) — while other worktrees are active,")
-		fmt.Fprintln(stdout, "         denies edits to product files in the MAIN checkout before they happen. Enable by")
-		fmt.Fprintln(stdout, "         adding a PreToolUse hook (matcher \"Edit|Write\") to .claude/settings.json:")
-		fmt.Fprintln(stdout, "           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh")
-	}
+	// The guard ships in the binary (`omakase guard`, #172), so the stanza
+	// prints unconditionally — wired to the same stable machine-wide copy the
+	// git dispatchers exec.
+	fmt.Fprintln(stdout, "omakase: worktree guard (Claude Code only, opt-in) — while other worktrees are active,")
+	fmt.Fprintln(stdout, "         denies edits to product files in the MAIN checkout before they happen. Enable by")
+	fmt.Fprintln(stdout, "         adding a PreToolUse hook (matcher \"Edit|Write\") to .claude/settings.json:")
+	fmt.Fprintf(stdout, "           %s guard\n", stable)
 
 	// ---- prove, don't assert ----
 	// The closing line is the three status-bar proofs run fresh against what
