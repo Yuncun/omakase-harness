@@ -39,13 +39,14 @@ jobs:
     runs-on: ubuntu-latest
     container: debian:stable-slim
     steps:
-      # git is absent from the slim image. Debian's base already carries bash,
-      # coreutils, tar, findutils, and mawk. Nothing here needs the network:
-      # resolution is local-only since #182.
+      # git is absent from the slim image; ca-certificates lets the checkout
+      # step's git-over-HTTPS verify GitHub's TLS. Debian's base already
+      # carries bash, coreutils, tar, findutils, and mawk. The suite itself
+      # needs no network: resolution is local-only since #182.
       - name: Install suite dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git
+          apt-get install -y --no-install-recommends git ca-certificates
       - uses: actions/checkout@v4
       - name: Assert no Go toolchain
         run: |
