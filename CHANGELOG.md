@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.28.0] — 2026-07-27
+
 ### Added
 - **Session-start heal** (#164 C5, narrow scope): the plugin now ships
   `hooks/hooks.json` with a `SessionStart` hook — both hosts read it — that
