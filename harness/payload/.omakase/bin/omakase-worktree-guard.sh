@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # omakase-worktree-guard — worktree discipline BEFORE the edit happens (issue #86).
-# Opt-in Claude Code PreToolUse hook (matcher "Edit|Write"; init prints how to wire it).
+# HARNESS POLICY, not omakase machinery (#172): this script ships in the
+# omakase-harness-harness payload — a harness that wants the discipline carries its
+# own copy. The omakase binary knows nothing about it.
+# Opt-in Claude Code PreToolUse hook (matcher "Edit|Write"); wire it in
+# .claude/settings.json as:  bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh
 # While other worktrees are active, an Edit/Write to a product file in the MAIN checkout
 # is denied with a teaching message: branches cut in the main checkout inherit concurrent
 # sessions' uncommitted work, which then leaks into a PR. Implementation goes in a

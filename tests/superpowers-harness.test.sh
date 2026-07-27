@@ -6,7 +6,7 @@
 #     enablement is Claude-only — Copilot has no project-scoped settings file, #164 C2)
 #     and gitignores it, and does NOT place the retired .github/copilot/settings.json
 #   - the file registers the superpowers-marketplace and enables the plugin
-#   - the base harness machinery is layered in (omakase-banner.sh)
+#   - the base payload is layered in (.omakase/VERSION)
 #   - init prints the manifest's `recommends:` fallback line
 #   - remove tears it all down, exclude block included
 # HOME and XDG_CACHE_HOME point at fixture dirs so nothing touches the real machine.
@@ -52,7 +52,7 @@ grep -q 'obra/superpowers-marketplace' "$CC" 2>/dev/null && pass ".claude/settin
 grep -q 'superpowers@superpowers-marketplace' "$CC" 2>/dev/null && pass ".claude/settings.json: enables the plugin" || fail ".claude/settings.json: enabledPlugins entry missing"
 
 # 5) Base layering: machinery the example does NOT ship is present from the base layer.
-[ -f "$REPO/.omakase/bin/omakase-banner.sh" ] && pass "base machinery layered in (omakase-banner.sh)" || fail "base machinery missing"
+[ -f "$REPO/.omakase/VERSION" ] && pass "base payload layered in (.omakase/VERSION)" || fail "base payload missing"
 
 # 6) init surfaced the manifest's recommends fallback line.
 echo "$OUT" | grep -q 'this harness recommends' && pass "recommends line printed" || { fail "no recommends line"; echo "$OUT" | sed 's/^/      /'; }

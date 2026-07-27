@@ -8,7 +8,8 @@ other things too. `payload/` is copied onto a target on install; everything else
 
 A `--source` install layers the omakase **base harness's payload** under your `payload/` (your
 delta wins on overlap), so you ship only your delta and **rely on base machinery without keeping
-your own copy**: the banner and other optional UX come from the base harness. Declare your gates
+your own copy** — the gate runner and the status banner live in the `omakase` binary
+itself. Declare your gates
 as `gate:` blocks in `payload/omakase.manifest` — the one manifest, placed and snapshotted (see
 [Reference](reference.md#manifest)) — and ship only your own gate scripts. If a gate's `run:` names a payload script (`.omakase/…` or `gates/…`)
 neither you nor the base harness ships, `init` refuses and places nothing — so a typo surfaces
@@ -32,16 +33,19 @@ the `gate:` block and its keys (`hook:`, `run:`, `glob:`, `cacheable:`, `purpose
 or repurposed out from under your manifest; anything else is an internal refactor you never
 see.
 
-The base scripts are **optional UX, opt-in, and not part of the contract**:
-`omakase-banner.sh` (the branded box) and `omakase-worktree-guard.sh` (a Claude Code
-PreToolUse hook that denies edits to product files in the main checkout while other
-worktrees are active — the pre-edit half of worktree discipline; a commit-time allowlist
-gate is the fail-closed half). Wire them only if you want them — skip them and your
-harness still works. Do not build wiring that depends on their names being stable.
-The status-bar segment is a **binary subcommand**, not a placed
-script: `omakase statusline` (`omakase statusline --wire` connects the bar; see
-[Reference](reference.md)). It probes the shared ledger and hooks, so a custom
-harness gets it for free.
+The product UX is **built into the binary, not placed scripts**: the branded box
+opening `omakase status` is rendered by the binary (swap the glyph with
+`OMAKASE_ICON`), and the status-bar segment is a binary subcommand,
+`omakase statusline` (`omakase statusline --wire` connects the bar; see
+[Reference](reference.md)). Both probe the shared ledger and hooks, so a custom
+harness gets them for free and ships none of it.
+
+**Policy**, by contrast, ships in a harness. Anything that steers how people or
+agents work — editor hooks, workflow rules, discipline scripts — is payload
+content you place and recommend, never an omakase feature. The worked example is
+the worktree guard in [`harness/`](../harness/): a PreToolUse script this repo's
+own harness ships (with a `recommends:` line teaching the wiring) that omakase
+itself knows nothing about.
 
 A gate whose `run:` names a payload script (`.omakase/…` or `gates/…`) is validated at
 install: `init` refuses any harness that references a script it does not ship, so a drift
@@ -66,6 +70,36 @@ A block opens with `gate: <name>` and carries these keys:
 - `glob:` — space-separated path globs; skip the gate when no changed file matches.
 - `purpose:` — what the gate enforces, in your words (≤6 words, concrete — "tests green
   before push"). Shown as the ENFORCES column of the status guards table.
+
+A worked example — block staged merge-conflict markers. Save it as
+`payload/.omakase/gates/markers.sh` and declare it in `payload/omakase.manifest`:
+
+```bash
+#!/usr/bin/env bash
+# Blocks a commit that stages an unresolved merge-conflict marker. Fully
+# generic: depends on nothing but git. Exit non-zero to block; 0 to allow.
+set -euo pipefail
+
+# A real conflict always writes the <<<<<<< / >>>>>>> pair, each with a
+# trailing ref label. Deliberately do NOT match a bare ======= line: that is
+# also a Markdown/RST heading underline and would false-block.
+fail=0
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  if grep -nE '^(<<<<<<<|>>>>>>>)([[:space:]]|$)' "$f" >/dev/null 2>&1; then
+    echo "markers: unresolved merge-conflict marker in $f" >&2
+    fail=1
+  fi
+done < <(git diff --cached --name-only --diff-filter=ACM)
+[ "$fail" -eq 0 ] || exit 1
+```
+
+```
+gate: markers
+  hook: pre-commit
+  run: .omakase/gates/markers.sh
+  purpose: merge-conflict markers stay out
+```
 
 ## Wrapping a third-party check
 

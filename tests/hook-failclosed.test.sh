@@ -36,6 +36,13 @@ OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && reso
 # rest of the ambient environment is cleared.
 CLEANPATH="$PATH:/usr/bin:/bin:/usr/sbin:/sbin"
 mkdir -p "$TMP"
+# Local fixture payload: the base payload ships no gates since #172, so suites
+# that need a wired gate carry their own (one markers gate + its script).
+FIXPAY="$TMP/fixpay"; mkdir -p "$FIXPAY/.omakase/gates"
+printf '#!/usr/bin/env bash\necho "example gate passed"\nexit 0\n' > "$FIXPAY/.omakase/gates/example.sh"
+chmod +x "$FIXPAY/.omakase/gates/example.sh"
+printf 'name: fixture-harness\nversion: 0.1.0\n\ngate: markers\n  hook: pre-commit\n  run: .omakase/gates/example.sh\n' > "$FIXPAY/omakase.manifest"
+
 
 # Self-contained HOME + cache for the setup inits, so a `bash init` self-install
 # never touches the real machine. The commit-time HOME is set per scenario below
@@ -51,7 +58,7 @@ fi
 newrepo(){
   rm -rf "$1"; mkdir -p "$1"
   ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init )
-  ( cd "$1" && OMAKASE_PAYLOAD="$HERE/../payload" bash "$INIT" ) >/dev/null 2>&1 || fail "setup: init failed in $1"
+  ( cd "$1" && OMAKASE_PAYLOAD="$FIXPAY" bash "$INIT" ) >/dev/null 2>&1 || fail "setup: init failed in $1"
 }
 
 # A fixture HOME whose stable path carries the real omakase binary. $1 = home dir.

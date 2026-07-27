@@ -3,8 +3,9 @@
 ## Base harness and custom harness
 
 **omakase base harness** — the tool you install once. It holds the install/remove logic
-(`bin/`), the base machinery every harness can rely on (the banner, the gate runner and its
-scorecard ledger), and the `omakase` commands. This repo is the base harness.
+(`bin/`), the base machinery every harness can rely on (the gate runner and its scorecard
+ledger, the status banner, the worktree guard — all inside the `omakase` binary), and the
+`omakase` commands. This repo is the base harness.
 
 **custom harness** — a personal harness you make and share: a git repo with a `payload/`
 tree whose `payload/omakase.manifest` is its one manifest. You install it with

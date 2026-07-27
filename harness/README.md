@@ -12,6 +12,8 @@ status surfaces) is layered in underneath at install:
       omakase-dev.instructions.md             the same conventions, read by Copilot
     payload/.omakase/gates/block-marker.sh    gate: refuse a staged scratch marker
     payload/.omakase/gates/go-checks.sh       gate: gofmt + go vet on staged Go files
+    payload/.omakase/bin/
+      omakase-worktree-guard.sh               opt-in worktree guard (policy, see below)
     payload/omakase.manifest                  the one manifest — identity (name + version)
                                               and the gates (hook / run / glob / cacheable / purpose)
 
@@ -26,6 +28,21 @@ status surfaces) is layered in underneath at install:
 Every run lands in the scorecard (`omakase status` and the status line). The audited
 per-gate bypass is `OMAKASE_SKIP_<NAME>=1` with the name upper-cased and `-` mapped to
 `_`: `OMAKASE_SKIP_BLOCK_MARKER=1`, `OMAKASE_SKIP_GO_CHECKS=1`, `OMAKASE_SKIP_GO_TEST=1`.
+
+## Worktree guard (opt-in policy)
+
+This harness also ships `omakase-worktree-guard.sh` — worktree discipline for
+multi-session work, and deliberately **harness policy, not omakase machinery**: omakase
+itself never mentions worktrees. While other worktrees are active, the guard denies an
+agent's Edit/Write to a product file in the MAIN checkout before it happens (branches
+cut there would inherit concurrent sessions' uncommitted work). It fails open and only
+ever fires with 2+ worktrees. Claude Code only; enable it by adding a PreToolUse hook
+(matcher `"Edit|Write"`) to `.claude/settings.json`:
+
+    bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh
+
+Bypass once with `OMAKASE_SKIP_WORKTREE_DISCIPLINE=1`, or persistently with
+`omakase status --disable worktree-discipline`.
 
 ## Try it
 

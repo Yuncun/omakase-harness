@@ -45,7 +45,7 @@ func useBasePayloadDir(t *testing.T) string {
 
 // clearBasePayloadOverride empties basePayloadOverride for the duration of a test
 // (save/restore, like useBasePayloadDir), so ensureBasePayload falls through to the
-// OMAKASE_BASE_PAYLOAD env tier the shims export — the override would otherwise
+// OMAKASE_BASE_PAYLOAD env tier (the documented dev/test override) — it would otherwise
 // short-circuit that tier.
 func clearBasePayloadOverride(t *testing.T) {
 	t.Helper()
@@ -243,9 +243,6 @@ func TestEnsureBasePayloadEmbedded(t *testing.T) {
 	for _, rel := range []string{
 		"omakase.manifest",
 		".omakase/VERSION",
-		".omakase/bin/omakase-banner.sh",
-		".omakase/bin/omakase-worktree-guard.sh",
-		".omakase/gates/example.sh",
 	} {
 		info, err := os.Stat(filepath.Join(dir, rel))
 		if err != nil {
@@ -302,9 +299,6 @@ func TestSourceEmbeddedBaseFallback(t *testing.T) {
 	// The source delta and the real embedded machinery are both placed.
 	for _, rel := range []string{
 		".claude/rules/r.md",
-		".omakase/bin/omakase-banner.sh",
-		".omakase/bin/omakase-worktree-guard.sh",
-		".omakase/gates/example.sh",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Errorf("placed tree missing %s: %v", rel, err)
@@ -986,7 +980,7 @@ func TestSourceMergeBaseMissing(t *testing.T) {
 		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
 	}
 	eq(t, "base-missing stderr", stderr.String(),
-		"omakase: base payload not found at "+missing+" — set OMAKASE_BASE_PAYLOAD or run omakase via the plugin's bin/ shims\n")
+		"omakase: base payload not found at "+missing+" — point OMAKASE_BASE_PAYLOAD at a real payload tree, or unset it to use the binary's embedded copy\n")
 	if strings.Contains(stdout.String(), "cached at") || strings.Contains(stderr.String(), "cached at") {
 		t.Errorf("the base check must run before any clone/fetch (no 'cached at'):\n stdout=%q\n stderr=%q", stdout.String(), stderr.String())
 	}

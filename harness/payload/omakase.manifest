@@ -1,5 +1,6 @@
 name: omakase-harness-harness
-version: 0.3.0
+version: 0.4.0
+recommends: worktree guard (opt-in, Claude Code) — add a PreToolUse hook (matcher "Edit|Write") running  bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh
 
 # This one file IS the harness's gate wiring — read it top to bottom to see
 # everything that runs. omakase runs each gate at its git hook, records the run

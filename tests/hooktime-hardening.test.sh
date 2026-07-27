@@ -41,6 +41,13 @@ newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config us
 common_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)"; }
 
 mkdir -p "$TMP"
+# Local fixture payload: the base payload ships no gates since #172, so suites
+# that need a wired gate carry their own (one markers gate + its script).
+FIXPAY="$TMP/fixpay"; mkdir -p "$FIXPAY/.omakase/gates"
+printf '#!/usr/bin/env bash\necho "example gate passed"\nexit 0\n' > "$FIXPAY/.omakase/gates/example.sh"
+chmod +x "$FIXPAY/.omakase/gates/example.sh"
+printf 'name: fixture-harness\nversion: 0.1.0\n\ngate: markers\n  hook: pre-commit\n  run: .omakase/gates/example.sh\n' > "$FIXPAY/omakase.manifest"
+
 
 # Self-contained HOME + cache: init self-installs the resolved binary into
 # $XDG_CACHE_HOME, so the real commits below fire that copy through the
@@ -54,7 +61,7 @@ fi
 
 # ---------- fixture: repoA carries a real install; repoB is the leak target ----------
 REPOA="$TMP/repoA"; newrepo "$REPOA"
-( cd "$REPOA" && OMAKASE_PAYLOAD="$HERE/../payload" bash "$INIT" ) >/dev/null 2>&1 || fail "setup: init exited non-zero in repoA"
+( cd "$REPOA" && OMAKASE_PAYLOAD="$FIXPAY" bash "$INIT" ) >/dev/null 2>&1 || fail "setup: init exited non-zero in repoA"
 OMKA="$(common_of "$REPOA")/omakase"
 REPOB="$TMP/repoB"; newrepo "$REPOB"
 REL="$(awk -F'\t' '{print $1; exit}' "$OMKA/placed.tsv" 2>/dev/null)"

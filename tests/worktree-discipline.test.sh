@@ -1,29 +1,31 @@
 #!/usr/bin/env bash
-# TDD spec for the EARLIER-THAN-COMMIT worktree-discipline layers (issue #86). The
-# commit-time gate (a custom harness's allowlist gate over omakase-gate.sh) stays the
-# fail-closed last line; these two layers fire before it:
-# (The #86 soft layer — a statusline "main checkout" warning — was retired in the #85
-#  redesign: the base bar shows harness health only; worktree discipline is harness
-#  POLICY, carried by a custom harness's commit gate and this opt-in guard.)
-#   - omakase-worktree-guard.sh   : opt-in Claude Code PreToolUse hook (matcher Edit|Write).
-#                                   Denies edits to product files in the MAIN checkout while
-#                                   other worktrees are active; the allowlist mirrors the
-#                                   commit gate's (AGENTS.md, CLAUDE.md, .claude/**, root
-#                                   *.md) plus paths that CANNOT leak into a commit
-#                                   (.omakase/** is force-excluded; .git/** isn't content).
-# Both honor OMAKASE_SKIP_WORKTREE_DISCIPLINE=1 and a "worktree-discipline" line in the
+# TDD spec for the EARLIER-THAN-COMMIT worktree-discipline layer (issue #86). The
+# commit-time gate (a custom harness's allowlist gate over `omakase hook`) stays the
+# fail-closed last line; this layer fires before it:
+#   - omakase-worktree-guard.sh : HARNESS POLICY (#172), shipped by the dogfood
+#                       harness (harness/payload), never by the omakase binary or base
+#                       payload. An opt-in Claude Code PreToolUse hook (matcher
+#                       Edit|Write; the harness recommends the wiring). Denies edits to
+#                       product files in the MAIN checkout while other worktrees are
+#                       active; the allowlist mirrors the commit gate's (AGENTS.md,
+#                       CLAUDE.md, .claude/**, root *.md) plus paths that CANNOT leak
+#                       into a commit (.omakase/** is force-excluded; .git/** isn't
+#                       content).
+# It honors OMAKASE_SKIP_WORKTREE_DISCIPLINE=1 and a "worktree-discipline" line in the
 # shared disabled-gates file (the persistent, visible disable). The guard fails
 # OPEN on anything it cannot parse or resolve — it is a pre-layer; the commit gate is
 # the layer that must fail closed.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GUARD="$HERE/../payload/.omakase/bin/omakase-worktree-guard.sh"
+GUARD="$HERE/../harness/payload/.omakase/bin/omakase-worktree-guard.sh"
 TMP="${TMPDIR:-/tmp}/omakase-wtdisc-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
 fail(){ echo "  FAIL: $1"; FAILED=1; }
 newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }
 common_of(){ ( cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd ); }
+
+mkdir -p "$TMP"
 
 # ---------- Scenario B: PreToolUse worktree guard ----------
 echo "== Scenario B: omakase-worktree-guard PreToolUse hook =="
@@ -67,7 +69,7 @@ OUT="$(guard "$ROOT" "$ROOT/docs/notes.md")"
 echo "$OUT" | grep -q '"permissionDecision":"deny"' && pass "nested .md is NOT allowlisted" || fail "nested .md escaped ($OUT)"
 
 # Paths that cannot leak into a commit: the overlay (force-excluded) and the git dir.
-OUT="$(guard "$ROOT" "$ROOT/.omakase/gates/example.sh")"
+OUT="$(guard "$ROOT" "$ROOT/.omakase/gates/mine.sh")"
 [ -z "$OUT" ] && pass ".omakase/** -> allow (cannot leak into a commit)" || fail "overlay edit denied ($OUT)"
 OUT="$(guard "$ROOT" "$ROOT/.git/info/exclude")"
 [ -z "$OUT" ] && pass ".git/** -> allow (not committable content)" || fail "git-dir edit denied ($OUT)"

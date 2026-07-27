@@ -20,8 +20,8 @@ points at it, ship in the same unattended run. Review comes before the tag.
 ## Cutting a release
 
 Any change adopters should pick up needs a version bump — the plugin manager
-keys off `.claude-plugin/plugin.json`, and the banner / `omakase status` read
-`payload/.omakase/VERSION` (see CONTRIBUTING.md for how the two update
+keys off `.claude-plugin/plugin.json`, and `omakase status` (its banner line)
+reads `payload/.omakase/VERSION` (see CONTRIBUTING.md for how the two update
 channels differ).
 
 1. Bump the version in all **three** stamps — `.claude-plugin/plugin.json`,

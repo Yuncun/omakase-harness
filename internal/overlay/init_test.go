@@ -45,7 +45,8 @@ const gateContent = "#!/usr/bin/env bash\necho hi\n"
 // uxStanzas is the wiring block every successful init appends after
 // summaryTail. Currently empty: the statusline --wire pointer prints only
 // when a host config dir exists without a statusLine, and the test HOME has
-// no host dirs (TestInitStatuslinePointer covers it). Kept as the named
+// no host dirs (TestInitStatuslinePointer covers it); worktree discipline is
+// harness policy the binary never advertises (#172). Kept as the named
 // slot so a future unconditional stanza has one place to land.
 func uxStanzas() string {
 	return ""
@@ -1160,9 +1161,9 @@ func TestPayloadNotFound(t *testing.T) {
 // Bare init with nothing remembered places NOTHING: no remembered source and
 // no OMAKASE_PAYLOAD override means there is no harness to refresh, so init
 // prints one line pointing at status and exits 0 (#123 item 1). A base
-// payload being available (the shims always export OMAKASE_BASE_PAYLOAD) is
-// merge-base plumbing, never install intent — it must not trigger the old
-// silent base-machinery install.
+// payload being available (here via OMAKASE_BASE_PAYLOAD; embedded in every
+// binary) is merge-base plumbing, never install intent — it must not trigger
+// the old silent base-machinery install.
 func TestBareInitNothingRemembered(t *testing.T) {
 	dir, repo := initRepo(t)
 	clearBasePayloadOverride(t)
@@ -1432,9 +1433,11 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 	}
 }
 
-// TestUXStanzas: the closing summary appends the worktree-guard stanza iff
-// that script exists in the repo after placement (conditional stanzas like
-// the statusline --wire pointer are covered by their own tests).
+// TestUXStanzas pins the #172 product boundary: worktree discipline is
+// harness policy, so even when a harness SHIPS a worktree-guard script, init
+// prints no stanza about it — the binary does not know the feature exists.
+// A harness that wants the wiring advertised uses its manifest's recommends:
+// line.
 func TestUXStanzas(t *testing.T) {
 	_, _ = initRepo(t)
 	p := t.TempDir()
@@ -1447,13 +1450,11 @@ func TestUXStanzas(t *testing.T) {
 	}
 	wantOut := "omakase: placed 1 file(s), updated 0 to match the payload, skipped 0 committed path(s).\n" +
 		"  + .omakase/bin/omakase-worktree-guard.sh\n" +
-		summaryTail +
-		"omakase: worktree guard (Claude Code only, opt-in) — while other worktrees are active,\n" +
-		"         denies edits to product files in the MAIN checkout before they happen. Enable by\n" +
-		"         adding a PreToolUse hook (matcher \"Edit|Write\") to .claude/settings.json:\n" +
-		"           bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh\n" +
-		verifiedLine
-	eq(t, "summary with stanzas", stdout.String(), wantOut)
+		summaryTail + verifiedLine
+	eq(t, "summary without policy stanzas", stdout.String(), wantOut)
+	if strings.Contains(strings.ToLower(stdout.String()), "worktree guard") {
+		t.Errorf("init advertised worktree policy — that belongs to the harness, not the binary: %q", stdout.String())
+	}
 }
 
 // ------------------------------------------------------------ exclude/wtinc write mode

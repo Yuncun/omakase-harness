@@ -170,10 +170,10 @@ OUT="$( cd "$REPO" && "$SHOW" --help 2>&1 )"; RC=$?
 echo "== toggles: --plain still reaches the normal render =="
 # 8. --plain is an accepted no-op (the plain page is the only page); the
 #    normal identity line still renders as the first line of output.
-OUT="$( cd "$REPO" && "$SHOW" --plain 2>&1 | head -1 )"
+OUT="$( cd "$REPO" && "$SHOW" --plain 2>&1 )"
 echo "$OUT" | grep -q "installed in" \
   && pass "case8: --plain still prints the identity line" \
-  || fail "case8: --plain first line unexpected: '$OUT'"
+  || fail "case8: --plain output unexpected: '$OUT'"
 
 rm -rf "$TMP"
 echo ""

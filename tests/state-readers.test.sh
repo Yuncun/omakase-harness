@@ -46,10 +46,17 @@ common_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)";
 col(){ awk -F'\t' -v p="$2" -v c="$3" '$1==p{print $c; exit}' "$1"; }   # $1=placed.tsv $2=path $3=column
 
 mkdir -p "$TMP"
+# Local fixture payload: the base payload ships no gates since #172, so suites
+# that need a wired gate carry their own (one markers gate + its script).
+FIXPAY="$TMP/fixpay"; mkdir -p "$FIXPAY/.omakase/gates"
+printf '#!/usr/bin/env bash\necho "example gate passed"\nexit 0\n' > "$FIXPAY/.omakase/gates/example.sh"
+chmod +x "$FIXPAY/.omakase/gates/example.sh"
+printf 'name: fixture-harness\nversion: 0.1.0\n\ngate: markers\n  hook: pre-commit\n  run: .omakase/gates/example.sh\n' > "$FIXPAY/omakase.manifest"
+
 
 # ---------- shared plain-init fixture for V (fail-closed) + H (heal) ----------
 REPO="$TMP/repoHV"; newrepo "$REPO"
-( cd "$REPO" && OMAKASE_PAYLOAD="$HERE/../payload" bash "$INIT" ) >/dev/null 2>&1 || fail "setup: plain init exited non-zero"
+( cd "$REPO" && OMAKASE_PAYLOAD="$FIXPAY" bash "$INIT" ) >/dev/null 2>&1 || fail "setup: plain init exited non-zero"
 OMK="$(common_of "$REPO")/omakase"
 PLACED="$OMK/placed.tsv"
 # One *.sh row to heal (it also pins the exec-bit contract) and a DIFFERENT row to
