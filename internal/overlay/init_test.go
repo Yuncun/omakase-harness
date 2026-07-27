@@ -43,21 +43,13 @@ const steeringOnlyVerifiedLine = "omakase: verified — no gates declared · fil
 const gateContent = "#!/usr/bin/env bash\necho hi\n"
 
 // uxStanzas is the wiring block every successful init appends after
-// summaryTail: the worktree-guard pointer (unconditional since the guard
-// moved into the binary, #172; it wires the stable machine-wide copy). The
-// statusline --wire pointer prints only when a host config dir exists
-// without a statusLine, and the test HOME has no host dirs
-// (TestInitStatuslinePointer covers it). Kept as the named
+// summaryTail. Currently empty: the statusline --wire pointer prints only
+// when a host config dir exists without a statusLine, and the test HOME has
+// no host dirs (TestInitStatuslinePointer covers it); worktree discipline is
+// harness policy the binary never advertises (#172). Kept as the named
 // slot so a future unconditional stanza has one place to land.
 func uxStanzas() string {
-	stable := hook.StableBinPath()
-	if stable == "" {
-		stable = "omakase"
-	}
-	return "omakase: worktree guard (Claude Code only, opt-in) — while other worktrees are active,\n" +
-		"         denies edits to product files in the MAIN checkout before they happen. Enable by\n" +
-		"         adding a PreToolUse hook (matcher \"Edit|Write\") to .claude/settings.json:\n" +
-		"           " + stable + " guard\n"
+	return ""
 }
 
 func sha256hex(b []byte) string {
@@ -1441,27 +1433,27 @@ func TestWtincBlockOmitsPlacedWorktreeinclude(t *testing.T) {
 	}
 }
 
-// TestUXStanzas: the closing summary appends the worktree-guard stanza
-// unconditionally (the guard is the `omakase guard` binary verb since #172)
-// and points it at the stable machine-wide binary copy, the same path the
-// git dispatchers exec (conditional stanzas like the statusline --wire
-// pointer are covered by their own tests).
+// TestUXStanzas pins the #172 product boundary: worktree discipline is
+// harness policy, so even when a harness SHIPS a worktree-guard script, init
+// prints no stanza about it — the binary does not know the feature exists.
+// A harness that wants the wiring advertised uses its manifest's recommends:
+// line.
 func TestUXStanzas(t *testing.T) {
 	_, _ = initRepo(t)
 	p := t.TempDir()
 	t.Setenv("OMAKASE_PAYLOAD", p)
-	writeFile(t, filepath.Join(p, ".omakase", "note.txt"), "n\n")
+	writeFile(t, filepath.Join(p, ".omakase", "bin", "omakase-worktree-guard.sh"), "#!/bin/sh\n")
 
 	var stdout, stderr strings.Builder
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
 	wantOut := "omakase: placed 1 file(s), updated 0 to match the payload, skipped 0 committed path(s).\n" +
-		"  + .omakase/note.txt\n" +
-		summaryTail + uxStanzas() + verifiedLine
-	eq(t, "summary with stanzas", stdout.String(), wantOut)
-	if !strings.Contains(stdout.String(), hook.StableBinPath()+" guard\n") {
-		t.Errorf("guard stanza does not wire the stable binary path: %q", stdout.String())
+		"  + .omakase/bin/omakase-worktree-guard.sh\n" +
+		summaryTail + verifiedLine
+	eq(t, "summary without policy stanzas", stdout.String(), wantOut)
+	if strings.Contains(strings.ToLower(stdout.String()), "worktree guard") {
+		t.Errorf("init advertised worktree policy — that belongs to the harness, not the binary: %q", stdout.String())
 	}
 }
 

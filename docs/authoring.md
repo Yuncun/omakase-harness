@@ -8,8 +8,8 @@ other things too. `payload/` is copied onto a target on install; everything else
 
 A `--source` install layers the omakase **base harness's payload** under your `payload/` (your
 delta wins on overlap), so you ship only your delta and **rely on base machinery without keeping
-your own copy** — the gate runner, the status banner, and the worktree guard all live in the
-`omakase` binary itself. Declare your gates
+your own copy** — the gate runner and the status banner live in the `omakase` binary
+itself. Declare your gates
 as `gate:` blocks in `payload/omakase.manifest` — the one manifest, placed and snapshotted (see
 [Reference](reference.md#manifest)) — and ship only your own gate scripts. If a gate's `run:` names a payload script (`.omakase/…` or `gates/…`)
 neither you nor the base harness ships, `init` refuses and places nothing — so a typo surfaces
@@ -33,16 +33,19 @@ the `gate:` block and its keys (`hook:`, `run:`, `glob:`, `cacheable:`, `purpose
 or repurposed out from under your manifest; anything else is an internal refactor you never
 see.
 
-The optional UX is **built into the binary, not placed scripts**: the branded box
+The product UX is **built into the binary, not placed scripts**: the branded box
 opening `omakase status` is rendered by the binary (swap the glyph with
-`OMAKASE_ICON`), and the worktree guard is the `omakase guard` verb — a Claude Code
-PreToolUse hook that denies edits to product files in the main checkout while other
-worktrees are active (the pre-edit half of worktree discipline; a commit-time
-allowlist gate is the fail-closed half; `init` prints the wiring). The status-bar
-segment is likewise a binary subcommand: `omakase statusline`
-(`omakase statusline --wire` connects the bar; see [Reference](reference.md)). All of
-it probes the shared ledger and hooks, so a custom harness gets it for free and
-ships none of it.
+`OMAKASE_ICON`), and the status-bar segment is a binary subcommand,
+`omakase statusline` (`omakase statusline --wire` connects the bar; see
+[Reference](reference.md)). Both probe the shared ledger and hooks, so a custom
+harness gets them for free and ships none of it.
+
+**Policy**, by contrast, ships in a harness. Anything that steers how people or
+agents work — editor hooks, workflow rules, discipline scripts — is payload
+content you place and recommend, never an omakase feature. The worked example is
+the worktree guard in [`harness/`](../harness/): a PreToolUse script this repo's
+own harness ships (with a `recommends:` line teaching the wiring) that omakase
+itself knows nothing about.
 
 A gate whose `run:` names a payload script (`.omakase/…` or `gates/…`) is validated at
 install: `init` refuses any harness that references a script it does not ship, so a drift

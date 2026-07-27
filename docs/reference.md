@@ -137,22 +137,6 @@ turns on the experimental `STATUS_LINE` feature flag; note Copilot refreshes
 its bar per response (no timer), so the live gate counter updates more
 coarsely there than on Claude Code.
 
-### `omakase guard`
-
-Binary-only plumbing verb: the worktree-discipline check, wired as an opt-in
-Claude Code PreToolUse hook (matcher `Edit|Write`; `init` prints the wiring,
-pointing at the machine-wide binary copy the git dispatchers exec). It reads
-one hook-JSON payload on stdin; while other worktrees are active, an
-Edit/Write to a product file in the MAIN checkout is denied with a teaching
-message (the deny carries both the top-level and nested hook-output shapes,
-so Claude Code and Copilot CLI both honor it). The allowlist mirrors the
-commit gate's — `AGENTS.md`, `CLAUDE.md`, `.claude/**`, root `*.md` — plus
-`.omakase/**` and `.git/**`, which cannot leak into a commit. Standdowns:
-`OMAKASE_SKIP_WORKTREE_DISCIPLINE=1` per invocation, or a
-`worktree-discipline` line via `omakase status --disable`. The guard fails
-OPEN (exit 0, silent) on anything it cannot parse or resolve — it is a
-pre-layer for attention; a commit-time gate is the layer that fails closed.
-
 ### `remove.sh`
 
 Uninstalls hooks, deletes exactly the untracked files `init` placed, and strips the

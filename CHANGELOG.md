@@ -6,25 +6,25 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 ## [Unreleased]
 
 ### Changed
-- **The last machinery scripts moved into the binary** (#172). The worktree
-  guard is now the `omakase guard` verb (init's wiring hint points at the
-  stable machine-wide binary, like the git dispatchers); the branded status
-  banner renders inside `omakase status` (no script exec of repo content).
-  The base payload shrinks to `omakase.manifest` + `.omakase/VERSION`.
+- **The base payload shrinks to content the product owns** (#172):
+  `omakase.manifest` + `.omakase/VERSION`, nothing else. The branded status
+  banner now renders inside `omakase status` (no script exec of repo
+  content); the worktree guard is reclassified as **harness policy** and
+  moves to the dogfood harness (`harness/payload/.omakase/bin/`), which
+  recommends its wiring at install — the omakase binary itself no longer
+  mentions worktree discipline anywhere.
 - The shims no longer export `OMAKASE_BASE_PAYLOAD` — every pinned binary
   since 0.27.0 embeds the base payload. The env var remains honored as a
   dev/test override.
 
 ### Removed
-- `payload/.omakase/bin/omakase-worktree-guard.sh`,
-  `payload/.omakase/bin/omakase-banner.sh`, and the example `markers` gate
-  (`payload/.omakase/gates/example.sh` + its `gate:` block). The example
-  gate had been unreachable in production since #123 — bare init places
-  nothing, and a source install's manifest shadows the base manifest; its
-  conflict-marker script now lives as a worked example in
-  `docs/authoring.md`. Existing installs: re-run `omakase init` (the orphan
-  sweep clears the retired scripts) and re-point any PreToolUse hook at
-  `omakase guard`.
+- From the base payload: `omakase-worktree-guard.sh` (now in the dogfood
+  harness), `omakase-banner.sh` (now in the binary), and the example
+  `markers` gate (`example.sh` + its `gate:` block). The example gate had
+  been unreachable in production since #123 — bare init places nothing, and
+  a source install's manifest shadows the base manifest; its conflict-marker
+  script survives as a worked example in `docs/authoring.md`. Existing
+  installs: re-run `omakase init` (the orphan sweep clears retired scripts).
 
 ## [0.27.0] — 2026-07-27
 
