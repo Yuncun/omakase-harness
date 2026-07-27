@@ -23,10 +23,10 @@
 #       if-condition's set -e suppression; a succeeding build still execs
 #   O10. issue #70 regression: the binary sits ALONE in the cache (a fetch /
 #        PATH install, no payload/ sibling); shim -> cached binary -> init
-#        --source finds the base merge payload via the shim-exported
-#        OMAKASE_BASE_PAYLOAD. Leg 8 runs the cached binary DIRECTLY with no
-#        such export — the brew/tarball shape — and proves it succeeds via
-#        the base payload EMBEDDED in the binary (issue #168).
+#        --source succeeds via the base payload EMBEDDED in the binary (the
+#        shim-export handoff was retired in #172). Leg 8 runs the cached
+#        binary DIRECTLY — the brew/tarball shape — same embedded path
+#        (issue #168).
 # HOME and XDG_CACHE_HOME point at fixture dirs so nothing touches the real machine.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -312,8 +312,8 @@ rc2=$?
 echo "== Scenario O10: a cache-resident release binary drives init end-to-end (issue #70) =="
 # The issue's exact shape: the omakase binary sits ALONE in the per-machine cache
 # (the fetch / PATH-install case, no payload/ sibling), so the --source merge base
-# is NOT discoverable binary-relative. resolve_omakase exports the plugin's own
-# bin/../payload in OMAKASE_BASE_PAYLOAD (fix #70) and the binary honors it. O10
+# is NOT discoverable binary-relative. The binary falls back to its EMBEDDED base
+# payload (#168; the shim's OMAKASE_BASE_PAYLOAD export was retired in #172). O10
 # itself touches no network: a real binary drives a LOCAL source clone.
 #
 # Binary source, in order: go on PATH builds from source; else the pinned release
@@ -377,15 +377,14 @@ if [ -n "$O10BUILT" ]; then
     [ -f "$O10TGT/.omakase/VERSION" ] && pass "base payload file placed (the merge base was located)" || fail "base payload file missing — base payload not located"
     [ -f "$O10TGT/.omakase/O10-SOURCE-MARKER" ] && pass "source marker placed (source delta layered over the base)" || fail "source marker missing"
 
-    # ---- leg 8: the cached binary DIRECTLY, no OMAKASE_BASE_PAYLOAD (issue #168) ----
+    # ---- leg 8: the cached binary DIRECTLY, no shim at all (issue #168) ----
     # The standalone-binary shape: brew / release tarball / go install — no shim
-    # runs, so nothing exports OMAKASE_BASE_PAYLOAD and no payload/ sibling
-    # exists. Before #168 this failed fast ("base payload not found", the old
-    # negative control here); now the binary extracts its EMBEDDED base payload
-    # into the machine cache and the install succeeds. The extraction dir
-    # appearing under <cache>/omakase/basepayload/ proves the embedded path ran
-    # (leg 7's env handoff never creates it). Runs on either binary source:
-    # the pinned release carries the embed since 0.27.0.
+    # runs and no payload/ sibling exists. Before #168 this failed fast ("base
+    # payload not found", the old negative control here); now the binary
+    # extracts its EMBEDDED base payload into the machine cache and the install
+    # succeeds. The extraction dir under <cache>/omakase/basepayload/ proves the
+    # embedded path ran. Runs on either binary source: the pinned release
+    # carries the embed since 0.27.0.
     O10TGT2="$O10/target-standalone"; scratch_repo "$O10TGT2"
     O10SAOUT="$O10/standalone.out"; O10SAERR="$O10/standalone.err"
     ( cd "$O10TGT2" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" \
@@ -399,8 +398,8 @@ if [ -n "$O10BUILT" ]; then
     # ---- leg 9: bare init with nothing remembered places NOTHING (#123 item 1) ----
     # A fresh repo, no --source, no remembered source: there is no harness to
     # refresh, so init prints the one-line pointer at status and exits 0 —
-    # never the old silent base-machinery install, even though the shim
-    # exported OMAKASE_BASE_PAYLOAD (merge-base plumbing, not install intent).
+    # never the old silent base-machinery install, even though a base payload
+    # is always reachable (embedded; merge-base plumbing, not install intent).
     O10TGT2="$O10/target2"; scratch_repo "$O10TGT2"
     O10OUT2="$O10/bare.out"; O10ERR2="$O10/bare.err"
     ( cd "$O10TGT2" && env -i PATH="$CLEANPATH" HOME="$O10HOME" XDG_CACHE_HOME="$XDG" \

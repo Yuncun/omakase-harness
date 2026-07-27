@@ -1169,9 +1169,9 @@ func TestPayloadNotFound(t *testing.T) {
 // Bare init with nothing remembered places NOTHING: no remembered source and
 // no OMAKASE_PAYLOAD override means there is no harness to refresh, so init
 // prints one line pointing at status and exits 0 (#123 item 1). A base
-// payload being available (the shims always export OMAKASE_BASE_PAYLOAD) is
-// merge-base plumbing, never install intent — it must not trigger the old
-// silent base-machinery install.
+// payload being available (here via OMAKASE_BASE_PAYLOAD; embedded in every
+// binary) is merge-base plumbing, never install intent — it must not trigger
+// the old silent base-machinery install.
 func TestBareInitNothingRemembered(t *testing.T) {
 	dir, repo := initRepo(t)
 	clearBasePayloadOverride(t)

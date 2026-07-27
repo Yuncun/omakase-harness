@@ -143,7 +143,7 @@ func runSource(source, sourceRef, sourceSub, basePayload string, stdout, stderr 
 	// never happened. The message names the path so a bad handoff is
 	// diagnosable.
 	if info, err := os.Stat(basePayload); err != nil || !info.IsDir() {
-		fmt.Fprintf(stderr, "omakase: base payload not found at %s — set OMAKASE_BASE_PAYLOAD or run omakase via the plugin's bin/ shims\n", basePayload)
+		fmt.Fprintf(stderr, "omakase: base payload not found at %s — point OMAKASE_BASE_PAYLOAD at a real payload tree, or unset it to use the binary's embedded copy\n", basePayload)
 		return sourceResult{}, 1
 	}
 

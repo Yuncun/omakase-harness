@@ -20,10 +20,6 @@
 # pinned version, baked sha256s, one download per machine into
 # ${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/<ver>/.
 #
-# resolve_omakase also exports OMAKASE_BASE_PAYLOAD (the plugin's own
-# bin/../payload) so the binary can find the --source merge base even when it
-# runs from a cache dir / PATH with no payload/ sibling (since v0.18.0). A
-# pre-set OMAKASE_BASE_PAYLOAD always wins.
 
 # Pinned omakase release. Re-pinning: bump this, replace the four archive hashes
 # from that release's checksums.txt, and regenerate the four binary hashes
@@ -184,15 +180,10 @@ fetch_omakase() {
 # nothing resolves. Requires $HERE = the caller's bin/ directory.
 resolve_omakase() {
   local allow_fetch="${1:-}"
-  # Hand the base harness payload's location to the binary before resolving it:
-  # since v0.18.0 the binary can run from a cache dir / PATH with no payload/
-  # sibling, so the --source merge base ($SCRIPT_DIR/../payload in v1) is no
-  # longer discoverable binary-relative. Export the plugin's own bin/../payload
-  # as a normalized absolute path (it can surface in the binary's error
-  # messages). A pre-set value always wins; safe under set -u.
-  if [ -z "${OMAKASE_BASE_PAYLOAD:-}" ] && [ -d "$HERE/../payload" ]; then
-    export OMAKASE_BASE_PAYLOAD="$(cd "$HERE/.." && pwd)/payload"
-  fi
+  # The binary carries its own embedded base payload (since 0.27.0) and
+  # resolves an on-disk one binary-relative for the dev loop, so the shims no
+  # longer export OMAKASE_BASE_PAYLOAD (#172). A pre-set value still wins as
+  # the documented dev/test override.
   # An OMAKASE_BIN override short-circuits resolution entirely, same as the
   # pre-bootstrap shims: valid (executable) -> use it; invalid -> fail now
   # rather than falling through to tiers 2-6 (tests rely on this to force a
