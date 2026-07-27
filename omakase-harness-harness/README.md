@@ -46,13 +46,13 @@ Bypass once with `OMAKASE_SKIP_WORKTREE_DISCIPLINE=1`, or persistently with
 
 ## Try it
 
-A harness can live in a **subfolder** of a git repo — this one lives at `harness/` in the
+A harness can live in a **subfolder** of a git repo — this one lives at `omakase-harness-harness/` in the
 omakase repo itself. From any Go project, including a clone of this repo (that is the
 self-hosting use):
 
-    omakase init Yuncun/omakase-harness/harness    # Claude Code or Copilot CLI
+    omakase init Yuncun/omakase-harness/omakase-harness-harness    # Claude Code or Copilot CLI
 
-(From a local clone, the same install is `omakase init --source <path-to-clone>//harness`
+(From a local clone, the same install is `omakase init --source <path-to-clone>//omakase-harness-harness`
 — the `//` marks where the repo ends and the subfolder begins.)
 
 `omakase status` lists what it placed; `omakase remove` deletes it all and restores the repo.

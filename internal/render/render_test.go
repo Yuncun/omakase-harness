@@ -181,8 +181,8 @@ func TestHarnessSlot(t *testing.T) {
 		{"", "", "", ""},
 		// The manifest's declared name: outranks the source's last folder
 		// (#131 gripe 5) but not the NAME override…
-		{"", "omakase-harness-harness", "github.com/Yuncun/omakase-harness//harness", "omakase-harness-harness"},
-		{"acme", "omakase-harness-harness", "github.com/Yuncun/omakase-harness//harness", "acme"},
+		{"", "omakase-harness-harness", "github.com/Yuncun/omakase-harness//omakase-harness-harness", "omakase-harness-harness"},
+		{"acme", "omakase-harness-harness", "github.com/Yuncun/omakase-harness//omakase-harness-harness", "acme"},
 		// …and the base payload's own name: never names a bare install.
 		{"", "omakase-base", "", ""},
 	}

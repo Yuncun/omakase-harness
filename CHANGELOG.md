@@ -10,12 +10,17 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   `omakase.manifest` + `.omakase/VERSION`, nothing else. The branded status
   banner now renders inside `omakase status` (no script exec of repo
   content); the worktree guard is reclassified as **harness policy** and
-  moves to the dogfood harness (`harness/payload/.omakase/bin/`), which
+  moves to the dogfood harness (`omakase-harness-harness/payload/.omakase/bin/`), which
   recommends its wiring at install — the omakase binary itself no longer
   mentions worktree discipline anywhere.
 - The shims no longer export `OMAKASE_BASE_PAYLOAD` — every pinned binary
   since 0.27.0 embeds the base payload. The env var remains honored as a
   dev/test override.
+- The dogfood harness directory `harness/` is renamed
+  `omakase-harness-harness/` — the long name is deliberate teaching: the
+  omakase repo carries a harness for omakase development, and the folder
+  says so. Install path is now
+  `omakase init Yuncun/omakase-harness/omakase-harness-harness`.
 
 ### Removed
 - From the base payload: `omakase-worktree-guard.sh` (now in the dogfood

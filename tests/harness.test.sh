@@ -16,7 +16,7 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../bin/init.sh"
 REMOVE="$HERE/../bin/remove.sh"
-STARTER="$(cd "$HERE/../harness" && pwd)"
+STARTER="$(cd "$HERE/../omakase-harness-harness" && pwd)"
 TMP="${TMPDIR:-/tmp}/omakase-starter-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }

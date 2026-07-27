@@ -26,8 +26,8 @@ it off. `omakase remove` deletes everything it placed.
      tape replaces it. -->
 
 ```
-$ omakase init Yuncun/omakase-harness/harness
-omakase: source 'https://github.com/Yuncun/omakase-harness//harness' (name: omakase-harness-harness, version: 0.3.0)
+$ omakase init Yuncun/omakase-harness/omakase-harness-harness
+omakase: source 'https://github.com/Yuncun/omakase-harness//omakase-harness-harness' (name: omakase-harness-harness, version: 0.4.0)
 omakase: placed 9 file(s), updated 0 to match the payload, skipped 0 committed path(s).
   + .claude/rules/omakase-dev.md
   + .github/instructions/omakase-dev.instructions.md
