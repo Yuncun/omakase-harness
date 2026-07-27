@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Yuncun/omakase-harness/internal/hook"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
 
@@ -417,5 +419,82 @@ func TestHealWarnsKeptDriftWithoutCpFix(t *testing.T) {
 	}
 	if strings.Contains(w, "cp -P") {
 		t.Errorf("kept drift warning still suggests the cp fix: %q", w)
+	}
+}
+
+// TestHookTimeNeverWritesGitHooks is the issue #96 regression test: a hook
+// firing must never modify anything under .git/hooks — not even to "repair"
+// a stale or foreign hook file. The original incident was a hook file
+// rewritten in place while bash was executing it (bash resumed at a stale
+// byte offset — spurious syntax error, non-zero checkout). The #98
+// architecture kills the class by contract: dispatchers are write-once, and
+// only init/remove are writers. This pins that contract.
+func TestHookTimeNeverWritesGitHooks(t *testing.T) {
+	repo := hookRepo(t)
+	hooksDir := filepath.Join(repo.Root, ".git", "hooks")
+	for _, name := range hook.Names() {
+		if err := hook.Write(hooksDir, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A deliberately stale/foreign hook file: hook-time code must leave even
+	// this untouched (repairing it is init's job, not a fire-time side effect).
+	stale := []byte("#!/bin/sh\n# stale wiring from an older omakase\nexit 0\n")
+	writeFile(t, filepath.Join(hooksDir, "post-merge"), string(stale))
+	if err := os.Chmod(filepath.Join(hooksDir, "post-merge"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	before := map[string]string{}
+	beforeMtime := map[string]time.Time{}
+	entries, err := os.ReadDir(hooksDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		p := filepath.Join(hooksDir, e.Name())
+		before[e.Name()] = readFileT(t, p)
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		beforeMtime[e.Name()] = info.ModTime()
+	}
+
+	// Fire every hook kind: a passing gate, the heal with real work to do
+	// (a deleted placed file), and the session heal.
+	var out, errb strings.Builder
+	if code := RunHook([]string{"pre-commit"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("pre-commit exit = %d; stderr=%q", code, errb.String())
+	}
+	if err := os.Remove(filepath.Join(repo.Root, ".omakase", "gates", "example.sh")); err != nil {
+		t.Fatal(err)
+	}
+	if code := RunHook([]string{"post-checkout", "0000", "1111", "1"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("post-checkout exit = %d; stderr=%q", code, errb.String())
+	}
+	if code := RunHook([]string{"session-start"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("session-start exit = %d; stderr=%q", code, errb.String())
+	}
+
+	after, err := os.ReadDir(hooksDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(entries) {
+		t.Errorf("hook-time run changed the .git/hooks entry count: %d -> %d", len(entries), len(after))
+	}
+	for _, e := range after {
+		p := filepath.Join(hooksDir, e.Name())
+		if got := readFileT(t, p); got != before[e.Name()] {
+			t.Errorf("hook-time run rewrote .git/hooks/%s", e.Name())
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.ModTime().Equal(beforeMtime[e.Name()]) {
+			t.Errorf("hook-time run touched .git/hooks/%s (mtime changed)", e.Name())
+		}
 	}
 }
