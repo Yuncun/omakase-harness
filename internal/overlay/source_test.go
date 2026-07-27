@@ -345,6 +345,36 @@ func TestSourceCRLFManifest(t *testing.T) {
 	_ = repo
 }
 
+// TestSourceManifestControlBytesStripped: manifest fields are attacker-supplied
+// (an untrusted source repo); embedded control bytes — ANSI escapes, BEL,
+// backspace — must never reach the terminal through the cached-at or
+// recommends lines (issue #32).
+func TestSourceManifestControlBytesStripped(t *testing.T) {
+	initRepo(t)
+	srcTestEnv(t)
+	useBasePayloadDir(t)
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"),
+		"name: evil\x1b[2J\x07harness\nversion: 1.0\x08\nrecommends: run\x1b]0;spoof\x07 this\n")
+	writeFile(t, filepath.Join(src, "payload", ".omakase", "gates", "g.sh"), "g\n")
+	commitAll(t, src, "hostile manifest")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", src}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	out := stdout.String() + stderr.String()
+	for _, bad := range []string{"\x1b", "\x07", "\x08"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("control byte %q leaked into output:\n%q", bad, out)
+		}
+	}
+	if !strings.Contains(stdout.String(), "(name: evil[2Jharness, version: 1.0)") {
+		t.Errorf("cached-at line does not carry the stripped fields:\n%q", stdout.String())
+	}
+}
+
 // ---------------------------------------------------------------- ref pin
 
 // TestSourceRefPinBranch: --source repo#branch checks the cache out to that

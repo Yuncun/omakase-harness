@@ -406,7 +406,9 @@ func sanitizeBase(src string) string {
 // manifestField returns the value of the first line beginning "<key>:",
 // with whitespace after the colon and all trailing whitespace (including
 // CR) stripped, so a CRLF manifest never leaks a ^M downstream; "" when no
-// such line exists.
+// such line exists. Control bytes (C0 + DEL) are deleted: the manifest is
+// attacker-supplied and these values are echoed to the terminal, where an
+// embedded ESC/BEL could spoof the install output (issue #32).
 func manifestField(content []byte, key string) string {
 	prefix := key + ":"
 	const ws = " \t\r\n\v\f" // POSIX [[:space:]]
@@ -420,7 +422,12 @@ func manifestField(content []byte, key string) string {
 		v := line[len(prefix):]
 		v = strings.TrimLeft(v, ws)
 		v = strings.TrimRight(v, ws)
-		return v
+		return strings.Map(func(r rune) rune {
+			if r < 0x20 || r == 0x7f {
+				return -1
+			}
+			return r
+		}, v)
 	}
 	return ""
 }
