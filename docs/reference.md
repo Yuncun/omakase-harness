@@ -35,6 +35,12 @@ agent session opens — the same best-effort repair, covering the one gap git ev
 can't see (overlay wiped, then a new session starts). It is silent unless it restored
 something, exits 0 always, and never fetches the binary at session start.
 
+Hooks, the exclude block, and the remembered source live in the git common dir, shared by
+every checkout of the repository. Switching the repo's harness is therefore repo-wide: a
+source that differs from the one the repo already runs is refused from a **linked
+worktree** (the message names the main checkout to run it from). The bare refresh and the
+same-source re-run stay allowed in any worktree — that is the normal heal flow.
+
 - `<owner/repo[/subpath][#ref]>` — positional shorthand for
   `--source https://github.com/owner/repo`, optionally pinned to a branch or tag with
   `#ref`. This is the install line for a custom harness a repo publishes:

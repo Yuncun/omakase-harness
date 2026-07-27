@@ -39,6 +39,16 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   adopted.
 
 ### Fixed
+- **A linked worktree can no longer silently re-point the repository's
+  harness** (#184): hooks, the exclude block, and the remembered source live
+  in the shared git common dir, so `init` with a source that differs from
+  the one the repo already runs now refuses from a linked worktree — exit 1,
+  nothing changed, message naming the main checkout to run it from. The bare
+  refresh and the same-source re-run keep working in any worktree (the heal
+  flow), and a first install from a worktree is still allowed (nothing to
+  clobber). Previously the second harness overwrote the exclude block,
+  hooks, and remembered source for the main checkout and every sibling
+  worktree, unprompted.
 - **Payload symlinks that escape the repo are refused** (#30): a harness
   payload carrying a symlink with an absolute target, or a relative target
   that climbs out of the repo, refuses the whole install before anything is

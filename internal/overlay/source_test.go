@@ -1455,3 +1455,111 @@ func TestSourceSubpathRememberedRoundTrip(t *testing.T) {
 		t.Errorf("bare re-run did not re-fetch the remembered subpath source:\n%s", o2.String())
 	}
 }
+
+// ------------------------------------------------- linked-worktree guard (#184)
+
+// wtOf adds a linked worktree to dir and chdirs into it. Assertions compare
+// against git's physical paths (repo.Root), never the raw temp path.
+func wtOf(t *testing.T, dir string) string {
+	t.Helper()
+	wt := filepath.Join(t.TempDir(), "wt")
+	runGitT(t, dir, "worktree", "add", "-q", wt, "-b", "feat")
+	chdir(t, wt)
+	return wt
+}
+
+// srcWith builds a committed one-file source harness.
+func srcWith(t *testing.T, name, rel, content string) string {
+	t.Helper()
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: "+name+"\n")
+	writeFile(t, filepath.Join(src, "payload", rel), content)
+	commitAll(t, src, name)
+	return src
+}
+
+// Hooks, the exclude block, and the remembered source live in the git common
+// dir — shared by every checkout. An explicit DIFFERENT source given from a
+// linked worktree would silently re-point all of them, so it refuses, names
+// the main checkout, and changes nothing (#184).
+func TestWorktreeInitDifferentSourceRefused(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	useBasePayloadDir(t)
+	srcA := srcWith(t, "harness-a", filepath.Join(".claude", "rules", "a.md"), "rule A\n")
+	srcB := srcWith(t, "harness-b", "b.md", "rule B\n")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", srcA}, &stdout, &stderr); code != 0 {
+		t.Fatalf("main install exit=%d stderr=%s", code, stderr.String())
+	}
+	exclBefore := readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude"))
+	srcBefore := readFileT(t, filepath.Join(repo.OMK, "source"))
+	placedBefore := readFileT(t, filepath.Join(repo.OMK, "placed.tsv"))
+
+	wt := wtOf(t, dir)
+	stdout.Reset()
+	stderr.Reset()
+	if code := RunInit([]string{"--source", srcB}, &stdout, &stderr); code != 1 {
+		t.Fatalf("worktree re-point exit=%d, want 1; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "linked worktree") || !strings.Contains(stderr.String(), repo.Root) {
+		t.Fatalf("refusal must say linked worktree and name the main checkout %s:\n%s", repo.Root, stderr.String())
+	}
+	if got := readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude")); got != exclBefore {
+		t.Fatalf("shared exclude block rewritten despite refusal:\n%s", got)
+	}
+	if got := readFileT(t, filepath.Join(repo.OMK, "source")); got != srcBefore {
+		t.Fatalf("remembered source re-pointed despite refusal: %q", got)
+	}
+	if got := readFileT(t, filepath.Join(repo.OMK, "placed.tsv")); got != placedBefore {
+		t.Fatalf("ledger rewritten despite refusal:\n%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "b.md")); !os.IsNotExist(err) {
+		t.Fatal("source B file placed despite refusal")
+	}
+}
+
+// The per-worktree refresh flows stay allowed: a bare re-run and an explicit
+// re-run of the SAME source both place the repo's harness into the worktree.
+func TestWorktreeInitSameSourceAllowed(t *testing.T) {
+	dir, _ := initRepo(t)
+	srcTestEnv(t)
+	useBasePayloadDir(t)
+	srcA := srcWith(t, "harness-a", filepath.Join(".claude", "rules", "a.md"), "rule A\n")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", srcA}, &stdout, &stderr); code != 0 {
+		t.Fatalf("main install exit=%d stderr=%s", code, stderr.String())
+	}
+
+	wt := wtOf(t, dir)
+	stdout.Reset()
+	stderr.Reset()
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("bare worktree refresh exit=%d stderr=%s", code, stderr.String())
+	}
+	eq(t, "bare refresh places the harness", readFileT(t, filepath.Join(wt, ".claude", "rules", "a.md")), "rule A\n")
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := RunInit([]string{"--source", srcA}, &stdout, &stderr); code != 0 {
+		t.Fatalf("same-source worktree re-run exit=%d stderr=%s", code, stderr.String())
+	}
+}
+
+// A first install from a worktree (nothing installed anywhere) is deliberate
+// repo configuration, not a re-point — allowed.
+func TestWorktreeFirstInstallAllowed(t *testing.T) {
+	dir, _ := initRepo(t)
+	srcTestEnv(t)
+	useBasePayloadDir(t)
+	srcA := srcWith(t, "harness-a", filepath.Join(".claude", "rules", "a.md"), "rule A\n")
+
+	wt := wtOf(t, dir)
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", srcA}, &stdout, &stderr); code != 0 {
+		t.Fatalf("first install from a worktree exit=%d stderr=%s", code, stderr.String())
+	}
+	eq(t, "first install places the harness", readFileT(t, filepath.Join(wt, ".claude", "rules", "a.md")), "rule A\n")
+}
