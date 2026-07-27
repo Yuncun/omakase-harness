@@ -80,9 +80,9 @@ keep/restore for files you've edited, and `omakase diff` for what changed —
 config (an instruction file, a skill, a hook script) from your clone — on every
 host, including the surfaces no host can switch off natively — and
 `omakase unblock` puts it back exactly. Authoring is done by your agent from intent — see
-[Share your harness](#share-your-harness). An optional status bar
-(`omakase statusline --wire`) keeps the harness state visible in Claude Code and
-Copilot CLI, including which gate is running right now.
+[Share your harness](#share-your-harness). A status bar wired at init keeps
+the harness state visible in Claude Code and Copilot CLI, including which
+gate is running right now (it never replaces a bar you already have).
 
 ## What's a harness?
 

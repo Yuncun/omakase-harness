@@ -985,22 +985,11 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "omakase: to customize, edit an injected file in place (omakase diff shows the change;")
 	fmt.Fprintln(stdout, "         keep or undo it via omakase status) — or fork the harness source and init from your copy.")
-	// The status-bar wiring runs the machine-wide binary copy
-	// (main() refreshes it on every real init), so these stanzas print
-	// unconditionally — the feature ships in the binary, not the payload.
-	stable := hook.StableBinPath()
-	if stable == "" {
-		stable = "omakase" // no resolvable home: fall back to PATH wiring
-	}
-	// One line, only while a host is missing a status bar — the --wire verb
-	// carries the details (per-host, backup, never replaces an existing bar).
-	if !statuslineWired() {
-		fmt.Fprintln(stdout, "omakase: status bar (optional) — one machine-wide segment for every omakase repo,")
-		fmt.Fprintf(stdout, "         dark elsewhere. Wire it:  %s statusline --wire\n", stable)
-	}
-	// No other UX stanzas: worktree discipline and its guard are harness
-	// POLICY (#172) — a harness that wants them ships its own script and
-	// recommends the wiring; the binary does not advertise them.
+	// No UX stanzas here: the status-bar wiring is machine config the init
+	// verb (cmd/omakase) applies after this returns — wired by default into
+	// empty host slots, #123 item 5 — and worktree discipline and its guard
+	// are harness POLICY (#172): a harness that wants them ships its own
+	// script and recommends the wiring; the binary does not advertise them.
 
 	// ---- prove, don't assert ----
 	// The closing line is the three status-bar proofs run fresh against what
@@ -1012,28 +1001,6 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, render.InitVerdict(verdict))
 	return 0
-}
-
-// statuslineWired reports whether every host config dir that exists already
-// carries a statusLine in its settings.json — when one is missing a bar,
-// init prints the --wire pointer. A missing HOME counts as wired (nothing
-// to point at).
-func statuslineWired() bool {
-	home := os.Getenv("HOME")
-	if home == "" {
-		return true
-	}
-	for _, host := range []string{".claude", ".copilot"} {
-		dir := filepath.Join(home, host)
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			continue // host not on this machine
-		}
-		b, err := os.ReadFile(filepath.Join(dir, "settings.json"))
-		if err != nil || !strings.Contains(string(b), `"statusLine"`) {
-			return false
-		}
-	}
-	return true
 }
 
 // placeFile places one payload file at root/rel: creates the dest parent,

@@ -32,6 +32,16 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   command; `omakase remove` restores everything blocked. Works with or
   without a harness installed. v1 refuses repos already running their own
   sparse-checkout.
+
+- **Statusline wired by default** (#123 item 5): a real `omakase init` now
+  fills each host's empty `statusLine` slot (Claude Code `~/.claude`,
+  Copilot CLI `~/.copilot` — only where the config dir already exists) with
+  the segment block, announcing the write and backing up any prior settings
+  file. An existing status bar is never touched, and a wired machine stays
+  silent — the steady state prints nothing. `init --help` and the
+  nothing-remembered first run install nothing and wire nothing.
+  `omakase statusline --wire` stays for explicit re-wiring and for the
+  occupied-slot instructions.
 - **Resolved commit in the source line** (#38): every `--source` install and
   bare re-run now prints the commit the payload came from —
   `omakase: source '…' (name: …, commit a1b2c3d) cached at …` — so a bare
@@ -49,6 +59,11 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   clobber). Previously the second harness overwrote the exclude block,
   hooks, and remembered source for the main checkout and every sibling
   worktree, unprompted.
+
+- **Wire target honors `XDG_CACHE_HOME`**: the statusline block now points
+  at `hook.StableBinPath()` — the same path the dispatchers exec and every
+  init refreshes — instead of a hardcoded `~/.cache`, which left the bar
+  dark on machines that set `XDG_CACHE_HOME`.
 - **Payload symlinks that escape the repo are refused** (#30): a harness
   payload carrying a symlink with an absolute target, or a relative target
   that climbs out of the repo, refuses the whole install before anything is

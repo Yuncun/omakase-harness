@@ -36,9 +36,10 @@ see.
 The product UX is **built into the binary, not placed scripts**: the branded box
 opening `omakase status` is rendered by the binary (swap the glyph with
 `OMAKASE_ICON`), and the status-bar segment is a binary subcommand,
-`omakase statusline` (`omakase statusline --wire` connects the bar; see
-[Reference](reference.md)). Both probe the shared ledger and hooks, so a custom
-harness gets them for free and ships none of it.
+`omakase statusline` (wired into the hosts' bars at init;
+`omakase statusline --wire` re-wires by hand — see [Reference](reference.md)).
+Both probe the shared ledger and hooks, so a custom harness gets them for free
+and ships none of it.
 
 **Policy**, by contrast, ships in a harness. Anything that steers how people or
 agents work — editor hooks, workflow rules, discipline scripts — is payload

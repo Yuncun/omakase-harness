@@ -25,6 +25,13 @@ TMP="${TMPDIR:-/tmp}/omakase-edit-lifecycle-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
 fail(){ echo "  FAIL: $1"; FAILED=1; }
+
+# Self-contained HOME + cache (binary already resolved above): init wires the
+# statusline into host settings under $HOME by default (#123 item 5) and
+# self-installs the binary into $XDG_CACHE_HOME — neither may ever touch the
+# developer's real ones from a test run.
+export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+mkdir -p "$HOME" "$XDG_CACHE_HOME"
 newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }
 common_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)"; }
 bar(){ ( cd "$1" && printf '{"workspace":{"current_dir":"%s"}}' "$1" | NO_COLOR=1 "$OMAKASE" statusline ); }

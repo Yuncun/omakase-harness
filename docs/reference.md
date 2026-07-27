@@ -139,14 +139,19 @@ else. Dark is also the honest degraded state: the segment reads cached facts
 only, so a wiped cache stays dark until the next `init`; `omakase status` is
 the truth surface.
 
-`--wire` connects the segment to the hosts' bars, per host and only where its
-config dir already exists: if no status line is configured, it backs the
-settings file up (`settings.json.omakase-bak`) and writes the block pointing
-at the machine-wide binary; an existing bar is never replaced (you get
-instructions for adding the segment to it instead). On Copilot CLI it also
-turns on the experimental `STATUS_LINE` feature flag; note Copilot refreshes
-its bar per response (no timer), so the live gate counter updates more
-coarsely there than on Claude Code.
+The segment is wired into the hosts' bars by default: after a real install,
+`omakase init` fills each host's empty `statusLine` slot, per host and only
+where its config dir already exists (Claude Code `~/.claude`, Copilot CLI
+`~/.copilot`), backing the settings file up first
+(`settings.json.omakase-bak`). An existing bar is never replaced — a host
+that already has one is left untouched, silently. `init --help` and the
+nothing-remembered first run install nothing and wire nothing.
+
+`--wire` does the same connection explicitly — after an unwire, or on a
+machine that has never run an init here — and it teaches the occupied-slot
+case: instructions for adding the segment to an existing bar by hand. Note
+Copilot refreshes its bar per response (no timer), so the live gate counter
+updates more coarsely there than on Claude Code.
 
 ### `remove.sh`
 
