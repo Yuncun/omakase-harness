@@ -98,6 +98,48 @@ func TestHookPostCheckoutExitsZeroWhenNotInstalled(t *testing.T) {
 	eq(t, "stderr", errb.String(), "")
 }
 
+// session-start (the plugin's SessionStart hook) shares post-checkout's
+// best-effort contract: exit 0 and stay silent wherever there is nothing
+// to do — a session start must never be blocked or narrated.
+func TestHookSessionStartSilentZeroWhenNotInstalled(t *testing.T) {
+	initRepo(t)
+	var out, errb strings.Builder
+	if code := RunHook([]string{"session-start"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	eq(t, "stdout", out.String(), "")
+	eq(t, "stderr", errb.String(), "")
+}
+
+func TestHookSessionStartSilentWhenIntact(t *testing.T) {
+	hookRepo(t)
+	var out, errb strings.Builder
+	if code := RunHook([]string{"session-start"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	eq(t, "stdout", out.String(), "")
+	eq(t, "stderr", errb.String(), "")
+}
+
+// The one case session-start speaks: files were missing and got restored —
+// one stdout line (host session context), so the wiped-overlay session is
+// visibly repaired instead of silently unguided (#164 C5).
+func TestHookSessionStartHealsAndReports(t *testing.T) {
+	repo := hookRepo(t)
+	rel := filepath.Join(".omakase", "gates", "example.sh")
+	if err := os.Remove(filepath.Join(repo.Root, rel)); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb strings.Builder
+	if code := RunHook([]string{"session-start"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	eq(t, "healed content", readFileT(t, filepath.Join(repo.Root, rel)), gateContent)
+	if !strings.Contains(out.String(), "restored 1 missing harness file") {
+		t.Errorf("stdout = %q, want the one-line restore report", out.String())
+	}
+}
+
 // A clean pre-commit runs the declared gate and records a pass row.
 func TestHookGateRunsAndRecords(t *testing.T) {
 	repo := hookRepo(t)

@@ -30,6 +30,12 @@ after a checkout). A re-init after a harness drops its last gate deletes omakase
 enforcement dispatchers; a later gate added to the manifest brings the full wiring — and
 the incumbent refusal — back.
 
+Healing has a second trigger besides `post-checkout`: the plugin ships a `SessionStart`
+hook (`hooks/hooks.json`, both hosts) that runs `omakase hook session-start` when an
+agent session opens — the same best-effort repair, covering the one gap git events
+can't see (overlay wiped, then a new session starts). It is silent unless it restored
+something, exits 0 always, and never fetches the binary at session start.
+
 - `<owner/repo[/subpath][#ref]>` — positional shorthand for
   `--source https://github.com/owner/repo`, optionally pinned to a branch or tag with
   `#ref`. This is the install line for a custom harness a repo publishes:
