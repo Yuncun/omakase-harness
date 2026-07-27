@@ -203,6 +203,16 @@ func runSource(source, sourceRef, sourceSub, basePayload string, stdout, stderr 
 		return CopyEntry(filepath.Join(payloadDir, rel), dst)
 	}
 	for _, rel := range rels {
+		// A source symlink where the base put a real directory would delete
+		// the base files under it wholesale (and the walk never descends the
+		// link) — the silent machinery-drop of issue #30b. Refuse; a source
+		// replacing a base *file* is the normal delta-wins case.
+		if isSymlink(filepath.Join(payloadDir, rel)) &&
+			isDir(filepath.Join(merged, rel)) && !isSymlink(filepath.Join(merged, rel)) {
+			os.RemoveAll(merged)
+			fmt.Fprintf(stderr, "omakase: source ships '%s' as a symlink where the base payload has a directory — refusing to shadow the base files under it. Nothing was changed.\n", rel)
+			return sourceResult{}, 1
+		}
 		if err := overlayOne(rel); err != nil {
 			os.RemoveAll(merged)
 			fmt.Fprintf(stderr, "omakase: failed to overlay source payload file '%s' onto the base payload\n", rel)

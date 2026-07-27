@@ -411,6 +411,91 @@ func TestSourceCruftNeverPlaced(t *testing.T) {
 	}
 }
 
+// TestPayloadSymlinkAbsoluteTargetRefused: a payload symlink with an absolute
+// target is refused before anything is placed — installed verbatim it would
+// read/write outside the repo, hidden from git status, and be re-materialized
+// into every worktree by the heal (issue #30a).
+func TestPayloadSymlinkAbsoluteTargetRefused(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	useBasePayloadDir(t)
+
+	outside := t.TempDir()
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: abs-link\n")
+	writeFile(t, filepath.Join(src, "payload", ".claude", "rules", "r.md"), "rule\n")
+	if err := os.Symlink(outside, filepath.Join(src, "payload", "logs")); err != nil {
+		t.Fatal(err)
+	}
+	commitAll(t, src, "hostile symlink")
+
+	var stdout, stderr strings.Builder
+	code := RunInit([]string{"--source", src}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "logs") || !strings.Contains(stderr.String(), "outside the repo") {
+		t.Errorf("refusal does not name the symlink and the escape:\n%s", stderr.String())
+	}
+	if _, err := os.Lstat(filepath.Join(dir, ".claude", "rules", "r.md")); err == nil {
+		t.Error("a payload file was placed despite the refusal (not fail-closed)")
+	}
+	if fileRegular(filepath.Join(repo.OMK, "placed.tsv")) {
+		t.Error("a ledger was written despite the refusal")
+	}
+}
+
+// TestPayloadSymlinkRelativeEscapeRefused: a relative symlink that lexically
+// climbs out of the repo (../..) is refused the same way (issue #30a).
+func TestPayloadSymlinkRelativeEscapeRefused(t *testing.T) {
+	_, _ = initRepo(t)
+	srcTestEnv(t)
+	useBasePayloadDir(t)
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: rel-link\n")
+	if err := os.Symlink("../../sibling/secret", filepath.Join(src, "payload", "peer")); err != nil {
+		t.Fatal(err)
+	}
+	commitAll(t, src, "escaping symlink")
+
+	var stdout, stderr strings.Builder
+	code := RunInit([]string{"--source", src}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "peer") {
+		t.Errorf("refusal does not name the symlink:\n%s", stderr.String())
+	}
+}
+
+// TestSourceSymlinkShadowingBaseDirRefused: a source entry that is a symlink
+// where the merged tree already has a real directory (from the base payload)
+// would silently drop the base files under it — refuse instead (issue #30b).
+func TestSourceSymlinkShadowingBaseDirRefused(t *testing.T) {
+	_, _ = initRepo(t)
+	srcTestEnv(t)
+	base := useBasePayloadDir(t)
+	writeFile(t, filepath.Join(base, ".omakase", "bin", "base.sh"), "base\n")
+
+	src := newSourceRepo(t)
+	writeFile(t, filepath.Join(src, "payload", "omakase.manifest"), "name: shadow\n")
+	writeFile(t, filepath.Join(src, "payload", "docs", "real.md"), "x\n")
+	if err := os.Symlink("docs", filepath.Join(src, "payload", ".omakase")); err != nil {
+		t.Fatal(err)
+	}
+	commitAll(t, src, "dir shadow")
+
+	var stdout, stderr strings.Builder
+	code := RunInit([]string{"--source", src}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), ".omakase") {
+		t.Errorf("refusal does not name the shadowed path:\n%s", stderr.String())
+	}
+}
+
 // ---------------------------------------------------------------- ref pin
 
 // TestSourceRefPinBranch: --source repo#branch checks the cache out to that
