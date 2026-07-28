@@ -78,13 +78,19 @@ func runBlock(repo *state.Repo, committed []string, blocked map[string]bool, arg
 		placedHint(repo, arg, stderr)
 		return 2
 	}
-	if blocked[rel] {
-		fmt.Fprintf(stdout, "omakase: %s is already blocked\n", rel)
-		return 0
+	if code := preflight(repo, blocked, stderr); code != 0 {
+		return code
 	}
-	if foreign, msg := foreignSparse(repo, blocked); foreign {
-		fmt.Fprintf(stderr, "omakase: %s\n", msg)
-		return 2
+	if blocked[rel] {
+		// Not a pure no-op: several git operations rematerialize a masked
+		// file silently (git am, merge --abort), so re-blocking re-applies
+		// and re-verifies — the manual heal path status points at.
+		if err := writeAndApply(repo, blocked, stderr); err != nil {
+			fmt.Fprintf(stderr, "omakase: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "omakase: %s is already blocked — mask re-applied and verified\n", rel)
+		return 0
 	}
 	if !yes {
 		fmt.Fprintf(stdout, "%s steers agents in this repo (%s).\n", rel, describeCovered(rel, covered))
@@ -117,9 +123,8 @@ func runUnblock(repo *state.Repo, committed []string, blocked map[string]bool, a
 		}
 		rel = r
 	}
-	if foreign, msg := foreignSparse(repo, blocked); foreign {
-		fmt.Fprintf(stderr, "omakase: %s\n", msg)
-		return 2
+	if code := preflight(repo, blocked, stderr); code != 0 {
+		return code
 	}
 
 	delete(blocked, rel)
@@ -128,6 +133,28 @@ func runUnblock(repo *state.Repo, committed []string, blocked map[string]bool, a
 		return 1
 	}
 	fmt.Fprintf(stdout, "omakase: unblocked — %s is back in the working tree\n", rel)
+	return 0
+}
+
+// preflight is the shared refuse-before-write gate: a git below the
+// non-cone floor, a merge/rebase/cherry-pick underway in any reachable
+// worktree (masking mid-operation deadlocks the conflicted path), or
+// sparse-checkout state omakase does not own.
+func preflight(repo *state.Repo, blocked map[string]bool, stderr io.Writer) int {
+	if ok, v := gitMaskSupported(repo.Root); !ok {
+		fmt.Fprintf(stderr, "omakase: block needs git 2.35 or newer (this is git %s)\n", v)
+		return 1
+	}
+	for _, wt := range state.WorktreeRoots(repo.Root) {
+		if dirExists(wt) && opInProgress(wt) {
+			fmt.Fprintf(stderr, "omakase: a merge, rebase, or cherry-pick is in progress in %s — finish or abort it first\n", wt)
+			return 2
+		}
+	}
+	if foreign, msg := foreignSparse(repo, blocked); foreign {
+		fmt.Fprintf(stderr, "omakase: %s\n", msg)
+		return 2
+	}
 	return 0
 }
 

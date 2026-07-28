@@ -241,7 +241,14 @@ func committedRows(repo *state.Repo) [][2]string {
 		kind := harness.KindOf(rel)
 		if item := blockedItemOf(blocked, rel); item != "" {
 			seen[item] = true
-			kind += "; BLOCKED by you — hidden from the working tree (omakase unblock " + item + ")"
+			// A blocked file that is back on disk is a leak, not a state: a
+			// few git operations (am, merge --abort, a resolved conflict)
+			// rematerialize masked files silently. Say so and name the fix.
+			if _, err := os.Lstat(filepath.Join(repo.Root, rel)); err == nil {
+				kind += "; BLOCKED but PRESENT — a git operation restored it (re-hide: omakase block " + item + " --yes)"
+			} else {
+				kind += "; BLOCKED by you — hidden from the working tree (omakase unblock " + item + ")"
+			}
 		}
 		rows = append(rows, [2]string{rel, kind})
 	}

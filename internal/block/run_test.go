@@ -134,7 +134,7 @@ func TestBlockUnblockRoundtrip(t *testing.T) {
 	if len(state.ReadBlocked(repo.OMK)) != 0 {
 		t.Error("ledger not emptied")
 	}
-	if sparseEnabled(dir) {
+	if sparseActive(dir) {
 		t.Error("sparse-checkout still enabled after last unblock")
 	}
 }
@@ -207,7 +207,7 @@ func TestUnblockStaleBlock(t *testing.T) {
 	if code, _, e := runVerb(t, dir, true, "CLAUDE.md"); code != 0 {
 		t.Fatalf("stale unblock: %s", e)
 	}
-	if sparseEnabled(dir) {
+	if sparseActive(dir) {
 		t.Error("sparse-checkout still enabled")
 	}
 }
@@ -236,5 +236,33 @@ func TestBlockWorksInLinkedWorktree(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(wt, "CLAUDE.md")); err != nil {
 		t.Error("linked worktree not restored")
+	}
+}
+
+// A committed path containing gitignore-pattern syntax must mask only
+// itself: the pattern is escaped, so `evil*.md` (a literal asterisk in the
+// file name) never swallows `evilX.md`.
+func TestBlockEscapesPatternSyntax(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, ".claude/rules/evil*.md", "glob char\n")
+	write(t, dir, ".claude/rules/evilX.md", "victim\n")
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "tricky names")
+
+	code, _, errOut := runVerb(t, dir, false, ".claude/rules/evil*.md", "--yes")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %s", code, errOut)
+	}
+	if lexists(t, dir, ".claude/rules/evil*.md") {
+		t.Error("literal evil*.md still present")
+	}
+	if !lexists(t, dir, ".claude/rules/evilX.md") {
+		t.Error("evilX.md was swallowed by an unescaped glob")
+	}
+	if code, _, e := runVerb(t, dir, true, ".claude/rules/evil*.md"); code != 0 {
+		t.Fatalf("unblock: %s", e)
+	}
+	if !lexists(t, dir, ".claude/rules/evil*.md") {
+		t.Error("literal file not restored")
 	}
 }

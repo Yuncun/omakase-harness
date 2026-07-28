@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Yuncun/omakase-harness/internal/block"
 	"github.com/Yuncun/omakase-harness/internal/gate"
 	"github.com/Yuncun/omakase-harness/internal/hook"
 	"github.com/Yuncun/omakase-harness/internal/state"
@@ -94,12 +95,22 @@ func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if n := healWorktree(repo, stderr); n > 0 {
 			fmt.Fprintf(stdout, "omakase: restored %d missing harness file(s) at session start — run `omakase status` to review.\n", n)
 		}
+		// The mirror heal for blocked items: a few git operations (am,
+		// merge --abort, a resolved conflict) silently bring a masked file
+		// back; a session opening on one would load steering the user said
+		// no to. Reassert never runs mid-merge/rebase and never fails the
+		// session.
+		if n := block.Reassert(repo, stderr); n > 0 {
+			fmt.Fprintf(stdout, "omakase: re-hid %d blocked item(s) a git operation had restored.\n", n)
+		}
 		return 0
 	}
 
 	// post-checkout: heal, then forward git-lfs best-effort. Never fails the
-	// checkout.
+	// checkout. Blocked items are reasserted silently (same rationale as
+	// session-start; a checkout is no place for a lecture).
 	healWorktree(repo, stderr)
+	block.Reassert(repo, stderr)
 	runGitLFS(name, hookArgs, repo.Root, stdin, stdout, stderr, false)
 	return 0
 }

@@ -709,15 +709,30 @@ func TestCommittedRowsBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeOMK(t, repo.OMK, state.BlockedName, ".agents/skills/od\ngone.md\n")
-
+	// The skill is ledger-blocked but its files were never masked (or a git
+	// operation brought them back) — that leak state must read differently
+	// from a healthy block, and name the re-hide command.
 	rows := committedRows(repo)
 	got := map[string]string{}
 	for _, r := range rows {
 		got[r[0]] = r[1]
 	}
+	if !strings.Contains(got[".agents/skills/od/SKILL.md"], "BLOCKED but PRESENT") ||
+		!strings.Contains(got[".agents/skills/od/SKILL.md"], "omakase block .agents/skills/od --yes") {
+		t.Errorf("visible-blocked skill row = %q", got[".agents/skills/od/SKILL.md"])
+	}
+	// Genuinely hidden (absent from the working tree): the healthy state.
+	if err := os.RemoveAll(filepath.Join(dir, ".agents")); err != nil {
+		t.Fatal(err)
+	}
+	rows = committedRows(repo)
+	got = map[string]string{}
+	for _, r := range rows {
+		got[r[0]] = r[1]
+	}
 	if !strings.Contains(got[".agents/skills/od/SKILL.md"], "BLOCKED by you") ||
 		!strings.Contains(got[".agents/skills/od/SKILL.md"], "omakase unblock .agents/skills/od") {
-		t.Errorf("skill row = %q", got[".agents/skills/od/SKILL.md"])
+		t.Errorf("hidden-blocked skill row = %q", got[".agents/skills/od/SKILL.md"])
 	}
 	if strings.Contains(got["CLAUDE.md"], "BLOCKED") {
 		t.Errorf("unblocked row annotated: %q", got["CLAUDE.md"])
