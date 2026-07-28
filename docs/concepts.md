@@ -27,6 +27,63 @@ A path the target already tracks is skipped, never overwritten. The harness only
 files the project does not. Replacing a tracked file with the harness copy is a separate,
 guarded step (see [Authoring](authoring.md) and `--cut-over`).
 
+### Why not just copy the files in — or ship a plugin?
+
+Three things get compared to the overlay, and only two of them are the same kind
+of alternative.
+
+**`cp -R` + exclude.** The placement half is reproducible by hand: copy the
+payload onto the repo, append its paths to `.git/info/exclude`, `git status`
+comes back clean.
+
+**A minimal placer.** A few hundred lines of shell doing the same with a hash
+ledger on top, so it can also skip already-tracked paths, retract what a later
+version dropped, and uninstall exactly what it placed. These deliberately scope
+out enforcement rather than fight a hook manager for `.git/hooks`.
+
+**A plugin.** A different axis: it places nothing in the repo. Skills and agent
+files live under the host's plugin directory. Plugin hooks are *agent-lifecycle*
+hooks (`SessionStart`, `PreToolUse`) — they fire when the agent acts, not when a
+commit happens.
+
+|  | `cp -R` | placer | plugin | omakase |
+| --- | :---: | :---: | :---: | :---: |
+| Place files, zero committed footprint | ✅ | ✅ | — | ✅ |
+| Leaves a path the project already committed alone | ❌ | ✅ | ✅ | ✅ |
+| Removes what a later version dropped | ❌ | ✅ | ✅ | ✅ |
+| Uninstall removes only what it added | ❌ | ✅ | ✅ | ✅ |
+| Reaches new clones and worktrees with no per-repo step | ❌ | ❌ | ✅ | ❌ |
+| Updates everywhere at once | ❌ | ❌ | ✅ | ❌ |
+| Files land where non-agent tools read them | ✅ | ✅ | ❌ | ✅ |
+| Applies to plain `git`, an IDE, or someone else's agent | ❌ | ❌ | ❌ | ✅ |
+| Works with no agent host installed | ✅ | ✅ | ❌ | ✅ |
+| Runs checks on commit and push | ❌ | ❌ | ❌ | ✅ |
+| Per-gate bypass, disable, and a pass/fail record | ❌ | ❌ | ❌ | ✅ |
+
+**If a harness is only agent files, prefer a plugin.** On a host with per-project
+plugin scopes it is strictly the better tool: it updates everywhere at once and
+costs nothing per clone, where an overlay needs an `init` in every checkout.
+Host support for scoping varies — Claude Code has project, per-user-per-repo,
+and user scopes; other hosts resolve plugin settings from the user directory
+only, so a plugin there loads in every repo you open. Check your host before
+assuming a plugin can be confined to one project.
+
+The two are not rivals. A harness can place a project-scoped settings file that
+*enables* a plugin — the overlay becomes the delivery mechanism, and the plugin
+still does the loading.
+
+**The overlay earns its place on the bottom five rows**, and they are all one
+idea: the file has to exist on disk, at a real path, for something that is not
+your agent. A `lefthook.yml` or a lint config is read by a tool. A gate script is
+run by git. Those cannot live in a plugin directory, and a commit made from an
+IDE or by a teammate who runs no agent still has to be governed.
+
+One more row is worth expanding, because it is the only case where the cheap
+option damages the project rather than the overlay: if a harness ships
+`CLAUDE.md` and the project has a committed `CLAUDE.md`, `cp -R` overwrites it
+and nothing warns you. It surfaces later as a modification to tracked code that
+nobody made.
+
 ## Owned and shared directories
 
 `init` excludes most harness files by their top directory, written once: `.omakase/`,
