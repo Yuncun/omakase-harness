@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/Yuncun/omakase-harness/internal/harness"
 )
 
 // CopyEntry copies one payload entry to dst. A symlink source is recreated
@@ -209,6 +212,56 @@ func DerivePrefixes(placed []string, sharedTopdirs []string, isDir func(string) 
 		}
 	}
 	return out
+}
+
+// sharedTopdirs is harness.SharedTopdirs plus every top-level directory the
+// payload lands in that the repo ALREADY TRACKS something under.
+//
+// DerivePrefixes excludes an unshared top-level dir wholesale — one "/docs/"
+// line instead of a line per file — which is right for a directory omakase
+// owns outright (.omakase, .claude) and catastrophic for one it does not. A
+// harness carrying a single docs/od-harness/README.md would write "/docs/",
+// and from then on every new file anywhere under docs/ is invisible to
+// `git status`: not shown, not committed, silently lost. The static list
+// cannot anticipate this, because which directories a project shares is a
+// property of the project, not of omakase.
+//
+// Tracked content is the evidence. If git is already carrying files under a
+// directory, the project is using it and omakase is a guest there. This
+// subsumes the hardcoded .github entry rather than replacing it — a repo with
+// an empty .github still gets the shared treatment from the static list.
+func sharedTopdirs(root string, placed []string) []string {
+	out := append([]string{}, harness.SharedTopdirs...)
+	seen := make(map[string]bool, len(out))
+	for _, d := range out {
+		seen[d] = true
+	}
+	for _, rel := range placed {
+		idx := strings.IndexByte(rel, '/')
+		if idx <= 0 { // a root-level file has no top-level dir to share
+			continue
+		}
+		top := rel[:idx]
+		if seen[top] {
+			continue
+		}
+		seen[top] = true
+		if gitTracksUnder(root, top) {
+			out = append(out, top)
+		}
+	}
+	return out
+}
+
+// gitTracksUnder reports whether the repo tracks at least one path under dir.
+// Masked (skip-worktree) entries still count: the project can add a new file
+// there tomorrow, and that file must stay visible.
+func gitTracksUnder(root, dir string) bool {
+	out, err := exec.Command("git", "-C", root, "ls-files", "-z", "--", dir).Output()
+	if err != nil {
+		return false
+	}
+	return len(out) > 0
 }
 
 // rewriteFile replaces path wholesale: content is written to a fresh

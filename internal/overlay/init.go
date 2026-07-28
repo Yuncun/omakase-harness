@@ -669,7 +669,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		return !isSymlink(q) && isDir(q)
 	}
 	consented := append(append(append([]string{}, placed...), declinedKept...), keptOrder...)
-	prefixes := DerivePrefixes(consented, harness.SharedTopdirs, isDirRoot, wtincTracked)
+	prefixes := DerivePrefixes(consented, sharedTopdirs(root, consented), isDirRoot, wtincTracked)
 
 	if err := os.MkdirAll(filepath.Dir(exclude), 0o755); err != nil {
 		return 1
