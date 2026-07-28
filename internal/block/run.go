@@ -127,7 +127,7 @@ func runBlock(repo *state.Repo, committed []string, blocked map[string]bool, arg
 			fmt.Fprintf(stderr, "omakase: %v\n", err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "omakase: %s is already blocked — mask re-applied and verified\n", rel)
+		fmt.Fprintf(stdout, "omakase: %s is already blocked — re-hidden and verified\n", rel)
 		return 0
 	}
 	if !yes {

@@ -89,7 +89,7 @@ func applyWorktree(wt string, blocked map[string]bool) error {
 func verifyHidden(wt string, blocked map[string]bool) error {
 	for _, rel := range sortedBlocked(blocked) {
 		if _, err := os.Lstat(wt + "/" + rel); err == nil {
-			return fmt.Errorf("%s is still present after masking — a local edit keeps it in the tree (commit or stash it), as does an unfinished merge or rebase; resolve that and re-run", rel)
+			return fmt.Errorf("%s could not be hidden — a local edit keeps it in place (commit or stash it), as does an unfinished merge or rebase; resolve that and re-run", rel)
 		}
 	}
 	return nil

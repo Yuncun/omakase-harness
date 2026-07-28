@@ -96,7 +96,7 @@ func TestReblockReappliesMask(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("re-block: exit %d stderr %s", code, errOut)
 	}
-	if !strings.Contains(out, "re-applied") {
+	if !strings.Contains(out, "re-hidden") {
 		t.Errorf("out = %q", out)
 	}
 	if lexists(t, dir, "CLAUDE.md") {
