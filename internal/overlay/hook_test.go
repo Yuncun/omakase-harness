@@ -362,6 +362,30 @@ func TestHookPostCheckoutWarnsOnTrackedCollision(t *testing.T) {
 	eq(t, "tracked file untouched", readFileT(t, filepath.Join(repo.Root, rel)), "upstream version\n")
 }
 
+// A masked path is tracked with skip-worktree set: someone is deliberately
+// running this harness over the repo's own copy, without staging a deletion
+// their whole team would see. That is the opposite of the upstream-collision
+// this warning exists for, and firing it once per masked path on every
+// checkout and every commit buries the output the user actually ran.
+func TestHookPostCheckoutSilentOnMaskedPath(t *testing.T) {
+	repo := hookRepo(t)
+	rel := ".omakase/gates/example.sh"
+	writeFile(t, filepath.Join(repo.Root, rel), "upstream version\n")
+	runGitT(t, repo.Root, "add", "-f", rel)
+	runGitT(t, repo.Root, "commit", "-q", "-m", "upstream lands the path")
+	runGitT(t, repo.Root, "update-index", "--skip-worktree", rel)
+	writeFile(t, filepath.Join(repo.Root, rel), "harness version\n")
+
+	var out, errb strings.Builder
+	if code := RunHook([]string{"post-checkout"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if strings.Contains(errb.String(), "now TRACKED") {
+		t.Errorf("stderr = %q, want no collision warning for a masked path", errb.String())
+	}
+	eq(t, "harness copy untouched", readFileT(t, filepath.Join(repo.Root, rel)), "harness version\n")
+}
+
 // post-checkout forwards git-lfs best-effort: a git-lfs failure never fails the
 // checkout.
 func TestHookPostCheckoutForwardsLFSBestEffort(t *testing.T) {

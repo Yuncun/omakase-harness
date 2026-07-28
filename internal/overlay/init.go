@@ -1189,6 +1189,32 @@ func physicalResolve(p string) string {
 
 // --- small predicates / helpers ---
 
+// gitMasked reports whether rel is tracked but carries the skip-worktree bit —
+// the state you get when someone deliberately overlays a harness copy on top of
+// a path the repo commits, without staging a deletion for everyone else (the
+// alternative to --cut-over on a shared repo). git is being told to ignore the
+// working tree for that path, so an injected copy sitting there is intentional,
+// not the upstream-clobber collision the tracked check normally means.
+//
+// `git ls-files -v` prefixes each entry with a status letter; S is
+// skip-worktree. Lowercase letters mean assume-unchanged, which is a different
+// (and much more fragile) promise, so it does not count as masked.
+func gitMasked(root, rel string) bool {
+	if rel == "" {
+		return false
+	}
+	out, err := exec.Command("git", "-C", root, "ls-files", "-v", "--", rel).Output()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if strings.HasPrefix(line, "S ") {
+			return true
+		}
+	}
+	return false
+}
+
 // gitTracked is `git -C root ls-files --error-unmatch -- rel` exit 0. On a
 // case-insensitive filesystem (core.ignorecase, which git init sets there)
 // a tracked file differing from rel only in case occupies the same disk

@@ -494,6 +494,44 @@ func TestCommittedListDeepSurface(t *testing.T) {
 	}
 }
 
+// TestCommittedListSkipsMaskedPaths pins the third adoption door: a harness
+// whose payload overlaps files the repo commits can be run locally by setting
+// skip-worktree on those paths instead of staging a deletion for the whole
+// team. A masked path is serving an injected copy, so counting it as part of
+// the repo's own committed surface would list the same file twice — once as
+// the project's, once as the harness's — in two sections that contradict each
+// other. Unmasked siblings must still be listed, so this is not a blanket
+// "hide anything under a masked directory".
+func TestCommittedListSkipsMaskedPaths(t *testing.T) {
+	repo := newGitRepo(t)
+	for _, rel := range []string{
+		"CLAUDE.md",
+		".agents/skills/masked/SKILL.md",
+		".agents/skills/live/SKILL.md",
+	} {
+		writeFile(t, repo, rel, "x\n")
+	}
+	runGitT(t, repo, "add", ".")
+	runGitT(t, repo, "commit", "-q", "-m", "committed surface")
+
+	if got := CommittedList(repo); len(got) != 3 {
+		t.Fatalf("precondition: CommittedList = %v, want all 3 tracked paths", got)
+	}
+
+	runGitT(t, repo, "update-index", "--skip-worktree", ".agents/skills/masked/SKILL.md")
+
+	got := CommittedList(repo)
+	want := []string{".agents/skills/live/SKILL.md", "CLAUDE.md"}
+	if len(got) != len(want) {
+		t.Fatalf("CommittedList after mask = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("CommittedList[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestCommittedListError(t *testing.T) {
 	dir := t.TempDir() // not a git repo
 	if got := CommittedList(dir); got != nil {

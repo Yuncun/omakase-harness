@@ -185,7 +185,11 @@ func verifyPresent(root, omk string, stderr io.Writer) int {
 		if lexists(filepath.Join(root, row.Rel)) {
 			continue
 		}
-		if gitTracked(root, row.Rel) {
+		// A tracked path normally supplies its own content, so a missing
+		// injected copy is not a hole. A MASKED path does not: git is
+		// ignoring the working tree there, so nothing will ever restore it
+		// and the gate really would run without its file.
+		if gitTracked(root, row.Rel) && !gitMasked(root, row.Rel) {
 			continue
 		}
 		if missing == 0 {
@@ -233,7 +237,10 @@ func healWorktree(repo *state.Repo, stderr io.Writer) int {
 		}
 		// Tracked first — a tracked file exists in the working tree, so an
 		// existence-first order would skip the collision warning silently.
-		if gitTracked(root, rel) {
+		// A masked path is the exception: tracked, but with skip-worktree
+		// set, which is someone deliberately running this harness over the
+		// repo's own copy. Fall through and treat it like any injected file.
+		if gitTracked(root, rel) && !gitMasked(root, rel) {
 			fmt.Fprintf(stderr, "omakase: WARNING — injected path '%s' is now TRACKED by the repo; your personal copy was likely clobbered by an upstream commit (git overwrites ignored files on checkout). Last-injected copy: %s — diff it against the tracked file, then drop the path from your payload or cut over (init --cut-over).\n", rel, snapEntry)
 			continue
 		}
