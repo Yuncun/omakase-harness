@@ -181,7 +181,7 @@ func TestBlockRefusesForeignSparseCheckout(t *testing.T) {
 	if code != 2 {
 		t.Errorf("exit = %d, want 2", code)
 	}
-	if !strings.Contains(errOut, "already uses git sparse-checkout") {
+	if !strings.Contains(errOut, "sparse-checkout patterns of its own") {
 		t.Errorf("stderr %q", errOut)
 	}
 }

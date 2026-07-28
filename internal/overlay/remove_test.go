@@ -283,22 +283,42 @@ func TestPre010FallbackPayloadEnumeration(t *testing.T) {
 	eq(t, "exclude stripped", readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude")), "scratch/\n*.tmp\n")
 }
 
-// TestSentinelViaOmkDirWithoutExcludeBlock covers the other half of the sentinel
-// condition: no ledger, no exclude block at all, but a leftover $OMK dir (e.g.
-// from an interrupted prior remove) is enough on its own to authorize the
-// payload-enumeration fallback.
+// TestSentinelViaOmkDirWithoutExcludeBlock covers the other half of the
+// sentinel condition: no ledger, no exclude block, but a $OMK dir holding an
+// actual install trace (here a leftover source file, e.g. from an
+// interrupted prior remove) authorizes the payload-enumeration fallback. A
+// BARE $OMK dir does not — `omakase block` creates one in never-installed
+// repos, and enumerating there would delete the user's own untracked files
+// that merely share payload names.
 func TestSentinelViaOmkDirWithoutExcludeBlock(t *testing.T) {
 	dir, repo := initRepo(t)
 	p := t.TempDir()
 	writeFile(t, filepath.Join(p, "c.txt"), "c\n")
 	t.Setenv("OMAKASE_PAYLOAD", p)
 
+	// Bare dir first: must be a no-op, not an enumeration.
 	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(dir, "c.txt"), "c\n")
-
 	var stdout, stderr strings.Builder
+	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("bare-dir remove: exit = %d; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "nothing installed here") {
+		t.Errorf("bare-dir remove: stderr = %q, want nothing-installed", stderr.String())
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "c.txt")); err != nil {
+		t.Fatalf("bare $OMK dir triggered enumeration: c.txt deleted")
+	}
+
+	// With an install trace, the fallback fires as before.
+	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo.OMK, "source"), "some/src\n")
+	stdout.Reset()
+	stderr.Reset()
 	code := RunRemove(nil, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
@@ -309,6 +329,37 @@ func TestSentinelViaOmkDirWithoutExcludeBlock(t *testing.T) {
 	if _, err := os.Lstat(repo.OMK); !os.IsNotExist(err) {
 		t.Errorf("$OMK not removed: %v", err)
 	}
+}
+
+// The review's exact repro (finding 4): block → unblock → remove in a
+// never-installed repo must be a clean no-op, never the enumeration
+// fallback deleting the user's untracked files.
+func TestRemoveAfterBlockUnblockIsNoOp(t *testing.T) {
+	dir, _ := initRepo(t)
+	writeFile(t, filepath.Join(dir, "CLAUDE.md"), "doctrine\n")
+	runGitT(t, dir, "add", "CLAUDE.md")
+	runGitT(t, dir, "commit", "-q", "-m", "steering")
+	p := t.TempDir()
+	writeFile(t, filepath.Join(p, "omakase.manifest"), "name: x\n")
+	t.Setenv("OMAKASE_PAYLOAD", p)
+	writeFile(t, filepath.Join(dir, "omakase.manifest"), "the user's own untracked manifest\n")
+
+	var out, errOut strings.Builder
+	if code := block.Run(false, []string{"CLAUDE.md", "--yes"}, &out, &errOut); code != 0 {
+		t.Fatalf("block: %s", errOut.String())
+	}
+	if code := block.Run(true, []string{"CLAUDE.md"}, &out, &errOut); code != 0 {
+		t.Fatalf("unblock: %s", errOut.String())
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "nothing installed here") {
+		t.Errorf("stderr = %q, want nothing-installed", stderr.String())
+	}
+	eq(t, "user manifest untouched", readFileT(t, filepath.Join(dir, "omakase.manifest")), "the user's own untracked manifest\n")
 }
 
 // ---------------------------------------------------------------- skeleton lefthook.yml

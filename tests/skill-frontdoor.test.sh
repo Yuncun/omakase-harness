@@ -47,9 +47,19 @@ echo "$OUT" | grep -qxF 'ARG[--markdown]' && pass "status passes the fixed --mar
 echo "$OUT" | grep -qxF 'ARG[SHOULD_NOT_APPEAR]' && fail "status forwarded a caller arg into the read-only render" || pass "status does not forward caller args (fixed --markdown only)"
 # block -> bin/block.sh, forwards "$@" verbatim; a leading "unblock" routes to bin/unblock.sh
 # with the routing word consumed (a leaked "unblock" arg would read as the item name).
-OUT=$(run block .agents/skills/od-worktree --yes)
+OUT=$(run block .agents/skills/od-worktree)
 echo "$OUT" | grep -qxF 'STUB:block' && pass "block/run.sh execs bin/block.sh" || fail "block reached wrong script ($OUT)"
-{ echo "$OUT" | grep -qxF 'ARG[.agents/skills/od-worktree]' && echo "$OUT" | grep -qxF 'ARG[--yes]'; } && pass "block forwards args" || fail "block dropped args ($OUT)"
+echo "$OUT" | grep -qxF 'ARG[.agents/skills/od-worktree]' && pass "block forwards the item" || fail "block dropped args ($OUT)"
+# The pre-approved entry point REFUSES --yes: consent escalation must go through
+# confirm.sh, which is outside the skill's allowed-tools (the host prompt is the
+# human confirmation). A run.sh that forwarded --yes would let one pre-approved
+# call apply a block.
+OUT=$(run block .agents/skills/od-worktree --yes 2>&1); RC=$?
+{ [ "$RC" -ne 0 ] && ! echo "$OUT" | grep -qxF 'STUB:block'; } && pass "block/run.sh refuses --yes" || fail "run.sh forwarded --yes (rc=$RC, $OUT)"
+# confirm.sh is exercised from the stub layout like run.sh.
+cp "$SKILLS/block/confirm.sh" "$TMP/plugin/skills/block/confirm.sh"
+OUT=$(bash "$TMP/plugin/skills/block/confirm.sh" .agents/skills/od-worktree)
+{ echo "$OUT" | grep -qxF 'STUB:block' && echo "$OUT" | grep -qxF 'ARG[.agents/skills/od-worktree]' && echo "$OUT" | grep -qxF 'ARG[--yes]'; } && pass "confirm.sh applies with --yes appended" || fail "confirm.sh wrong ($OUT)"
 OUT=$(run block unblock "od worktree")
 echo "$OUT" | grep -qxF 'STUB:unblock' && pass "block/run.sh routes unblock to bin/unblock.sh" || fail "unblock routed to wrong script ($OUT)"
 { echo "$OUT" | grep -qxF 'ARG[od worktree]' && ! echo "$OUT" | grep -qxF 'ARG[unblock]'; } && pass "unblock consumes the routing word, forwards the item" || fail "unblock arg handling wrong ($OUT)"

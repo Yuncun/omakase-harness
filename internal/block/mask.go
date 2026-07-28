@@ -49,24 +49,27 @@ func maskApply(repo *state.Repo, blocked map[string]bool, stderr io.Writer) erro
 			firstErr = fmt.Errorf("worktree %s: %w", wt, err)
 		}
 	}
+	if len(blocked) == 0 {
+		cleanupWorktreeConfig(repo)
+	}
 	return firstErr
 }
 
 // applyWorktree applies (or, for an empty set, reverses) the mask in one
-// worktree and verifies the result.
+// worktree and verifies the result. The empty-set revert may only be
+// reached when the patterns are omakase's own — callers guarantee it
+// (preflight refuses diverged patterns; RestoreAll checks per worktree).
 func applyWorktree(wt string, blocked map[string]bool) error {
 	if len(blocked) == 0 {
-		if !sparseActive(wt) {
+		if len(currentPatterns(wt)) == 0 && !sparseActive(wt) {
 			return nil
 		}
 		if err := runGitQuiet(wt, "sparse-checkout", "disable"); err != nil {
 			return err
 		}
 		// disable restores every file but leaves the pattern file behind, and
-		// a later `git sparse-checkout init` would silently reuse it. The
-		// patterns were omakase's own (foreign sparse is refused before the
-		// first block), so delete the residue. extensions.worktreeConfig is
-		// left alone: other worktrees may rely on it for config resolution.
+		// a later `git sparse-checkout init` would silently reuse it —
+		// delete the residue.
 		if p, err := gitPath(wt, "info/sparse-checkout"); err == nil {
 			os.Remove(p)
 		}
@@ -86,7 +89,7 @@ func applyWorktree(wt string, blocked map[string]bool) error {
 func verifyHidden(wt string, blocked map[string]bool) error {
 	for _, rel := range sortedBlocked(blocked) {
 		if _, err := os.Lstat(wt + "/" + rel); err == nil {
-			return fmt.Errorf("%s is still present after masking — if a merge or rebase involves it, finish or abort that first, then re-run", rel)
+			return fmt.Errorf("%s is still present after masking — a local edit keeps it in the tree (commit or stash it), as does an unfinished merge or rebase; resolve that and re-run", rel)
 		}
 	}
 	return nil
@@ -123,7 +126,10 @@ func Reassert(repo *state.Repo, stderr io.Writer) int {
 // RestoreAll undoes every block: the ledger is emptied (sidecar deleted) and
 // sparse-checkout disabled in every reachable worktree. It is remove's hook —
 // blocked state joins the every-trace-reversed promise (issue #193) — and is
-// a no-op when nothing is blocked.
+// a no-op when nothing is blocked. Unlike block/unblock, remove must not
+// refuse, so a worktree whose patterns were changed outside omakase (they no
+// longer equal what the ledger derives) is left untouched with a warning —
+// never guess at which lines are the user's.
 func RestoreAll(repo *state.Repo, stderr io.Writer) (n int, err error) {
 	blocked := state.ReadBlocked(repo.OMK)
 	if len(blocked) == 0 {
@@ -132,7 +138,23 @@ func RestoreAll(repo *state.Repo, stderr io.Writer) (n int, err error) {
 	if err := state.WriteBlocked(repo.OMK, nil); err != nil {
 		return 0, err
 	}
-	return len(blocked), maskApply(repo, nil, stderr)
+	expected := maskPatterns(blocked)
+	var firstErr error
+	for _, wt := range state.WorktreeRoots(repo.Root) {
+		if !dirExists(wt) {
+			fmt.Fprintf(stderr, "omakase: worktree %s is unreachable; its block state was not updated.\n", wt)
+			continue
+		}
+		if cur := currentPatterns(wt); len(cur) > 0 && !equalPatterns(cur, expected) {
+			fmt.Fprintf(stderr, "omakase: %s: sparse-checkout patterns were changed outside omakase — left in place (review: git -C %s sparse-checkout list).\n", wt, wt)
+			continue
+		}
+		if err := applyWorktree(wt, nil); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("worktree %s: %w", wt, err)
+		}
+	}
+	cleanupWorktreeConfig(repo)
+	return len(blocked), firstErr
 }
 
 // maskPatterns derives the sparse-checkout pattern list from the blocked
@@ -171,30 +193,117 @@ func escapePattern(rel string) string {
 	return s
 }
 
-// foreignSparse reports whether sparse-checkout is enabled by something other
-// than omakase. With a non-empty ledger the sparse state is omakase's own;
-// with an empty one, any worktree already running sparse-checkout belongs to
-// the user, and v1 refuses to merge with it rather than risk clobbering
-// their patterns (issue #193 — a plain `set` restores their whole tree
-// silently).
+// foreignSparse reports whether sparse-checkout state exists that omakase
+// does not own. With a non-empty ledger the patterns are omakase's own
+// (divergence is preflight's separate check); with an empty one, any
+// worktree with a non-empty pattern file belongs to the user — active OR
+// stale residue from a past `disable`, both of which a plain `set` would
+// destroy — and v1 refuses (issue #193). The probe is the pattern file, not
+// sparse mode: a global core.sparseCheckout=true with no patterns must not
+// read as foreign.
 func foreignSparse(repo *state.Repo, blocked map[string]bool) (bool, string) {
 	if len(blocked) > 0 {
 		return false, ""
 	}
 	for _, wt := range state.WorktreeRoots(repo.Root) {
-		if dirExists(wt) && sparseActive(wt) {
-			return true, fmt.Sprintf("this repo already uses git sparse-checkout (%s) — omakase won't touch existing sparse patterns; disable it first or manage this file with git directly", wt)
+		if dirExists(wt) && len(currentPatterns(wt)) > 0 {
+			return true, fmt.Sprintf("this repo has git sparse-checkout patterns of its own (%s) — omakase won't touch them; clear them first (git sparse-checkout disable, then delete .git/info/sparse-checkout) or manage this file with git directly", wt)
 		}
 	}
 	return false, ""
 }
 
+// divergedPatterns reports the first reachable worktree whose pattern file
+// no longer equals what the ledger derives — i.e. it was edited outside
+// omakase. block/unblock refuse then: a wholesale `set` would silently drop
+// the user's additions. A missing or empty file is NOT divergence — it holds
+// nothing of the user's and the next apply rewrites it.
+func divergedPatterns(repo *state.Repo, blocked map[string]bool) (string, bool) {
+	if len(blocked) == 0 {
+		return "", false
+	}
+	expected := maskPatterns(blocked)
+	for _, wt := range state.WorktreeRoots(repo.Root) {
+		if !dirExists(wt) {
+			continue
+		}
+		if cur := currentPatterns(wt); len(cur) > 0 && !equalPatterns(cur, expected) {
+			return wt, true
+		}
+	}
+	return "", false
+}
+
+// currentPatterns reads the worktree's sparse-checkout pattern file (its
+// non-empty lines), nil when missing or empty. The file, not
+// `sparse-checkout list`, is the probe: list also exits 0 under a global
+// core.sparseCheckout=true, and reading the file sees stale residue too.
+func currentPatterns(wt string) []string {
+	p, err := gitPath(wt, "info/sparse-checkout")
+	if err != nil {
+		return nil
+	}
+	content, err := os.ReadFile(p)
+	if err != nil {
+		return nil
+	}
+	var lines []string
+	for _, l := range strings.Split(string(content), "\n") {
+		if l = strings.TrimRight(l, "\r"); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+func equalPatterns(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // sparseActive reports whether root's checkout currently has sparse-checkout
-// on. `git sparse-checkout list` is the robust probe (hardening area 1): it
-// exits 128 on a non-sparse worktree, while the pattern file and stale
-// config can both survive a disable.
+// on (`git sparse-checkout list` exits 128 on a non-sparse worktree).
 func sparseActive(root string) bool {
 	return exec.Command("git", "-C", root, "sparse-checkout", "list").Run() == nil
+}
+
+// cleanupWorktreeConfig reverts the config side effect `sparse-checkout set`
+// leaves behind: extensions.worktreeConfig=true plus a config.worktree file.
+// Reverted only in the safe case — a single-worktree repo whose
+// config.worktree holds nothing but sparse-checkout keys — because linked
+// worktrees may rely on the extension for their own config. Best-effort:
+// failure leaves harmless residue, never breaks the repo.
+func cleanupWorktreeConfig(repo *state.Repo) {
+	if len(state.WorktreeRoots(repo.Root)) != 1 {
+		return
+	}
+	cw := repo.CommonDir + "/config.worktree"
+	content, err := os.ReadFile(cw)
+	if err != nil {
+		return
+	}
+	for _, l := range strings.Split(string(content), "\n") {
+		l = strings.ToLower(strings.TrimSpace(l))
+		key, _, _ := strings.Cut(l, "=")
+		key = strings.TrimSpace(key)
+		// Everything sparse-checkout writes: the two sections plus the
+		// core.sparseCheckout* keys and index.sparse.
+		if l == "" || l == "[core]" || l == "[index]" || key == "sparse" ||
+			strings.HasPrefix(key, "sparsecheckout") {
+			continue
+		}
+		return // anything else in there is not ours to delete
+	}
+	if os.Remove(cw) == nil {
+		exec.Command("git", "-C", repo.Root, "config", "--unset", "extensions.worktreeConfig").Run()
+	}
 }
 
 // opInProgress reports whether a merge, rebase, or cherry-pick is underway

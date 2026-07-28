@@ -64,6 +64,7 @@ func Run(unblock bool, argv []string, stdout, stderr io.Writer) int {
 
 	committed := state.TrackedUnder(repo.Root, harness.CommittedGlobs)
 	blocked := state.ReadBlocked(repo.OMK)
+	item = normalizeItemArg(repo.Root, wd, committed, blocked, item)
 
 	if unblock {
 		return runUnblock(repo, committed, blocked, item, stdout, stderr)
@@ -71,11 +72,48 @@ func Run(unblock bool, argv []string, stdout, stderr io.Writer) int {
 	return runBlock(repo, committed, blocked, item, yes, stdout, stderr)
 }
 
+// normalizeItemArg maps the spellings a shell hands out — an absolute path
+// (tab completion), or a path relative to a subdirectory cwd — onto the
+// repo-root-relative form everything downstream speaks. The raw argument
+// wins when it already resolves; otherwise the first rewritten candidate
+// that resolves (against the committed surface or the blocked ledger) is
+// used, and if none do, the raw argument passes through so error messages
+// name what the user typed.
+func normalizeItemArg(root, wd string, committed []string, blocked map[string]bool, arg string) string {
+	resolves := func(c string) bool {
+		if _, _, err := Resolve(committed, c); err == nil {
+			return true
+		}
+		return blocked[strings.TrimSuffix(strings.TrimPrefix(c, "./"), "/")]
+	}
+	if resolves(arg) {
+		return arg
+	}
+	full := arg
+	if !filepath.IsAbs(full) {
+		if wd == root {
+			return arg
+		}
+		full = filepath.Join(wd, arg)
+	}
+	if rel, err := filepath.Rel(root, full); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") && resolves(rel) {
+		return rel
+	}
+	return arg
+}
+
 func runBlock(repo *state.Repo, committed []string, blocked map[string]bool, arg string, yes bool, stdout, stderr io.Writer) int {
 	rel, covered, err := Resolve(committed, arg)
 	if err != nil {
 		fmt.Fprintf(stderr, "omakase: %v\n", err)
 		placedHint(repo, arg, stderr)
+		return 2
+	}
+	// The ledger is a line-oriented file: a rel containing a newline (or a
+	// bare CR, which the reader strips) cannot round-trip it — the block
+	// would read back as a different path and mask the wrong thing.
+	if strings.ContainsAny(rel, "\n\r") {
+		fmt.Fprintf(stderr, "omakase: %q contains a newline and cannot be blocked\n", rel)
 		return 2
 	}
 	if code := preflight(repo, blocked, stderr); code != 0 {
@@ -132,6 +170,12 @@ func runUnblock(repo *state.Repo, committed []string, blocked map[string]bool, a
 		fmt.Fprintf(stderr, "omakase: %v\n", err)
 		return 1
 	}
+	if len(blocked) == 0 {
+		// The ledger was $OMK's only blocked-state content; drop the dir if
+		// that leaves it empty, so a never-installed repo reads as such
+		// everywhere (remove's install sentinel included).
+		os.Remove(repo.OMK)
+	}
 	fmt.Fprintf(stdout, "omakase: unblocked — %s is back in the working tree\n", rel)
 	return 0
 }
@@ -153,6 +197,10 @@ func preflight(repo *state.Repo, blocked map[string]bool, stderr io.Writer) int 
 	}
 	if foreign, msg := foreignSparse(repo, blocked); foreign {
 		fmt.Fprintf(stderr, "omakase: %s\n", msg)
+		return 2
+	}
+	if wt, diverged := divergedPatterns(repo, blocked); diverged {
+		fmt.Fprintf(stderr, "omakase: %s: the sparse-checkout patterns were changed outside omakase — a rewrite would drop those changes; restore them (review: git -C %s sparse-checkout list) or clear your additions first\n", wt, wt)
 		return 2
 	}
 	return 0

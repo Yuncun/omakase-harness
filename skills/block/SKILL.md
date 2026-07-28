@@ -12,17 +12,19 @@ Claude Code sets it but Copilot CLI does not, and an unset variable resolves to 
 
 ```bash
 bash <skill-dir>/run.sh <item>            # step 1: explains what blocking does; changes nothing
-bash <skill-dir>/run.sh <item> --yes      # step 2: applies — ONLY after the human confirms
+bash <skill-dir>/confirm.sh <item>        # step 2: applies — ONLY after the human confirms
 bash <skill-dir>/run.sh unblock <item>    # restore a blocked item
 ```
 
 `<item>` is a committed path from `omakase status` (e.g. `CLAUDE.md`,
 `.agents/skills/od-worktree`) or a bare skill/agent name when unambiguous.
 
-**Consent is two-step and belongs to the human.** Run WITHOUT `--yes` first and relay the
-explanation verbatim; add `--yes` only after the human explicitly says to proceed. Never block —
-and never pass `--yes` — on your own judgment, and never block an item the human didn't name.
-Unblock needs no `--yes`.
+**Consent is two-step and belongs to the human.** Run `run.sh <item>` first and relay the
+explanation verbatim; run `confirm.sh` only after the human explicitly says to proceed —
+it is intentionally outside this skill's pre-approved tools, so the host will ask the human
+for permission (that prompt is part of the design; do not work around it, and never pass
+`--yes` to `run.sh` — it refuses it). Never block on your own judgment, and never block an
+item the human didn't name. Unblock is restorative and needs no confirmation.
 
 After a block or unblock, relay the closing line, then remind the session: a file hidden this
 way is out of the working tree until unblocked, but git still tracks it — commits, pulls, and

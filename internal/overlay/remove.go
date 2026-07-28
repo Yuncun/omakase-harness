@@ -152,7 +152,7 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 		for _, row := range state.ReadPlaced(ledger) {
 			rels = append(rels, row.Rel)
 		}
-	} else if fileContains(exclude, begin) || isDir(omk) {
+	} else if fileContains(exclude, begin) || omkInstallTraces(omk) {
 		// No ledger (a pre-0.10 install) but omakase was installed here. The
 		// install-proof sentinel (the exclude block, or a leftover snapshot
 		// dir) is required before falling back to enumerating the payload:
@@ -246,6 +246,24 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "omakase: removed. Hooks uninstalled, placed files deleted, worktree snapshot + exclude block stripped.")
 	return 0
+}
+
+// omkInstallTraces reports whether the $OMK dir holds evidence of an actual
+// install — any entry other than the blocked sidecar. The bare dir is NOT
+// evidence: `omakase block` creates it in never-installed repos, and reading
+// it as the pre-0.10 sentinel would send remove into the payload-enumeration
+// fallback, deleting untracked files that merely share payload names.
+func omkInstallTraces(omk string) bool {
+	entries, err := os.ReadDir(omk)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.Name() != state.BlockedName {
+			return true
+		}
+	}
+	return false
 }
 
 // fileContains reports whether the file's content contains substr. A

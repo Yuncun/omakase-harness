@@ -193,21 +193,25 @@ func DisabledFiles(dir string) map[string]bool {
 }
 
 // TrackedUnder lists the repo's git-tracked paths matching globs, in git's
-// own order, via `git -C root -c core.quotePath=false ls-files -- globs...`
-// (quotePath off so a non-ASCII path isn't quote-escaped, which would defeat
-// pattern matching downstream). Any error — root isn't a git repo, git isn't
-// on PATH — yields an empty result.
+// own order, via `git -C root ls-files -z -- globs...`. -z is load-bearing:
+// newline-terminated output C-quotes `\`, `"`, and control characters even
+// under core.quotePath=false, and a quoted name downstream is a path that
+// LOOKS blockable but never matches the real file — a false "blocked". NUL
+// termination emits every name raw. Any error — root isn't a git repo, git
+// isn't on PATH — yields an empty result.
 func TrackedUnder(root string, globs []string) []string {
-	args := append([]string{"-C", root, "-c", "core.quotePath=false", "ls-files", "--"}, globs...)
+	args := append([]string{"-C", root, "ls-files", "-z", "--"}, globs...)
 	out, err := exec.Command("git", args...).Output()
 	if err != nil {
 		return nil
 	}
-	trimmed := strings.TrimRight(string(out), "\n")
-	if trimmed == "" {
-		return nil
+	var rels []string
+	for _, rel := range strings.Split(string(out), "\x00") {
+		if rel != "" {
+			rels = append(rels, rel)
+		}
 	}
-	return strings.Split(trimmed, "\n")
+	return rels
 }
 
 // BlockedName is the sidecar beside placed.tsv listing the COMMITTED paths
@@ -218,7 +222,9 @@ func TrackedUnder(root string, globs []string) []string {
 const BlockedName = "blocked"
 
 // ReadBlocked is the set of committed paths currently blocked, read from
-// omk's blocked sidecar. Missing file -> empty set.
+// omk's blocked sidecar. Missing file -> empty set. Only line endings are
+// trimmed — a committed path may legitimately start or end with a space,
+// and trimming it would annotate one file while masking another.
 func ReadBlocked(omk string) map[string]bool {
 	m := map[string]bool{}
 	f, err := os.Open(filepath.Join(omk, BlockedName))
@@ -229,7 +235,7 @@ func ReadBlocked(omk string) map[string]bool {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), maxLineBuf)
 	for sc.Scan() {
-		if l := strings.TrimSpace(sc.Text()); l != "" {
+		if l := strings.TrimRight(sc.Text(), "\r"); l != "" {
 			m[l] = true
 		}
 	}
