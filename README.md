@@ -75,7 +75,11 @@ omakase remove            delete everything omakase placed, exactly
 
 Everything else hangs off `status`: per-item toggles (`--disable`/`--enable`),
 keep/restore for files you've edited, and `omakase diff` for what changed —
-`omakase status --help` lists them. Authoring is done by your agent from intent — see
+`omakase status --help` lists them. The toggles also point the other way:
+`omakase block <item>` hides one piece of the repo's *own* committed agent
+config (an instruction file, a skill, a hook script) from your clone — on every
+host, including the surfaces no host can switch off natively — and
+`omakase unblock` puts it back exactly. Authoring is done by your agent from intent — see
 [Share your harness](#share-your-harness). An optional status bar
 (`omakase statusline --wire`) keeps the harness state visible in Claude Code and
 Copilot CLI, including which gate is running right now.

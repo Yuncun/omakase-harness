@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/Yuncun/omakase-harness/internal/block"
 	"github.com/Yuncun/omakase-harness/internal/overlay"
 	"github.com/Yuncun/omakase-harness/internal/status"
 )
@@ -77,6 +78,12 @@ var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 	"diff": func(argv []string, stdout, stderr io.Writer) int {
 		return overlay.RunDiff(argv[2:], stdout, stderr)
 	},
+	"block": func(argv []string, stdout, stderr io.Writer) int {
+		return block.Run(false, argv[2:], stdout, stderr)
+	},
+	"unblock": func(argv []string, stdout, stderr io.Writer) int {
+		return block.Run(true, argv[2:], stdout, stderr)
+	},
 	"hook": func(argv []string, stdout, stderr io.Writer) int {
 		return overlay.RunHook(argv[2:], os.Stdin, stdout, stderr)
 	},
@@ -102,6 +109,8 @@ const usage = `usage: omakase <command>
   init [source]    install or repair the harness in this repo (idempotent)
   status           what's installed here; per-item switches (--help for flags)
   diff [path…]     what you changed vs the harness (read-only)
+  block <item>     hide one piece of the repo's OWN committed agent config
+  unblock <item>   put a blocked item back
   remove           undo everything omakase placed
 
 commands used by your tools, not by you:

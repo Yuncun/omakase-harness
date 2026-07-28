@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Yuncun/omakase-harness/internal/block"
 	"github.com/Yuncun/omakase-harness/internal/hook"
 )
 
@@ -689,5 +690,76 @@ func TestRemoveLeavesKeptFileOnDisk(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), a) || !strings.Contains(stdout.String(), "kept") {
 		t.Errorf("remove did not report the kept file:\n%s", stdout.String())
+	}
+}
+
+// ---------------------------------------------------------------- blocked items
+
+// Remove restores blocked committed items (issue #193: blocked state joins
+// the every-trace-reversed promise): after a real init + a block, remove
+// brings the file back, disables sparse-checkout, and still tears the
+// harness down.
+func TestRemoveRestoresBlockedItems(t *testing.T) {
+	dir, repo := initRepo(t)
+	singleGatePayload(t)
+	writeFile(t, filepath.Join(dir, "CLAUDE.md"), "committed doctrine\n")
+	runGitT(t, dir, "add", "CLAUDE.md")
+	runGitT(t, dir, "commit", "-q", "-m", "steering")
+	mustInit(t)
+
+	var bout, berr strings.Builder
+	if code := block.Run(false, []string{"CLAUDE.md", "--yes"}, &bout, &berr); code != 0 {
+		t.Fatalf("block: exit=%d stderr=%q", code, berr.String())
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "CLAUDE.md")); err == nil {
+		t.Fatal("precondition: CLAUDE.md should be hidden")
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "restored content", readFileT(t, filepath.Join(dir, "CLAUDE.md")), "committed doctrine\n")
+	if !strings.Contains(stdout.String(), "unblocked 1 item(s)") {
+		t.Errorf("stdout = %q, want the unblocked note", stdout.String())
+	}
+	if _, err := os.Lstat(repo.OMK); !os.IsNotExist(err) {
+		t.Errorf("$OMK still exists: %v", err)
+	}
+}
+
+// A repo where the user only ever blocked (no harness installed) must remove
+// cleanly: file restored, ledger + $OMK gone, and — critically — NO pre-0.10
+// payload-enumeration fallback (the $OMK dir the ledger created must not read
+// as an install sentinel, or remove would delete untracked files that merely
+// share payload names).
+func TestRemoveBlockedOnlyRepo(t *testing.T) {
+	dir, repo := initRepo(t)
+	writeFile(t, filepath.Join(dir, "CLAUDE.md"), "committed doctrine\n")
+	runGitT(t, dir, "add", "CLAUDE.md")
+	runGitT(t, dir, "commit", "-q", "-m", "steering")
+	// A payload whose file exists UNTRACKED in the repo: the enumeration
+	// fallback would delete it.
+	p := t.TempDir()
+	writeFile(t, filepath.Join(p, "AGENTS.md"), "payload agents\n")
+	t.Setenv("OMAKASE_PAYLOAD", p)
+	writeFile(t, filepath.Join(dir, "AGENTS.md"), "the user's own untracked file\n")
+
+	var bout, berr strings.Builder
+	if code := block.Run(false, []string{"CLAUDE.md", "--yes"}, &bout, &berr); code != 0 {
+		t.Fatalf("block: exit=%d stderr=%q", code, berr.String())
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunRemove(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	eq(t, "restored content", readFileT(t, filepath.Join(dir, "CLAUDE.md")), "committed doctrine\n")
+	eq(t, "untracked file untouched", readFileT(t, filepath.Join(dir, "AGENTS.md")), "the user's own untracked file\n")
+	if !strings.Contains(stderr.String(), "nothing installed here") {
+		t.Errorf("stderr = %q, want the nothing-installed line after the restore", stderr.String())
+	}
+	if _, err := os.Lstat(repo.OMK); !os.IsNotExist(err) {
+		t.Errorf("$OMK still exists: %v", err)
 	}
 }

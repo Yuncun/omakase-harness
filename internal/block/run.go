@@ -1,0 +1,197 @@
+// This file is the `omakase block` / `omakase unblock` verb entry point:
+// flag parsing, repo discovery, resolution against the committed surface, the
+// two-step consent (a run without --yes states the consequence and applies
+// nothing — the binary never prompts), and the human-readable outcome lines.
+// The working-tree mechanism itself lives in mask.go.
+package block
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/Yuncun/omakase-harness/internal/harness"
+	"github.com/Yuncun/omakase-harness/internal/state"
+)
+
+// Run is both verbs; unblock selects the direction. argv is the arguments
+// after the verb. Exit codes follow the toggle conventions: 0 success or
+// no-op, 1 environment/apply failure, 2 refusal (unknown item, missing
+// consent, foreign sparse-checkout).
+func Run(unblock bool, argv []string, stdout, stderr io.Writer) int {
+	verb := "block"
+	if unblock {
+		verb = "unblock"
+	}
+
+	yes := false
+	item := ""
+	for _, a := range argv {
+		switch {
+		case a == "--help" || a == "-h":
+			printUsage(stdout)
+			return 0
+		case a == "--yes":
+			yes = true
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprintf(stderr, "omakase: unknown flag %s (see omakase %s --help)\n", a, verb)
+			return 2
+		case item == "":
+			item = a
+		default:
+			fmt.Fprintf(stderr, "omakase: %s takes one item (see omakase %s --help)\n", verb, verb)
+			return 2
+		}
+	}
+	if item == "" {
+		fmt.Fprintf(stderr, "omakase: %s needs an item — a committed path or a skill/agent name (the list: omakase status)\n", verb)
+		return 2
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "omakase: not inside a git repo")
+		return 1
+	}
+	repo, err := state.Discover(wd)
+	if err != nil {
+		fmt.Fprintln(stderr, "omakase: not inside a git repo")
+		return 1
+	}
+
+	committed := state.TrackedUnder(repo.Root, harness.CommittedGlobs)
+	blocked := state.ReadBlocked(repo.OMK)
+
+	if unblock {
+		return runUnblock(repo, committed, blocked, item, stdout, stderr)
+	}
+	return runBlock(repo, committed, blocked, item, yes, stdout, stderr)
+}
+
+func runBlock(repo *state.Repo, committed []string, blocked map[string]bool, arg string, yes bool, stdout, stderr io.Writer) int {
+	rel, covered, err := Resolve(committed, arg)
+	if err != nil {
+		fmt.Fprintf(stderr, "omakase: %v\n", err)
+		placedHint(repo, arg, stderr)
+		return 2
+	}
+	if blocked[rel] {
+		fmt.Fprintf(stdout, "omakase: %s is already blocked\n", rel)
+		return 0
+	}
+	if foreign, msg := foreignSparse(repo, blocked); foreign {
+		fmt.Fprintf(stderr, "omakase: %s\n", msg)
+		return 2
+	}
+	if !yes {
+		fmt.Fprintf(stdout, "%s steers agents in this repo (%s).\n", rel, describeCovered(rel, covered))
+		fmt.Fprintf(stdout, "Blocking hides it from this clone's working tree — agents, editors, and builds\n")
+		fmt.Fprintf(stdout, "stop seeing it. git still tracks it: nothing is deleted, commits and pulls are\n")
+		fmt.Fprintf(stdout, "unaffected, and  omakase unblock %s  puts it back exactly.\n", arg)
+		fmt.Fprintf(stdout, "\nTo proceed:  omakase block %s --yes\n", arg)
+		return 2
+	}
+
+	blocked[rel] = true
+	if err := writeAndApply(repo, blocked, stderr); err != nil {
+		fmt.Fprintf(stderr, "omakase: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "omakase: blocked — %s is hidden from the working tree (restore:  omakase unblock %s)\n", rel, arg)
+	return 0
+}
+
+func runUnblock(repo *state.Repo, committed []string, blocked map[string]bool, arg string, stdout, stderr io.Writer) int {
+	// Unblock resolves against the blocked set itself first, so a stale block
+	// (the file no longer committed upstream) is always reversible; the
+	// committed-surface resolution is the fallback for shorthand names.
+	rel := strings.TrimSuffix(strings.TrimPrefix(arg, "./"), "/")
+	if !blocked[rel] {
+		r, _, err := Resolve(committed, arg)
+		if err != nil || !blocked[r] {
+			fmt.Fprintf(stderr, "omakase: %s is not blocked (blocked items:  omakase status)\n", arg)
+			return 2
+		}
+		rel = r
+	}
+	if foreign, msg := foreignSparse(repo, blocked); foreign {
+		fmt.Fprintf(stderr, "omakase: %s\n", msg)
+		return 2
+	}
+
+	delete(blocked, rel)
+	if err := writeAndApply(repo, blocked, stderr); err != nil {
+		fmt.Fprintf(stderr, "omakase: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "omakase: unblocked — %s is back in the working tree\n", rel)
+	return 0
+}
+
+// writeAndApply persists the blocked set and makes the working tree match.
+// Ledger-first on purpose: a crash between the two writes leaves a blocked
+// mark whose masking has not applied yet — visible in status and re-applied
+// by the next block/unblock — rather than a masked tree with no record.
+func writeAndApply(repo *state.Repo, blocked map[string]bool, stderr io.Writer) error {
+	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
+		return err
+	}
+	if err := state.WriteBlocked(repo.OMK, blocked); err != nil {
+		return err
+	}
+	return maskApply(repo, blocked, stderr)
+}
+
+// describeCovered summarizes what a block covers: the file itself, or the n
+// committed files under a directory item.
+func describeCovered(rel string, covered []string) string {
+	if len(covered) == 1 && covered[0] == rel {
+		return harness.KindOf(rel)
+	}
+	if len(covered) == 1 {
+		return fmt.Sprintf("%s, 1 committed file", harness.KindOf(rel+"/x"))
+	}
+	return fmt.Sprintf("%s, %d committed files", harness.KindOf(rel+"/x"), len(covered))
+}
+
+// placedHint adds one line when the failed argument names a file omakase
+// itself placed: that file has its own switch.
+func placedHint(repo *state.Repo, arg string, stderr io.Writer) {
+	norm := strings.TrimSuffix(strings.TrimPrefix(arg, "./"), "/")
+	for _, row := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
+		if row.Rel == norm {
+			fmt.Fprintf(stderr, "omakase: (omakase placed that file — its switch is:  omakase status --disable %s)\n", norm)
+			return
+		}
+	}
+}
+
+// sortedBlocked is the blocked set as a sorted slice.
+func sortedBlocked(blocked map[string]bool) []string {
+	rels := make([]string, 0, len(blocked))
+	for r := range blocked {
+		rels = append(rels, r)
+	}
+	sort.Strings(rels)
+	return rels
+}
+
+func printUsage(w io.Writer) {
+	fmt.Fprint(w, `usage: omakase block <item> [--yes]
+       omakase unblock <item>
+
+Per-item consent over the repo's OWN committed agent config (instruction
+files, skills, agents, prompts, hooks). Blocking hides the item from this
+clone's working tree so no agent or tool loads it; git still tracks it —
+nothing is deleted, commits and pulls are unaffected, and unblock restores
+it exactly. Items omakase itself placed have their own switch
+(omakase status --disable).
+
+  <item>   a committed path (from omakase status), a directory of them,
+           or a bare skill/agent name when unambiguous
+  --yes    apply; without it, block only explains what would happen
+`)
+}
