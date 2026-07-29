@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 
 	"github.com/Yuncun/omakase-harness/internal/block"
 	"github.com/Yuncun/omakase-harness/internal/overlay"
+	"github.com/Yuncun/omakase-harness/internal/state"
 	"github.com/Yuncun/omakase-harness/internal/status"
 )
 
@@ -70,7 +72,19 @@ var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 		return status.Run(argv[2:], stdout, stderr)
 	},
 	"init": func(argv []string, stdout, stderr io.Writer) int {
-		return overlay.RunInit(argv[2:], stdout, stderr)
+		code := overlay.RunInit(argv[2:], stdout, stderr)
+		// Statusline wired by default (#123 item 5): after an init that
+		// left a real install behind, fill each host's empty statusLine
+		// slot; an existing bar always wins (wireAtInit). Lives here, not
+		// in RunInit, for SelfInstallCurrent's reason: unit tests calling
+		// RunInit directly must never touch a developer's real host
+		// settings. --help and the nothing-remembered first run install
+		// nothing and must wire nothing — the placed.tsv check is the
+		// same installed-here signal RunInit's own wording keys on.
+		if code == 0 && !hasHelpFlag(argv[2:]) && overlayInstalled() {
+			wireAtInit(stdout, stderr)
+		}
+		return code
 	},
 	"remove": func(argv []string, stdout, stderr io.Writer) int {
 		return overlay.RunRemove(argv[2:], stdout, stderr)
@@ -100,6 +114,34 @@ var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 	},
 }
 
+// hasHelpFlag mirrors RunInit's parser: -h/--help anywhere in the args
+// prints usage and installs nothing, so the wired-by-default step must
+// treat it as a no-op run too.
+func hasHelpFlag(args []string) bool {
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
+// overlayInstalled reports whether the working directory sits in a repo
+// carrying a placed overlay (placed.tsv) — the installed-here signal the
+// wired-by-default gate keys on.
+func overlayInstalled() bool {
+	wd, err := os.Getwd()
+	if err != nil {
+		return false
+	}
+	repo, err := state.Discover(wd)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(repo.OMK, "placed.tsv"))
+	return err == nil
+}
+
 // usage is the two-tier command list (issue #98 Part 2; chezmoi's grouped
 // --help is the precedent): the four human verbs first, then the plumbing
 // verbs your tools call — grouped so a human scanning for what to type never
@@ -116,7 +158,7 @@ const usage = `usage: omakase <command>
 commands used by your tools, not by you:
   hook <name>      run the git-hook logic (called by the hooks init installs)
   record <name>    record a PASS for HEAD for a deferred gate (out-of-band)
-  statusline       one-line status segment (--wire connects it to your hosts' bars)
+  statusline       one-line status segment (init wires it into your hosts' bars; --wire re-wires)
 `
 
 // run dispatches argv to a verb and returns the exit code, writing only to

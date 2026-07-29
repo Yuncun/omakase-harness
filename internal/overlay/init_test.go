@@ -43,11 +43,11 @@ const steeringOnlyVerifiedLine = "omakase: verified — no gates declared · fil
 const gateContent = "#!/usr/bin/env bash\necho hi\n"
 
 // uxStanzas is the wiring block every successful init appends after
-// summaryTail. Currently empty: the statusline --wire pointer prints only
-// when a host config dir exists without a statusLine, and the test HOME has
-// no host dirs (TestInitStatuslinePointer covers it); worktree discipline is
-// harness policy the binary never advertises (#172). Kept as the named
-// slot so a future unconditional stanza has one place to land.
+// summaryTail. Currently empty: the status-bar wiring moved to the init
+// verb in cmd/omakase (#123 item 5 — RunInit prints nothing about it), and
+// worktree discipline is harness policy the binary never advertises (#172).
+// Kept as the named slot so a future unconditional stanza has one place to
+// land.
 func uxStanzas() string {
 	return ""
 }
@@ -89,9 +89,8 @@ func initRepo(t *testing.T) (string, *state.Repo) {
 	runGitT(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
 	chdir(t, dir)
 	stubStableBin(t)
-	// A bare HOME (no host config dirs) so the init goldens never depend on
-	// the developer's real ~/.claude wiring (the statusline --wire pointer
-	// is host-conditional; TestInitStatuslinePointer covers it).
+	// A bare HOME (no host config dirs) keeps every init hermetic — nothing
+	// under the developer's real home is ever read or written from tests.
 	t.Setenv("HOME", t.TempDir())
 	repo, err := state.Discover(dir)
 	if err != nil {
@@ -1806,9 +1805,12 @@ func TestReinitRefillsMissingKeptFile(t *testing.T) {
 	}
 }
 
-// The statusline --wire pointer prints only while a host config dir exists
-// without a statusLine in its settings; a wired host silences it (#85).
-func TestInitStatuslinePointer(t *testing.T) {
+// RunInit never touches host settings and never advertises the status bar:
+// the wired-by-default step (#123 item 5) lives in the init verb
+// (cmd/omakase), for SelfInstallCurrent's reason — tests calling RunInit
+// directly must never write a developer's real ~/.claude. An unwired host
+// dir must produce neither a wire nor a pointer line here.
+func TestInitNeverTouchesHostSettings(t *testing.T) {
 	_, _ = initRepo(t)
 	t.Setenv("OMAKASE_PAYLOAD", t.TempDir())
 
@@ -1822,18 +1824,11 @@ func TestInitStatuslinePointer(t *testing.T) {
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d; stderr=%q", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "statusline --wire") {
-		t.Fatalf("pointer missing with an unwired host:\n%s", stdout.String())
-	}
-
-	// Wire the host: the pointer goes quiet.
-	writeFile(t, filepath.Join(home, ".claude", "settings.json"), `{"statusLine":{"type":"command","command":"x"}}`)
-	stdout.Reset()
-	if code := RunInit(nil, &stdout, &stderr); code != 0 {
-		t.Fatalf("re-init exit = %d; stderr=%q", code, stderr.String())
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatal("RunInit wrote host settings — machine config belongs to the init verb, not the library")
 	}
 	if strings.Contains(stdout.String(), "statusline --wire") {
-		t.Fatalf("pointer printed for a wired host:\n%s", stdout.String())
+		t.Fatalf("stale --wire pointer printed:\n%s", stdout.String())
 	}
 }
 
