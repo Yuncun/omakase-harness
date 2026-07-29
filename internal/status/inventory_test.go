@@ -200,6 +200,7 @@ func buildNotInstalledFixture(t *testing.T) (*state.Repo, string) {
 const wantInventoryTermInstalled = `THE PROJECT'S HARNESS (committed — managed by git, not omakase)
     + .claude/rules/team.md   (rule)
     + CLAUDE.md   (doc)
+    any of these can be hidden from this clone's agents:  omakase block <path>
 INJECTED (omakase) — placed by omakase init, gitignored
     + normal.txt   (other, from some/src)
     - disabled.txt   (other, from some/src; disabled — not restored, not verified)
@@ -220,6 +221,8 @@ GLOBAL — 11 files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list
 const wantInventoryMDInstalled = "### The project's harness (committed — managed by git, not omakase)\n" +
 	"- `.claude/rules/team.md` — rule\n" +
 	"- `CLAUDE.md` — doc\n" +
+	"\n" +
+	"_Any of these can be hidden from this clone's agents:_ `omakase block <path>`\n" +
 	"\n" +
 	"### Injected (omakase) — placed by `omakase init`, gitignored\n" +
 	"- `normal.txt` — other, from some/src\n" +
@@ -266,6 +269,7 @@ const wantNotInstalledTerm = `No omakase harness is installed in this repo.
 
 AGENT CONFIG COMMITTED IN THIS REPO (managed by git, not omakase)
     + .claude/rules/team.md   (rule)
+    any of these can be hidden from this clone's agents:  omakase block <path>
 YOURS, UNMANAGED — untracked agent config, only in this clone (not committed, not placed by omakase)
     + .claude/rules/local-tweak.md   (rule)
     + CLAUDE.local.md   (doc)
@@ -281,6 +285,8 @@ const wantNotInstalledMD = "**No omakase harness is installed in this repo.**\n"
 	"\n" +
 	"### Agent config committed in this repo (managed by git, not omakase)\n" +
 	"- `.claude/rules/team.md` — rule\n" +
+	"\n" +
+	"_Any of these can be hidden from this clone's agents:_ `omakase block <path>`\n" +
 	"\n" +
 	"### Yours, unmanaged — untracked agent config, only in this clone (not committed, not placed by omakase)\n" +
 	"- `.claude/rules/local-tweak.md` — rule\n" +
@@ -680,5 +686,58 @@ func TestRenderInjectedKeptMissingAndDisabled(t *testing.T) {
 	}
 	if !strings.Contains(out, "`off.md`") || !strings.Contains(out, "a kept version of yours is saved") {
 		t.Errorf("disabled kept row hides the saved copy:\n%s", out)
+	}
+}
+
+// ---------------------------------------------------------------- blocked rows
+
+// A committed row covered by a blocked item (itself, or an ancestor dir in
+// the $OMK/blocked sidecar) carries the BLOCKED note; a blocked item no
+// longer matching any committed row still renders as its own trailing row so
+// the block stays discoverable and reversible.
+func TestCommittedRowsBlocked(t *testing.T) {
+	dir := newGitRepo(t)
+	writeFile(t, dir, "CLAUDE.md", "doctrine\n")
+	writeFile(t, dir, ".agents/skills/od/SKILL.md", "skill\n")
+	runGitT(t, dir, "add", "-A")
+	runGitT(t, dir, "commit", "-q", "-m", "files")
+	repo, err := state.Discover(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeOMK(t, repo.OMK, state.BlockedName, ".agents/skills/od\ngone.md\n")
+	// The skill is ledger-blocked but its files were never masked (or a git
+	// operation brought them back) — that leak state must read differently
+	// from a healthy block, and name the re-hide command.
+	rows := committedRows(repo)
+	got := map[string]string{}
+	for _, r := range rows {
+		got[r[0]] = r[1]
+	}
+	if !strings.Contains(got[".agents/skills/od/SKILL.md"], "BLOCKED but PRESENT") ||
+		!strings.Contains(got[".agents/skills/od/SKILL.md"], "omakase block .agents/skills/od --yes") {
+		t.Errorf("visible-blocked skill row = %q", got[".agents/skills/od/SKILL.md"])
+	}
+	// Genuinely hidden (absent from the working tree): the healthy state.
+	if err := os.RemoveAll(filepath.Join(dir, ".agents")); err != nil {
+		t.Fatal(err)
+	}
+	rows = committedRows(repo)
+	got = map[string]string{}
+	for _, r := range rows {
+		got[r[0]] = r[1]
+	}
+	if !strings.Contains(got[".agents/skills/od/SKILL.md"], "BLOCKED by you") ||
+		!strings.Contains(got[".agents/skills/od/SKILL.md"], "omakase unblock .agents/skills/od") {
+		t.Errorf("hidden-blocked skill row = %q", got[".agents/skills/od/SKILL.md"])
+	}
+	if strings.Contains(got["CLAUDE.md"], "BLOCKED") {
+		t.Errorf("unblocked row annotated: %q", got["CLAUDE.md"])
+	}
+	if !strings.Contains(got["gone.md"], "no longer committed") {
+		t.Errorf("stale block row = %q (rows: %v)", got["gone.md"], rows)
 	}
 }

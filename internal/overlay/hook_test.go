@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Yuncun/omakase-harness/internal/block"
 	"github.com/Yuncun/omakase-harness/internal/hook"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
@@ -496,5 +497,40 @@ func TestHookTimeNeverWritesGitHooks(t *testing.T) {
 		if !info.ModTime().Equal(beforeMtime[e.Name()]) {
 			t.Errorf("hook-time run touched .git/hooks/%s (mtime changed)", e.Name())
 		}
+	}
+}
+
+// A blocked-only repo (no harness ever installed) still self-heals: the
+// session-start hook reasserts a blocked item a git operation brought back,
+// even though there is no placed.tsv. Without this, the heal's
+// not-installed early return left leaked files steering until the user
+// happened to run status.
+func TestSessionStartReassertsBlockedOnlyRepo(t *testing.T) {
+	dir, repo := initRepo(t)
+	writeFile(t, filepath.Join(dir, "CLAUDE.md"), "doctrine\n")
+	runGitT(t, dir, "add", "CLAUDE.md")
+	runGitT(t, dir, "commit", "-q", "-m", "steering")
+
+	var out, errOut strings.Builder
+	if code := block.Run(false, []string{"CLAUDE.md", "--yes"}, &out, &errOut); code != 0 {
+		t.Fatalf("block: %s", errOut.String())
+	}
+	runGitT(t, dir, "sparse-checkout", "disable") // the silent-leak end state
+	if _, err := os.Lstat(filepath.Join(dir, "CLAUDE.md")); err != nil {
+		t.Fatal("precondition: leak should have restored the file")
+	}
+	if fileRegular(filepath.Join(repo.OMK, "placed.tsv")) {
+		t.Fatal("precondition: repo must be blocked-only (no install)")
+	}
+
+	var stdout, stderr strings.Builder
+	if code := RunHook([]string{"session-start"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("session-start: exit %d, stderr %s", code, stderr.String())
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "CLAUDE.md")); err == nil {
+		t.Error("leaked blocked file not re-hidden in blocked-only repo")
+	}
+	if !strings.Contains(stdout.String(), "re-hid 1 blocked item(s)") {
+		t.Errorf("stdout = %q, want the re-hid note", stdout.String())
 	}
 }

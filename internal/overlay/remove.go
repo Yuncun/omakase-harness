@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Yuncun/omakase-harness/internal/block"
 	"github.com/Yuncun/omakase-harness/internal/hook"
 	"github.com/Yuncun/omakase-harness/internal/state"
 	"github.com/Yuncun/omakase-harness/internal/textblock"
@@ -54,6 +55,21 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	root := repo.Root
 	common := repo.CommonDir
 	omk := repo.OMK
+
+	// ---- blocked-item restore ----
+	// Before any teardown: items the user blocked (`omakase block` — hidden
+	// from the working tree via sparse-checkout) come back, ledger first.
+	// Then the $OMK dir is dropped if the ledger was its only content, so a
+	// blocked-only repo (no harness ever installed) does not leave an empty
+	// dir behind — and, below, is a clean "nothing installed", never the
+	// pre-0.10 payload-enumeration fallback.
+	if n, berr := block.RestoreAll(repo, stderr); berr != nil {
+		fmt.Fprintf(stderr, "omakase: %v\n", berr)
+		return 1
+	} else if n > 0 {
+		fmt.Fprintf(stdout, "omakase: unblocked %d item(s) — the repo's own files are back in the working tree.\n", n)
+		os.Remove(omk) // only succeeds when empty
+	}
 
 	const begin = "# >>> omakase-harness >>>"
 	const end = "# <<< omakase-harness <<<"
@@ -136,7 +152,7 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 		for _, row := range state.ReadPlaced(ledger) {
 			rels = append(rels, row.Rel)
 		}
-	} else if fileContains(exclude, begin) || isDir(omk) {
+	} else if fileContains(exclude, begin) || omkInstallTraces(omk) {
 		// No ledger (a pre-0.10 install) but omakase was installed here. The
 		// install-proof sentinel (the exclude block, or a leftover snapshot
 		// dir) is required before falling back to enumerating the payload:
@@ -230,6 +246,24 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "omakase: removed. Hooks uninstalled, placed files deleted, worktree snapshot + exclude block stripped.")
 	return 0
+}
+
+// omkInstallTraces reports whether the $OMK dir holds evidence of an actual
+// install — any entry other than the blocked sidecar. The bare dir is NOT
+// evidence: `omakase block` creates it in never-installed repos, and reading
+// it as the pre-0.10 sentinel would send remove into the payload-enumeration
+// fallback, deleting untracked files that merely share payload names.
+func omkInstallTraces(omk string) bool {
+	entries, err := os.ReadDir(omk)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.Name() != state.BlockedName {
+			return true
+		}
+	}
+	return false
 }
 
 // fileContains reports whether the file's content contains substr. A

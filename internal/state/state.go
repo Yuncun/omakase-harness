@@ -192,6 +192,79 @@ func DisabledFiles(dir string) map[string]bool {
 	return m
 }
 
+// TrackedUnder lists the repo's git-tracked paths matching globs, in git's
+// own order, via `git -C root ls-files -z -- globs...`. -z is load-bearing:
+// newline-terminated output C-quotes `\`, `"`, and control characters even
+// under core.quotePath=false, and a quoted name downstream is a path that
+// LOOKS blockable but never matches the real file — a false "blocked". NUL
+// termination emits every name raw. Any error — root isn't a git repo, git
+// isn't on PATH — yields an empty result.
+func TrackedUnder(root string, globs []string) []string {
+	args := append([]string{"-C", root, "ls-files", "-z", "--"}, globs...)
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return nil
+	}
+	var rels []string
+	for _, rel := range strings.Split(string(out), "\x00") {
+		if rel != "" {
+			rels = append(rels, rel)
+		}
+	}
+	return rels
+}
+
+// BlockedName is the sidecar beside placed.tsv listing the COMMITTED paths
+// the user has blocked from steering their agents (`omakase block`), one rel
+// per line — the same existence-is-the-mark shape as disabled-files. Unlike
+// disabled-files it describes the repo's own tracked files, never placed
+// ones.
+const BlockedName = "blocked"
+
+// ReadBlocked is the set of committed paths currently blocked, read from
+// omk's blocked sidecar. Missing file -> empty set. Only line endings are
+// trimmed — a committed path may legitimately start or end with a space,
+// and trimming it would annotate one file while masking another.
+func ReadBlocked(omk string) map[string]bool {
+	m := map[string]bool{}
+	f, err := os.Open(filepath.Join(omk, BlockedName))
+	if err != nil {
+		return m
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), maxLineBuf)
+	for sc.Scan() {
+		if l := strings.TrimRight(sc.Text(), "\r"); l != "" {
+			m[l] = true
+		}
+	}
+	return m
+}
+
+// WriteBlocked rewrites omk's blocked sidecar wholesale to the sorted
+// contents of set; an empty set removes the file. Paths containing a newline
+// are skipped (they cannot round-trip a line-oriented file).
+func WriteBlocked(omk string, set map[string]bool) error {
+	var names []string
+	for n := range set {
+		if n == "" || strings.ContainsRune(n, '\n') {
+			continue
+		}
+		names = append(names, n)
+	}
+	path := filepath.Join(omk, BlockedName)
+	if len(names) == 0 {
+		err := os.Remove(path)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	sort.Strings(names)
+	return os.WriteFile(path, []byte(strings.Join(names, "\n")+"\n"), 0o644)
+}
+
 // CountNonEmptyLines counts non-empty lines in path; a final line without a
 // trailing newline still counts. A missing or unreadable file returns 0.
 func CountNonEmptyLines(path string) int {

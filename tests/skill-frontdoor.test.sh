@@ -4,7 +4,7 @@
 # argument boundaries intact. Stub bin/ scripts in a temp plugin layout isolate the contract from
 # the real bin behavior (these 6-8 line files are the exact cross-tool seam; a broken relative
 # path or a dropped/collapsed "$@" would otherwise ship green). add-gate has no run.sh (it is a
-# pure instruction skill), so only the three exec front doors (init/status/remove) are exercised.
+# pure instruction skill), so only the exec front doors (init/status/remove/block) are exercised.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILLS="$(cd "$HERE/../skills" && pwd)"
@@ -17,13 +17,13 @@ mkdir -p "$TMP/plugin/bin" "$TMP/plugin/skills"
 
 # Stub every bin script a run.sh might exec: echo a marker, then each arg on its own line so a
 # collapsed "$*" (which would join 'be ta' into the prior arg) is caught.
-for s in init status remove; do
+for s in init status remove block unblock; do
   printf '#!/usr/bin/env bash\necho "STUB:%s"\nfor a in "$@"; do echo "ARG[$a]"; done\n' "$s" > "$TMP/plugin/bin/$s.sh"
   chmod +x "$TMP/plugin/bin/$s.sh"
 done
 
 # Copy each real run.sh into the temp plugin tree; it self-locates ../../bin -> our stubs.
-for v in init status remove; do
+for v in init status remove block; do
   mkdir -p "$TMP/plugin/skills/$v"
   cp "$SKILLS/$v/run.sh" "$TMP/plugin/skills/$v/run.sh"
 done
@@ -45,6 +45,24 @@ OUT=$(run status SHOULD_NOT_APPEAR)
 echo "$OUT" | grep -qxF 'STUB:status'     && pass "status/run.sh execs bin/status.sh"  || fail "status reached wrong script ($OUT)"
 echo "$OUT" | grep -qxF 'ARG[--markdown]' && pass "status passes the fixed --markdown" || fail "status did not pass --markdown ($OUT)"
 echo "$OUT" | grep -qxF 'ARG[SHOULD_NOT_APPEAR]' && fail "status forwarded a caller arg into the read-only render" || pass "status does not forward caller args (fixed --markdown only)"
+# block -> bin/block.sh, forwards "$@" verbatim; a leading "unblock" routes to bin/unblock.sh
+# with the routing word consumed (a leaked "unblock" arg would read as the item name).
+OUT=$(run block .agents/skills/od-worktree)
+echo "$OUT" | grep -qxF 'STUB:block' && pass "block/run.sh execs bin/block.sh" || fail "block reached wrong script ($OUT)"
+echo "$OUT" | grep -qxF 'ARG[.agents/skills/od-worktree]' && pass "block forwards the item" || fail "block dropped args ($OUT)"
+# The pre-approved entry point REFUSES --yes: consent escalation must go through
+# confirm.sh, which is outside the skill's allowed-tools (the host prompt is the
+# human confirmation). A run.sh that forwarded --yes would let one pre-approved
+# call apply a block.
+OUT=$(run block .agents/skills/od-worktree --yes 2>&1); RC=$?
+{ [ "$RC" -ne 0 ] && ! echo "$OUT" | grep -qxF 'STUB:block'; } && pass "block/run.sh refuses --yes" || fail "run.sh forwarded --yes (rc=$RC, $OUT)"
+# confirm.sh is exercised from the stub layout like run.sh.
+cp "$SKILLS/block/confirm.sh" "$TMP/plugin/skills/block/confirm.sh"
+OUT=$(bash "$TMP/plugin/skills/block/confirm.sh" .agents/skills/od-worktree)
+{ echo "$OUT" | grep -qxF 'STUB:block' && echo "$OUT" | grep -qxF 'ARG[.agents/skills/od-worktree]' && echo "$OUT" | grep -qxF 'ARG[--yes]'; } && pass "confirm.sh applies with --yes appended" || fail "confirm.sh wrong ($OUT)"
+OUT=$(run block unblock "od worktree")
+echo "$OUT" | grep -qxF 'STUB:unblock' && pass "block/run.sh routes unblock to bin/unblock.sh" || fail "unblock routed to wrong script ($OUT)"
+{ echo "$OUT" | grep -qxF 'ARG[od worktree]' && ! echo "$OUT" | grep -qxF 'ARG[unblock]'; } && pass "unblock consumes the routing word, forwards the item" || fail "unblock arg handling wrong ($OUT)"
 
 echo ""
 [ "$FAILED" -eq 0 ] && echo "skill-frontdoor.test.sh: ALL PASS" || { echo "skill-frontdoor.test.sh: FAILURES"; exit 1; }

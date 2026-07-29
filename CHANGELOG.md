@@ -18,6 +18,20 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   everything is.
 
 ### Added
+- **`omakase block <item>` / `omakase unblock <item>`** (#193): per-item
+  consent over the repo's OWN committed agent config. Blocking hides the
+  item — an instruction file, a skill or agent directory, a prompts file, a
+  hooks script — from this clone's working tree via non-cone git
+  sparse-checkout, so no host loads it: agents discover steering files by
+  presence on disk, and this works identically for Claude Code and Copilot
+  CLI, including the surfaces neither host can switch off natively
+  (instruction files, hooks). git still tracks the file: nothing is deleted,
+  commits/pulls/pushes are unaffected, and unblock restores it byte-perfect.
+  A run without `--yes` only explains what would happen. Applies across all
+  worktrees; `omakase status` shows blocked rows and names the unblock
+  command; `omakase remove` restores everything blocked. Works with or
+  without a harness installed. v1 refuses repos already running their own
+  sparse-checkout.
 - **Resolved commit in the source line** (#38): every `--source` install and
   bare re-run now prints the commit the payload came from —
   `omakase: source '…' (name: …, commit a1b2c3d) cached at …` — so a bare

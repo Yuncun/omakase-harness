@@ -23,23 +23,10 @@ import (
 // pathologically long line should fail closed rather than crash the scan.
 const maxLineBuf = 1 << 20
 
-// CommittedList lists the repo's own git-tracked harness surface. It runs
-// `git -C root -c core.quotePath=false ls-files -- <harness.CommittedGlobs>`
-// (core.quotePath=false so a non-ASCII path isn't quote-escaped, which would
-// defeat harness.KindOf's pattern matching) and returns the output lines in
-// git's own order. Any error — root isn't a git repo, git isn't on PATH —
-// yields an empty result.
+// CommittedList lists the repo's own git-tracked harness surface
+// (state.TrackedUnder over harness.CommittedGlobs), in git's own order.
 func CommittedList(root string) []string {
-	args := append([]string{"-C", root, "-c", "core.quotePath=false", "ls-files", "--"}, harness.CommittedGlobs...)
-	out, err := exec.Command("git", args...).Output()
-	if err != nil {
-		return nil
-	}
-	trimmed := strings.TrimRight(string(out), "\n")
-	if trimmed == "" {
-		return nil
-	}
-	return strings.Split(trimmed, "\n")
+	return state.TrackedUnder(root, harness.CommittedGlobs)
 }
 
 // PersonalList is a presence-only listing of the user's global harness config
@@ -236,16 +223,64 @@ func renderUnmanaged(w io.Writer, rows [][2]string, md bool) {
 }
 
 // committedRows pairs each CommittedList path with its kind, in git's order,
-// for renderPathRows.
-func committedRows(root string) [][2]string {
+// for renderPathRows. A row the user blocked (`omakase block` — the
+// $OMK/blocked sidecar, item rel or a covering directory) carries the blocked
+// note: the file is still tracked and still listed, but absent from the
+// working tree, and that state must be visible at rest. A blocked item that
+// no longer matches any committed row (upstream deleted or renamed it) gets
+// its own trailing row — a stale block must stay discoverable and
+// reversible.
+func committedRows(repo *state.Repo) [][2]string {
+	blocked := state.ReadBlocked(repo.OMK)
+	seen := map[string]bool{}
 	var rows [][2]string
-	for _, rel := range CommittedList(root) {
+	for _, rel := range CommittedList(repo.Root) {
 		if rel == "" {
 			continue
 		}
-		rows = append(rows, [2]string{rel, harness.KindOf(rel)})
+		kind := harness.KindOf(rel)
+		if item := blockedItemOf(blocked, rel); item != "" {
+			seen[item] = true
+			// A blocked file that is back on disk is a leak, not a state: a
+			// few git operations (am, merge --abort, a resolved conflict)
+			// rematerialize masked files silently. Say so and name the fix.
+			if _, err := os.Lstat(filepath.Join(repo.Root, rel)); err == nil {
+				kind += "; BLOCKED but PRESENT — a git operation restored it (re-hide: omakase block " + item + " --yes)"
+			} else {
+				kind += "; BLOCKED by you — hidden from the working tree (omakase unblock " + item + ")"
+			}
+		}
+		rows = append(rows, [2]string{rel, kind})
+	}
+	for _, item := range sortedKeys(blocked) {
+		if !seen[item] {
+			rows = append(rows, [2]string{item, "blocked, but no longer committed here (omakase unblock " + item + ")"})
+		}
 	}
 	return rows
+}
+
+// blockedItemOf returns the blocked item covering rel — rel itself or an
+// ancestor directory — or "".
+func blockedItemOf(blocked map[string]bool, rel string) string {
+	if blocked[rel] {
+		return rel
+	}
+	for item := range blocked {
+		if strings.HasPrefix(rel, item+"/") {
+			return item
+		}
+	}
+	return ""
+}
+
+func sortedKeys(set map[string]bool) []string {
+	keys := make([]string, 0, len(set))
+	for k := range set {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // renderPathRows writes {display path, kind} rows as md bullets or indented
@@ -279,7 +314,7 @@ func renderPathRows(w io.Writer, rows [][2]string, md bool) {
 // md selects markdown output (### headers, `- ` bullets) vs terminal output
 // (all-caps headers, indented +/-/~/! rows).
 func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
-	comm := committedRows(repo.Root)
+	comm := committedRows(repo)
 	pers := PersonalList(home)
 	placedPath := filepath.Join(repo.OMK, "placed.tsv")
 	unmanaged := UnmanagedList(repo.Root, placedPath)
@@ -287,6 +322,10 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 	if md {
 		fmt.Fprintln(w, "### The project's harness (committed — managed by git, not omakase)")
 		renderPathRows(w, comm, true)
+		if len(comm) > 0 {
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "_Any of these can be hidden from this clone's agents:_ `omakase block <path>`")
+		}
 		fmt.Fprintln(w)
 
 		fmt.Fprintln(w, "### Injected (omakase) — placed by `omakase init`, gitignored")
@@ -306,6 +345,9 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 
 	fmt.Fprintln(w, "THE PROJECT'S HARNESS (committed — managed by git, not omakase)")
 	renderPathRows(w, comm, false)
+	if len(comm) > 0 {
+		fmt.Fprintln(w, "    any of these can be hidden from this clone's agents:  omakase block <path>")
+	}
 
 	fmt.Fprintln(w, "INJECTED (omakase) — placed by omakase init, gitignored")
 	if renderInjected(w, repo, placedPath, false) {
@@ -513,7 +555,7 @@ func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, src st
 // the owner/repo form — a bare init with nothing remembered installs
 // nothing. The caller exits 0.
 func RenderNotInstalled(w io.Writer, repo *state.Repo, home string, md bool) {
-	comm := committedRows(repo.Root)
+	comm := committedRows(repo)
 	pers := PersonalList(home)
 	unmanaged := UnmanagedList(repo.Root, filepath.Join(repo.OMK, "placed.tsv"))
 
@@ -522,6 +564,10 @@ func RenderNotInstalled(w io.Writer, repo *state.Repo, home string, md bool) {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "### Agent config committed in this repo (managed by git, not omakase)")
 		renderPathRows(w, comm, true)
+		if len(comm) > 0 {
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "_Any of these can be hidden from this clone's agents:_ `omakase block <path>`")
+		}
 		fmt.Fprintln(w)
 		renderUnmanaged(w, unmanaged, true)
 		renderGlobalLine(w, len(pers), true)
@@ -536,6 +582,9 @@ func RenderNotInstalled(w io.Writer, repo *state.Repo, home string, md bool) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "AGENT CONFIG COMMITTED IN THIS REPO (managed by git, not omakase)")
 	renderPathRows(w, comm, false)
+	if len(comm) > 0 {
+		fmt.Fprintln(w, "    any of these can be hidden from this clone's agents:  omakase block <path>")
+	}
 	renderUnmanaged(w, unmanaged, false)
 	renderGlobalLine(w, len(pers), false)
 	fmt.Fprintln(w)
