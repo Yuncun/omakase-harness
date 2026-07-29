@@ -1,6 +1,7 @@
 package gate
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -40,11 +41,23 @@ func RunHook(hook, root, omk string, stdin io.Reader, stdout, stderr io.Writer) 
 		return 0
 	}
 
+	// On pre-push, git's ref lines on stdin are both the scope source (#186)
+	// and input the checks may read — buffer once so every gate (and the
+	// scoper) sees the full input, instead of the first child draining it.
+	var pushRefs []byte
+	if hook == "pre-push" && stdin != nil {
+		pushRefs, _ = io.ReadAll(io.LimitReader(stdin, 1<<20))
+	}
+
 	disabled := disabledSet(omk)
 	sha := headSHA(root)
 	firstFail := 0
 	for _, g := range stage {
-		if code := runOne(g, root, omk, sha, disabled, stdin, stdout, stderr); code != 0 && firstFail == 0 {
+		in := stdin
+		if hook == "pre-push" {
+			in = bytes.NewReader(pushRefs)
+		}
+		if code := runOne(g, hook, root, omk, sha, disabled, pushRefs, in, stdout, stderr); code != 0 && firstFail == 0 {
 			firstFail = code
 		}
 	}
@@ -55,7 +68,7 @@ func RunHook(hook, root, omk string, stdin io.Reader, stdout, stderr io.Writer) 
 // audited skip, menu skip, glob scope, cache, then the check. It records a
 // verdict row whenever the check actually runs, and returns the check's exit
 // code unchanged (0 for every skip path).
-func runOne(g Gate, root, omk, sha string, disabled map[string]bool, stdin io.Reader, stdout, stderr io.Writer) int {
+func runOne(g Gate, hook, root, omk, sha string, disabled map[string]bool, pushRefs []byte, stdin io.Reader, stdout, stderr io.Writer) int {
 	// (1) audited per-gate bypass.
 	if os.Getenv(skipVar(g.Name)) == "1" {
 		fmt.Fprintf(stdout, "omakase[%s]: skipped via %s (audited)\n", g.Name, skipVar(g.Name))
@@ -69,16 +82,36 @@ func runOne(g Gate, root, omk, sha string, disabled map[string]bool, stdin io.Re
 		return 0
 	}
 
-	// (3) glob scope: run only when a changed file in the range matches. With
-	// no resolvable base the gate cannot tell what changed, so it RUNS unscoped
+	// (3) glob scope: run only when a file in what's actually being
+	// committed/pushed matches. pre-commit scopes by the staged set (#196)
+	// and pre-push by the ref ranges git handed the hook (#186) — neither
+	// needs a guessed base ref. Any other gate hook keeps the branch-range
+	// scope. Whenever the scope cannot be determined the gate RUNS unscoped
 	// rather than skipping — the threat model is omission (#92).
 	if len(g.Glob) > 0 {
-		base, ok := resolveBase(root)
-		if !ok {
-			fmt.Fprintf(stdout, "omakase[%s]: no resolvable base ref - cannot scope, running the check\n", g.Name)
-		} else if !changedMatches(root, base, g.Glob) {
-			fmt.Fprintf(stdout, "omakase[%s]: no changed file matches the glob - skipping\n", g.Name)
-			return 0
+		switch hook {
+		case "pre-commit":
+			if matched, ok := stagedMatches(root, g.Glob); !ok {
+				fmt.Fprintf(stdout, "omakase[%s]: cannot read the staged files - cannot scope, running the check\n", g.Name)
+			} else if !matched {
+				fmt.Fprintf(stdout, "omakase[%s]: no staged file matches the glob - skipping\n", g.Name)
+				return 0
+			}
+		case "pre-push":
+			if matched, ok := pushedMatches(root, pushRefs, g.Glob); !ok {
+				fmt.Fprintf(stdout, "omakase[%s]: cannot scope this push - running the check\n", g.Name)
+			} else if !matched {
+				fmt.Fprintf(stdout, "omakase[%s]: no pushed file matches the glob - skipping\n", g.Name)
+				return 0
+			}
+		default:
+			base, ok := resolveBase(root)
+			if !ok {
+				fmt.Fprintf(stdout, "omakase[%s]: no resolvable base ref - cannot scope, running the check\n", g.Name)
+			} else if !changedMatches(root, base, g.Glob) {
+				fmt.Fprintf(stdout, "omakase[%s]: no changed file matches the glob - skipping\n", g.Name)
+				return 0
+			}
 		}
 	}
 

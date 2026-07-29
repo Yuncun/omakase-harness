@@ -110,6 +110,11 @@ func changedMatches(root, base string, patterns []string) bool {
 	if err != nil {
 		changed, _ = gitDiffNames(root, base+"..HEAD")
 	}
+	return anyMatches(changed, patterns)
+}
+
+// anyMatches reports whether any of the changed paths matches any pattern.
+func anyMatches(changed, patterns []string) bool {
 	for _, file := range changed {
 		if file == "" {
 			continue
@@ -121,6 +126,79 @@ func changedMatches(root, base string, patterns []string) bool {
 		}
 	}
 	return false
+}
+
+// stagedMatches reports whether any STAGED file matches the patterns — the
+// pre-commit scope (#196). `git diff --cached` is exactly the set the commit
+// will contain: it needs no base ref, honors the temporary index git exports
+// during partial commits (GIT_INDEX_FILE, deliberately not scrubbed by the
+// hook entry), and works on an unborn HEAD. A branch range is wrong on this
+// hook in both directions — the staged changes are not in HEAD yet, and a
+// path anywhere in the branch's history keeps matching forever. ok is false
+// when git itself failed, which the caller treats as "run unscoped".
+func stagedMatches(root string, patterns []string) (matched, ok bool) {
+	out, err := exec.Command("git", "-C", root, "diff", "--cached", "--name-only", "-z").Output()
+	if err != nil {
+		return false, false
+	}
+	return anyMatches(strings.Split(strings.TrimRight(string(out), "\x00"), "\x00"), patterns), true
+}
+
+// zeroSHA matches the all-zero object id git uses in pre-push ref lines for
+// "no commit" (a created or deleted ref), at either hash length.
+func zeroSHA(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	return strings.Trim(s, "0") == ""
+}
+
+// pushedMatches reports whether any file in the ranges being pushed matches
+// the patterns — the pre-push scope (#186). git hands the hook the
+// authoritative ranges on stdin (`<local-ref> <local-sha> <remote-ref>
+// <remote-sha>` per ref), so no base-ref guess is needed: each line diffs
+// remote-sha...local-sha. A deleted ref (zero local sha) changes no pushed
+// files. A NEW ref (zero remote sha) has no range, so it falls back to the
+// resolved base ref, and when that also fails ok is false — the caller runs
+// the check unscoped rather than skipping (the threat model is omission,
+// #92). Malformed or empty input is likewise ok=false.
+func pushedMatches(root string, stdinRefs []byte, patterns []string) (matched, ok bool) {
+	sawRange := false
+	for _, line := range strings.Split(strings.TrimRight(string(stdinRefs), "\n"), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) != 4 {
+			return false, false
+		}
+		localSHA, remoteSHA := f[1], f[3]
+		if zeroSHA(localSHA) {
+			continue // ref deletion: nothing pushed
+		}
+		base := remoteSHA
+		if zeroSHA(remoteSHA) {
+			b, resolved := resolveBase(root)
+			if !resolved {
+				return false, false
+			}
+			base = b
+		}
+		sawRange = true
+		changed, err := gitDiffNames(root, base+"..."+localSHA)
+		if err != nil {
+			changed, err = gitDiffNames(root, base+".."+localSHA)
+		}
+		if err != nil {
+			return false, false
+		}
+		if anyMatches(changed, patterns) {
+			return true, true
+		}
+	}
+	// Only deletions (or nothing at all): with no range seen there is nothing
+	// to certify a skip against, so run.
+	return false, sawRange
 }
 
 // gitDiffNames runs `git diff --name-only -z <range>` from root and returns the
