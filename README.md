@@ -114,6 +114,30 @@ was skipped.
 For scripts and agents, `omakase status --plain` prints a stable text page, and
 `--disable` / `--enable` toggle items on and off.
 
+## Why not just copy the files in — or ship a plugin?
+
+Copying gets you most of the placement: `cp -R` the payload onto the repo,
+append its paths to `.git/info/exclude`, and `git status` comes back clean. A
+small placer tool does that properly, with a ledger so it can also update and
+uninstall. A plugin is a different axis — it places nothing in the repo and
+loads agent files from the host's own plugin directory.
+
+|  | `cp -R` | placer | plugin | omakase |
+| --- | :---: | :---: | :---: | :---: |
+| Place files, zero committed footprint | ✅ | ✅ | — | ✅ |
+| Updates and uninstalls cleanly | ❌ | ✅ | ✅ | ✅ |
+| Reaches every clone with no per-repo step | ❌ | ❌ | ✅ | ❌ |
+| Files land where non-agent tools read them | ✅ | ✅ | ❌ | ✅ |
+| Applies to plain `git`, an IDE, or someone else's agent | ❌ | ❌ | ❌ | ✅ |
+| Runs checks on commit and push | ❌ | ❌ | ❌ | ✅ |
+
+**If a harness is only agent files, prefer a plugin** — it updates everywhere at
+once and costs nothing per clone. An overlay earns its place when a file has to
+exist on disk for something that is not your agent: a lint config a tool reads,
+a gate script git runs, a commit made from an IDE. The two also compose — a
+harness can place the project settings file that enables a plugin. See
+[concepts](docs/concepts.md#why-not-just-copy-the-files-in--or-ship-a-plugin).
+
 ## Why not just commit these files?
 
 - Instruction files rot. They are reviewed like documentation but consumed like
