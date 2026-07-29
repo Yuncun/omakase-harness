@@ -137,17 +137,6 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	common := repo.CommonDir
 	omk := repo.OMK
 
-	// ---- one-time ledger schema upgrade ----
-	// A pre-v2 (6-column) run ledger is rotated aside. On rename failure the
-	// notice is suppressed and the run continues with the old ledger in
-	// place.
-	ledger := filepath.Join(omk, "ledger.tsv")
-	if fileRegular(ledger) && ledgerNeedsRotate(ledger) {
-		if err := os.Rename(ledger, ledger+".pre-v2.bak"); err == nil {
-			fmt.Fprintln(stdout, "omakase: rotated a pre-v2 (6-column) run ledger aside to ledger.tsv.pre-v2.bak (the new store starts clean).")
-		}
-	}
-
 	// ---- source precedence ----
 	// Payload precedence: --source flag > OMAKASE_PAYLOAD env > remembered
 	// source ($OMK/source); with all three absent, init places nothing (the
@@ -307,7 +296,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// a repo a newer omakase set up and silently roll .omakase/ backwards —
 	// the only symptom was status rendering differently. Refuse before
 	// anything is placed; a deliberate downgrade is remove-then-init.
-	if code := checkBaseDowngrade(root, payload, stderr); code != 0 {
+	if code := checkBaseDowngrade(root, omk, payload, stderr); code != 0 {
 		return code
 	}
 
@@ -457,6 +446,18 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "  If these are stale leftovers, remove them and re-run. If the project really uses")
 		fmt.Fprintln(stderr, "  them, do not install omakase here. Nothing was changed.")
 		return 1
+	}
+
+	// ---- one-time ledger schema upgrade ----
+	// A pre-v2 (6-column) run ledger is rotated aside. On rename failure the
+	// notice is suppressed and the run continues with the old ledger in
+	// place. Deliberately after every refusal guard above: each of those
+	// claims nothing was changed, and rotating first made that a lie.
+	ledger := filepath.Join(omk, "ledger.tsv")
+	if fileRegular(ledger) && ledgerNeedsRotate(ledger) {
+		if err := os.Rename(ledger, ledger+".pre-v2.bak"); err == nil {
+			fmt.Fprintln(stdout, "omakase: rotated a pre-v2 (6-column) run ledger aside to ledger.tsv.pre-v2.bak (the new store starts clean).")
+		}
 	}
 
 	// ---- guarded cut-over ----
@@ -1217,8 +1218,11 @@ func physicalResolve(p string) string {
 // .omakase/VERSION than the repo already has (#189): that init was run by a
 // stale entry point, not by intent. Both sides must parse as x.y.z for the
 // guard to fire — a dev build ("dev"), a missing file, or a never-installed
-// repo never refuses.
-func checkBaseDowngrade(root, payload string, stderr io.Writer) int {
+// repo never refuses. A repo that merely COMMITS an .omakase/VERSION with no
+// omakase installed is not "set up by a newer omakase" either: the guard
+// would refuse a first install forever (init never overwrites a committed
+// path, so the file can never change), so that shape is excluded.
+func checkBaseDowngrade(root, omk, payload string, stderr io.Writer) int {
 	incoming := state.FirstLine(filepath.Join(payload, ".omakase", "VERSION"))
 	installed := state.FirstLine(filepath.Join(root, ".omakase", "VERSION"))
 	iv, okIn := parseVersion(incoming)
@@ -1226,7 +1230,17 @@ func checkBaseDowngrade(root, payload string, stderr io.Writer) int {
 	if !okIn || !okRepo || !versionLess(iv, rv) {
 		return 0
 	}
-	fmt.Fprintf(stderr, "omakase: refusing to roll this repo's omakase files BACK from %s to %s — a newer omakase set this repo up, and this init came from an older install (usually a stale plugin or binary). Update it (brew upgrade omakase, or update the plugin), then re-run. To go back to %s on purpose:  omakase remove  then init again. Nothing was changed.\n", installed, incoming, incoming)
+	if !fileRegular(filepath.Join(omk, "placed.tsv")) && gitTracked(root, ".omakase/VERSION") {
+		return 0
+	}
+	// Name the remembered source in the deliberate-downgrade path: remove
+	// deletes $OMK/source, so "remove then init again" would otherwise
+	// destroy the only copy of the string the re-init needs.
+	again := "init again"
+	if src := state.FirstLine(filepath.Join(omk, "source")); src != "" {
+		again = "omakase init " + src
+	}
+	fmt.Fprintf(stderr, "omakase: refusing to roll this repo's omakase files BACK from %s to %s — a newer omakase set this repo up, and this init came from an older install (usually a stale plugin or binary). Update it (brew upgrade omakase, or update the plugin), then re-run. To go back to %s on purpose:  omakase remove  then  %s. Nothing was changed.\n", installed, incoming, incoming, again)
 	return 2
 }
 

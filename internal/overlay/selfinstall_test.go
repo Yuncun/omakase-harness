@@ -21,7 +21,7 @@ func TestSelfInstallCurrent(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", cache)
 	dest := hook.StableBinPath()
 
-	SelfInstallCurrent()
+	SelfInstallCurrent("dev")
 	info, err := os.Stat(dest)
 	if err != nil {
 		t.Fatalf("no binary installed at %s: %v", dest, err)
@@ -40,7 +40,7 @@ func TestSelfInstallCurrent(t *testing.T) {
 	// Idempotent: an identical copy is left alone (same inode contents; the
 	// mtime not advancing proves the skip).
 	before := info.ModTime()
-	SelfInstallCurrent()
+	SelfInstallCurrent("dev")
 	after, err := os.Stat(dest)
 	if err != nil {
 		t.Fatal(err)
@@ -53,8 +53,53 @@ func TestSelfInstallCurrent(t *testing.T) {
 	if err := os.WriteFile(dest, []byte("old version"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	SelfInstallCurrent()
+	SelfInstallCurrent("dev")
 	if state.HashOf(dest) != state.HashOf(exe) {
 		t.Fatal("stale copy was not replaced")
+	}
+}
+
+// A stale entry point must never replace a NEWER stable copy: every repo's
+// dispatchers exec that one path, so the overwrite would downgrade every
+// repo's hooks at once (#189 at machine scope). A dev build or an unaskable
+// copy keeps the old always-install behavior.
+func TestSelfInstallRefusesToDowngradeStableCopy(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	dest := hook.StableBinPath()
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	newer := "#!/bin/sh\necho 'omakase 9.9.9 (commit x, built y)'\n"
+	if err := os.WriteFile(dest, []byte(newer), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	SelfInstallCurrent("0.1.0") // older release build: must leave the copy alone
+	if got, _ := os.ReadFile(dest); string(got) != newer {
+		t.Fatal("an older release build overwrote a newer stable copy")
+	}
+
+	SelfInstallCurrent("10.0.0") // newer release build: replaces
+	if got, _ := os.ReadFile(dest); string(got) == newer {
+		t.Fatal("a newer release build did not replace the stable copy")
+	}
+
+	if err := os.WriteFile(dest, []byte(newer), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	SelfInstallCurrent("dev") // dev build: always installs (developer flow)
+	if got, _ := os.ReadFile(dest); string(got) == newer {
+		t.Fatal("a dev build did not refresh the stable copy")
+	}
+
+	// An unaskable copy (no --version output) installs as before.
+	if err := os.WriteFile(dest, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	SelfInstallCurrent("0.1.0")
+	if got, _ := os.ReadFile(dest); string(got) == "#!/bin/sh\nexit 0\n" {
+		t.Fatal("an unaskable stable copy blocked the install")
 	}
 }

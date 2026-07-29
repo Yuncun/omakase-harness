@@ -1903,3 +1903,27 @@ func TestInitRefusesBaseDowngrade(t *testing.T) {
 		t.Fatalf("dev-version init: exit %d\n%s", code, errOut.String())
 	}
 }
+
+// A repo that merely COMMITS an .omakase/VERSION with no omakase installed
+// was never "set up by a newer omakase" — the guard must not refuse a first
+// install there (it would loop forever: init never overwrites a committed
+// path, so the file can never change).
+func TestInitDowngradeGuardSkipsUninstalledTrackedVersion(t *testing.T) {
+	dir, _ := initRepo(t)
+	writeFile(t, filepath.Join(dir, ".omakase", "VERSION"), "0.28.0\n")
+	runGitT(t, dir, "add", ".omakase/VERSION")
+	runGitT(t, dir, "commit", "-q", "-m", "project pins a version file")
+
+	older := t.TempDir()
+	writeFile(t, filepath.Join(older, ".omakase", "VERSION"), "0.22.0\n")
+	writeFile(t, filepath.Join(older, ".claude", "rules", "r.md"), "rule\n")
+	t.Setenv("OMAKASE_PAYLOAD", older)
+	var out, errOut strings.Builder
+	if code := RunInit(nil, &out, &errOut); code != 0 {
+		t.Fatalf("first install refused on a repo that merely tracks .omakase/VERSION: exit %d\n%s", code, errOut.String())
+	}
+	// The committed file was skipped, not downgraded.
+	if got := state.FirstLine(filepath.Join(dir, ".omakase", "VERSION")); got != "0.28.0" {
+		t.Errorf(".omakase/VERSION changed to %q", got)
+	}
+}

@@ -9,8 +9,10 @@ package overlay
 import (
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/Yuncun/omakase-harness/internal/hook"
 	"github.com/Yuncun/omakase-harness/internal/state"
@@ -24,10 +26,23 @@ import (
 // proof checks it on every status run. Called from main() and never from
 // RunInit, so unit tests exercising RunInit cannot overwrite a developer's
 // real cached binary with a test binary.
-func SelfInstallCurrent() {
+//
+// version is the running build's resolved version. When it and the stable
+// copy's version (asked via `--version`) both parse as x.y.z and the running
+// binary is OLDER, the copy is left alone: every repo's dispatchers exec
+// this one machine-wide path, so letting a stale entry point overwrite it
+// would downgrade every repo's hooks at once — the #189 harm at machine
+// scope. A dev build ("dev") or an unaskable stable copy installs as
+// before.
+func SelfInstallCurrent(version string) {
 	dest := hook.StableBinPath()
 	if dest == "" {
 		return
+	}
+	if v, ok := parseVersion(strings.TrimPrefix(version, "v")); ok {
+		if sv, ok := stableVersion(dest); ok && versionLess(v, sv) {
+			return
+		}
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -60,4 +75,21 @@ func SelfInstallCurrent() {
 	if out.Close() != nil || os.Rename(tmp, dest) != nil {
 		os.Remove(tmp)
 	}
+}
+
+// stableVersion asks the stable copy for its version (`--version` prints
+// "omakase X.Y.Z (commit …, built …)"). ok is false when the copy is
+// missing, not runnable, or prints anything else — the caller then installs
+// as before.
+func stableVersion(dest string) ([3]int, bool) {
+	var zero [3]int
+	out, err := exec.Command(dest, "--version").Output()
+	if err != nil {
+		return zero, false
+	}
+	f := strings.Fields(string(out))
+	if len(f) < 2 || f[0] != "omakase" {
+		return zero, false
+	}
+	return parseVersion(strings.TrimPrefix(f[1], "v"))
 }
