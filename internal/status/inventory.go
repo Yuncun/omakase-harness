@@ -25,8 +25,24 @@ const maxLineBuf = 1 << 20
 
 // CommittedList lists the repo's own git-tracked harness surface
 // (state.TrackedUnder over harness.CommittedGlobs), in git's own order.
+//
+// A path the repo commits but that carries the skip-worktree bit is being
+// deliberately served from an injected harness copy, so it is not part of the
+// repo's live surface — listing it here would report the same file twice in
+// two sections that contradict each other. Those paths are filtered out.
 func CommittedList(root string) []string {
-	return state.TrackedUnder(root, harness.CommittedGlobs)
+	live := state.TrackedUnder(root, harness.CommittedGlobs)
+	skipped := state.SkipWorktreeUnder(root, harness.CommittedGlobs)
+	if len(skipped) == 0 {
+		return live
+	}
+	var out []string
+	for _, rel := range live {
+		if !skipped[rel] {
+			out = append(out, rel)
+		}
+	}
+	return out
 }
 
 // PersonalList is a presence-only listing of the user's global harness config

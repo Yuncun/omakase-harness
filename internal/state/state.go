@@ -214,6 +214,28 @@ func TrackedUnder(root string, globs []string) []string {
 	return rels
 }
 
+// SkipWorktreeUnder is the set of tracked paths matching globs that carry
+// git's skip-worktree bit — the state left by deliberately overlaying a
+// harness copy on top of a path the repo commits (the alternative to
+// --cut-over on a shared repo). `ls-files -v` prefixes each entry with a
+// status letter (S = skip-worktree; lowercase letters mean assume-unchanged,
+// a much weaker promise git feels free to break, so they do not count), and
+// -z keeps names raw for the same reason as TrackedUnder.
+func SkipWorktreeUnder(root string, globs []string) map[string]bool {
+	args := append([]string{"-C", root, "ls-files", "-z", "-v", "--"}, globs...)
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return nil
+	}
+	set := map[string]bool{}
+	for _, entry := range strings.Split(string(out), "\x00") {
+		if strings.HasPrefix(entry, "S ") {
+			set[entry[2:]] = true
+		}
+	}
+	return set
+}
+
 // BlockedName is the sidecar beside placed.tsv listing the COMMITTED paths
 // the user has blocked from steering their agents (`omakase block`), one rel
 // per line — the same existence-is-the-mark shape as disabled-files. Unlike

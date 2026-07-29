@@ -1083,6 +1083,52 @@ func TestSymlinkDirExcludeNoSlash(t *testing.T) {
 	}
 }
 
+// A payload that lands one file inside a directory the project already uses
+// must not get that whole directory excluded. The wholesale form is right for
+// a directory omakase owns outright and catastrophic for a shared one: with
+// "/docs/" in .git/info/exclude, every new file anywhere under docs/ is
+// invisible to git status — not shown, not committed, silently lost.
+//
+// Tracked content is the test. docs/ is tracked here, so it must be excluded
+// file-by-file; vendor/ is not tracked by the project, so omakase still owns
+// it wholesale and the terse form is kept.
+func TestExcludeIsFileWiseUnderATrackedProjectDir(t *testing.T) {
+	dir, repo := initRepo(t)
+	writeFile(t, filepath.Join(dir, "docs", "recipes", "existing.md"), "project's own\n")
+	runGitT(t, dir, "add", "docs/recipes/existing.md")
+	runGitT(t, dir, "commit", "-q", "-m", "project owns docs/")
+
+	p := t.TempDir()
+	t.Setenv("OMAKASE_PAYLOAD", p)
+	writeFile(t, filepath.Join(p, "docs", "harness", "README.md"), "# harness\n")
+	writeFile(t, filepath.Join(p, "vendor", "tool.sh"), "#!/bin/sh\n")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	exclude := readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude"))
+	if strings.Contains(exclude, "/docs/\n") {
+		t.Errorf("docs/ excluded wholesale — the project's own new files there go invisible:\n%s", exclude)
+	}
+	if !strings.Contains(exclude, "/docs/harness") {
+		t.Errorf("exclude missing the file-wise docs entry:\n%s", exclude)
+	}
+	if !strings.Contains(exclude, "/vendor/\n") {
+		t.Errorf("vendor/ is untracked by the project and omakase-owned; expected the wholesale form:\n%s", exclude)
+	}
+
+	// The point of all this: a new project file under docs/ still shows up.
+	writeFile(t, filepath.Join(dir, "docs", "recipes", "brand-new.md"), "written today\n")
+	out := gitStdout(dir, "status", "--porcelain", "--untracked-files=all")
+	if !strings.Contains(out, "docs/recipes/brand-new.md") {
+		t.Errorf("a new project file under docs/ is invisible to git status; got %q", out)
+	}
+	if strings.Contains(out, "docs/harness/README.md") {
+		t.Errorf("the injected file leaked into git status; got %q", out)
+	}
+}
+
 // ---------------------------------------------------- usage / arg errors
 
 func TestUsageAndArgErrors(t *testing.T) {
