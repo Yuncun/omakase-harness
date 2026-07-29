@@ -155,6 +155,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// OMAKASE_PAYLOAD only; OMAKASE_BASE_PAYLOAD is the merge base the shims
 	// hand over, not a suppression key, so a bare re-run never silently
 	// downgrades a remembered source to a plain install.
+	explicitSource := source != "" // given this run, not remembered — the re-point guard keys on it
 	if source == "" && os.Getenv("OMAKASE_PAYLOAD") == "" {
 		if first := state.FirstLine(filepath.Join(omk, "source")); first != "" {
 			source = first
@@ -189,6 +190,38 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		sourceSub = clean
+	}
+
+	// ---- linked-worktree re-point guard (#184) ----
+	// Hooks, the exclude block, and the remembered source live in the git
+	// common dir — every checkout of the repository shares them. Switching
+	// the repo's harness is therefore a repo-wide act: an explicitly given
+	// source that differs from what the repo already runs refuses from a
+	// linked worktree and names the main checkout. The bare refresh and the
+	// same-source re-run stay allowed (the per-worktree heal flow), and a
+	// first install from a worktree has nothing to clobber.
+	if explicitSource && fileRegular(filepath.Join(omk, "placed.tsv")) {
+		if gd := gitOutTrim(root, "rev-parse", "--absolute-git-dir"); gd != "" && filepath.Clean(gd) != common {
+			// The canonical label, exactly as runSource records it — a
+			// same-source re-run round-trips to the remembered string.
+			label := source
+			if sourceSub != "" {
+				label += "//" + sourceSub
+			}
+			if sourceRef != "" {
+				label += "#" + sourceRef
+			}
+			if label != state.FirstLine(filepath.Join(omk, "source")) {
+				mainRoot := state.WorktreeRoots(root)[0]
+				fmt.Fprintf(stderr, "omakase: this checkout is a linked worktree of %s.\n", mainRoot)
+				fmt.Fprintln(stderr, "         Hooks, ignores, and the remembered source are shared by every checkout of the")
+				fmt.Fprintln(stderr, "         repository, so switching its harness from here would silently re-point all of")
+				fmt.Fprintf(stderr, "         them. To change the repository's harness, run from the main checkout:\n")
+				fmt.Fprintf(stderr, "           cd %s && omakase init %s\n", mainRoot, label)
+				fmt.Fprintln(stderr, "omakase: nothing was changed.")
+				return 1
+			}
+		}
 	}
 
 	// ---- nothing to refresh (the newcomer first-run) ----
