@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.29.1] — 2026-07-29
+
 ### Fixed
 - **A stale entry point can no longer downgrade the machine-wide binary**:
   the self-install that runs on every `omakase init` now asks the existing
