@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.29.0] — 2026-07-29
+
 ### Removed
 - **The shim fetch tier** (#182): a plugin-only install no longer downloads
   the pinned release binary behind the scenes. The shims resolve locally —
@@ -49,6 +51,26 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   adopted.
 
 ### Fixed
+- **Scoped gates now check what you are actually committing or pushing**
+  (#196, #186): a pre-commit gate's `glob:` matches the staged files (it
+  used to diff branch history, so a fresh clone's first commit skipped its
+  gates entirely and any old change kept firing them forever), and a
+  pre-push gate's `glob:` matches the exact ranges git hands the hook —
+  including when git-lfs is installed, whose forward used to swallow those
+  ranges before the gates saw them. When a push cannot be scoped the gate
+  runs rather than skips.
+- **A stale plugin or binary can no longer silently roll a repo's omakase
+  files backwards** (#189): `init` refuses when its payload is older than
+  what the repo already runs, naming both versions and the fix.
+- **A deliberately overlaid copy of a committed file is no longer reported
+  as a collision** (#195): repos where a harness copy serves in place of a
+  committed file (via git's skip-worktree) stop printing a false warning
+  per file on every checkout and commit, and `status` no longer lists those
+  files twice in contradicting sections.
+- **A harness file inside a directory the project already uses no longer
+  hides the project's own new files there** (#195): the ignore entries go
+  in file-by-file for any top-level directory with tracked content, instead
+  of excluding the whole directory from `git status`.
 - **git-lfs forwarding is now visible** (#190): the pre-push and
   post-checkout hook files carry a line saying they also run
   `git lfs <hook>` (the stock git-lfs stub was displaced, not disabled), and
