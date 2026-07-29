@@ -1836,3 +1836,56 @@ func TestInitStatuslinePointer(t *testing.T) {
 		t.Fatalf("pointer printed for a wired host:\n%s", stdout.String())
 	}
 }
+
+// --- base-machinery downgrade guard (#189) --------------------------------
+
+// An init whose payload carries an older .omakase/VERSION than the repo
+// (a stale plugin/binary running a bare refresh) refuses before placing
+// anything; a newer or equal payload proceeds, and unparseable versions
+// (dev builds) never refuse.
+func TestInitRefusesBaseDowngrade(t *testing.T) {
+	_, repo := initRepo(t)
+
+	newer := t.TempDir()
+	writeFile(t, filepath.Join(newer, ".omakase", "VERSION"), "0.28.0\n")
+	t.Setenv("OMAKASE_PAYLOAD", newer)
+	var out, errOut strings.Builder
+	if code := RunInit(nil, &out, &errOut); code != 0 {
+		t.Fatalf("install at 0.28.0: exit %d\n%s", code, errOut.String())
+	}
+
+	older := t.TempDir()
+	writeFile(t, filepath.Join(older, ".omakase", "VERSION"), "0.22.0\n")
+	t.Setenv("OMAKASE_PAYLOAD", older)
+	out.Reset()
+	errOut.Reset()
+	code := RunInit(nil, &out, &errOut)
+	if code != 2 {
+		t.Fatalf("downgrade init: exit %d, want 2\n%s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "0.28.0") || !strings.Contains(errOut.String(), "0.22.0") {
+		t.Errorf("refusal must name both versions: %q", errOut.String())
+	}
+	if got := state.FirstLine(filepath.Join(repo.Root, ".omakase", "VERSION")); got != "0.28.0" {
+		t.Errorf(".omakase/VERSION rolled back to %q", got)
+	}
+
+	// Upgrade direction proceeds.
+	upgrade := t.TempDir()
+	writeFile(t, filepath.Join(upgrade, ".omakase", "VERSION"), "0.29.0\n")
+	t.Setenv("OMAKASE_PAYLOAD", upgrade)
+	if code := RunInit(nil, &out, &errOut); code != 0 {
+		t.Fatalf("upgrade init: exit %d\n%s", code, errOut.String())
+	}
+	if got := state.FirstLine(filepath.Join(repo.Root, ".omakase", "VERSION")); got != "0.29.0" {
+		t.Errorf("upgrade did not land: %q", got)
+	}
+
+	// A dev payload (unparseable version) is never refused.
+	dev := t.TempDir()
+	writeFile(t, filepath.Join(dev, ".omakase", "VERSION"), "dev\n")
+	t.Setenv("OMAKASE_PAYLOAD", dev)
+	if code := RunInit(nil, &out, &errOut); code != 0 {
+		t.Fatalf("dev-version init: exit %d\n%s", code, errOut.String())
+	}
+}
