@@ -558,3 +558,26 @@ func TestSessionStartReassertsBlockedOnlyRepo(t *testing.T) {
 		t.Errorf("stdout = %q, want the re-hid note", stdout.String())
 	}
 }
+
+// The pre-push ref lines have two readers — the git-lfs forward and the gate
+// runner (glob scoper + gate children). A real git-lfs DRAINS stdin, so
+// without buffering the gates after it see nothing: globs print "cannot
+// scope" and a stdin-reading check fails (#186 regression, found live).
+func TestHookPrePushStdinSurvivesLFSDrain(t *testing.T) {
+	repo := hookRepo(t)
+	setManifest(t, repo, "name: t\nversion: 1\n\ngate: reads\n  hook: pre-push\n  run: grep -q refs/heads/main\n")
+
+	// A git-lfs that swallows all of stdin, like the real one.
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "git-lfs"), "#!/bin/sh\ncat >/dev/null\nexit 0\n")
+	if err := os.Chmod(filepath.Join(dir, "git-lfs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	refs := "refs/heads/main aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/main bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+	var out, errb strings.Builder
+	if code := RunHook([]string{"pre-push"}, strings.NewReader(refs), &out, &errb); code != 0 {
+		t.Fatalf("gate did not see the ref lines after the LFS forward drained stdin: exit %d\n%s%s", code, out.String(), errb.String())
+	}
+}
