@@ -74,8 +74,15 @@ func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// Not installed: no harness state to run. A dispatcher only exists where
 	// init wrote it, so this is a torn state (state wiped without `omakase
 	// remove`) — gate hooks refuse rather than silently running nothing.
+	// Blocked items are independent of an install (block works in
+	// never-initialized repos), so the non-gate heals still reassert them
+	// before returning: a session opening on a leaked blocked file would
+	// load steering the user said no to.
 	if !fileRegular(filepath.Join(repo.OMK, "placed.tsv")) {
 		if !isGate {
+			if n := block.Reassert(repo, stderr); n > 0 && name == "session-start" {
+				fmt.Fprintf(stdout, "omakase: re-hid %d blocked item(s) a git operation had restored.\n", n)
+			}
 			return 0
 		}
 		fmt.Fprintf(stderr, "omakase: BLOCKING — %s: omakase hooks are installed but no harness state exists in this repo.\n", name)
