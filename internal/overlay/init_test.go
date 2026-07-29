@@ -756,6 +756,25 @@ func TestStockLFSAccepted(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".omakase", "gates", "example.sh")); err != nil {
 		t.Errorf("gate not placed in an LFS repo: %v", err)
 	}
+	// The displacement is announced (#190): silence read as "my LFS hook got
+	// clobbered". Only the hooks omakase writes are named — post-commit and
+	// post-merge stubs stay in place untouched.
+	for _, want := range []string{"git-lfs pre-push hook", "git-lfs post-checkout hook"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("init output missing the %s displacement notice:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "post-merge") {
+		t.Errorf("init claims to displace post-merge, which it does not write:\n%s", out.String())
+	}
+	// A re-init is quiet on the subject: the stubs are dispatchers now.
+	out.Reset()
+	if code := RunInit(nil, &out, &errb); code != 0 {
+		t.Fatalf("re-init exit = %d; stderr=%q", code, errb.String())
+	}
+	if strings.Contains(out.String(), "git-lfs") {
+		t.Errorf("re-init repeats the displacement notice:\n%s", out.String())
+	}
 }
 
 // TestForeignHookAlongsideLFS: a genuine foreign hook next to LFS hooks refuses

@@ -13,7 +13,6 @@ package probe
 
 import (
 	"bufio"
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -262,7 +261,7 @@ func hooksInstalled(root string) (Tri, HookIssue) {
 			}
 			continue
 		}
-		if !bytes.Equal(b, hook.Dispatcher(h)) {
+		if !hook.IsDispatcherBytes(b, h) {
 			return Problem, HookIssueForeign
 		}
 	}
