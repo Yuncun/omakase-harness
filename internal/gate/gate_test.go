@@ -58,15 +58,37 @@ func writeSnapshotManifest(t *testing.T, omk, content string) {
 // run drives RunHook with the given snapshot manifest and returns the exit
 // code, combined stdout, and the ledger contents.
 func run(t *testing.T, root, omk, hook, manifest string, env map[string]string) (int, string, string) {
+	return runIn(t, root, omk, hook, manifest, "", env)
+}
+
+// runIn is run with hook stdin content — on pre-push, the ref lines git
+// feeds the hook.
+func runIn(t *testing.T, root, omk, hook, manifest, stdin string, env map[string]string) (int, string, string) {
 	t.Helper()
 	writeSnapshotManifest(t, omk, manifest)
 	for k, v := range env {
 		t.Setenv(k, v)
 	}
 	var out bytes.Buffer
-	code := RunHook(hook, root, omk, strings.NewReader(""), &out, &out)
+	code := RunHook(hook, root, omk, strings.NewReader(stdin), &out, &out)
 	led, _ := os.ReadFile(filepath.Join(omk, "ledger.tsv"))
 	return code, out.String(), string(led)
+}
+
+// pushStdin builds the pre-push ref line git would feed for pushing the
+// repo's HEAD over the given remote-side sha ("0000…" for a new ref).
+func pushStdin(t *testing.T, root, remoteSHA string) string {
+	t.Helper()
+	return "refs/heads/main " + revParse(t, root, "HEAD") + " refs/heads/main " + remoteSHA + "\n"
+}
+
+func revParse(t *testing.T, root, ref string) string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", root, "rev-parse", ref).Output()
+	if err != nil {
+		t.Fatalf("rev-parse %s: %v", ref, err)
+	}
+	return strings.TrimRight(string(out), "\n")
 }
 
 func ledgerRows(led string) [][]string {
@@ -334,7 +356,7 @@ func TestRunHook_GlobMatchRuns(t *testing.T) {
 	root, omk := newRepo(t)
 	withRemote(t, root)
 	commitFile(t, root, "src/app.txt", "a\n")
-	code, _, led := run(t, root, omk, "pre-push", "gate: g1\n  hook: pre-push\n  run: true\n  glob: src/*\n", nil)
+	code, _, led := runIn(t, root, omk, "pre-push", "gate: g1\n  hook: pre-push\n  run: true\n  glob: src/*\n", pushStdin(t, root, revParse(t, root, "origin/main")), nil)
 	if code != 0 || !hasRow(led, "g1", "pass") {
 		t.Fatalf("glob match must run (code=%d led=%q)", code, led)
 	}
@@ -344,14 +366,14 @@ func TestRunHook_GlobMissSkips(t *testing.T) {
 	root, omk := newRepo(t)
 	withRemote(t, root)
 	commitFile(t, root, "src/app.txt", "a\n")
-	code, out, led := run(t, root, omk, "pre-push", "gate: g2\n  hook: pre-push\n  run: false\n  glob: docs/*\n", nil)
+	code, out, led := runIn(t, root, omk, "pre-push", "gate: g2\n  hook: pre-push\n  run: false\n  glob: docs/*\n", pushStdin(t, root, revParse(t, root, "origin/main")), nil)
 	if code != 0 {
 		t.Fatalf("glob miss must skip (exit 0), got %d", code)
 	}
 	if hasRow(led, "g2", "fail") {
 		t.Fatalf("a skipped gate records nothing: %q", led)
 	}
-	if !strings.Contains(out, "no changed file matches") {
+	if !strings.Contains(out, "no pushed file matches") {
 		t.Fatalf("glob miss must say so: %q", out)
 	}
 }
@@ -361,7 +383,7 @@ func TestRunHook_GlobSpansDirectories(t *testing.T) {
 	withRemote(t, root)
 	commitFile(t, root, "internal/gate/gate.go", "package gate\n")
 	// A single `*` must span `/` (the sh case dialect): *.go matches internal/gate/gate.go.
-	code, _, led := run(t, root, omk, "pre-push", "gate: gt\n  hook: pre-push\n  run: false\n  glob: *.go go.mod go.sum\n", nil)
+	code, _, led := runIn(t, root, omk, "pre-push", "gate: gt\n  hook: pre-push\n  run: false\n  glob: *.go go.mod go.sum\n", pushStdin(t, root, revParse(t, root, "origin/main")), nil)
 	if code == 0 {
 		t.Fatalf("*.go must match a nested .go file (glob should span directories)")
 	}
@@ -374,7 +396,7 @@ func TestRunHook_MultiPatternSecond(t *testing.T) {
 	root, omk := newRepo(t)
 	withRemote(t, root)
 	commitFile(t, root, "lib/util.txt", "y\n")
-	code, _, _ := run(t, root, omk, "pre-push", "gate: mg\n  hook: pre-push\n  run: false\n  glob: src/* lib/*\n", nil)
+	code, _, _ := runIn(t, root, omk, "pre-push", "gate: mg\n  hook: pre-push\n  run: false\n  glob: src/* lib/*\n", pushStdin(t, root, revParse(t, root, "origin/main")), nil)
 	if code == 0 {
 		t.Fatalf("a change under the second pattern (lib/*) must trigger the gate")
 	}
@@ -383,14 +405,16 @@ func TestRunHook_MultiPatternSecond(t *testing.T) {
 func TestRunHook_NoBaseRunsUnscoped(t *testing.T) {
 	root, omk := newRepo(t)
 	commitFile(t, root, "src/app.txt", "a\n") // no remote → no resolvable base
-	code, out, led := run(t, root, omk, "pre-push", "gate: fo\n  hook: pre-push\n  run: false\n  glob: src/*\n", nil)
+	// A brand-new ref (zero remote sha) with no resolvable base ref: the
+	// push cannot be scoped, so the gate must run.
+	code, out, led := runIn(t, root, omk, "pre-push", "gate: fo\n  hook: pre-push\n  run: false\n  glob: src/*\n", pushStdin(t, root, strings.Repeat("0", 40)), nil)
 	if code == 0 {
 		t.Fatalf("no resolvable base must run unscoped and block, got exit 0")
 	}
 	if !hasRow(led, "fo", "fail") {
 		t.Fatalf("unscoped run must record: %q", led)
 	}
-	if !strings.Contains(out, "no resolvable base") {
+	if !strings.Contains(out, "cannot scope this push") {
 		t.Fatalf("must explain the unscoped run: %q", out)
 	}
 }
@@ -409,9 +433,101 @@ func TestRunHook_TwoDotFallbackUnrelatedHistory(t *testing.T) {
 	runGit(t, root, "rm", "-rfq", "--cached", ".")
 	os.Remove(filepath.Join(root, "base.txt"))
 	commitFile(t, root, "src/app.txt", "x\n")
-	code, _, _ := run(t, root, omk, "pre-push", "gate: td\n  hook: pre-push\n  run: false\n  glob: src/*\n", nil)
+	// Force-pushing the orphan over main: three-dot (merge-base) is fatal on
+	// unrelated histories, so the two-dot fallback must still find the change.
+	code, _, _ := runIn(t, root, omk, "pre-push", "gate: td\n  hook: pre-push\n  run: false\n  glob: src/*\n", "refs/heads/orphanwork "+revParse(t, root, "HEAD")+" refs/heads/main "+revParse(t, root, "origin/main")+"\n", nil)
 	if code == 0 {
 		t.Fatalf("two-dot fallback must find the in-scope change on unrelated histories")
+	}
+}
+
+// --- staged / pushed scope (#196, #186) -----------------------------------
+
+// The #196 repro, direction 1: a fresh clone sitting at origin/main stages an
+// in-scope file. The old branch-range scope saw an empty range and skipped —
+// the gate's first commit after every clone was unguarded.
+func TestRunHook_PreCommitScopesByStagedSet(t *testing.T) {
+	root, omk := newRepo(t)
+	withRemote(t, root) // HEAD == origin/main, the fresh-clone shape
+	if err := os.WriteFile(filepath.Join(root, "config.txt"), []byte("v\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", "config.txt")
+	code, _, led := run(t, root, omk, "pre-commit", "gate: sc\n  hook: pre-commit\n  run: false\n  glob: config.txt\n", nil)
+	if code == 0 {
+		t.Fatalf("a staged in-scope file must run the gate (and block), got exit 0")
+	}
+	if !hasRow(led, "sc", "fail") {
+		t.Fatalf("the gate must have run: %q", led)
+	}
+}
+
+// Direction 2: an in-scope path in the BRANCH's history but not in the staged
+// set must not fire the gate — the old scope kept matching it on every later
+// commit.
+func TestRunHook_PreCommitIgnoresBranchHistory(t *testing.T) {
+	root, omk := newRepo(t)
+	withRemote(t, root)
+	commitFile(t, root, "config.txt", "v\n") // ahead of origin/main now
+	if err := os.WriteFile(filepath.Join(root, "unrelated.txt"), []byte("u\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", "unrelated.txt")
+	code, out, _ := run(t, root, omk, "pre-commit", "gate: sh2\n  hook: pre-commit\n  run: false\n  glob: config.txt\n", nil)
+	if code != 0 {
+		t.Fatalf("nothing staged matches - must skip, got exit %d (%s)", code, out)
+	}
+	if !strings.Contains(out, "no staged file matches") {
+		t.Fatalf("skip must say so: %q", out)
+	}
+}
+
+// A push of a NEW ref (zero remote sha) has no range of its own; it falls
+// back to the resolved base ref and scopes against that.
+func TestRunHook_PrePushNewRefFallsBackToBaseRef(t *testing.T) {
+	root, omk := newRepo(t)
+	withRemote(t, root)
+	runGit(t, root, "checkout", "-q", "-b", "feature")
+	commitFile(t, root, "docs/readme.txt", "d\n")
+	stdin := "refs/heads/feature " + revParse(t, root, "HEAD") + " refs/heads/feature " + strings.Repeat("0", 40) + "\n"
+	code, out, _ := runIn(t, root, omk, "pre-push", "gate: nr\n  hook: pre-push\n  run: false\n  glob: src/*\n", stdin, nil)
+	if code != 0 {
+		t.Fatalf("new-ref push touching only docs/ must skip a src/* gate, got exit %d (%s)", code, out)
+	}
+	if !strings.Contains(out, "no pushed file matches") {
+		t.Fatalf("skip must say so: %q", out)
+	}
+}
+
+// A deletion-only push has no range to certify a skip against: run.
+func TestRunHook_PrePushDeletionRunsUnscoped(t *testing.T) {
+	root, omk := newRepo(t)
+	withRemote(t, root)
+	stdin := "(delete) " + strings.Repeat("0", 40) + " refs/heads/gone " + revParse(t, root, "origin/main") + "\n"
+	code, out, _ := runIn(t, root, omk, "pre-push", "gate: dl\n  hook: pre-push\n  run: false\n  glob: src/*\n", stdin, nil)
+	if code == 0 {
+		t.Fatalf("deletion-only push cannot be scoped - the gate must run, got exit 0")
+	}
+	if !strings.Contains(out, "cannot scope this push") {
+		t.Fatalf("must explain the unscoped run: %q", out)
+	}
+}
+
+// The ref lines are both the scope source and input the checks may read:
+// every gate in the stage must see the FULL stdin, not whatever the previous
+// child left behind.
+func TestRunHook_PrePushStdinSharedAcrossGates(t *testing.T) {
+	root, omk := newRepo(t)
+	withRemote(t, root)
+	commitFile(t, root, "src/app.txt", "a\n")
+	manifest := "gate: r1\n  hook: pre-push\n  run: grep -q refs/heads/main\n  glob: src/*\n" +
+		"gate: r2\n  hook: pre-push\n  run: grep -q refs/heads/main\n  glob: src/*\n"
+	code, _, led := runIn(t, root, omk, "pre-push", manifest, pushStdin(t, root, revParse(t, root, "origin/main")), nil)
+	if code != 0 {
+		t.Fatalf("both gates must see the ref lines on stdin, got exit %d (ledger %q)", code, led)
+	}
+	if !hasRow(led, "r1", "pass") || !hasRow(led, "r2", "pass") {
+		t.Fatalf("both gates must have run and passed: %q", led)
 	}
 }
 
