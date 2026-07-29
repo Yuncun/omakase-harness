@@ -356,6 +356,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 
 	// ---- incumbent hook-manager guard ----
 	var incumbent []string
+	var lfsDisplaced []string
 	resetHooksPath := false
 	hookspath := gitOutTrim(root, "config", "--get", "core.hooksPath")
 	if hookspath != "" {
@@ -425,7 +426,11 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			continue // a pre-gate-module omakase stub (guard-block markers) — a bare re-init migrates it
 		}
 		if isStockGitLFSHook(hf, content) {
-			continue // `omakase hook` forwards git-lfs — not a rival manager
+			// `omakase hook` forwards git-lfs — not a rival manager. Remember
+			// it so the summary can say the stub was displaced, not disabled
+			// (#190): silence here read as "LFS hook clobbered".
+			lfsDisplaced = append(lfsDisplaced, filepath.Base(hf))
+			continue
 		}
 		base := filepath.Base(hf)
 		switch {
@@ -918,6 +923,14 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			if err := removeF(hf); err != nil {
 				return 1
 			}
+		}
+	}
+	// A displaced stock git-lfs stub deserves one line (#190): the
+	// dispatcher runs `git lfs <hook>` itself, so LFS keeps working — but
+	// silence read as "my LFS hook got clobbered".
+	for _, name := range lfsDisplaced {
+		if wantHook[name] {
+			fmt.Fprintf(stdout, "omakase: displaced the stock git-lfs %s hook — the omakase hook runs 'git lfs %s' itself, so LFS keeps working.\n", name, name)
 		}
 	}
 	// The dispatchers exec the machine-wide copy at StableBinPath, which is

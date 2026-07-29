@@ -49,6 +49,12 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   adopted.
 
 ### Fixed
+- **git-lfs forwarding is now visible** (#190): the pre-push and
+  post-checkout hook files carry a line saying they also run
+  `git lfs <hook>` (the stock git-lfs stub was displaced, not disabled), and
+  `init` prints one line when it displaces a stock git-lfs hook. Hooks
+  written by an older omakase are still recognized as omakase's own, so the
+  upgrade never reads as "foreign hooks".
 - **A linked worktree can no longer silently re-point the repository's
   harness** (#184): hooks, the exclude block, and the remembered source live
   in the shared git common dir, so `init` with a source that differs from

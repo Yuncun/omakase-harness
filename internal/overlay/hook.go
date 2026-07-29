@@ -15,6 +15,7 @@
 package overlay
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -133,6 +134,18 @@ func runGateHook(name string, hookArgs []string, repo *state.Repo, stdin io.Read
 	// NOT bypass this — the only escape is git's own --no-verify.
 	if code := verifyPresent(root, repo.OMK, stderr); code != 0 {
 		return code
+	}
+
+	// On pre-push the ref lines on stdin have two readers — the git-lfs
+	// forward below and the gate runner's glob scoper (#186) — and the first
+	// child would drain the pipe for the second. Buffer once, hand each a
+	// fresh reader.
+	if name == "pre-push" {
+		refs, _ := io.ReadAll(io.LimitReader(stdin, 1<<20))
+		if code := runGitLFS(name, hookArgs, root, bytes.NewReader(refs), stdout, stderr, true); code != 0 {
+			return code
+		}
+		return gate.RunHook(name, root, repo.OMK, bytes.NewReader(refs), stdout, stderr)
 	}
 
 	// A displaced stock git-lfs hook still owes its LFS run (pre-push): forward

@@ -145,3 +145,40 @@ func TestMatches(t *testing.T) {
 		t.Error("a single appended byte must break the match")
 	}
 }
+
+// The git-lfs note (#190) appears exactly on the hooks git-lfs stubs
+// (pre-push, post-checkout among ours), so someone reading the hook file
+// learns the stock stub was displaced, not disabled.
+func TestDispatcherCarriesLFSNote(t *testing.T) {
+	for _, name := range []string{"pre-push", "post-checkout"} {
+		if !bytes.Contains(Dispatcher(name), []byte("git lfs "+name)) {
+			t.Errorf("%s dispatcher missing the git-lfs note", name)
+		}
+	}
+	if bytes.Contains(Dispatcher("pre-commit"), []byte("git lfs")) {
+		t.Error("pre-commit dispatcher must not claim an LFS forward (git-lfs has no pre-commit stub)")
+	}
+}
+
+// Hooks written by an older init (pre-#190 text, no LFS note) must keep
+// reading as omakase's own — otherwise every binary upgrade shows "foreign
+// hooks" until a re-init, and remove strands them.
+func TestLegacyDispatcherStillRecognized(t *testing.T) {
+	for _, name := range Names() {
+		old := legacyDispatcher(name)
+		if bytes.Equal(old, Dispatcher(name)) && (name == "pre-push" || name == "post-checkout") {
+			t.Errorf("%s: legacy and current dispatcher are identical — the legacy pin lost its point", name)
+		}
+		if !IsDispatcherBytes(old, name) {
+			t.Errorf("%s: legacy dispatcher bytes not recognized", name)
+		}
+		dir := t.TempDir()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, old, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if !Matches(p, name) {
+			t.Errorf("%s: Matches rejects a legacy dispatcher file", name)
+		}
+	}
+}

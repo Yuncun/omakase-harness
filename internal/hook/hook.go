@@ -65,12 +65,45 @@ func Dispatcher(name string) []byte {
 		guard = `[ -x "$OMK" ] || { echo "omakase: ` + name + ` blocked — the omakase binary is missing at $OMK. Fix: install omakase (github.com/Yuncun/omakase-harness) and run 'omakase init' in this repo. Bypass once: git ` +
 			bypassVerb(name) + ` --no-verify." >&2; exit 1; }`
 	}
+	// The git-lfs note (#190): someone debugging LFS reads this file first,
+	// and without the line concludes the stock git-lfs hook was clobbered.
+	lfsNote := ""
+	if name == "pre-push" || name == "post-checkout" {
+		lfsNote = `# Also runs 'git lfs ` + name + `' when git-lfs is installed — a stock git-lfs hook here was displaced, not disabled.
+`
+	}
+	return []byte(`#!/bin/sh
+# omakase dispatcher — permanent. Written only by 'omakase init'; removed by 'omakase remove'.
+` + lfsNote + `OMK="${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase"
+` + guard + `
+exec "$OMK" hook ` + name + ` "$@"
+`)
+}
+
+// legacyDispatcher is the previous-generation dispatcher text for name (the
+// pre-#190 form, without the git-lfs note). Hooks written by an older init
+// keep this exact content until the next init rewrites them, and both the
+// probe's hook proof and remove's delete guard must keep recognizing them as
+// omakase's own — otherwise every binary upgrade reads as "foreign hooks"
+// until a re-init.
+func legacyDispatcher(name string) []byte {
+	guard := `[ -x "$OMK" ] || exit 0`
+	if IsGate(name) {
+		guard = `[ -x "$OMK" ] || { echo "omakase: ` + name + ` blocked — the omakase binary is missing at $OMK. Fix: install omakase (github.com/Yuncun/omakase-harness) and run 'omakase init' in this repo. Bypass once: git ` +
+			bypassVerb(name) + ` --no-verify." >&2; exit 1; }`
+	}
 	return []byte(`#!/bin/sh
 # omakase dispatcher — permanent. Written only by 'omakase init'; removed by 'omakase remove'.
 OMK="${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase"
 ` + guard + `
 exec "$OMK" hook ` + name + ` "$@"
 `)
+}
+
+// IsDispatcherBytes reports whether content is an omakase dispatcher for
+// name — the current text or the previous generation's.
+func IsDispatcherBytes(content []byte, name string) bool {
+	return bytes.Equal(content, Dispatcher(name)) || bytes.Equal(content, legacyDispatcher(name))
 }
 
 // bypassVerb names the git verb whose --no-verify skips the hook, so the
@@ -104,12 +137,13 @@ func Write(hooksDir, name string) error {
 	return nil
 }
 
-// Matches reports whether the file at path is byte-equal to the dispatcher
-// for name. A missing or unreadable file does not match.
+// Matches reports whether the file at path is an omakase dispatcher for
+// name (current or previous-generation text). A missing or unreadable file
+// does not match.
 func Matches(path, name string) bool {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
-	return bytes.Equal(content, Dispatcher(name))
+	return IsDispatcherBytes(content, name)
 }
