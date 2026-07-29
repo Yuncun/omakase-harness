@@ -21,6 +21,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -264,6 +265,16 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// the repo is a persistent read/write hole. Refuse the whole payload
 	// before anything is placed; in-tree relative links stay allowed.
 	if code := checkPayloadSymlinks(payload, payloadRels, stderr); code != 0 {
+		return code
+	}
+
+	// ---- base-machinery downgrade guard (#189) ----
+	// The entry points update independently (brew binary, Claude plugin,
+	// Copilot plugin, dev build), so a stale one can run a bare init against
+	// a repo a newer omakase set up and silently roll .omakase/ backwards —
+	// the only symptom was status rendering differently. Refuse before
+	// anything is placed; a deliberate downgrade is remove-then-init.
+	if code := checkBaseDowngrade(root, payload, stderr); code != 0 {
 		return code
 	}
 
@@ -1188,6 +1199,49 @@ func physicalResolve(p string) string {
 }
 
 // --- small predicates / helpers ---
+
+// checkBaseDowngrade refuses an init whose payload carries an OLDER
+// .omakase/VERSION than the repo already has (#189): that init was run by a
+// stale entry point, not by intent. Both sides must parse as x.y.z for the
+// guard to fire — a dev build ("dev"), a missing file, or a never-installed
+// repo never refuses.
+func checkBaseDowngrade(root, payload string, stderr io.Writer) int {
+	incoming := state.FirstLine(filepath.Join(payload, ".omakase", "VERSION"))
+	installed := state.FirstLine(filepath.Join(root, ".omakase", "VERSION"))
+	iv, okIn := parseVersion(incoming)
+	rv, okRepo := parseVersion(installed)
+	if !okIn || !okRepo || !versionLess(iv, rv) {
+		return 0
+	}
+	fmt.Fprintf(stderr, "omakase: refusing to roll this repo's omakase files BACK from %s to %s — a newer omakase set this repo up, and this init came from an older install (usually a stale plugin or binary). Update it (brew upgrade omakase, or update the plugin), then re-run. To go back to %s on purpose:  omakase remove  then init again. Nothing was changed.\n", installed, incoming, incoming)
+	return 2
+}
+
+// parseVersion parses a strict x.y.z numeric version.
+func parseVersion(s string) ([3]int, bool) {
+	var v [3]int
+	parts := strings.Split(strings.TrimSpace(s), ".")
+	if len(parts) != 3 {
+		return v, false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return v, false
+		}
+		v[i] = n
+	}
+	return v, true
+}
+
+func versionLess(a, b [3]int) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return false
+}
 
 // gitMasked reports whether rel is tracked but carries the skip-worktree bit —
 // the state you get when someone deliberately overlays a harness copy on top of
