@@ -68,7 +68,12 @@ A block opens with `gate: <name>` and carries these keys:
 - `cacheable: true` — reuse a passing result for the same commit (run it once, then skip).
   Use for expensive steps or for a check that runs out of band: a blocking `run:` refuses
   the push until the check records its own pass via `omakase record <name>`.
-- `glob:` — space-separated path globs; skip the gate when no changed file matches.
+- `glob:` — space-separated path globs; the gate runs only when a matching file is in
+  what the hook is guarding: the STAGED files on `pre-commit`, the files in the pushed
+  range on `pre-push`. When the scope cannot be determined the gate runs unscoped rather
+  than skipping. Note the pre-commit scope covers exactly what `git commit` stages —
+  content landed by a rebase, cherry-pick, or clean merge fires no pre-commit at all, so
+  a path-scoped policy that must catch those needs a `pre-push` gate too.
 - `purpose:` — what the gate enforces, in your words (≤6 words, concrete — "tests green
   before push"). Shown as the ENFORCES column of the status guards table.
 

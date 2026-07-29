@@ -42,22 +42,21 @@ func RunHook(hook, root, omk string, stdin io.Reader, stdout, stderr io.Writer) 
 	}
 
 	// On pre-push, git's ref lines on stdin are both the scope source (#186)
-	// and input the checks may read — buffer once so every gate (and the
-	// scoper) sees the full input, instead of the first child draining it.
+	// and input the checks may read — buffer ALL of it once (no byte cap: a
+	// truncated ref list silently mis-scopes) so every gate and the scoper
+	// see the full input, instead of the first child draining it. runOne
+	// derives each consumer's reader from these bytes itself, so the scoper
+	// and the check can never see different data.
 	var pushRefs []byte
 	if hook == "pre-push" && stdin != nil {
-		pushRefs, _ = io.ReadAll(io.LimitReader(stdin, 1<<20))
+		pushRefs, _ = io.ReadAll(stdin)
 	}
 
 	disabled := disabledSet(omk)
 	sha := headSHA(root)
 	firstFail := 0
 	for _, g := range stage {
-		in := stdin
-		if hook == "pre-push" {
-			in = bytes.NewReader(pushRefs)
-		}
-		if code := runOne(g, hook, root, omk, sha, disabled, pushRefs, in, stdout, stderr); code != 0 && firstFail == 0 {
+		if code := runOne(g, hook, root, omk, sha, disabled, pushRefs, stdin, stdout, stderr); code != 0 && firstFail == 0 {
 			firstFail = code
 		}
 	}
@@ -85,31 +84,22 @@ func runOne(g Gate, hook, root, omk, sha string, disabled map[string]bool, pushR
 	// (3) glob scope: run only when a file in what's actually being
 	// committed/pushed matches. pre-commit scopes by the staged set (#196)
 	// and pre-push by the ref ranges git handed the hook (#186) — neither
-	// needs a guessed base ref. Any other gate hook keeps the branch-range
-	// scope. Whenever the scope cannot be determined the gate RUNS unscoped
+	// needs a guessed base ref, and manifest validation admits no other gate
+	// hook. Whenever the scope cannot be determined the gate RUNS unscoped
 	// rather than skipping — the threat model is omission (#92).
 	if len(g.Glob) > 0 {
-		switch hook {
-		case "pre-commit":
-			if matched, ok := stagedMatches(root, g.Glob); !ok {
-				fmt.Fprintf(stdout, "omakase[%s]: cannot read the staged files - cannot scope, running the check\n", g.Name)
-			} else if !matched {
-				fmt.Fprintf(stdout, "omakase[%s]: no staged file matches the glob - skipping\n", g.Name)
-				return 0
-			}
-		case "pre-push":
+		if hook == "pre-push" {
 			if matched, ok := pushedMatches(root, pushRefs, g.Glob); !ok {
 				fmt.Fprintf(stdout, "omakase[%s]: cannot scope this push - running the check\n", g.Name)
 			} else if !matched {
 				fmt.Fprintf(stdout, "omakase[%s]: no pushed file matches the glob - skipping\n", g.Name)
 				return 0
 			}
-		default:
-			base, ok := resolveBase(root)
-			if !ok {
-				fmt.Fprintf(stdout, "omakase[%s]: no resolvable base ref - cannot scope, running the check\n", g.Name)
-			} else if !changedMatches(root, base, g.Glob) {
-				fmt.Fprintf(stdout, "omakase[%s]: no changed file matches the glob - skipping\n", g.Name)
+		} else {
+			if matched, ok := stagedMatches(root, g.Glob); !ok {
+				fmt.Fprintf(stdout, "omakase[%s]: cannot read the staged files - cannot scope, running the check\n", g.Name)
+			} else if !matched {
+				fmt.Fprintf(stdout, "omakase[%s]: no staged file matches the glob - skipping\n", g.Name)
 				return 0
 			}
 		}
@@ -127,7 +117,13 @@ func runOne(g Gate, hook, root, omk, sha string, disabled map[string]bool, pushR
 	writeHeartbeat(omk, g.Name)
 	cmd := exec.Command("sh", "-c", g.Run)
 	cmd.Dir = root
-	cmd.Stdin = stdin
+	// On pre-push the check's stdin comes from the SAME buffered ref lines
+	// the scoper read — one source, so the two can never desync.
+	if hook == "pre-push" {
+		cmd.Stdin = bytes.NewReader(pushRefs)
+	} else {
+		cmd.Stdin = stdin
+	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	rc := 0

@@ -1563,3 +1563,69 @@ func TestWorktreeFirstInstallAllowed(t *testing.T) {
 	}
 	eq(t, "first install places the harness", readFileT(t, filepath.Join(wt, ".claude", "rules", "a.md")), "rule A\n")
 }
+
+// The OMAKASE_PAYLOAD override is the other door to the same #184 harm: it
+// suppresses the remembered source and re-points the shared exclude block
+// and hooks for every checkout. From a linked worktree it must refuse like
+// an explicit different source does.
+func TestWorktreePayloadOverrideRefused(t *testing.T) {
+	dir, repo := initRepo(t)
+	srcTestEnv(t)
+	useBasePayloadDir(t)
+	srcA := srcWith(t, "harness-a", filepath.Join(".claude", "rules", "a.md"), "rule A\n")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", srcA}, &stdout, &stderr); code != 0 {
+		t.Fatalf("main install exit=%d stderr=%s", code, stderr.String())
+	}
+	exclBefore := readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude"))
+
+	rogue := t.TempDir()
+	writeFile(t, filepath.Join(rogue, "ROGUE.md"), "rogue\n")
+	wtOf(t, dir)
+	t.Setenv("OMAKASE_PAYLOAD", rogue)
+	stdout.Reset()
+	stderr.Reset()
+	if code := RunInit(nil, &stdout, &stderr); code != 1 {
+		t.Fatalf("payload override from a worktree: exit=%d, want 1; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "linked worktree") {
+		t.Fatalf("refusal must explain the worktree rule: %s", stderr.String())
+	}
+	if got := readFileT(t, filepath.Join(repo.CommonDir, "info", "exclude")); got != exclBefore {
+		t.Fatalf("shared exclude rewritten despite refusal:\n%s", got)
+	}
+}
+
+// In the bare-repo + worktrees layout there is no main checkout; the FIRST
+// listed worktree counts as main, so the harness can still be re-pointed
+// from somewhere (before this, every checkout refused and pointed at
+// another refusing checkout).
+func TestWorktreeRepointAllowedFromFirstWorktreeOfBare(t *testing.T) {
+	srcTestEnv(t)
+	useBasePayloadDir(t)
+	srcA := srcWith(t, "harness-a", "a.md", "A\n")
+	srcB := srcWith(t, "harness-b", "b.md", "B\n")
+
+	seed := t.TempDir()
+	runGitT(t, seed, "init", "-q")
+	runGitT(t, seed, "config", "user.email", "t@t")
+	runGitT(t, seed, "config", "user.name", "t")
+	runGitT(t, seed, "commit", "-q", "--allow-empty", "-m", "init")
+	bare := filepath.Join(t.TempDir(), "repo.git")
+	runGitT(t, seed, "clone", "-q", "--bare", seed, bare)
+	wtA := filepath.Join(t.TempDir(), "wtA")
+	runGitT(t, bare, "worktree", "add", "-q", wtA)
+
+	chdir(t, wtA)
+	plantStableBin(t)
+	var stdout, stderr strings.Builder
+	if code := RunInit([]string{"--source", srcA}, &stdout, &stderr); code != 0 {
+		t.Fatalf("install in wtA: exit=%d stderr=%s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := RunInit([]string{"--source", srcB}, &stdout, &stderr); code != 0 {
+		t.Fatalf("re-point from the first worktree of a bare repo must be allowed: exit=%d stderr=%s", code, stderr.String())
+	}
+}

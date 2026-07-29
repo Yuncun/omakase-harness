@@ -1,8 +1,11 @@
 package overlay
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -579,5 +582,101 @@ func TestHookPrePushStdinSurvivesLFSDrain(t *testing.T) {
 	var out, errb strings.Builder
 	if code := RunHook([]string{"pre-push"}, strings.NewReader(refs), &out, &errb); code != 0 {
 		t.Fatalf("gate did not see the ref lines after the LFS forward drained stdin: exit %d\n%s%s", code, out.String(), errb.String())
+	}
+}
+
+// The git-lfs forward must receive the COMPLETE ref list, even past the old
+// 1MB cap: git tolerates a hook that stops reading, and git-lfs silently
+// skips uploading objects for refs it never saw — dangling pointers on the
+// remote with a green push. Pins both the no-cap and the
+// forward-gets-the-refs wiring (mutating either broke nothing before).
+func TestHookPrePushLFSReceivesFullStdin(t *testing.T) {
+	repo := hookRepo(t)
+	setManifest(t, repo, "name: t\nversion: 1\n") // no gates: isolate the LFS forward
+
+	dir := t.TempDir()
+	countFile := filepath.Join(dir, "count")
+	writeFile(t, filepath.Join(dir, "git-lfs"), "#!/bin/sh\nwc -c > \""+countFile+"\"\nexit 0\n")
+	if err := os.Chmod(filepath.Join(dir, "git-lfs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	line := "refs/heads/main aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/main bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+	var refs strings.Builder
+	for refs.Len() < 2*1024*1024 {
+		refs.WriteString(line)
+	}
+	var out, errb strings.Builder
+	if code := RunHook([]string{"pre-push"}, strings.NewReader(refs.String()), &out, &errb); code != 0 {
+		t.Fatalf("exit %d\n%s%s", code, out.String(), errb.String())
+	}
+	got := strings.TrimSpace(readFileT(t, countFile))
+	if want := strconv.Itoa(refs.Len()); got != want {
+		t.Fatalf("git-lfs received %s bytes of ref lines, want %s (truncated or rewired)", got, want)
+	}
+}
+
+// A blocked path must survive the heals: it carries the same skip-worktree
+// tag as a deliberately masked (adopted) path, and before the blockedCovers
+// exemption healWorktree copied the harness snapshot over the tracked,
+// blocked file — block defeated, index dirtied, the agent reading the one
+// file the user hid. verifyPresent must likewise not count the deliberate
+// absence as a hole.
+func TestHealNeverRestoresBlockedPath(t *testing.T) {
+	repo := hookRepo(t)
+	root := repo.Root
+	rel := ".claude/skills/x/SKILL.md"
+
+	// Upstream commits the path the harness also places.
+	writeFile(t, filepath.Join(root, rel), "UPSTREAM\n")
+	runGitT(t, root, "add", rel)
+	runGitT(t, root, "commit", "-q", "-m", "upstream skill")
+
+	// The harness placed it too: snapshot + enabled ledger row.
+	writeFile(t, filepath.Join(repo.OMK, "payload-snapshot", rel), "HARNESS\n")
+	f, err := os.OpenFile(filepath.Join(repo.OMK, "placed.tsv"), os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(f, "%s\tskill\tpayload\t%s\t1\n", rel, sha256hex([]byte("HARNESS\n")))
+	f.Close()
+
+	// The user blocks the skill directory (the real mechanism: non-cone
+	// sparse-checkout + the blocked ledger).
+	runGitT(t, root, "sparse-checkout", "set", "--no-cone", "/*", "!/.claude/skills/x")
+	if err := state.WriteBlocked(repo.OMK, map[string]bool{".claude/skills/x": true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, rel)); !os.IsNotExist(err) {
+		t.Fatal("precondition: block should hide the file")
+	}
+
+	var out, errb strings.Builder
+	if code := RunHook([]string{"session-start"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("session-start exit %d\n%s", code, errb.String())
+	}
+	if _, err := os.Lstat(filepath.Join(root, rel)); !os.IsNotExist(err) {
+		t.Fatalf("heal rematerialized a blocked path\nstdout: %s\nstderr: %s", out.String(), errb.String())
+	}
+	stCmd := exec.Command("git", "-C", root, "status", "--porcelain")
+	stOut, err := stCmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The hand-built fixture has no exclude block, so untracked ?? rows are
+	// noise; what must never appear is a MODIFICATION — the tracked blocked
+	// file overwritten with harness content.
+	for _, l := range strings.Split(string(stOut), "\n") {
+		if strings.Contains(l, "skills/x") || strings.HasPrefix(l, " M") || strings.HasPrefix(l, "M ") {
+			t.Fatalf("heal dirtied the index on a blocked path: %q", stOut)
+		}
+	}
+
+	// And the gate hook still runs: the blocked absence is not a hole.
+	out.Reset()
+	errb.Reset()
+	if code := RunHook([]string{"pre-commit"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("pre-commit blocked by a deliberately blocked path: exit %d\n%s", code, errb.String())
 	}
 }

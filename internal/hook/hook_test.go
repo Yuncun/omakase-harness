@@ -162,12 +162,30 @@ func TestDispatcherCarriesLFSNote(t *testing.T) {
 
 // Hooks written by an older init (pre-#190 text, no LFS note) must keep
 // reading as omakase's own — otherwise every binary upgrade shows "foreign
-// hooks" until a re-init, and remove strands them.
+// hooks" until a re-init, and remove strands them. The legacy bytes are
+// LITERALS (never derived from Dispatcher's helpers): a shared helper would
+// shift both generations together on the next wording edit and orphan every
+// 0.29.0-written hook with a green suite.
 func TestLegacyDispatcherStillRecognized(t *testing.T) {
 	for _, name := range Names() {
-		old := legacyDispatcher(name)
+		old := legacyDispatchers[name]
+		if len(old) == 0 {
+			t.Fatalf("%s: no pinned legacy dispatcher bytes", name)
+		}
 		if bytes.Equal(old, Dispatcher(name)) && (name == "pre-push" || name == "post-checkout") {
 			t.Errorf("%s: legacy and current dispatcher are identical — the legacy pin lost its point", name)
+		}
+		// The pin is exactly the 0.28.0 shape: current text minus the one
+		// git-lfs line. Reconstruct that and require byte equality, so a
+		// future edit to the CURRENT text cannot drag the pin along.
+		var lines []string
+		for _, l := range strings.Split(string(Dispatcher(name)), "\n") {
+			if !strings.Contains(l, "git lfs") {
+				lines = append(lines, l)
+			}
+		}
+		if want := strings.Join(lines, "\n"); string(old) != want {
+			t.Errorf("%s: legacy pin no longer matches the shipped 0.28.0 text\n got: %q\nwant: %q", name, old, want)
 		}
 		if !IsDispatcherBytes(old, name) {
 			t.Errorf("%s: legacy dispatcher bytes not recognized", name)

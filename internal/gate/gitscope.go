@@ -100,19 +100,6 @@ func resolveBase(root string) (string, bool) {
 	return "", false
 }
 
-// changedMatches reports whether any file changed in base...HEAD matches one of
-// the glob patterns. The range is merge-base-bounded (three-dot); a two-dot
-// fallback covers unrelated histories, where three-dot is fatal and a range
-// error must never masquerade as "no changes". A raw git error is never
-// surfaced.
-func changedMatches(root, base string, patterns []string) bool {
-	changed, err := gitDiffNames(root, base+"...HEAD")
-	if err != nil {
-		changed, _ = gitDiffNames(root, base+"..HEAD")
-	}
-	return anyMatches(changed, patterns)
-}
-
 // anyMatches reports whether any of the changed paths matches any pattern.
 func anyMatches(changed, patterns []string) bool {
 	for _, file := range changed {
