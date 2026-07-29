@@ -5,6 +5,46 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Fixed
+- **A stale entry point can no longer downgrade the machine-wide binary**:
+  the self-install that runs on every `omakase init` now asks the existing
+  machine copy its version and never replaces a newer one — before, even a
+  REFUSED init from an old plugin rolled back the one binary every repo's
+  hooks execute, then printed "Nothing was changed".
+- **Blocked items show correctly on the status page again**: 0.29.0's
+  masked-path filter used the same git marker blocking uses, so every
+  blocked item was dropped from the committed list and mislabeled "no
+  longer committed here". Blocked rows now stay, with their real state.
+- **The heals can no longer defeat a block**: a blocked path that omakase
+  itself had once placed was treated as a deliberately adopted file, and the
+  session-start/checkout heal copied harness content over it — un-hiding the
+  one file the user said no to and dirtying the index. Blocked paths are now
+  exempt everywhere the adopted-path logic applies.
+- **A bare re-init keeps an adopted (skip-worktree) file working**: init now
+  treats an adopted path as an ordinary injected file — no false collision
+  warning per file, no tracked skip, ledger row kept — so the heal and the
+  missing-file check keep protecting it after the next init instead of only
+  until then.
+- **The full pushed ref list reaches git-lfs and the gate scoper**: an
+  internal 1MB cap could truncate very large pushes (e.g. thousands of
+  tags), which would have made git-lfs silently skip uploading objects for
+  the refs past the cut. No cap; one buffered copy feeds both readers, and a
+  test pins that byte-for-byte.
+- **init-then-remove no longer half-uninstalls git-lfs**: init saves the
+  stock git-lfs hooks it displaces and remove restores them byte-perfect.
+- **Worktree re-point guard covers the payload override and bare-repo
+  layouts**: the `OMAKASE_PAYLOAD` door now refuses from a linked worktree
+  like an explicit different source does; in a bare-repo-plus-worktrees
+  layout the first worktree counts as the main checkout so the harness can
+  still be re-pointed from somewhere; and spelling differences (`.git`
+  suffix, trailing slash) of the same source no longer refuse falsely.
+- **The downgrade refusal's instructions are now safe to follow**: the
+  message names the remembered source to re-init from (the old wording's
+  remove-then-init deleted the only copy of it), the guard no longer fires
+  on repos that merely commit an `.omakase/VERSION` with no omakase
+  installed, and a refused init no longer rotates the run ledger while
+  claiming nothing changed.
+
 ## [0.29.0] — 2026-07-29
 
 ### Removed

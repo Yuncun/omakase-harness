@@ -80,30 +80,42 @@ exec "$OMK" hook ` + name + ` "$@"
 `)
 }
 
-// legacyDispatcher is the previous-generation dispatcher text for name (the
-// pre-#190 form, without the git-lfs note). Hooks written by an older init
-// keep this exact content until the next init rewrites them, and both the
-// probe's hook proof and remove's delete guard must keep recognizing them as
-// omakase's own — otherwise every binary upgrade reads as "foreign hooks"
-// until a re-init.
-func legacyDispatcher(name string) []byte {
-	guard := `[ -x "$OMK" ] || exit 0`
-	if IsGate(name) {
-		guard = `[ -x "$OMK" ] || { echo "omakase: ` + name + ` blocked — the omakase binary is missing at $OMK. Fix: install omakase (github.com/Yuncun/omakase-harness) and run 'omakase init' in this repo. Bypass once: git ` +
-			bypassVerb(name) + ` --no-verify." >&2; exit 1; }`
-	}
-	return []byte(`#!/bin/sh
+// legacyDispatchers holds the previous-generation dispatcher text for each
+// hook, EXACTLY as 0.28.0 shipped it (pre-#190, without the git-lfs note).
+// Hooks written by an older init keep this exact content until the next init
+// rewrites them, and both the probe's hook proof and remove's delete guard
+// must keep recognizing them as omakase's own — otherwise every binary
+// upgrade reads as "foreign hooks" until a re-init.
+//
+// LITERALS ON PURPOSE: an earlier version derived these from the same
+// helpers Dispatcher uses, which meant a future wording edit would shift
+// both generations together and orphan every 0.29.0-written hook while the
+// tests stayed green. These bytes must never change again.
+var legacyDispatchers = map[string][]byte{
+	"pre-commit": []byte(`#!/bin/sh
 # omakase dispatcher — permanent. Written only by 'omakase init'; removed by 'omakase remove'.
 OMK="${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase"
-` + guard + `
-exec "$OMK" hook ` + name + ` "$@"
-`)
+[ -x "$OMK" ] || { echo "omakase: pre-commit blocked — the omakase binary is missing at $OMK. Fix: install omakase (github.com/Yuncun/omakase-harness) and run 'omakase init' in this repo. Bypass once: git commit --no-verify." >&2; exit 1; }
+exec "$OMK" hook pre-commit "$@"
+`),
+	"pre-push": []byte(`#!/bin/sh
+# omakase dispatcher — permanent. Written only by 'omakase init'; removed by 'omakase remove'.
+OMK="${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase"
+[ -x "$OMK" ] || { echo "omakase: pre-push blocked — the omakase binary is missing at $OMK. Fix: install omakase (github.com/Yuncun/omakase-harness) and run 'omakase init' in this repo. Bypass once: git push --no-verify." >&2; exit 1; }
+exec "$OMK" hook pre-push "$@"
+`),
+	"post-checkout": []byte(`#!/bin/sh
+# omakase dispatcher — permanent. Written only by 'omakase init'; removed by 'omakase remove'.
+OMK="${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase"
+[ -x "$OMK" ] || exit 0
+exec "$OMK" hook post-checkout "$@"
+`),
 }
 
 // IsDispatcherBytes reports whether content is an omakase dispatcher for
 // name — the current text or the previous generation's.
 func IsDispatcherBytes(content []byte, name string) bool {
-	return bytes.Equal(content, Dispatcher(name)) || bytes.Equal(content, legacyDispatcher(name))
+	return bytes.Equal(content, Dispatcher(name)) || bytes.Equal(content, legacyDispatchers[name])
 }
 
 // bypassVerb names the git verb whose --no-verify skips the hook, so the

@@ -29,8 +29,12 @@ const maxLineBuf = 1 << 20
 // A path the repo commits but that carries the skip-worktree bit is being
 // deliberately served from an injected harness copy, so it is not part of the
 // repo's live surface — listing it here would report the same file twice in
-// two sections that contradict each other. Those paths are filtered out.
-func CommittedList(root string) []string {
+// two sections that contradict each other. Those paths are filtered out —
+// EXCEPT paths omakase itself blocked: block hides via sparse-checkout,
+// which also sets the skip-worktree bit, and a blocked row must stay on the
+// page with its BLOCKED annotation (dropping it here relabeled every blocked
+// item "no longer committed here").
+func CommittedList(root string, blocked map[string]bool) []string {
 	live := state.TrackedUnder(root, harness.CommittedGlobs)
 	skipped := state.SkipWorktreeUnder(root, harness.CommittedGlobs)
 	if len(skipped) == 0 {
@@ -38,7 +42,7 @@ func CommittedList(root string) []string {
 	}
 	var out []string
 	for _, rel := range live {
-		if !skipped[rel] {
+		if !skipped[rel] || blockedItemOf(blocked, rel) != "" {
 			out = append(out, rel)
 		}
 	}
@@ -250,7 +254,7 @@ func committedRows(repo *state.Repo) [][2]string {
 	blocked := state.ReadBlocked(repo.OMK)
 	seen := map[string]bool{}
 	var rows [][2]string
-	for _, rel := range CommittedList(repo.Root) {
+	for _, rel := range CommittedList(repo.Root, blocked) {
 		if rel == "" {
 			continue
 		}

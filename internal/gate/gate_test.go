@@ -435,9 +435,15 @@ func TestRunHook_TwoDotFallbackUnrelatedHistory(t *testing.T) {
 	commitFile(t, root, "src/app.txt", "x\n")
 	// Force-pushing the orphan over main: three-dot (merge-base) is fatal on
 	// unrelated histories, so the two-dot fallback must still find the change.
-	code, _, _ := runIn(t, root, omk, "pre-push", "gate: td\n  hook: pre-push\n  run: false\n  glob: src/*\n", "refs/heads/orphanwork "+revParse(t, root, "HEAD")+" refs/heads/main "+revParse(t, root, "origin/main")+"\n", nil)
+	code, out, _ := runIn(t, root, omk, "pre-push", "gate: td\n  hook: pre-push\n  run: false\n  glob: src/*\n", "refs/heads/orphanwork "+revParse(t, root, "HEAD")+" refs/heads/main "+revParse(t, root, "origin/main")+"\n", nil)
 	if code == 0 {
 		t.Fatalf("two-dot fallback must find the in-scope change on unrelated histories")
+	}
+	// The gate must have run because the fallback SCOPED it in — an
+	// unscopable "cannot scope" run also exits non-zero and would hide a
+	// deleted fallback (mutation-testing finding).
+	if strings.Contains(out, "cannot scope") {
+		t.Fatalf("gate ran unscoped, not via the two-dot fallback: %q", out)
 	}
 }
 
@@ -453,9 +459,14 @@ func TestRunHook_PreCommitScopesByStagedSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	runGit(t, root, "add", "config.txt")
-	code, _, led := run(t, root, omk, "pre-commit", "gate: sc\n  hook: pre-commit\n  run: false\n  glob: config.txt\n", nil)
+	code, out, led := run(t, root, omk, "pre-commit", "gate: sc\n  hook: pre-commit\n  run: false\n  glob: config.txt\n", nil)
 	if code == 0 {
 		t.Fatalf("a staged in-scope file must run the gate (and block), got exit 0")
+	}
+	// It must have run because the staged set MATCHED — a broken scoper
+	// falls back to an unscoped run and also blocks (mutation finding).
+	if strings.Contains(out, "cannot read the staged files") {
+		t.Fatalf("gate ran via the unscoped fallback, not the staged set: %q", out)
 	}
 	if !hasRow(led, "sc", "fail") {
 		t.Fatalf("the gate must have run: %q", led)

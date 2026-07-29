@@ -1903,3 +1903,126 @@ func TestInitRefusesBaseDowngrade(t *testing.T) {
 		t.Fatalf("dev-version init: exit %d\n%s", code, errOut.String())
 	}
 }
+
+// A repo that merely COMMITS an .omakase/VERSION with no omakase installed
+// was never "set up by a newer omakase" — the guard must not refuse a first
+// install there (it would loop forever: init never overwrites a committed
+// path, so the file can never change).
+func TestInitDowngradeGuardSkipsUninstalledTrackedVersion(t *testing.T) {
+	dir, _ := initRepo(t)
+	writeFile(t, filepath.Join(dir, ".omakase", "VERSION"), "0.28.0\n")
+	runGitT(t, dir, "add", ".omakase/VERSION")
+	runGitT(t, dir, "commit", "-q", "-m", "project pins a version file")
+
+	older := t.TempDir()
+	writeFile(t, filepath.Join(older, ".omakase", "VERSION"), "0.22.0\n")
+	writeFile(t, filepath.Join(older, ".claude", "rules", "r.md"), "rule\n")
+	t.Setenv("OMAKASE_PAYLOAD", older)
+	var out, errOut strings.Builder
+	if code := RunInit(nil, &out, &errOut); code != 0 {
+		t.Fatalf("first install refused on a repo that merely tracks .omakase/VERSION: exit %d\n%s", code, errOut.String())
+	}
+	// The committed file was skipped, not downgraded.
+	if got := state.FirstLine(filepath.Join(dir, ".omakase", "VERSION")); got != "0.28.0" {
+		t.Errorf(".omakase/VERSION changed to %q", got)
+	}
+}
+
+// An ADOPTED path — tracked, but deliberately served from the injected copy
+// via skip-worktree (#195's third door) — must ride through a bare re-init
+// as an ordinary injected file: no collision warning, no tracked skip, its
+// ledger row kept. A BLOCKED path carries the same skip-worktree tag and
+// must get the opposite treatment: never placed over.
+func TestInitTreatsAdoptedPathAsInjected(t *testing.T) {
+	dir, repo := initRepo(t)
+	p := t.TempDir()
+	writeFile(t, filepath.Join(p, ".claude", "rules", "r.md"), "HARNESS\n")
+	t.Setenv("OMAKASE_PAYLOAD", p)
+	var out, errb strings.Builder
+	if code := RunInit(nil, &out, &errb); code != 0 {
+		t.Fatalf("install: exit %d\n%s", code, errb.String())
+	}
+
+	// Adoption: the repo commits the path, the user masks it so the
+	// injected copy keeps serving.
+	runGitT(t, dir, "add", "-f", ".claude/rules/r.md")
+	runGitT(t, dir, "commit", "-q", "-m", "upstream adopts the rule")
+	runGitT(t, dir, "update-index", "--skip-worktree", ".claude/rules/r.md")
+
+	out.Reset()
+	errb.Reset()
+	if code := RunInit(nil, &out, &errb); code != 0 {
+		t.Fatalf("re-init: exit %d\n%s", code, errb.String())
+	}
+	all := out.String() + errb.String()
+	if strings.Contains(all, "NOW TRACKED") {
+		t.Errorf("adopted path still fires the upstream-collision warning:\n%s", all)
+	}
+	if strings.Contains(all, "SKIP (already tracked)") {
+		t.Errorf("adopted path skipped as tracked:\n%s", all)
+	}
+	found := false
+	for _, row := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
+		if row.Rel == ".claude/rules/r.md" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("adopted path dropped from placed.tsv — the heal and verify paths lose it")
+	}
+
+	// Now BLOCK the same path (sparse-checkout + ledger): a re-init must
+	// not rematerialize it.
+	runGitT(t, dir, "update-index", "--no-skip-worktree", ".claude/rules/r.md")
+	runGitT(t, dir, "sparse-checkout", "set", "--no-cone", "/*", "!/.claude/rules/r.md")
+	if err := state.WriteBlocked(repo.OMK, map[string]bool{".claude/rules/r.md": true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, ".claude", "rules", "r.md")); !os.IsNotExist(err) {
+		t.Fatal("precondition: block should hide the file")
+	}
+	out.Reset()
+	errb.Reset()
+	if code := RunInit(nil, &out, &errb); code != 0 {
+		t.Fatalf("re-init over block: exit %d\n%s", code, errb.String())
+	}
+	if _, err := os.Lstat(filepath.Join(dir, ".claude", "rules", "r.md")); !os.IsNotExist(err) {
+		t.Error("init placed harness content over a BLOCKED path")
+	}
+}
+
+// init-then-remove must leave git-lfs exactly as it found it: the stock
+// stubs init displaced come back byte-perfect on remove (before this, the
+// pre-push and post-checkout LFS stubs simply vanished — LFS silently
+// half-uninstalled).
+func TestRemoveRestoresDisplacedLFSHooks(t *testing.T) {
+	_, repo := initRepo(t)
+	singleGatePayload(t)
+	stub := map[string]string{}
+	for _, h := range []string{"post-checkout", "post-commit", "post-merge", "pre-push"} {
+		content := "#!/bin/sh\ncommand -v git-lfs >/dev/null 2>&1 || exit 2\ngit lfs " + h + " \"$@\"\n"
+		hf := filepath.Join(repo.CommonDir, "hooks", h)
+		writeFile(t, hf, content)
+		if err := os.Chmod(hf, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		stub[h] = content
+	}
+	var out, errb strings.Builder
+	if code := RunInit(nil, &out, &errb); code != 0 {
+		t.Fatalf("init: exit %d\n%s", code, errb.String())
+	}
+	if code := RunRemove(nil, &out, &errb); code != 0 {
+		t.Fatalf("remove: exit %d\n%s", code, errb.String())
+	}
+	for _, h := range []string{"post-checkout", "post-commit", "post-merge", "pre-push"} {
+		got, err := os.ReadFile(filepath.Join(repo.CommonDir, "hooks", h))
+		if err != nil {
+			t.Errorf("%s hook gone after remove: %v", h, err)
+			continue
+		}
+		if string(got) != stub[h] {
+			t.Errorf("%s hook not restored byte-perfect:\n got %q\nwant %q", h, got, stub[h])
+		}
+	}
+}

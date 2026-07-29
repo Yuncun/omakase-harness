@@ -449,7 +449,7 @@ func TestRenderPre010MD(t *testing.T) {
 
 func TestCommittedList(t *testing.T) {
 	repo, _ := buildInstalledFixture(t)
-	got := CommittedList(repo.Root)
+	got := CommittedList(repo.Root, nil)
 	want := []string{".claude/rules/team.md", "CLAUDE.md"} // src/app.js excluded: not a harness glob
 	if len(got) != len(want) {
 		t.Fatalf("CommittedList = %v, want %v", got, want)
@@ -479,7 +479,7 @@ func TestCommittedListDeepSurface(t *testing.T) {
 	runGitT(t, repo, "add", ".")
 	runGitT(t, repo, "commit", "-q", "-m", "deep committed surface")
 
-	got := CommittedList(repo)
+	got := CommittedList(repo, nil)
 	want := []string{
 		".agents/skills/foo/SKILL.md", "CLAUDE.md", "app/AGENTS.md",
 		"app/CLAUDE.md", "core/auth/CLAUDE.md",
@@ -514,13 +514,13 @@ func TestCommittedListSkipsMaskedPaths(t *testing.T) {
 	runGitT(t, repo, "add", ".")
 	runGitT(t, repo, "commit", "-q", "-m", "committed surface")
 
-	if got := CommittedList(repo); len(got) != 3 {
+	if got := CommittedList(repo, nil); len(got) != 3 {
 		t.Fatalf("precondition: CommittedList = %v, want all 3 tracked paths", got)
 	}
 
 	runGitT(t, repo, "update-index", "--skip-worktree", ".agents/skills/masked/SKILL.md")
 
-	got := CommittedList(repo)
+	got := CommittedList(repo, nil)
 	want := []string{".agents/skills/live/SKILL.md", "CLAUDE.md"}
 	if len(got) != len(want) {
 		t.Fatalf("CommittedList after mask = %v, want %v", got, want)
@@ -534,8 +534,8 @@ func TestCommittedListSkipsMaskedPaths(t *testing.T) {
 
 func TestCommittedListError(t *testing.T) {
 	dir := t.TempDir() // not a git repo
-	if got := CommittedList(dir); got != nil {
-		t.Errorf("CommittedList(non-repo) = %v, want nil", got)
+	if got := CommittedList(dir, nil); got != nil {
+		t.Errorf("CommittedList(non-repo, nil) = %v, want nil", got)
 	}
 }
 
@@ -777,5 +777,56 @@ func TestCommittedRowsBlocked(t *testing.T) {
 	}
 	if !strings.Contains(got["gone.md"], "no longer committed") {
 		t.Errorf("stale block row = %q (rows: %v)", got["gone.md"], rows)
+	}
+}
+
+// A BLOCKED item carries the same skip-worktree tag as a deliberately
+// adopted (masked) path, and the masked-path filter must not eat it: with
+// real sparse-checkout state, the blocked row stays on the page with its
+// BLOCKED annotation instead of being relabeled "no longer committed here"
+// (the 0.29.0 regression).
+func TestCommittedListKeepsBlockedRows(t *testing.T) {
+	dir := newGitRepo(t)
+	writeFile(t, dir, "CLAUDE.md", "steering\n")
+	writeFile(t, dir, ".claude/rules/team.md", "rule\n")
+	runGitT(t, dir, "add", "-A")
+	runGitT(t, dir, "commit", "-q", "-m", "files")
+	runGitT(t, dir, "sparse-checkout", "set", "--no-cone", "/*", "!/CLAUDE.md")
+	repo, err := state.Discover(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.WriteBlocked(repo.OMK, map[string]bool{"CLAUDE.md": true}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := CommittedList(dir, state.ReadBlocked(repo.OMK))
+	found := false
+	for _, rel := range got {
+		if rel == "CLAUDE.md" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("blocked CLAUDE.md dropped from CommittedList: %v", got)
+	}
+
+	rows := committedRows(repo)
+	var claude string
+	for _, r := range rows {
+		if r[0] == "CLAUDE.md" {
+			claude = r[1]
+		}
+	}
+	if !strings.Contains(claude, "BLOCKED by you") {
+		t.Errorf("blocked row annotation = %q, want BLOCKED by you", claude)
+	}
+	for _, r := range rows {
+		if strings.Contains(r[1], "no longer committed here") {
+			t.Errorf("blocked item mislabeled stale: %v", r)
+		}
 	}
 }

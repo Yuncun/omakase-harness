@@ -2,6 +2,8 @@ package basepayload
 
 import (
 	"io/fs"
+	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -39,5 +41,19 @@ func TestEmbeddedPayloadComplete(t *testing.T) {
 		if !seen {
 			t.Errorf("embedded payload missing %s (go:embed dot-path exclusion?)", path)
 		}
+	}
+}
+
+// The init downgrade guard (#189) and the self-install version guard compare
+// versions only when they parse as strict x.y.z — one loose release value
+// would silently disable both forever. Pin the format here.
+func TestBasePayloadVersionIsStrictSemver(t *testing.T) {
+	b, err := FS.ReadFile("payload/.omakase/VERSION")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := strings.TrimSpace(string(b))
+	if !regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(v) {
+		t.Fatalf("payload/.omakase/VERSION = %q — must be strict x.y.z or the downgrade guards go silent", v)
 	}
 }

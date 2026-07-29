@@ -197,7 +197,9 @@ func main() {
 	// call RunInit directly can never overwrite a developer's cached binary
 	// with a test binary.
 	if len(os.Args) > 1 && os.Args[1] == "init" {
-		overlay.SelfInstallCurrent()
+		bi, _ := debug.ReadBuildInfo()
+		v, _, _ := resolveVersion(version, commit, date, bi)
+		overlay.SelfInstallCurrent(v)
 	}
 	os.Exit(run(os.Args, os.Stdout, os.Stderr))
 }

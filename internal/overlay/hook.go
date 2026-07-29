@@ -136,29 +136,27 @@ func runGateHook(name string, hookArgs []string, repo *state.Repo, stdin io.Read
 		return code
 	}
 
-	// On pre-push the ref lines on stdin have two readers — the git-lfs
-	// forward below and the gate runner's glob scoper (#186) — and the first
-	// child would drain the pipe for the second. Buffer once, hand each a
-	// fresh reader.
+	// On pre-push the ref lines on stdin have two readers — the displaced
+	// git-lfs hook's forward (which still owes its LFS run, fail-closed like
+	// the stock stub) and the gate runner's glob scoper (#186) — and the
+	// first child would drain the pipe for the second. Buffer ALL of it once
+	// and hand each a fresh reader: a byte cap here truncates the ref list
+	// mid-line and git-lfs would silently skip uploading objects for the
+	// refs past the cut (git deliberately tolerates a hook that stops
+	// reading, so nothing fails).
 	if name == "pre-push" {
-		refs, _ := io.ReadAll(io.LimitReader(stdin, 1<<20))
+		refs, _ := io.ReadAll(stdin)
 		if code := runGitLFS(name, hookArgs, root, bytes.NewReader(refs), stdout, stderr, true); code != 0 {
 			return code
 		}
 		return gate.RunHook(name, root, repo.OMK, bytes.NewReader(refs), stdout, stderr)
 	}
 
-	// A displaced stock git-lfs hook still owes its LFS run (pre-push): forward
-	// it, fail closed on its failure like the stock stub did. This is not a
-	// gate, so OMAKASE_SKIP_GATES never reaches it. No-op for pre-commit
-	// (which git-lfs does not stub).
-	if code := runGitLFS(name, hookArgs, root, stdin, stdout, stderr, true); code != 0 {
-		return code
-	}
-
-	// Run the manifest-declared gates. gate.RunHook reads the gate list from
-	// the init-written snapshot manifest only (the one-writer invariant on
-	// wiring), records verdicts, and passes a blocking gate's exit code through.
+	// pre-commit: git-lfs has no pre-commit stub, so there is nothing to
+	// forward — straight to the manifest-declared gates. gate.RunHook reads
+	// the gate list from the init-written snapshot manifest only (the
+	// one-writer invariant on wiring), records verdicts, and passes a
+	// blocking gate's exit code through.
 	return gate.RunHook(name, root, repo.OMK, stdin, stdout, stderr)
 }
 
@@ -191,11 +189,18 @@ func runGitLFS(name string, args []string, root string, stdin io.Reader, stdout,
 // init/checkout); disabled rows are deliberately absent.
 func verifyPresent(root, omk string, stderr io.Writer) int {
 	missing := 0
+	blocked := state.ReadBlocked(omk)
 	for _, row := range state.ReadPlaced(filepath.Join(omk, "placed.tsv")) {
 		if row.Enabled != "1" {
 			continue
 		}
 		if lexists(filepath.Join(root, row.Rel)) {
+			continue
+		}
+		// A path the user BLOCKED is deliberately absent — never a hole.
+		// (It also carries the same skip-worktree tag as a masked path, so
+		// without this exemption the masked branch below would misread it.)
+		if blockedCovers(blocked, row.Rel) {
 			continue
 		}
 		// A tracked path normally supplies its own content, so a missing
@@ -232,6 +237,7 @@ func healWorktree(repo *state.Repo, stderr io.Writer) int {
 	root := repo.Root
 	snap := filepath.Join(repo.OMK, "payload-snapshot")
 	umask := currentUmask()
+	blocked := state.ReadBlocked(repo.OMK)
 	for _, row := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
 		// enabled=0 is a deliberate off switch: a missing disabled artifact
 		// is not "missing" — never resurrect it.
@@ -239,6 +245,15 @@ func healWorktree(repo *state.Repo, stderr io.Writer) int {
 			continue
 		}
 		rel := row.Rel
+		// A BLOCKED path is the user's explicit no — heal must never
+		// rematerialize it. It also carries the same skip-worktree tag as a
+		// deliberately masked path, so without this exemption the masked
+		// branch below would copy the harness snapshot over a tracked,
+		// blocked file: the block defeated, the index dirtied, and the agent
+		// reading the one file the user hid.
+		if blockedCovers(blocked, rel) {
+			continue
+		}
 		dest := filepath.Join(root, rel)
 		// The accepted (kept) copy outranks the harness version: refilling a
 		// kept file must restore what the user consented to, and the drift
@@ -307,4 +322,20 @@ func first12(s string) string {
 		return s[:12]
 	}
 	return s
+}
+
+// blockedCovers reports whether rel is one of the user's blocked items or
+// sits under a blocked directory item. Blocked paths carry the same
+// skip-worktree tag as deliberately masked (adopted) ones, so every
+// masked-path branch must check this first.
+func blockedCovers(blocked map[string]bool, rel string) bool {
+	if blocked[rel] {
+		return true
+	}
+	for item := range blocked {
+		if strings.HasPrefix(rel, item+"/") {
+			return true
+		}
+	}
+	return false
 }

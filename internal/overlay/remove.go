@@ -136,6 +136,14 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 			if err := removeF(hf); err != nil {
 				return 1
 			}
+			// init saved the stock git-lfs stub this dispatcher displaced;
+			// put it back byte-perfect, so init-then-remove never leaves
+			// git-lfs half-installed.
+			if saved, rerr := os.ReadFile(filepath.Join(omk, "displaced-hooks", name)); rerr == nil {
+				if os.WriteFile(hf, saved, 0o755) == nil {
+					fmt.Fprintf(stdout, "omakase: restored the git-lfs %s hook the install had displaced.\n", name)
+				}
+			}
 			continue
 		}
 		fmt.Fprintf(stderr, "omakase: NOTE — %s is not omakase's dispatcher (another tool wrote it); left in place.\n", hf)

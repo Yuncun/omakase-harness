@@ -137,17 +137,6 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	common := repo.CommonDir
 	omk := repo.OMK
 
-	// ---- one-time ledger schema upgrade ----
-	// A pre-v2 (6-column) run ledger is rotated aside. On rename failure the
-	// notice is suppressed and the run continues with the old ledger in
-	// place.
-	ledger := filepath.Join(omk, "ledger.tsv")
-	if fileRegular(ledger) && ledgerNeedsRotate(ledger) {
-		if err := os.Rename(ledger, ledger+".pre-v2.bak"); err == nil {
-			fmt.Fprintln(stdout, "omakase: rotated a pre-v2 (6-column) run ledger aside to ledger.tsv.pre-v2.bak (the new store starts clean).")
-		}
-	}
-
 	// ---- source precedence ----
 	// Payload precedence: --source flag > OMAKASE_PAYLOAD env > remembered
 	// source ($OMK/source); with all three absent, init places nothing (the
@@ -196,12 +185,20 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// Hooks, the exclude block, and the remembered source live in the git
 	// common dir — every checkout of the repository shares them. Switching
 	// the repo's harness is therefore a repo-wide act: an explicitly given
-	// source that differs from what the repo already runs refuses from a
+	// source (or an OMAKASE_PAYLOAD override, the other door to the same
+	// re-point) that differs from what the repo already runs refuses from a
 	// linked worktree and names the main checkout. The bare refresh and the
-	// same-source re-run stay allowed (the per-worktree heal flow), and a
-	// first install from a worktree has nothing to clobber.
-	if explicitSource && fileRegular(filepath.Join(omk, "placed.tsv")) {
-		if gd := gitOutTrim(root, "rev-parse", "--absolute-git-dir"); gd != "" && filepath.Clean(gd) != common {
+	// same-source re-run stay allowed (the per-worktree heal flow), a first
+	// install from a worktree has nothing to clobber, and in a bare-repo +
+	// worktrees layout (no main checkout at all) the FIRST listed worktree
+	// counts as main — otherwise every checkout refuses and the repo's
+	// harness can never be changed.
+	payloadOverride := os.Getenv("OMAKASE_PAYLOAD") != ""
+	remembered := state.FirstLine(filepath.Join(omk, "source"))
+	if (explicitSource || (payloadOverride && remembered != "")) && fileRegular(filepath.Join(omk, "placed.tsv")) {
+		gd := gitOutTrim(root, "rev-parse", "--absolute-git-dir")
+		mainRoot := state.WorktreeRoots(root)[0]
+		if gd != "" && filepath.Clean(gd) != common && filepath.Clean(root) != filepath.Clean(mainRoot) {
 			// The canonical label, exactly as runSource records it — a
 			// same-source re-run round-trips to the remembered string.
 			label := source
@@ -211,13 +208,18 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			if sourceRef != "" {
 				label += "#" + sourceRef
 			}
-			if label != state.FirstLine(filepath.Join(omk, "source")) {
-				mainRoot := state.WorktreeRoots(root)[0]
+			if !payloadOverride && sameSourceLabel(label, remembered) {
+				// spelled differently, same harness: allow
+			} else if payloadOverride || label != remembered {
+				given := label
+				if payloadOverride && label == "" {
+					given = "(a local payload via OMAKASE_PAYLOAD)"
+				}
 				fmt.Fprintf(stderr, "omakase: this checkout is a linked worktree of %s.\n", mainRoot)
 				fmt.Fprintln(stderr, "         Hooks, ignores, and the remembered source are shared by every checkout of the")
 				fmt.Fprintln(stderr, "         repository, so switching its harness from here would silently re-point all of")
 				fmt.Fprintf(stderr, "         them. To change the repository's harness, run from the main checkout:\n")
-				fmt.Fprintf(stderr, "           cd %s && omakase init %s\n", mainRoot, label)
+				fmt.Fprintf(stderr, "           cd %s && omakase init %s\n", mainRoot, given)
 				fmt.Fprintln(stderr, "omakase: nothing was changed.")
 				return 1
 			}
@@ -307,7 +309,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// a repo a newer omakase set up and silently roll .omakase/ backwards —
 	// the only symptom was status rendering differently. Refuse before
 	// anything is placed; a deliberate downgrade is remove-then-init.
-	if code := checkBaseDowngrade(root, payload, stderr); code != 0 {
+	if code := checkBaseDowngrade(root, omk, payload, stderr); code != 0 {
 		return code
 	}
 
@@ -459,6 +461,18 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	// ---- one-time ledger schema upgrade ----
+	// A pre-v2 (6-column) run ledger is rotated aside. On rename failure the
+	// notice is suppressed and the run continues with the old ledger in
+	// place. Deliberately after every refusal guard above: each of those
+	// claims nothing was changed, and rotating first made that a lie.
+	ledger := filepath.Join(omk, "ledger.tsv")
+	if fileRegular(ledger) && ledgerNeedsRotate(ledger) {
+		if err := os.Rename(ledger, ledger+".pre-v2.bak"); err == nil {
+			fmt.Fprintln(stdout, "omakase: rotated a pre-v2 (6-column) run ledger aside to ledger.tsv.pre-v2.bak (the new store starts clean).")
+		}
+	}
+
 	// ---- guarded cut-over ----
 	// cutSet feeds the collision scan below: a just-untracked path was
 	// explicitly consented (OMAKASE_CUTOVER_CONFIRM=1), so the injected
@@ -501,6 +515,17 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	// adopted: rel is tracked but deliberately served from an injected copy
+	// (skip-worktree set by the user's adoption flow, #195) — and NOT
+	// blocked, because a blocked path carries the same tag and treating it
+	// as adopted would place harness content over a file the user said no
+	// to. An adopted path behaves like an ordinary injected file in every
+	// branch below: no collision warning, no tracked skip, ledger row kept.
+	blockedSet := state.ReadBlocked(omk)
+	adopted := func(rel string) bool {
+		return gitMasked(root, rel) && !blockedCovers(blockedSet, rel)
+	}
+
 	// ---- upstream-collision guard ----
 	// Prior placed paths from placed.tsv col 1 (fallback placed.list), in
 	// file row order.
@@ -514,7 +539,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		if rel == "" {
 			continue
 		}
-		if !gitTracked(root, rel) {
+		if !gitTracked(root, rel) || adopted(rel) {
 			continue
 		}
 		fmt.Fprintf(stderr, "omakase: WARNING — '%s' was injected (personal, gitignored) but is NOW TRACKED by the repo.\n", rel)
@@ -572,7 +597,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// matches its ledger row is just outdated and updates in place.
 	var conflicts []string
 	for _, rel := range payloadRels {
-		if gitTracked(root, rel) || declined[rel] || cutSet[rel] {
+		if (gitTracked(root, rel) && !adopted(rel)) || declined[rel] || cutSet[rel] {
 			continue
 		}
 		if _, ok := keptPrior[rel]; ok {
@@ -608,8 +633,9 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	for _, rel := range payloadRels {
 		f := filepath.Join(payload, rel)
 		dest := filepath.Join(root, rel)
-		// Never touch a path the repo tracks (committed file wins).
-		if gitTracked(root, rel) {
+		// Never touch a path the repo tracks (committed file wins) — except
+		// an ADOPTED one, whose working copy is deliberately the harness's.
+		if gitTracked(root, rel) && !adopted(rel) {
 			skipped = append(skipped, rel)
 			fmt.Fprintf(stderr, "omakase: SKIP (already tracked) %s\n", rel)
 			continue
@@ -910,6 +936,16 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		if wantHook[name] {
 			if hook.IsGate(name) {
 				gateHooks = true
+			}
+			// About to displace a stock git-lfs stub? Save its exact bytes
+			// under $OMK so remove can put it back — otherwise init-then-
+			// remove leaves git-lfs half-installed with nothing saying so.
+			hf := filepath.Join(hooksDir, name)
+			if content, rerr := os.ReadFile(hf); rerr == nil && isStockGitLFSHook(hf, content) {
+				bdir := filepath.Join(omk, "displaced-hooks")
+				if os.MkdirAll(bdir, 0o755) == nil {
+					_ = os.WriteFile(filepath.Join(bdir, name), content, 0o755)
+				}
 			}
 			if err := hook.Write(hooksDir, name); err != nil {
 				fmt.Fprintf(stderr, "omakase: could not write the %s hook: %v\n", name, err)
@@ -1217,8 +1253,11 @@ func physicalResolve(p string) string {
 // .omakase/VERSION than the repo already has (#189): that init was run by a
 // stale entry point, not by intent. Both sides must parse as x.y.z for the
 // guard to fire — a dev build ("dev"), a missing file, or a never-installed
-// repo never refuses.
-func checkBaseDowngrade(root, payload string, stderr io.Writer) int {
+// repo never refuses. A repo that merely COMMITS an .omakase/VERSION with no
+// omakase installed is not "set up by a newer omakase" either: the guard
+// would refuse a first install forever (init never overwrites a committed
+// path, so the file can never change), so that shape is excluded.
+func checkBaseDowngrade(root, omk, payload string, stderr io.Writer) int {
 	incoming := state.FirstLine(filepath.Join(payload, ".omakase", "VERSION"))
 	installed := state.FirstLine(filepath.Join(root, ".omakase", "VERSION"))
 	iv, okIn := parseVersion(incoming)
@@ -1226,7 +1265,17 @@ func checkBaseDowngrade(root, payload string, stderr io.Writer) int {
 	if !okIn || !okRepo || !versionLess(iv, rv) {
 		return 0
 	}
-	fmt.Fprintf(stderr, "omakase: refusing to roll this repo's omakase files BACK from %s to %s — a newer omakase set this repo up, and this init came from an older install (usually a stale plugin or binary). Update it (brew upgrade omakase, or update the plugin), then re-run. To go back to %s on purpose:  omakase remove  then init again. Nothing was changed.\n", installed, incoming, incoming)
+	if !fileRegular(filepath.Join(omk, "placed.tsv")) && gitTracked(root, ".omakase/VERSION") {
+		return 0
+	}
+	// Name the remembered source in the deliberate-downgrade path: remove
+	// deletes $OMK/source, so "remove then init again" would otherwise
+	// destroy the only copy of the string the re-init needs.
+	again := "init again"
+	if src := state.FirstLine(filepath.Join(omk, "source")); src != "" {
+		again = "omakase init " + src
+	}
+	fmt.Fprintf(stderr, "omakase: refusing to roll this repo's omakase files BACK from %s to %s — a newer omakase set this repo up, and this init came from an older install (usually a stale plugin or binary). Update it (brew upgrade omakase, or update the plugin), then re-run. To go back to %s on purpose:  omakase remove  then  %s. Nothing was changed.\n", installed, incoming, incoming, again)
 	return 2
 }
 
@@ -1263,23 +1312,41 @@ func versionLess(a, b [3]int) bool {
 // working tree for that path, so an injected copy sitting there is intentional,
 // not the upstream-clobber collision the tracked check normally means.
 //
-// `git ls-files -v` prefixes each entry with a status letter; S is
-// skip-worktree. Lowercase letters mean assume-unchanged, which is a different
-// (and much more fragile) promise, so it does not count as masked.
+// `git ls-files -v` prefixes each entry with a status letter; only S
+// (skip-worktree) counts. Lowercase letters mean assume-unchanged, a
+// different and much more fragile promise — including 'h', which git shows
+// when BOTH bits are set, so an adoption script that sets both gets none of
+// the masked-path behavior (set only skip-worktree). The pathspec is
+// :(literal) so a rel containing glob characters cannot match a masked
+// sibling's row, the returned NAME is compared (not just the tag), and a
+// case-insensitive retry keeps this in agreement with gitTracked's :(icase)
+// retry on case-folding filesystems.
 func gitMasked(root, rel string) bool {
 	if rel == "" {
 		return false
 	}
-	out, err := exec.Command("git", "-C", root, "ls-files", "-v", "--", rel).Output()
-	if err != nil {
-		return false
+	if tag, name, ok := lsFileTag(root, ":(literal)"+rel); ok {
+		return tag == 'S' && name == rel
 	}
-	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
-		if strings.HasPrefix(line, "S ") {
-			return true
-		}
+	if tag, name, ok := lsFileTag(root, ":(literal,icase)"+rel); ok {
+		return tag == 'S' && strings.EqualFold(name, rel)
 	}
 	return false
+}
+
+// lsFileTag runs `ls-files -z -v` on one pathspec and returns the first
+// entry's status letter and raw name (-z: quoting would break the name
+// comparison). ok is false when git failed or nothing matched.
+func lsFileTag(root, spec string) (byte, string, bool) {
+	out, err := exec.Command("git", "-C", root, "ls-files", "-z", "-v", "--", spec).Output()
+	if err != nil {
+		return 0, "", false
+	}
+	entry, _, _ := strings.Cut(string(out), "\x00")
+	if len(entry) < 3 || entry[1] != ' ' {
+		return 0, "", false
+	}
+	return entry[0], entry[2:], true
 }
 
 // gitTracked is `git -C root ls-files --error-unmatch -- rel` exit 0. On a
@@ -1405,4 +1472,18 @@ func exitCode(err error) int {
 		}
 	}
 	return 1
+}
+
+// sameSourceLabel reports whether two source labels name the same harness
+// despite spellings a person naturally introduces — a trailing slash or
+// GitHub's ".git" clone suffix. Anything it cannot equate refuses (the safe
+// direction: a false refusal names the main checkout; a false pass would
+// re-point every worktree).
+func sameSourceLabel(a, b string) bool {
+	norm := func(s string) string {
+		s = strings.Replace(s, ".git//", "//", 1)
+		s = strings.Replace(s, ".git#", "#", 1)
+		return strings.TrimSuffix(strings.TrimSuffix(s, "/"), ".git")
+	}
+	return norm(a) == norm(b)
 }
