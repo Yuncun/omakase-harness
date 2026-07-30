@@ -158,7 +158,9 @@ whose `payload/omakase.manifest` is its one manifest — a name plus its gate
 declarations. Publish it and anyone can install it with
 `omakase init you/your-harness` (or `omakase init you/hub/path` — one repo can
 hold several harnesses). The `/omakase:author` skill walks an agent through
-building one, including converting the agent files a repo already has.
+building one; `/omakase:split` covers the more common entrance — pulling a
+harness back out of a repo that already grew one, and judging which parts
+survive the move.
 See [authoring](docs/authoring.md).
 
 ## Documentation

@@ -5,6 +5,17 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added
+- **`/omakase:split` skill**: separating an existing repo into a portable
+  harness and the project it was written for — the entrance `author` did not
+  cover, since most harnesses are extracted rather than written fresh. Carries
+  the Two-Build Test (does the product still build without it; does it still
+  make sense on a bare repo), a three-tier coupling scan, the forge ceiling
+  (CI cannot travel in a gitignored overlay), the fidelity-vs-curation
+  decision, three pre-publish content checks no build catches, and a test
+  vessel protocol whose control arm — the same task with **no** harness — is
+  the only thing that makes "the harness worked" falsifiable.
+
 ## [0.29.1] — 2026-07-29
 
 ### Fixed

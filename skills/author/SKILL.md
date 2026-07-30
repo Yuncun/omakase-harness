@@ -12,7 +12,8 @@ git, and layers the omakase base machinery underneath — so a harness ships onl
 You are creating or editing that source repo, NOT an installed overlay (edits to injected
 copies are overwritten on the next `init`). Starting from scratch is not the only entrance:
 to fork a harness installed here, `omakase status` names its source — copy that harness
-directory into the repo chosen in Step 1 and continue at Step 3.
+directory into the repo chosen in Step 1 and continue at Step 3. To pull one back out of a
+repo that grew its own, start in [split](../split/SKILL.md) and return here at Step 2.
 
 ## Step 1 — decide where it lives (recommend, then confirm)
 
