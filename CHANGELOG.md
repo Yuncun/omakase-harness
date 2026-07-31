@@ -5,6 +5,30 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added
+- **`omakase context`**: a new read-only verb showing the harness as the
+  layers of instruction text an agent loads before your first word, rather
+  than as a list of files. Each layer is placed in a reach tier — `LOADED`
+  (full text every turn), `INDEXED` (description loads, body does not),
+  `ON DEMAND`, `ON TRIGGER`, `INERT` (unread by the host you are running) —
+  with an estimated token cost and a quoted sentence of what it actually
+  tells the agent.
+
+  `INDEXED` is the tier the file-based page cannot express, and the one that
+  changes decisions: a skill's `description:` is loaded every turn so the
+  agent can choose it, while its body stays on disk. A repo carrying ~40k
+  tokens of skill bodies may rent only ~1.5k tokens of descriptions, so a
+  bloated description costs what a long body does not.
+
+  Rows aggregate by unit rather than by file — one row per skill, one for all
+  nested `*/CLAUDE.md` — and two names for one file (a `~/.claude/CLAUDE.md`
+  symlink to `~/.copilot/copilot-instructions.md`) are grouped by resolved
+  path and counted once. Load order follows each host's published precedence
+  rather than a guess, and when the running host cannot be detected nothing
+  is marked inert. `--markdown` emits a table; `--show <path>` prints one
+  layer in full and lists candidates instead of guessing when a substring is
+  ambiguous.
+
 ## [0.29.1] — 2026-07-29
 
 ### Fixed

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/Yuncun/omakase-harness/internal/block"
+	"github.com/Yuncun/omakase-harness/internal/ctxlayers"
 	"github.com/Yuncun/omakase-harness/internal/overlay"
 	"github.com/Yuncun/omakase-harness/internal/state"
 	"github.com/Yuncun/omakase-harness/internal/status"
@@ -70,6 +71,9 @@ func resolveVersion(v, c, d string, bi *debug.BuildInfo) (string, string, string
 var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 	"status": func(argv []string, stdout, stderr io.Writer) int {
 		return status.Run(argv[2:], stdout, stderr)
+	},
+	"context": func(argv []string, stdout, stderr io.Writer) int {
+		return ctxlayers.Run(argv[2:], stdout, stderr)
 	},
 	"init": func(argv []string, stdout, stderr io.Writer) int {
 		code := overlay.RunInit(argv[2:], stdout, stderr)
@@ -150,6 +154,7 @@ const usage = `usage: omakase <command>
 
   init [source]    install or repair the harness in this repo (idempotent)
   status           what's installed here; per-item switches (--help for flags)
+  context          what an agent actually loads here, and what it costs
   diff [path…]     what you changed vs the harness (read-only)
   block <item>     hide one piece of the repo's OWN committed agent config
   unblock <item>   put a blocked item back

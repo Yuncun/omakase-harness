@@ -75,7 +75,12 @@ omakase remove            delete everything omakase placed, exactly
 
 Everything else hangs off `status`: per-item toggles (`--disable`/`--enable`),
 keep/restore for files you've edited, and `omakase diff` for what changed —
-`omakase status --help` lists them. The toggles also point the other way:
+`omakase status --help` lists them. `omakase context` answers the sibling
+question — not *what is installed* but *what an agent actually loads here*:
+every instruction layer in the order your host assembles it, what each costs
+in tokens, a line of what it actually says, and which layers are idle
+(a skill's description loads every turn; its body does not) or inert on the
+host you happen to be running. The toggles also point the other way:
 `omakase block <item>` hides one piece of the repo's *own* committed agent
 config (an instruction file, a skill, a hook script) from your clone — on every
 host, including the surfaces no host can switch off natively — and

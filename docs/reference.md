@@ -117,6 +117,57 @@ source no longer ships the path; `--restore` still works offline), by the
 checkout self-heal (which refills a missing kept file with the ACCEPTED
 copy), and by `remove` (a kept file is yours; it stays on disk, reported).
 
+### `omakase context [--markdown] [--show <path>]`
+
+Binary-only verb, strictly read-only: the harness seen as the layers of
+instruction text an agent host assembles before your first word, rather than
+as a list of files. Where `status` answers *what is installed and who owns
+it*, `context` answers *what actually reaches the model, and what it costs*.
+
+Every layer is placed in one of five reach tiers:
+
+| Tier | Meaning |
+| --- | --- |
+| `LOADED` | full text in the context window on every turn |
+| `INDEXED` | name and description load; the body does not |
+| `ON DEMAND` | loads when you touch the directory it governs |
+| `ON TRIGGER` | loads when what you ask matches its description |
+| `INERT` | present on disk, unread by the host you are running |
+
+The `INDEXED` tier is the distinction the file-based page cannot make: a
+skill's frontmatter `description:` is loaded every turn so the agent can
+decide whether to open it, while its body stays on disk until a trigger
+matches. A repo can therefore carry tens of thousands of tokens of skills for
+a rent of one or two thousand — and a needlessly long description is a
+permanent tax that a long body is not.
+
+Layer order follows each host's *published* instruction precedence (Copilot
+CLI prints its list in `copilot --help`); it is not inferred. Host detection
+reads `COPILOT_CLI`/`COPILOT_AGENT_SESSION_ID` and `CLAUDECODE` from the
+environment. When the host cannot be determined **nothing is marked inert** —
+asserting that a file is unread without being able to observe the host would
+be worse than staying quiet.
+
+Rows are aggregated by unit, not by file: one row per skill (not one per
+script, test, and reference), one row for all nested `*/CLAUDE.md`. Two names
+for one file — commonly `~/.claude/CLAUDE.md` symlinked to
+`~/.copilot/copilot-instructions.md` — are grouped by resolved path and
+counted once, since double-counting would both inflate the total and report
+loaded bytes as inert. A file whose only content is an `@`-include is
+reported as the pointer it is rather than quoted as if it were guidance.
+
+Token costs are estimated at four bytes per token and labelled as estimates;
+only the host knows real numbers (`/context` in both Copilot CLI and Claude
+Code). The verb deliberately does not duplicate that — it supplies the column
+the host cannot have: where a layer came from, whether it survives a clone,
+and who can change it.
+
+`--show <path>` prints one layer in full, accepting a repo-relative path, a
+`~/` personal path, or any unique substring of one. A substring matching
+several layers lists them and exits 2 rather than guessing. Exit 0 on the
+page; unknown flags and unresolvable `--show` targets exit 2; outside a git
+repo exits 1.
+
 ### `omakase diff [path…]`
 
 Binary-only verb (no `.sh` shim), strictly read-only: shows what you changed
