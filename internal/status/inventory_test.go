@@ -198,47 +198,31 @@ func buildNotInstalledFixture(t *testing.T) (*state.Repo, string) {
 // everything from "COMMITTED..." through the last GLOBAL row, no leading or
 // trailing blank line.
 const wantInventoryTermInstalled = `THE PROJECT'S HARNESS (committed — managed by git, not omakase)
-    + .claude/rules/team.md   (rule)
-    + CLAUDE.md   (doc)
-INJECTED (omakase) — placed by omakase init, gitignored
-    + normal.txt   (other, from some/src)
-    - disabled.txt   (other, from some/src; disabled — not restored, not verified)
-    ! missing.txt   (other, from some/src; MISSING — run omakase init to restore)
-    ~ drifted.txt   (other, from some/src; DRIFTED — differs from canonical, see omakase diff (then --keep or --restore))
-    + linked.txt -> nonexistent-target.txt   (other, from some/src)
-    ! .omakase/internal.sh   (other, from some/src; MISSING — run omakase init to restore)
-    ~ .omakase/stale-gate.sh   (other, from some/src; DRIFTED — differs from canonical, run omakase init to re-sync)
-    + sixtab.txt   (other, from some/src)
-    edit any of these directly — status offers keep/restore; to own the harness: /omakase:author
+  PATH                    KIND
+  .claude/rules/team.md   rule
+  CLAUDE.md               doc
+
+INJECTED — placed by omakase init from some/src · gitignored
+  PATH                                   KIND    STATE
+  normal.txt                             other   ✓
+  disabled.txt                           other   disabled — omakase status --enable
+  missing.txt                            other   MISSING — omakase init restores
+  drifted.txt                            other   DRIFTED — omakase diff, then --keep or --restore
+  linked.txt -> nonexistent-target.txt   other   ✓
+  .omakase/internal.sh                   other   MISSING — omakase init restores
+  .omakase/stale-gate.sh                 other   DRIFTED — omakase init re-syncs
+  sixtab.txt                             other   ✓
+
 YOURS, UNMANAGED — untracked agent config, only in this clone (not committed, not placed by omakase)
-    + .claude/rules/local-tweak.md   (rule)
-    To keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author
+  PATH                           KIND
+  .claude/rules/local-tweak.md   rule
+  To keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author
+
 GLOBAL — 11 files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list: omakase status --global)
 `
 
 // Markdown-mode inventory for the installed fixture: the RenderInventory slice.
-const wantInventoryMDInstalled = "### The project's harness (committed — managed by git, not omakase)\n" +
-	"- `.claude/rules/team.md` — rule\n" +
-	"- `CLAUDE.md` — doc\n" +
-	"\n" +
-	"### Injected (omakase) — placed by `omakase init`, gitignored\n" +
-	"- `normal.txt` — other, from some/src\n" +
-	"- `disabled.txt` — other, from some/src — disabled (not restored, not verified)\n" +
-	"- `missing.txt` — other, from some/src — **MISSING** (run `omakase init` to restore)\n" +
-	"- `drifted.txt` — other, from some/src — **DRIFTED** (differs from canonical; see `omakase diff` — keep it (`omakase status --keep`) or put the harness version back (`omakase status --restore`))\n" +
-	"- `linked.txt` → `nonexistent-target.txt` — other, from some/src\n" +
-	"- `.omakase/internal.sh` — other, from some/src — **MISSING** (run `omakase init` to restore)\n" +
-	"- `.omakase/stale-gate.sh` — other, from some/src — **DRIFTED** (differs from canonical; `omakase init` to re-sync)\n" +
-	"- `sixtab.txt` — other, from some/src\n" +
-	"\n" +
-	"_Edit any of these directly — status offers keep/restore; to own the harness: `/omakase:author`._\n" +
-	"\n" +
-	"### Yours, unmanaged — untracked agent config, only in this clone (not committed, not placed by omakase)\n" +
-	"- `.claude/rules/local-tweak.md` — rule\n" +
-	"\n" +
-	"_To keep or share one beyond this clone, add it to a harness — the author skill (`/omakase:author`)._\n" +
-	"\n" +
-	"### Global — 11 files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list: omakase status --global)\n"
+const wantInventoryMDInstalled = "### The project's harness (committed — managed by git, not omakase)\n\n| Path | Kind |\n| --- | --- |\n| `.claude/rules/team.md` | rule |\n| `CLAUDE.md` | doc |\n\n### Injected — placed by `omakase init` from some/src · gitignored\n\n| Path | Kind | State |\n| --- | --- | --- |\n| `normal.txt` | other | ✓ |\n| `disabled.txt` | other | disabled — omakase status --enable |\n| `missing.txt` | other | MISSING — omakase init restores |\n| `drifted.txt` | other | DRIFTED — omakase diff, then --keep or --restore |\n| `linked.txt -> nonexistent-target.txt` | other | ✓ |\n| `.omakase/internal.sh` | other | MISSING — omakase init restores |\n| `.omakase/stale-gate.sh` | other | DRIFTED — omakase init re-syncs |\n| `sixtab.txt` | other | ✓ |\n\n### Yours, unmanaged — untracked agent config, only in this clone (not committed, not placed by omakase)\n\n| Path | Kind |\n| --- | --- |\n| `.claude/rules/local-tweak.md` | rule |\n\n_To keep or share one beyond this clone, add it to a harness — the author skill (`/omakase:author`)._\n\n### Global — 11 files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list: omakase status --global)\n"
 
 func TestRenderInventoryTermInstalled(t *testing.T) {
 	repo, home := buildInstalledFixture(t)
@@ -265,11 +249,14 @@ func TestRenderInventoryMDInstalled(t *testing.T) {
 const wantNotInstalledTerm = `No omakase harness is installed in this repo.
 
 AGENT CONFIG COMMITTED IN THIS REPO (managed by git, not omakase)
-    + .claude/rules/team.md   (rule)
+  PATH                    KIND
+  .claude/rules/team.md   rule
 YOURS, UNMANAGED — untracked agent config, only in this clone (not committed, not placed by omakase)
-    + .claude/rules/local-tweak.md   (rule)
-    + CLAUDE.local.md   (doc)
-    To keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author
+  PATH                           KIND
+  .claude/rules/local-tweak.md   rule
+  CLAUDE.local.md                doc
+  To keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author
+
 GLOBAL — 11 files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list: omakase status --global)
 
 A presence check of known paths for known tools — not exhaustive; a file can be present and never read.
@@ -277,22 +264,7 @@ Install a harness:  omakase init <owner/repo>
 `
 
 // Markdown-mode output for the not-installed fixture.
-const wantNotInstalledMD = "**No omakase harness is installed in this repo.**\n" +
-	"\n" +
-	"### Agent config committed in this repo (managed by git, not omakase)\n" +
-	"- `.claude/rules/team.md` — rule\n" +
-	"\n" +
-	"### Yours, unmanaged — untracked agent config, only in this clone (not committed, not placed by omakase)\n" +
-	"- `.claude/rules/local-tweak.md` — rule\n" +
-	"- `CLAUDE.local.md` — doc\n" +
-	"\n" +
-	"_To keep or share one beyond this clone, add it to a harness — the author skill (`/omakase:author`)._\n" +
-	"\n" +
-	"### Global — 11 files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list: omakase status --global)\n" +
-	"\n" +
-	"_A presence check of known paths for known tools — not exhaustive; a file can be present and never read._\n" +
-	"\n" +
-	"_Install a harness:_ `omakase init <owner/repo>`\n"
+const wantNotInstalledMD = "**No omakase harness is installed in this repo.**\n\n### Agent config committed in this repo (managed by git, not omakase)\n\n| Path | Kind |\n| --- | --- |\n| `.claude/rules/team.md` | rule |\n\n### Yours, unmanaged — untracked agent config, only in this clone (not committed, not placed by omakase)\n\n| Path | Kind |\n| --- | --- |\n| `.claude/rules/local-tweak.md` | rule |\n| `CLAUDE.local.md` | doc |\n\n_To keep or share one beyond this clone, add it to a harness — the author skill (`/omakase:author`)._\n\n### Global — 11 files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list: omakase status --global)\n\n_A presence check of known paths for known tools — not exhaustive; a file can be present and never read._\n\n_Install a harness:_ `omakase init <owner/repo>`\n"
 
 func TestRenderNotInstalledTerm(t *testing.T) {
 	repo, home := buildNotInstalledFixture(t)
@@ -377,8 +349,8 @@ func TestRenderUnmanagedCap(t *testing.T) {
 		md   bool
 		row  string
 	}{
-		{"terminal", false, "+ .claude/rules/"},
-		{"markdown", true, "- `.claude/rules/"},
+		{"terminal", false, "  .claude/rules/r"},
+		{"markdown", true, "| `.claude/rules/r"},
 	} {
 		var buf bytes.Buffer
 		renderUnmanaged(&buf, rows, mode.md)
@@ -671,10 +643,10 @@ func TestRenderInjectedKeptRow(t *testing.T) {
 	var md, term bytes.Buffer
 	RenderInventory(&md, repo, t.TempDir(), true)
 	RenderInventory(&term, repo, t.TempDir(), false)
-	if !strings.Contains(md.String(), "`AGENTS.md` — doc, from acme — kept (yours)") {
+	if !strings.Contains(md.String(), "| `AGENTS.md` | doc | ✓ kept (yours) |") {
 		t.Errorf("md kept row wrong:\n%s", md.String())
 	}
-	if !strings.Contains(term.String(), "= AGENTS.md   (doc, from acme; kept (yours))") {
+	if !strings.Contains(term.String(), "✓ kept (yours)") {
 		t.Errorf("term kept row wrong:\n%s", term.String())
 	}
 	if strings.Contains(md.String(), "DRIFTED") {
@@ -685,7 +657,7 @@ func TestRenderInjectedKeptRow(t *testing.T) {
 	writeFile(t, dir, "AGENTS.md", "accepted\nsecond edit\n")
 	var md2 bytes.Buffer
 	RenderInventory(&md2, repo, t.TempDir(), true)
-	if !strings.Contains(md2.String(), "kept (yours)") || !strings.Contains(md2.String(), "differs from your accepted version") {
+	if !strings.Contains(md2.String(), "DRIFTED from your kept version — omakase diff") {
 		t.Errorf("post-keep edit row wrong:\n%s", md2.String())
 	}
 }
@@ -713,10 +685,10 @@ func TestRenderInjectedKeptMissingAndDisabled(t *testing.T) {
 	var md bytes.Buffer
 	RenderInventory(&md, repo, t.TempDir(), true)
 	out := md.String()
-	if !strings.Contains(out, "`gone.md`") || !strings.Contains(out, "MISSING** (your kept version is saved") {
+	if !strings.Contains(out, "`gone.md`") || !strings.Contains(out, "MISSING — kept copy returns on next checkout") {
 		t.Errorf("missing kept row hides the saved copy:\n%s", out)
 	}
-	if !strings.Contains(out, "`off.md`") || !strings.Contains(out, "a kept version of yours is saved") {
+	if !strings.Contains(out, "`off.md`") || !strings.Contains(out, "disabled — kept copy saved; --enable restores it") {
 		t.Errorf("disabled kept row hides the saved copy:\n%s", out)
 	}
 }

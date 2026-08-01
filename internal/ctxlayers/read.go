@@ -358,27 +358,6 @@ func dirBytes(dir string) (bytes, count int) {
 	return bytes, count
 }
 
-// wordSet is the distinct lowercase word-ish tokens in a file, used for the
-// duplication check. Tokens shorter than four characters are dropped: they
-// are dominated by articles and punctuation and would flatten every
-// comparison toward a high score.
-func wordSet(path string) map[string]bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	set := map[string]bool{}
-	for _, w := range strings.FieldsFunc(strings.ToLower(string(data)), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r) &&
-			r != '.' && r != '/' && r != '-' && r != '_'
-	}) {
-		if len(w) >= 4 {
-			set[w] = true
-		}
-	}
-	return set
-}
-
 // collapseSpaces squeezes runs of whitespace to single spaces and trims.
 func collapseSpaces(s string) string { return strings.Join(strings.Fields(s), " ") }
 

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Yuncun/omakase-harness/internal/harness"
 	"github.com/Yuncun/omakase-harness/internal/state"
@@ -221,6 +222,7 @@ func renderUnmanaged(w io.Writer, rows [][2]string, md bool) {
 	}
 	if md {
 		fmt.Fprintln(w, "### Yours, unmanaged — untracked agent config, only in this clone (not committed, not placed by omakase)")
+		fmt.Fprintln(w)
 		renderPathRows(w, shown, true)
 		if elided > 0 {
 			fmt.Fprintf(w, "- … and %d more\n", elided)
@@ -233,9 +235,10 @@ func renderUnmanaged(w io.Writer, rows [][2]string, md bool) {
 	fmt.Fprintln(w, "YOURS, UNMANAGED — untracked agent config, only in this clone (not committed, not placed by omakase)")
 	renderPathRows(w, shown, false)
 	if elided > 0 {
-		fmt.Fprintf(w, "    … and %d more\n", elided)
+		fmt.Fprintf(w, "  … and %d more\n", elided)
 	}
-	fmt.Fprintln(w, "    To keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author")
+	fmt.Fprintln(w, "  To keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author")
+	fmt.Fprintln(w)
 }
 
 // committedRows pairs each CommittedList path with its kind, in git's order,
@@ -251,28 +254,41 @@ func committedRows(repo *state.Repo) [][2]string {
 	return rows
 }
 
-// renderPathRows writes {display path, kind} rows as md bullets or indented
-// terminal + rows, with the (none) placeholder when nothing rendered.
+// renderPathRows writes {display path, kind} rows as a width-aligned
+// PATH/KIND table (the guards chart's house style), or a markdown table,
+// with the (none) placeholder when nothing rendered.
 func renderPathRows(w io.Writer, rows [][2]string, md bool) {
-	shown := false
+	var kept [][2]string
 	for _, row := range rows {
-		if row[0] == "" {
-			continue
-		}
-		shown = true
-		if md {
-			fmt.Fprintf(w, "- `%s` — %s\n", row[0], row[1])
-		} else {
-			fmt.Fprintf(w, "    + %s   (%s)\n", row[0], row[1])
+		if row[0] != "" {
+			kept = append(kept, row)
 		}
 	}
-	if shown {
+	if len(kept) == 0 {
+		if md {
+			fmt.Fprintln(w, "- _(none)_")
+		} else {
+			fmt.Fprintln(w, "    (none)")
+		}
 		return
 	}
 	if md {
-		fmt.Fprintln(w, "- _(none)_")
-	} else {
-		fmt.Fprintln(w, "    (none)")
+		fmt.Fprintln(w, "| Path | Kind |")
+		fmt.Fprintln(w, "| --- | --- |")
+		for _, row := range kept {
+			fmt.Fprintf(w, "| `%s` | %s |\n", row[0], row[1])
+		}
+		return
+	}
+	wP := utf8.RuneCountInString("PATH")
+	for _, row := range kept {
+		if l := utf8.RuneCountInString(row[0]); l > wP {
+			wP = l
+		}
+	}
+	fmt.Fprintf(w, "  %-*s   %s\n", wP, "PATH", "KIND")
+	for _, row := range kept {
+		fmt.Fprintf(w, "  %-*s   %s\n", wP, row[0], row[1])
 	}
 }
 
@@ -289,14 +305,13 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 
 	if md {
 		fmt.Fprintln(w, "### The project's harness (committed — managed by git, not omakase)")
+		fmt.Fprintln(w)
 		renderPathRows(w, comm, true)
 		fmt.Fprintln(w)
 
-		fmt.Fprintln(w, "### Injected (omakase) — placed by `omakase init`, gitignored")
-		if renderInjected(w, repo, placedPath, true) {
-			fmt.Fprintln(w)
-			fmt.Fprintln(w, "_Edit any of these directly — status offers keep/restore; to own the harness: `/omakase:author`._")
-		} else {
+		fmt.Fprintf(w, "### Injected — placed by `omakase init` from %s · gitignored\n", injectedSrc(repo))
+		fmt.Fprintln(w)
+		if !renderInjected(w, repo, placedPath, true) {
 			fmt.Fprintln(w, "- _(none)_")
 		}
 		fmt.Fprintln(w)
@@ -309,13 +324,13 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 
 	fmt.Fprintln(w, "THE PROJECT'S HARNESS (committed — managed by git, not omakase)")
 	renderPathRows(w, comm, false)
+	fmt.Fprintln(w)
 
-	fmt.Fprintln(w, "INJECTED (omakase) — placed by omakase init, gitignored")
-	if renderInjected(w, repo, placedPath, false) {
-		fmt.Fprintln(w, "    edit any of these directly — status offers keep/restore; to own the harness: /omakase:author")
-	} else {
+	fmt.Fprintf(w, "INJECTED — placed by omakase init from %s · gitignored\n", injectedSrc(repo))
+	if !renderInjected(w, repo, placedPath, false) {
 		fmt.Fprintln(w, "    (none)")
 	}
+	fmt.Fprintln(w)
 
 	renderUnmanaged(w, unmanaged, false)
 
@@ -327,30 +342,27 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 // and prints nothing at all when every row is healthy. This is the default
 // page's whole per-file surface: a healthy file earns no line (its cost and
 // reach are the layers section's job), while a weakened or stale one must
-// never be invisible at rest. The row renderer is writeInjectedRow, so a
-// problem row here reads identically to its --all twin.
+// never be invisible at rest. The row builder is injectedCells, so a problem
+// row here reads identically to its --all twin.
 func RenderProblems(w io.Writer, repo *state.Repo, md bool) {
-	placedPath := filepath.Join(repo.OMK, "placed.tsv")
-	src := srcDisplay(state.FirstLine(filepath.Join(repo.OMK, "source")))
-	if src == "" {
-		src = "payload"
-	}
-	headed := false
-	for _, row := range state.ReadPlaced(placedPath) {
+	var rows []invRow
+	for _, row := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
 		if row.Rel == "" || !rowNeedsAttention(repo, row) {
 			continue
 		}
-		if !headed {
-			headed = true
-			fmt.Fprintln(w)
-			if md {
-				fmt.Fprintln(w, "### Needs attention — injected files off their canonical state")
-			} else {
-				fmt.Fprintln(w, "NEEDS ATTENTION — injected files off their canonical state")
-			}
-		}
-		writeInjectedRow(w, repo, row, src, md)
+		rows = append(rows, injectedCells(repo, row))
 	}
+	if len(rows) == 0 {
+		return
+	}
+	fmt.Fprintln(w)
+	if md {
+		fmt.Fprintln(w, "### Needs attention — injected files off their canonical state")
+		fmt.Fprintln(w)
+	} else {
+		fmt.Fprintln(w, "NEEDS ATTENTION — injected files off their canonical state")
+	}
+	emitInjectedTable(w, rows, md)
 }
 
 // rowNeedsAttention reports whether a placed row belongs on the default
@@ -421,6 +433,7 @@ func RenderGlobal(w io.Writer, home string, md bool) {
 	pers := PersonalList(home)
 	if md {
 		fmt.Fprintln(w, "### Global — not installed by omakase (Claude ~/.claude + Copilot ~/.copilot, applies to every repo)")
+		fmt.Fprintln(w)
 		renderPathRows(w, pers, true)
 		return
 	}
@@ -440,15 +453,7 @@ func renderInjected(w io.Writer, repo *state.Repo, placedPath string, md bool) b
 	if err != nil || info.Size() == 0 {
 		return false
 	}
-
-	shown := false
-	// The "from" annotation is the remembered source ($OMK/source), shown in
-	// its browsable form; a plain install has no source file and reads
-	// "payload". One value for every row — the ledger stores none of this.
-	src := srcDisplay(state.FirstLine(filepath.Join(repo.OMK, "source")))
-	if src == "" {
-		src = "payload"
-	}
+	var rows []invRow
 	for _, row := range state.ReadPlaced(placedPath) {
 		if row.Rel == "" {
 			continue
@@ -456,10 +461,24 @@ func renderInjected(w io.Writer, repo *state.Repo, placedPath string, md bool) b
 		if harness.IsMachinery(row.Rel) && !machineryNoteworthy(repo, row) {
 			continue
 		}
-		shown = true
-		writeInjectedRow(w, repo, row, src, md)
+		rows = append(rows, injectedCells(repo, row))
 	}
-	return shown
+	if len(rows) == 0 {
+		return false
+	}
+	emitInjectedTable(w, rows, md)
+	return true
+}
+
+// injectedSrc is the shared "from" fact for the whole Injected group — the
+// remembered source ($OMK/source) in its browsable form, or "payload" for a
+// plain install. It is stated once, in the group header, never per row.
+func injectedSrc(repo *state.Repo) string {
+	src := srcDisplay(state.FirstLine(filepath.Join(repo.OMK, "source")))
+	if src == "" {
+		return "payload"
+	}
+	return src
 }
 
 // machineryNoteworthy reports whether a machinery row deserves a line in the
@@ -483,16 +502,20 @@ func machineryNoteworthy(repo *state.Repo, row state.PlacedRow) bool {
 	return true
 }
 
-// writeInjectedRow renders one placed.tsv row in branch order: Enabled=="0"
-// -> disabled row; else a symlink (Lstat) -> arrow row (readlink target, even
-// if dangling); else the path exists (Stat) -> plain row; else -> missing
-// row. The drift suffix (state.IsDrifted) applies only to the arrow and plain
-// branches — disabled rows are never managed and missing rows have nothing to
-// diff. A kept row (the $OMK/kept accepted copy exists — the user accepted
-// their own edit, #98 Part 2) carries its own state marker: consent must be
-// visible at rest. Kept and drifted can coexist — an edit made after the
-// keep drifts from the ACCEPTED hash and renders both.
-func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, src string, md bool) {
+// invRow is one Injected-table row: the path cell (symlinks render as
+// `rel -> target`), the kind, and the state cell.
+type invRow struct{ path, kind, state string }
+
+// injectedCells builds one placed.tsv row's table cells, in branch order:
+// Enabled=="0" -> disabled; else a symlink (Lstat) -> arrow path (readlink
+// target, even if dangling); else the path exists (Stat) -> plain; else ->
+// MISSING. Drift (state.IsDrifted) applies only to the arrow and plain
+// branches — disabled rows are never managed and missing rows have nothing
+// to diff. A kept row (the $OMK/kept accepted copy exists — the user
+// accepted their own edit, #98 Part 2) says so: consent must be visible at
+// rest. Kept and drifted can coexist — an edit made after the keep drifts
+// from the ACCEPTED hash.
+func injectedCells(repo *state.Repo, row state.PlacedRow) invRow {
 	// Kind is a pure function of the path; the ledger stores only rel + hash.
 	kind := harness.KindOf(row.Rel)
 	full := filepath.Join(repo.Root, row.Rel)
@@ -506,74 +529,66 @@ func writeInjectedRow(w io.Writer, repo *state.Repo, row state.PlacedRow, src st
 	_, statErr := os.Stat(full)
 	present := statErr == nil
 
-	if md {
-		dz, kz := "", ""
-		if drifted {
-			// A drifted machinery file is torn state and init re-places it;
-			// a drifted user-facing file is a local edit and belongs to the
-			// edit lifecycle (init refuses to overwrite it).
-			dz = " — **DRIFTED** (differs from canonical; see `omakase diff` — keep it (`omakase status --keep`) or put the harness version back (`omakase status --restore`))"
-			if harness.IsMachinery(row.Rel) {
-				dz = " — **DRIFTED** (differs from canonical; `omakase init` to re-sync)"
-			}
-			if kept {
-				dz = " — **DRIFTED** (differs from your accepted version; see `omakase diff`)"
-			}
+	pathCell := row.Rel
+	if row.Enabled != "0" && isSymlink {
+		target, _ := os.Readlink(full)
+		pathCell = row.Rel + " -> " + target
+	}
+
+	var stateCell string
+	switch {
+	case row.Enabled == "0":
+		stateCell = "disabled — omakase status --enable"
+		if keptMark {
+			stateCell = "disabled — kept copy saved; --enable restores it"
+		}
+	case drifted:
+		// A drifted machinery file is torn state and init re-places it; a
+		// drifted user-facing file is a local edit and belongs to the edit
+		// lifecycle (init refuses to overwrite it).
+		stateCell = "DRIFTED — omakase diff, then --keep or --restore"
+		if harness.IsMachinery(row.Rel) {
+			stateCell = "DRIFTED — omakase init re-syncs"
 		}
 		if kept {
-			kz = " — kept (yours)"
+			stateCell = "DRIFTED from your kept version — omakase diff"
 		}
-		switch {
-		case row.Enabled == "0":
-			note := ""
-			if keptMark {
-				note = "; a kept version of yours is saved — `omakase status --enable` brings it back"
-			}
-			fmt.Fprintf(w, "- `%s` — %s, from %s — disabled (not restored, not verified%s)\n", row.Rel, kind, src, note)
-		case isSymlink:
-			target, _ := os.Readlink(full)
-			fmt.Fprintf(w, "- `%s` → `%s` — %s, from %s%s%s\n", row.Rel, target, kind, src, kz, dz)
-		case present:
-			fmt.Fprintf(w, "- `%s` — %s, from %s%s%s\n", row.Rel, kind, src, kz, dz)
-		case kept:
-			fmt.Fprintf(w, "- `%s` — %s, from %s — **MISSING** (your kept version is saved; restored on the next checkout, or run `omakase init`)\n", row.Rel, kind, src)
-		default:
-			fmt.Fprintf(w, "- `%s` — %s, from %s — **MISSING** (run `omakase init` to restore)\n", row.Rel, kind, src)
+	case present || isSymlink:
+		stateCell = "✓"
+		if kept {
+			stateCell = "✓ kept (yours)"
+		}
+	case kept:
+		stateCell = "MISSING — kept copy returns on next checkout, or omakase init"
+	default:
+		stateCell = "MISSING — omakase init restores"
+	}
+	return invRow{pathCell, kind, stateCell}
+}
+
+// emitInjectedTable writes invRows as a width-aligned PATH/KIND/STATE table
+// (terminal) or a markdown table, state last and unpadded.
+func emitInjectedTable(w io.Writer, rows []invRow, md bool) {
+	if md {
+		fmt.Fprintln(w, "| Path | Kind | State |")
+		fmt.Fprintln(w, "| --- | --- | --- |")
+		for _, r := range rows {
+			fmt.Fprintf(w, "| `%s` | %s | %s |\n", r.path, r.kind, r.state)
 		}
 		return
 	}
-
-	dz, kz, mk := "", "", "+"
-	if kept {
-		kz = "; kept (yours)"
-		mk = "="
+	wP, wK := utf8.RuneCountInString("PATH"), utf8.RuneCountInString("KIND")
+	for _, r := range rows {
+		if l := utf8.RuneCountInString(r.path); l > wP {
+			wP = l
+		}
+		if l := utf8.RuneCountInString(r.kind); l > wK {
+			wK = l
+		}
 	}
-	if drifted {
-		dz = "; DRIFTED — differs from canonical, see omakase diff (then --keep or --restore)"
-		if harness.IsMachinery(row.Rel) {
-			dz = "; DRIFTED — differs from canonical, run omakase init to re-sync"
-		}
-		if kept {
-			dz = "; DRIFTED — differs from your accepted version, see omakase diff"
-		}
-		mk = "~"
-	}
-	switch {
-	case row.Enabled == "0":
-		note := ""
-		if keptMark {
-			note = "; kept version of yours saved — omakase status --enable brings it back"
-		}
-		fmt.Fprintf(w, "    - %s   (%s, from %s; disabled — not restored, not verified%s)\n", row.Rel, kind, src, note)
-	case isSymlink:
-		target, _ := os.Readlink(full)
-		fmt.Fprintf(w, "    %s %s -> %s   (%s, from %s%s%s)\n", mk, row.Rel, target, kind, src, kz, dz)
-	case present:
-		fmt.Fprintf(w, "    %s %s   (%s, from %s%s%s)\n", mk, row.Rel, kind, src, kz, dz)
-	case kept:
-		fmt.Fprintf(w, "    ! %s   (%s, from %s; MISSING — your kept version is saved; restored on next checkout, or omakase init)\n", row.Rel, kind, src)
-	default:
-		fmt.Fprintf(w, "    ! %s   (%s, from %s; MISSING — run omakase init to restore)\n", row.Rel, kind, src)
+	fmt.Fprintf(w, "  %-*s   %-*s   %s\n", wP, "PATH", wK, "KIND", "STATE")
+	for _, r := range rows {
+		fmt.Fprintf(w, "  %-*s   %-*s   %s\n", wP, r.path, wK, r.kind, r.state)
 	}
 }
 
@@ -595,6 +610,7 @@ func RenderNotInstalled(w io.Writer, repo *state.Repo, home string, md bool) {
 		fmt.Fprintln(w, "**No omakase harness is installed in this repo.**")
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "### Agent config committed in this repo (managed by git, not omakase)")
+		fmt.Fprintln(w)
 		renderPathRows(w, comm, true)
 		fmt.Fprintln(w)
 		renderUnmanaged(w, unmanaged, true)

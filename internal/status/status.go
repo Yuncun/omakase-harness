@@ -260,7 +260,7 @@ func renderMarkdown(w io.Writer, repo *state.Repo, home, icon, hname, srcdisp, b
 // (built in since #172; see banner.go), then the same question-first order
 // as markdown.
 func renderTerminal(w io.Writer, repo *state.Repo, home, hname, srcdisp, basever string, nInjected, nToggledOff int, all bool) {
-	fmt.Fprint(w, statusBanner(hname, basever))
+	fmt.Fprint(w, statusBanner(hname))
 
 	if srcdisp != "" {
 		fmt.Fprintf(w, "%s — %s · base omakase %s · installed in %s\n", hname, srcdisp, basever, repo.Root)

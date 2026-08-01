@@ -65,15 +65,13 @@ func TestBannerColorGradient(t *testing.T) {
 func TestStatusBannerComposition(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("OMAKASE_ICON", "")
-	if out := statusBanner("acme", "1.2.3"); !strings.Contains(out, "🥡 acme v1.2.3") {
-		t.Errorf("default icon + version missing: %q", out)
-	}
-	// Unknown base version: no dangling "v?".
-	if out := statusBanner("acme", "?"); strings.Contains(out, "v?") || !strings.Contains(out, "🥡 acme ") {
-		t.Errorf("unknown version handled wrong: %q", out)
+	// Name only — no version in the banner: the base payload's version glued
+	// to the harness name read as the harness's own version (mislabel).
+	if out := statusBanner("acme"); !strings.Contains(out, "🥡 acme ") || strings.Contains(out, " v") {
+		t.Errorf("banner should be icon + name only: %q", out)
 	}
 	t.Setenv("OMAKASE_ICON", "⚙️")
-	if out := statusBanner("acme", "?"); !strings.Contains(out, "⚙️ acme") {
+	if out := statusBanner("acme"); !strings.Contains(out, "⚙️ acme") {
 		t.Errorf("OMAKASE_ICON ignored: %q", out)
 	}
 }

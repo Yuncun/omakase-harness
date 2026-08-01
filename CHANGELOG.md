@@ -11,14 +11,20 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   harness renders as the instruction layers the detected host loads — one
   line per layer with an estimated token cost drawn as a bar, cost-first,
   the file's opening words quoted, per-directory CLAUDE.md walk-up included,
-  CLAUDE.md/AGENTS.md symlink pairs counted once. Rules scoped by
-  frontmatter globs (`paths:`/`applyTo:`) and skill bodies aggregate under
-  an idle section instead of inflating the every-turn total; files the
-  current host never reads collapse to one closing line; with no host
-  detected the header shows each host's per-turn total. Injected files get
-  individual lines only when something is wrong (missing / drifted /
+  CLAUDE.md/AGENTS.md symlink pairs counted once (rendered as one
+  `CLAUDE.md → AGENTS.md` row). Rules scoped by frontmatter globs
+  (`paths:`/`applyTo:`) and skill bodies aggregate under a LOADS ON DEMAND
+  section instead of inflating the every-turn total; files the current host
+  never reads collapse to one closing line; with no host detected the
+  header shows each host's per-turn total. Rows are data only — bar,
+  number, path, quoted excerpt — with no annotation prose. Injected files
+  get individual lines only when something is wrong (missing / drifted /
   toggled off — NEEDS ATTENTION); untracked local config is one count line.
-  The full per-file inventory moved behind `omakase status --all`, and
+  The full per-file inventory moved behind `omakase status --all` and is
+  now a width-aligned PATH/KIND/STATE table with the install source stated
+  once in the group header, never per row. The banner no longer glues the
+  base payload version to the harness name (it read as the harness's own
+  version); the identity line still states it as `base omakase X`.
   `omakase status --show <path-or-fragment>` prints any layer in full.
 
 ### Removed

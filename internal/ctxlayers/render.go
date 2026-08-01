@@ -1,11 +1,15 @@
 // This file renders the context-layers page: what the detected host loads
 // every turn (one line per layer, cost drawn as a bar so the expensive
-// layers are visible before the numbers are read), what sits idle until
-// something asks for it (aggregated — twenty path-scoped rules are one fact,
-// not twenty rows), and one closing line for files the running host never
-// reads. Ordering is by cost, not alphabet: the page exists to show
-// significance, and repetition is the enemy — anything identical across a
-// whole group of rows is said once in the group header or not at all.
+// layers are visible before the numbers are read), what loads on demand
+// (aggregated — twenty path-scoped rules are one fact, not twenty rows),
+// and one closing line for files the running host never reads. Ordering is
+// by cost, not alphabet: the page exists to show significance.
+//
+// A row is data only — bar, number, path, quoted excerpt. No annotation
+// prose: a structural fact either goes into the data (a symlink renders as
+// `CLAUDE.md → AGENTS.md` in the path column) or is not on the page.
+// Anything identical across a whole group is said once in the group header
+// or not at all.
 //
 // Deliberately absent: color as the sole carrier of meaning. The bars,
 // labels and numbers survive NO_COLOR, a pipe into less, and a CI log.
@@ -32,23 +36,6 @@ const pathColWidth = 36
 // a rule, short enough to keep rows on one line in a ~105-column terminal.
 const excerptColWidth = 48
 
-// tierLabel names a tier for the --help text and the markdown table.
-func tierLabel(t Tier) string {
-	switch t {
-	case TierAlways:
-		return "LOADED"
-	case TierIndexed:
-		return "INDEXED"
-	case TierOnDemand:
-		return "ON DEMAND"
-	case TierOnTrigger:
-		return "ON TRIGGER"
-	case TierInert:
-		return "INERT"
-	}
-	return ""
-}
-
 // page is the assembled view: entries regrouped the way the reader needs
 // them rather than the way the scanner found them.
 type page struct {
@@ -59,11 +46,10 @@ type page struct {
 	idleTok   int
 }
 
-// idleRow is one aggregated line in the idle section.
+// idleRow is one aggregated line in the on-demand section.
 type idleRow struct {
 	tokens int
 	label  string
-	when   string
 }
 
 // assemble regroups the scan into the page. Path-scoped rules collapse to
@@ -89,11 +75,7 @@ func assemble(entries []Entry) page {
 			scoped[dir] = append(scoped[dir], e)
 			p.idleTok += e.Tokens()
 		default:
-			when := e.Note
-			if when == "" {
-				when = "loads on request"
-			}
-			p.idle = append(p.idle, idleRow{e.Tokens(), e.Display, when})
+			p.idle = append(p.idle, idleRow{e.Tokens(), e.Display})
 			p.idleTok += e.Tokens()
 		}
 	}
@@ -107,7 +89,6 @@ func assemble(entries []Entry) page {
 		p.idle = append(p.idle, idleRow{
 			tok,
 			plural(len(rules), "path-scoped rule", "path-scoped rules") + " (" + dir + ")",
-			"load when you edit files they govern (globs: --show <rule>)",
 		})
 	}
 
@@ -155,7 +136,7 @@ func renderTerminal(w io.Writer, entries []Entry, p page, repoName, host, cmdPre
 	}
 	pathW := 0
 	for _, e := range p.everyTurn {
-		if n := runeLen(e.Display); n > pathW {
+		if n := runeLen(displayName(e)); n > pathW {
 			pathW = n
 		}
 	}
@@ -169,25 +150,20 @@ func renderTerminal(w io.Writer, entries []Entry, p page, repoName, host, cmdPre
 			says = `"` + truncate(says, excerptColWidth) + `"`
 		} else if e.Points != "" {
 			says = "includes " + e.Points
-		} else if e.Note != "" && e.Count > 1 {
-			says = e.Note // aggregate rows explain themselves in the note
 		}
 		tag := hostTag(e, host)
 		line := fmt.Sprintf("  %-*s  %7s  %-*s  %s%s",
 			barWidth, bar(e.Tokens(), maxTok),
 			"~"+commas(e.Tokens()),
-			pathW, elideLeft(e.Display, pathW), says, tag)
+			pathW, elideLeft(displayName(e), pathW), says, tag)
 		fmt.Fprintln(w, strings.TrimRight(line, " "))
-		if note := rowNote(e); note != "" {
-			fmt.Fprintf(w, "  %*s  %s\n", barWidth+9+pathW+1, "", note)
-		}
 	}
 
 	if len(p.idle) > 0 {
 		fmt.Fprintln(w)
-		fmt.Fprintf(w, "IDLE UNTIL NEEDED — ~%s tok reachable, costing nothing now\n", commas(p.idleTok))
+		fmt.Fprintf(w, "LOADS ON DEMAND — ~%s tok\n", commas(p.idleTok))
 		for _, r := range p.idle {
-			fmt.Fprintf(w, "  %7s  %s — %s\n", "~"+commas(r.tokens), r.label, r.when)
+			fmt.Fprintf(w, "  %7s  %s\n", "~"+commas(r.tokens), r.label)
 		}
 	}
 
@@ -219,20 +195,15 @@ func renderMarkdown(w io.Writer, entries []Entry, p page, repoName, host, cmdPre
 		if says == "" && e.Points != "" {
 			says = "includes `" + e.Points + "`"
 		}
-		if says == "" {
-			says = e.Note
-		} else if n := rowNote(e); n != "" {
-			says += " _(" + n + ")_"
-		}
 		fmt.Fprintf(w, "| %s | %s | `%s`%s | %s |\n",
-			bar(e.Tokens(), maxTok), commas(e.Tokens()), e.Display,
+			bar(e.Tokens(), maxTok), commas(e.Tokens()), displayName(e),
 			mdEscape(hostTag(e, host)), mdEscape(truncate(says, 120)))
 	}
 	if len(p.idle) > 0 {
 		fmt.Fprintln(w)
-		fmt.Fprintf(w, "**Idle until needed — ~%s tok** reachable, costing nothing now:\n", commas(p.idleTok))
+		fmt.Fprintf(w, "**Loads on demand — ~%s tok:**\n", commas(p.idleTok))
 		for _, r := range p.idle {
-			fmt.Fprintf(w, "- ~%s tok — %s — %s\n", commas(r.tokens), r.label, r.when)
+			fmt.Fprintf(w, "- ~%s tok — %s\n", commas(r.tokens), r.label)
 		}
 	}
 	if line := inertLine(p.inert, host); line != "" {
@@ -249,18 +220,18 @@ func renderMarkdown(w io.Writer, entries []Entry, p page, repoName, host, cmdPre
 // markdown form is sentence-cased for a ### heading; the terminal form is a
 // caps section header like the page's other sections.
 func headerLine(entries []Entry, p page, repoName, host string, md bool) string {
-	title, both := "WHAT YOUR AGENT READS", "WHAT AN AGENT READS HERE"
+	title := "LOADED EVERY TURN"
 	if md {
-		title, both = "What your agent reads", "What an agent reads here"
+		title = "Loaded every turn"
 	}
 	switch host {
 	case "claude":
-		return title + " — " + repoName + " · Claude Code · every turn: ~" + commas(p.loadedTok) + " tok"
+		return title + " — " + repoName + " · Claude Code · ~" + commas(p.loadedTok) + " tok"
 	case "copilot":
-		return title + " — " + repoName + " · Copilot CLI · every turn: ~" + commas(p.loadedTok) + " tok"
+		return title + " — " + repoName + " · Copilot CLI · ~" + commas(p.loadedTok) + " tok"
 	}
-	return both + " — " + repoName +
-		" · every turn: ~" + commas(TotalsFor(entries, "claude")) + " tok (Claude Code) · ~" +
+	return title + " — " + repoName +
+		" · ~" + commas(TotalsFor(entries, "claude")) + " tok (Claude Code) · ~" +
 		commas(TotalsFor(entries, "copilot")) + " tok (Copilot CLI)"
 }
 
@@ -280,13 +251,14 @@ func hostTag(e Entry, host string) string {
 	return ""
 }
 
-// rowNote is the one-line continuation worth printing under a row: the
-// symlink/overlap/parent-dir facts. Aggregate rows carry their note inline.
-func rowNote(e Entry) string {
-	if e.Count > 1 {
-		return ""
+// displayName is the path cell: the primary name, with any other names that
+// resolve to the same file joined by arrows — the symlink fact as data, not
+// annotation.
+func displayName(e Entry) string {
+	if len(e.Also) == 0 {
+		return e.Display
 	}
-	return e.Note
+	return e.Display + " → " + strings.Join(e.Also, " → ")
 }
 
 // inertLine is the single closing line for files the detected host never

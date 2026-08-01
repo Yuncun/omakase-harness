@@ -102,11 +102,11 @@ func withRoot(golden, root string) string {
 // buildStatusFixture.
 
 // Markdown output for the installed fixture.
-const wantFullMD = "## 🥡 acme-dev-harness\n\n`acme/harness` · base omakase 0.11.3 · installed in `{{ROOT}}`\n\n**Zero footprint** — 2 file(s) injected, 0 committed; all gitignored via `.git/info/exclude` (invisible to git).\n\n### Guards — what runs when you commit / push\n\n| Run when | Guard | Enforces | Last verdict |\n| --- | --- | --- | --- |\n| `pre-commit` | markers | runs every fire | ✓ pass - 5m ago |\n| `pre-push` | tests | cached; scope: a/*\\|b/* | ✗ fail - 2h ago |\n| `pre-push` | review | cached; scope: src/* | - not yet run |\n\n### What an agent reads here — 001 · every turn: ~8 tok (Claude Code) · ~6 tok (Copilot CLI)\n\n| | ~tok | layer | says |\n| --- | ---: | --- | --- |\n| ████████████ | 4 | `~/.copilot/copilot-instructions.md`  · copilot only | copilot doctrine _(applies to every repo you open, not just this one)_ |\n| ████████████ | 4 | `~/.claude/CLAUDE.md`  · claude only | global doctrine _(applies to every repo you open, not just this one)_ |\n| ██████ | 2 | `CLAUDE.md` | doctrine |\n| ██████ | 2 | `.claude/rules/team.md`  · claude only | team rule |\n\n_Estimated at 4 bytes/token — your host's `/context` has the real numbers. `omakase status --show <path>` prints any layer in full._\n\n_Refresh:_ `omakase init`  ·  _Remove:_ `omakase remove`  ·  _read-only; running status changes nothing._\n"
+const wantFullMD = "## 🥡 acme-dev-harness\n\n`acme/harness` · base omakase 0.11.3 · installed in `{{ROOT}}`\n\n**Zero footprint** — 2 file(s) injected, 0 committed; all gitignored via `.git/info/exclude` (invisible to git).\n\n### Guards — what runs when you commit / push\n\n| Run when | Guard | Enforces | Last verdict |\n| --- | --- | --- | --- |\n| `pre-commit` | markers | runs every fire | ✓ pass - 5m ago |\n| `pre-push` | tests | cached; scope: a/*\\|b/* | ✗ fail - 2h ago |\n| `pre-push` | review | cached; scope: src/* | - not yet run |\n\n### Loaded every turn — 001 · ~8 tok (Claude Code) · ~6 tok (Copilot CLI)\n\n| | ~tok | layer | says |\n| --- | ---: | --- | --- |\n| ████████████ | 4 | `~/.copilot/copilot-instructions.md`  · copilot only | copilot doctrine |\n| ████████████ | 4 | `~/.claude/CLAUDE.md`  · claude only | global doctrine |\n| ██████ | 2 | `CLAUDE.md` | doctrine |\n| ██████ | 2 | `.claude/rules/team.md`  · claude only | team rule |\n\n_Estimated at 4 bytes/token — your host's `/context` has the real numbers. `omakase status --show <path>` prints any layer in full._\n\n_Refresh:_ `omakase init`  ·  _Remove:_ `omakase remove`  ·  _read-only; running status changes nothing._\n"
 
 // Terminal output for the installed fixture; the page opens with the
 // built-in banner box (#172), plain under the goldens' NO_COLOR=1.
-const wantFullTerm = "╭──────────────────────────────────────────────────────╮\n│ 🥡 acme-dev-harness v0.11.3                          │\n╰──────────────────────────────────────────────────────╯\nacme-dev-harness — acme/harness · base omakase 0.11.3 · installed in {{ROOT}}\nzero footprint: 2 injected, 0 committed, all gitignored (.git/info/exclude)\n\nGUARDS — what runs when you commit / push\n  RUN WHEN     GUARD     ENFORCES                 LAST VERDICT\n  pre-commit   markers   runs every fire          ✓ pass - 5m ago\n  pre-push     tests     cached; scope: a/*|b/*   ✗ fail - 2h ago\n  pre-push     review    cached; scope: src/*     - not yet run\n\nWHAT AN AGENT READS HERE — 001 · every turn: ~8 tok (Claude Code) · ~6 tok (Copilot CLI)\n  ████████████       ~4  ~/.copilot/copilot-instructions.md  \"copilot doctrine\"  · copilot only\n                                                            applies to every repo you open, not just this one\n  ████████████       ~4  ~/.claude/CLAUDE.md                 \"global doctrine\"  · claude only\n                                                            applies to every repo you open, not just this one\n  ██████             ~2  CLAUDE.md                           \"doctrine\"\n  ██████             ~2  .claude/rules/team.md               \"team rule\"  · claude only\n\nestimated at 4 bytes/token — your host's /context has the real numbers\nomakase status --show <path>   print any layer in full\n\nRestore the harness (replaces missing or changed files; removes dropped ones):   omakase init\nUndo everything:                                                                 omakase remove\n"
+const wantFullTerm = "╭──────────────────────────────────────────────────────╮\n│ 🥡 acme-dev-harness                                  │\n╰──────────────────────────────────────────────────────╯\nacme-dev-harness — acme/harness · base omakase 0.11.3 · installed in {{ROOT}}\nzero footprint: 2 injected, 0 committed, all gitignored (.git/info/exclude)\n\nGUARDS — what runs when you commit / push\n  RUN WHEN     GUARD     ENFORCES                 LAST VERDICT\n  pre-commit   markers   runs every fire          ✓ pass - 5m ago\n  pre-push     tests     cached; scope: a/*|b/*   ✗ fail - 2h ago\n  pre-push     review    cached; scope: src/*     - not yet run\n\nLOADED EVERY TURN — 001 · ~8 tok (Claude Code) · ~6 tok (Copilot CLI)\n  ████████████       ~4  ~/.copilot/copilot-instructions.md  \"copilot doctrine\"  · copilot only\n  ████████████       ~4  ~/.claude/CLAUDE.md                 \"global doctrine\"  · claude only\n  ██████             ~2  CLAUDE.md                           \"doctrine\"\n  ██████             ~2  .claude/rules/team.md               \"team rule\"  · claude only\n\nestimated at 4 bytes/token — your host's /context has the real numbers\nomakase status --show <path>   print any layer in full\n\nRestore the harness (replaces missing or changed files; removes dropped ones):   omakase init\nUndo everything:                                                                 omakase remove\n"
 
 func TestStatusRunMD(t *testing.T) {
 	repo, home := buildStatusFixture(t)
@@ -409,12 +409,16 @@ func TestStatusAllShowsFullInventory(t *testing.T) {
 	if code := Run(nil, &def, &def); code != 0 {
 		t.Fatalf("default exit = %d", code)
 	}
-	for _, want := range []string{"THE PROJECT'S HARNESS", "INJECTED (omakase)", "normal.txt"} {
+	for _, want := range []string{"THE PROJECT'S HARNESS", "INJECTED — placed by omakase init from", "normal.txt"} {
 		if !strings.Contains(all.String(), want) {
 			t.Errorf("--all page missing %q:\n%s", want, all.String())
 		}
 	}
-	for _, gone := range []string{"THE PROJECT'S HARNESS", "INJECTED (omakase)"} {
+	// The shared "from" fact appears once, in the group header — never per row.
+	if n := strings.Count(all.String(), "acme/harness"); n > 2 {
+		t.Errorf("source repeated %d times on --all, want once in the header (plus the identity line):\n%s", n, all.String())
+	}
+	for _, gone := range []string{"THE PROJECT'S HARNESS", "INJECTED — placed by"} {
 		if strings.Contains(def.String(), gone) {
 			t.Errorf("default page still carries the inventory wall %q", gone)
 		}
@@ -439,7 +443,7 @@ func TestStatusDefaultPageNeedsAttention(t *testing.T) {
 	var out bytes.Buffer
 	Run(nil, &out, &out)
 	if !strings.Contains(out.String(), "NEEDS ATTENTION") ||
-		!strings.Contains(out.String(), "! normal.txt") {
+		!strings.Contains(out.String(), "MISSING — omakase init restores") {
 		t.Errorf("missing placed file not surfaced:\n%s", out.String())
 	}
 }
@@ -456,8 +460,8 @@ func TestStatusDefaultPageUnmanagedLine(t *testing.T) {
 		t.Errorf("unmanaged count line missing:\n%s", out.String())
 	}
 	// The rule still shows in the LAYERS table (it loads — that is the
-	// point); what must be gone is the old inventory-style enumeration row.
-	if strings.Contains(out.String(), "+ .claude/rules/local-tweak.md") {
+	// point); what must be gone is the old inventory-style enumeration group.
+	if strings.Contains(out.String(), "YOURS, UNMANAGED") {
 		t.Errorf("default page enumerates unmanaged files inventory-style:\n%s", out.String())
 	}
 }

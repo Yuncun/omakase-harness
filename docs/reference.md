@@ -78,7 +78,8 @@ same-source re-run stay allowed in any worktree — that is the normal heal flow
 push, with the run ledger), then the harness as the layers of instruction text
 an agent host loads here — one line per layer with its reach, an estimated
 token cost drawn as a bar, and the file's first words. Layers that only load
-on demand (path-scoped rules, skill bodies) aggregate under an idle section,
+on demand (path-scoped rules, skill bodies) aggregate under a LOADS ON DEMAND
+section,
 files the detected host never reads collapse to one closing line, and when no
 host is detected the header shows each host's per-turn total instead. Injected
 files appear individually only when something is wrong (missing, drifted, or

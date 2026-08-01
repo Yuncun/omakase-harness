@@ -20,7 +20,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/Yuncun/omakase-harness/internal/state"
@@ -61,7 +60,7 @@ type Entry struct {
 	Hosts   []string // hosts that read it
 	Excerpt string   // a representative sentence, empty when not applicable
 	Points  string   // include target, when the file is only a pointer
-	Note    string   // a warning worth interrupting for
+	Also    []string // other names resolving to the same file (symlinks)
 	Scope   []string // path globs, when the layer loads only for matching files
 }
 
@@ -169,15 +168,10 @@ func globalLayer(home, host string) []Entry {
 	var out []Entry
 	for _, key := range order {
 		g := groups[key]
-		note := "applies to every repo you open, not just this one"
-		if len(g.names) > 1 {
-			note = "one file, both hosts: " + strings.Join(g.names[1:], ", ") +
-				" resolves here — counted once"
-		}
 		e := Entry{
 			Group: "GLOBAL", Display: g.names[0], Bytes: fileBytes(g.abs), Count: 1,
 			Prov: "global", Hosts: g.hosts, Excerpt: excerptOf(g.abs),
-			Points: IncludeTargetOf(g.abs), Note: note,
+			Points: IncludeTargetOf(g.abs), Also: g.names[1:],
 		}
 		e.Tier = tierFor(e.Hosts, host, TierAlways)
 		out = append(out, e)
@@ -233,7 +227,6 @@ func parentLayer(repo *state.Repo, home, host string) []Entry {
 				Group: "PARENT", Display: display, Bytes: n, Count: 1,
 				Prov: "parent dir", Hosts: []string{"claude"},
 				Excerpt: excerptOf(abs), Points: IncludeTargetOf(abs),
-				Note: "applies to every repo under " + filepath.Dir(display) + "/",
 			}
 			e.Tier = tierFor(e.Hosts, host, TierAlways)
 			out = append(out, e)
@@ -293,14 +286,12 @@ func projectLayer(repo *state.Repo, host string) []Entry {
 			Group: "PROJECT", Display: rel, Bytes: fileBytes(abs), Count: 1,
 			Prov: provenanceOf(rel, injected, tracked), Hosts: g.hosts,
 			Excerpt: excerptOf(abs), Points: IncludeTargetOf(abs),
-		}
-		if len(g.names) > 1 {
-			e.Note = "also named " + strings.Join(g.names[1:], ", ") + " (symlink) — counted once"
+			Also: g.names[1:],
 		}
 		e.Tier = tierFor(e.Hosts, host, TierAlways)
 		out = append(out, e)
 	}
-	return annotateOverlap(repo, out)
+	return out
 }
 
 // contains reports whether list holds s.
@@ -382,14 +373,12 @@ func skillLayer(repo *state.Repo, injected map[string]bool) []Entry {
 			Display: plural(n, "skill description", "skill descriptions"),
 			Bytes:   descBytes, Count: n, Prov: prov,
 			Hosts: []string{"claude", "copilot"},
-			Note:  "(the menu the agent picks from; bodies wait)",
 		},
 		{
 			Tier: TierOnTrigger, Group: "SKILLS",
 			Display: plural(n, "skill body", "skill bodies"),
 			Bytes:   bodyBytes, Count: n, Prov: prov,
 			Hosts: []string{"claude", "copilot"},
-			Note:  "load when your ask matches a description",
 		},
 	}
 }
@@ -412,7 +401,6 @@ func moduleLayer(repo *state.Repo) []Entry {
 		Display: plural(len(rels), "nested instruction file", "nested instruction files"),
 		Bytes:   total, Count: len(rels), Prov: "committed",
 		Hosts: []string{"claude", "copilot"},
-		Note:  "loads when you touch the module it sits in",
 	}}
 }
 
@@ -465,59 +453,6 @@ func DetectHost(getenv func(string) string) string {
 		return "claude"
 	}
 	return ""
-}
-
-// annotateOverlap flags root instruction files that substantially repeat each
-// other. Two host-specific copies of the same guidance both load in full, and
-// nothing else in the toolchain reports that.
-func annotateOverlap(repo *state.Repo, rows []Entry) []Entry {
-	if len(rows) < 2 {
-		return rows
-	}
-	words := make([]map[string]bool, len(rows))
-	for i, r := range rows {
-		words[i] = wordSet(filepath.Join(repo.Root, r.Display))
-	}
-	for i := range rows {
-		if rows[i].Note != "" {
-			continue
-		}
-		for j := range rows {
-			if i == j || len(words[i]) == 0 || len(words[j]) == 0 {
-				continue
-			}
-			if pct := overlapPct(words[i], words[j]); pct >= overlapWarnPct {
-				rows[i].Note = "~" + strconv.Itoa(pct) + "% vocabulary overlap with " +
-					rows[j].Display + " — both load in full"
-				break
-			}
-		}
-	}
-	return rows
-}
-
-// overlapWarnPct is the share of the smaller file's vocabulary that must be
-// shared before the duplication is worth interrupting for. Two unrelated
-// documents about the same codebase share a surprising amount of vocabulary,
-// so the bar sits well above incidental overlap.
-const overlapWarnPct = 30
-
-// overlapPct is the share of the smaller vocabulary that both sets contain.
-func overlapPct(a, b map[string]bool) int {
-	small, large := a, b
-	if len(b) < len(a) {
-		small, large = b, a
-	}
-	if len(small) == 0 {
-		return 0
-	}
-	n := 0
-	for w := range small {
-		if large[w] {
-			n++
-		}
-	}
-	return n * 100 / len(small)
 }
 
 // TotalsOf sums the loaded and idle byte counts for the footer.

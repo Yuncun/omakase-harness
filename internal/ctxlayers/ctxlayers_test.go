@@ -235,17 +235,6 @@ func TestElideLeftKeepsFilename(t *testing.T) {
 
 // --------------------------------------------------------------- overlap
 
-func TestOverlapPct(t *testing.T) {
-	a := map[string]bool{"alpha": true, "beta": true, "gamma": true, "delta": true}
-	b := map[string]bool{"alpha": true, "beta": true, "zeta": true, "eta": true}
-	if got := overlapPct(a, b); got != 50 {
-		t.Fatalf("overlap = %d, want 50", got)
-	}
-	if got := overlapPct(a, map[string]bool{}); got != 0 {
-		t.Fatalf("overlap with empty = %d, want 0", got)
-	}
-}
-
 // ------------------------------------------------------------------- Scan
 
 func TestScanTiersAndCounts(t *testing.T) {
@@ -459,11 +448,10 @@ func TestProjectLayerDedupsSymlink(t *testing.T) {
 		t.Fatalf("project rows = %d, want 1 (%v)", len(rows), rows)
 	}
 	e := rows[0]
-	if !strings.Contains(e.Note, "symlink") || !strings.Contains(e.Note, "counted once") {
-		t.Errorf("note = %q, want the symlink note", e.Note)
-	}
-	if strings.Contains(e.Note, "overlap") {
-		t.Errorf("self-overlap reported for a symlink pair: %q", e.Note)
+	// The second name rides in Also, so the page's path cell reads
+	// "CLAUDE.md → AGENTS.md" — the symlink fact as data, not annotation.
+	if e.Display != "CLAUDE.md" || len(e.Also) != 1 || e.Also[0] != "AGENTS.md" {
+		t.Errorf("display = %q, also = %v; want CLAUDE.md with AGENTS.md in Also", e.Display, e.Also)
 	}
 	if !contains(e.Hosts, "claude") || !contains(e.Hosts, "copilot") {
 		t.Errorf("hosts = %v, want both", e.Hosts)
@@ -491,21 +479,21 @@ func TestScanOmitsSettingsJSON(t *testing.T) {
 // ------------------------------------------------------------- render page
 
 // renderFixture is a stable entry set exercising every section: two loaded
-// rows (one with a note), an indexed aggregate, a scoped rule, a trigger
+// rows (one a symlink pair), an indexed aggregate, a scoped rule, a trigger
 // aggregate, and an inert file.
 func renderFixture() []Entry {
 	return []Entry{
 		{Tier: TierAlways, Display: "CLAUDE.md", Bytes: 4000, Count: 1,
-			Hosts: []string{"claude", "copilot"}, Excerpt: "Ship no change without tests."},
+			Hosts: []string{"claude", "copilot"}, Excerpt: "Ship no change without tests.",
+			Also: []string{"AGENTS.md"}},
 		{Tier: TierAlways, Display: "~/.claude/CLAUDE.md", Bytes: 2000, Count: 1,
-			Hosts: []string{"claude"}, Excerpt: "Personal doctrine.",
-			Note: "applies to every repo you open, not just this one"},
+			Hosts: []string{"claude"}, Excerpt: "Personal doctrine."},
 		{Tier: TierIndexed, Display: "2 skill descriptions", Bytes: 800, Count: 2,
-			Hosts: []string{"claude", "copilot"}, Note: "(the menu the agent picks from; bodies wait)"},
+			Hosts: []string{"claude", "copilot"}},
 		{Tier: TierOnDemand, Display: ".claude/rules/data.md", Bytes: 1200, Count: 1,
 			Hosts: []string{"claude"}, Scope: []string{"pkg/**"}},
 		{Tier: TierOnTrigger, Display: "2 skill bodies", Bytes: 6000, Count: 2,
-			Hosts: []string{"claude", "copilot"}, Note: "load when your ask matches a description"},
+			Hosts: []string{"claude", "copilot"}},
 		{Tier: TierInert, Display: ".github/instructions/a.instructions.md", Bytes: 900, Count: 1,
 			Hosts: []string{"copilot"}},
 		{Tier: TierInert, Display: ".github/instructions/b.instructions.md", Bytes: 900, Count: 1,
@@ -514,25 +502,26 @@ func renderFixture() []Entry {
 }
 
 // The detected-host terminal page: cost-descending bars, aggregated scoped
-// rules under IDLE, and the inert files collapsed to one closing line.
+// rules under LOADS ON DEMAND, and the inert files collapsed to one closing
+// line. Rows are data only — no annotation prose anywhere.
 func TestRenderTerminalDetectedHost(t *testing.T) {
 	var b strings.Builder
 	Render(&b, renderFixture(), "fixture", "claude", "omakase status", false)
 	got := b.String()
 
-	if !strings.Contains(got, "WHAT YOUR AGENT READS — fixture · Claude Code · every turn: ~1,700 tok") {
+	if !strings.Contains(got, "LOADED EVERY TURN — fixture · Claude Code · ~1,700 tok") {
 		t.Errorf("header missing or wrong total:\n%s", got)
 	}
-	// Largest row carries the full-width bar; the loaded rows are sorted by
-	// cost, so CLAUDE.md must precede the personal file.
-	if !strings.Contains(got, strings.Repeat("█", barWidth)+"   ~1,000  CLAUDE.md") {
+	// Largest row carries the full-width bar; the symlink pair renders as an
+	// arrow in the path cell.
+	if !strings.Contains(got, strings.Repeat("█", barWidth)+"   ~1,000  CLAUDE.md → AGENTS.md") {
 		t.Errorf("full bar row missing:\n%s", got)
 	}
 	if strings.Index(got, "CLAUDE.md") > strings.Index(got, "~/.claude/CLAUDE.md") {
 		t.Errorf("loaded rows not cost-descending:\n%s", got)
 	}
-	if !strings.Contains(got, "IDLE UNTIL NEEDED — ~1,800 tok") {
-		t.Errorf("idle total wrong:\n%s", got)
+	if !strings.Contains(got, "LOADS ON DEMAND — ~1,800 tok") {
+		t.Errorf("on-demand total wrong:\n%s", got)
 	}
 	if !strings.Contains(got, "1 path-scoped rule (.claude/rules/)") {
 		t.Errorf("scoped-rule aggregate missing:\n%s", got)
@@ -580,8 +569,8 @@ func TestRenderMarkdown(t *testing.T) {
 	got := b.String()
 	for _, want := range []string{
 		"| | ~tok | layer | says |",
-		"| " + strings.Repeat("█", barWidth) + " | 1,000 | `CLAUDE.md` | Ship no change without tests. |",
-		"**Idle until needed — ~1,800 tok**",
+		"| " + strings.Repeat("█", barWidth) + " | 1,000 | `CLAUDE.md → AGENTS.md` | Ship no change without tests. |",
+		"**Loads on demand — ~1,800 tok:**",
 		"_unread by Claude Code: .github/instructions/ (2 files)_",
 	} {
 		if !strings.Contains(got, want) {
