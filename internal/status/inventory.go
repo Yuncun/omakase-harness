@@ -15,6 +15,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Yuncun/omakase-harness/internal/ctxlayers"
 	"github.com/Yuncun/omakase-harness/internal/harness"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
@@ -387,24 +388,6 @@ func rowNeedsAttention(repo *state.Repo, row state.PlacedRow) bool {
 	return true
 }
 
-// renderUnmanagedLine is the default page's one-line version of the "yours,
-// unmanaged" group: the count and where the full list lives. The enumeration
-// belongs to --all — on the default page it was the wall of paths the reader's
-// eyes slid over.
-func renderUnmanagedLine(w io.Writer, repo *state.Repo, md bool) {
-	n := len(UnmanagedList(repo.Root, filepath.Join(repo.OMK, "placed.tsv")))
-	if n == 0 {
-		return
-	}
-	fmt.Fprintln(w)
-	line := fmt.Sprintf("yours, unmanaged: %d untracked agent-config file(s) only in this clone (list: omakase status --all)", n)
-	if md {
-		fmt.Fprintln(w, "_"+strings.ToUpper(line[:1])+line[1:]+"_")
-		return
-	}
-	fmt.Fprintln(w, line)
-}
-
 // renderGlobalLine is the page's whole GLOBAL section: one count line. The
 // FACT that personal config steers every repo belongs on the page; the
 // enumeration repeats identically in every repo and drowned it (#131 gripe 4)
@@ -609,6 +592,13 @@ func RenderNotInstalled(w io.Writer, repo *state.Repo, home string, md bool) {
 	if md {
 		fmt.Fprintln(w, "**No omakase harness is installed in this repo.**")
 		fmt.Fprintln(w)
+		if entries := ctxlayers.Scan(repo, home, ctxlayers.DetectHost(os.Getenv)); len(entries) > 0 {
+			// The steering stack works uninstalled too — the empty harness
+			// band is the install prompt, and the page doubles as a "how
+			// steered is this repo" gauge.
+			ctxlayers.RenderStack(w, entries, true)
+			fmt.Fprintln(w)
+		}
 		fmt.Fprintln(w, "### Agent config committed in this repo (managed by git, not omakase)")
 		fmt.Fprintln(w)
 		renderPathRows(w, comm, true)
@@ -624,6 +614,10 @@ func RenderNotInstalled(w io.Writer, repo *state.Repo, home string, md bool) {
 
 	fmt.Fprintln(w, "No omakase harness is installed in this repo.")
 	fmt.Fprintln(w)
+	if entries := ctxlayers.Scan(repo, home, ctxlayers.DetectHost(os.Getenv)); len(entries) > 0 {
+		ctxlayers.RenderStack(w, entries, false)
+		fmt.Fprintln(w)
+	}
 	fmt.Fprintln(w, "AGENT CONFIG COMMITTED IN THIS REPO (managed by git, not omakase)")
 	renderPathRows(w, comm, false)
 	renderUnmanaged(w, unmanaged, false)

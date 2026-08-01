@@ -227,73 +227,100 @@ func printStatusUsage(w io.Writer) {
 `)
 }
 
-// renderMarkdown prints the markdown status page in question-first order.
-// all=false is the default page: the Guards chart, then the harness rendered
-// as the layers an agent actually loads (internal/ctxlayers), then only the
-// injected files that need attention. all=true is the full file inventory —
-// every placed row healthy or not — for the reader auditing what is on disk.
+// renderMarkdown prints the markdown status page. all=false is the default
+// minimalist page: facts line, steering stack, guards, the loaded-every-turn
+// table, then only the injected files that need attention. all=true is the
+// full audit page — identity, footprint, guards, and the per-file inventory.
 func renderMarkdown(w io.Writer, repo *state.Repo, home, icon, hname, srcdisp, basever string, nInjected, nToggledOff int, all bool) {
 	fmt.Fprintf(w, "## %s %s\n", icon, hname)
 	fmt.Fprintln(w)
-	if srcdisp != "" {
-		fmt.Fprintf(w, "`%s` · base omakase %s · installed in `%s`\n", srcdisp, basever, repo.Root)
-	} else {
-		fmt.Fprintf(w, "base omakase %s · installed in `%s`\n", basever, repo.Root)
+	if all {
+		if srcdisp != "" {
+			fmt.Fprintf(w, "`%s` · base omakase %s · installed in `%s`\n", srcdisp, basever, repo.Root)
+		} else {
+			fmt.Fprintf(w, "base omakase %s · installed in `%s`\n", basever, repo.Root)
+		}
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "**Zero footprint** — %d file(s) injected%s, 0 committed; all gitignored via `.git/info/exclude` (invisible to git).\n", nInjected, toggledOffSuffix(nToggledOff))
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "### Guards")
+		fmt.Fprintln(w)
+		RenderGuards(w, repo.OMK, true)
+		fmt.Fprintln(w)
+		RenderInventory(w, repo, home, true)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "_Refresh:_ `omakase init`  ·  _Remove:_ `omakase remove`  ·  _read-only; running status changes nothing._")
+		return
 	}
+	fmt.Fprintln(w, factsLine(nInjected, nToggledOff))
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "**Zero footprint** — %d file(s) injected%s, 0 committed; all gitignored via `.git/info/exclude` (invisible to git).\n", nInjected, toggledOffSuffix(nToggledOff))
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "### Guards — what runs when you commit / push")
+	entries := ctxlayers.Scan(repo, home, ctxlayers.DetectHost(os.Getenv))
+	if len(entries) > 0 {
+		ctxlayers.RenderStack(w, entries, true)
+		fmt.Fprintln(w)
+	}
+	fmt.Fprintln(w, "### Guards")
 	fmt.Fprintln(w)
 	RenderGuards(w, repo.OMK, true)
-	fmt.Fprintln(w)
-	if all {
-		RenderInventory(w, repo, home, true)
-	} else {
-		renderLayersSection(w, repo, home, true)
+	if len(entries) > 0 {
+		fmt.Fprintln(w)
+		ctxlayers.Render(w, entries, ctxlayers.DetectHost(os.Getenv), true)
 	}
+	RenderProblems(w, repo, true)
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "_Refresh:_ `omakase init`  ·  _Remove:_ `omakase remove`  ·  _read-only; running status changes nothing._")
+	fmt.Fprintln(w, "_`omakase status --all` · `--show <path>`_")
 }
 
-// renderTerminal prints the default status page: the branded banner box
-// (built in since #172; see banner.go), then the same question-first order
-// as markdown.
+// renderTerminal prints the status page: the branded banner box (built in
+// since #172; see banner.go), then the same order as markdown.
 func renderTerminal(w io.Writer, repo *state.Repo, home, hname, srcdisp, basever string, nInjected, nToggledOff int, all bool) {
 	fmt.Fprint(w, statusBanner(hname))
 
-	if srcdisp != "" {
-		fmt.Fprintf(w, "%s — %s · base omakase %s · installed in %s\n", hname, srcdisp, basever, repo.Root)
-	} else {
-		fmt.Fprintf(w, "installed in %s (base omakase %s)\n", repo.Root, basever)
-	}
-	fmt.Fprintf(w, "zero footprint: %d injected%s, 0 committed, all gitignored (.git/info/exclude)\n", nInjected, toggledOffSuffix(nToggledOff))
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "GUARDS — what runs when you commit / push")
-	RenderGuards(w, repo.OMK, false)
-	fmt.Fprintln(w)
 	if all {
+		if srcdisp != "" {
+			fmt.Fprintf(w, "%s — %s · base omakase %s · installed in %s\n", hname, srcdisp, basever, repo.Root)
+		} else {
+			fmt.Fprintf(w, "installed in %s (base omakase %s)\n", repo.Root, basever)
+		}
+		fmt.Fprintf(w, "zero footprint: %d injected%s, 0 committed, all gitignored (.git/info/exclude)\n", nInjected, toggledOffSuffix(nToggledOff))
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "GUARDS")
+		RenderGuards(w, repo.OMK, false)
+		fmt.Fprintln(w)
 		RenderInventory(w, repo, home, false)
-	} else {
-		renderLayersSection(w, repo, home, false)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Restore the harness (replaces missing or changed files; removes dropped ones):   omakase init")
+		fmt.Fprintln(w, "Undo everything:                                                                 omakase remove")
+		return
 	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Restore the harness (replaces missing or changed files; removes dropped ones):   omakase init")
-	fmt.Fprintln(w, "Undo everything:                                                                 omakase remove")
-}
 
-// renderLayersSection is the default page's body below Guards: what the
-// detected host loads (the layers view), then only the injected rows that
-// are off their canonical state — a healthy file earns no line — and one
-// closing count of unmanaged local config. The full row-per-file inventory
-// lives behind --all.
-func renderLayersSection(w io.Writer, repo *state.Repo, home string, md bool) {
+	fmt.Fprintln(w, factsLine(nInjected, nToggledOff))
+	fmt.Fprintln(w)
 	entries := ctxlayers.Scan(repo, home, ctxlayers.DetectHost(os.Getenv))
 	if len(entries) > 0 {
-		ctxlayers.Render(w, entries, filepath.Base(repo.Root), ctxlayers.DetectHost(os.Getenv), "omakase status", md)
+		ctxlayers.RenderStack(w, entries, false)
+		fmt.Fprintln(w)
 	}
-	RenderProblems(w, repo, md)
-	renderUnmanagedLine(w, repo, md)
+	fmt.Fprintln(w, "GUARDS")
+	RenderGuards(w, repo.OMK, false)
+	if len(entries) > 0 {
+		fmt.Fprintln(w)
+		ctxlayers.Render(w, entries, ctxlayers.DetectHost(os.Getenv), false)
+	}
+	RenderProblems(w, repo, false)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "omakase status --all · --show <path>")
+}
+
+// factsLine is the default page's one line of numbers under the banner: the
+// footprint facts, no label. The words "zero footprint" and the exclusion
+// mechanism belong to the --all audit page.
+func factsLine(nInjected, nToggledOff int) string {
+	files := "files"
+	if nInjected == 1 {
+		files = "file"
+	}
+	return fmt.Sprintf("%d %s injected%s · 0 committed · invisible to git", nInjected, files, toggledOffSuffix(nToggledOff))
 }
 
 // harnessName derives the harness display name from the remembered source:

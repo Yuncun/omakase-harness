@@ -337,9 +337,15 @@ func injectedRuleLayer(repo *state.Repo, injected map[string]bool, host string) 
 // index of descriptions, and the bodies that stay on disk until a trigger
 // matches. Collapsing them into one "27 skills" line is what hides the fact
 // that a verbose description is a permanent tax while a long body is free.
+// Skills aggregate per provenance (injected vs committed vs yours) so the
+// steering stack can attribute their bytes to the right band; a repo where
+// all skills share one provenance still renders exactly two rows.
 func skillLayer(repo *state.Repo, injected map[string]bool) []Entry {
 	roots := []string{".agents/skills", ".github/skills", ".claude/skills"}
-	var descBytes, bodyBytes, n, nInjected int
+	tracked := trackedSet(repo.Root, roots)
+	type agg struct{ desc, body, n int }
+	sums := map[string]*agg{}
+	var order []string
 	for _, root := range roots {
 		for _, dir := range skillDirs(filepath.Join(repo.Root, root)) {
 			sk := filepath.Join(dir, "SKILL.md")
@@ -347,40 +353,43 @@ func skillLayer(repo *state.Repo, injected map[string]bool) []Entry {
 			if b == 0 {
 				continue
 			}
-			n++
-			d := len(descriptionOf(sk))
-			descBytes += d
-			if b > d {
-				bodyBytes += b - d
+			rel, err := filepath.Rel(repo.Root, sk)
+			if err != nil {
+				continue
 			}
-			if rel, err := filepath.Rel(repo.Root, sk); err == nil && injected[rel] {
-				nInjected++
+			prov := provenanceOf(filepath.ToSlash(rel), injected, tracked)
+			a, seen := sums[prov]
+			if !seen {
+				a = &agg{}
+				sums[prov] = a
+				order = append(order, prov)
+			}
+			a.n++
+			d := len(descriptionOf(sk))
+			a.desc += d
+			if b > d {
+				a.body += b - d
 			}
 		}
 	}
-	if n == 0 {
-		return nil
+	var out []Entry
+	for _, prov := range order {
+		a := sums[prov]
+		out = append(out,
+			Entry{
+				Tier: TierIndexed, Group: "SKILLS",
+				Display: plural(a.n, "skill description", "skill descriptions"),
+				Bytes:   a.desc, Count: a.n, Prov: prov,
+				Hosts: []string{"claude", "copilot"},
+			},
+			Entry{
+				Tier: TierOnTrigger, Group: "SKILLS",
+				Display: plural(a.n, "skill body", "skill bodies"),
+				Bytes:   a.body, Count: a.n, Prov: prov,
+				Hosts: []string{"claude", "copilot"},
+			})
 	}
-	prov := "committed"
-	if nInjected == n {
-		prov = "injected"
-	} else if nInjected > 0 {
-		prov = "mixed"
-	}
-	return []Entry{
-		{
-			Tier: TierIndexed, Group: "SKILLS",
-			Display: plural(n, "skill description", "skill descriptions"),
-			Bytes:   descBytes, Count: n, Prov: prov,
-			Hosts: []string{"claude", "copilot"},
-		},
-		{
-			Tier: TierOnTrigger, Group: "SKILLS",
-			Display: plural(n, "skill body", "skill bodies"),
-			Bytes:   bodyBytes, Count: n, Prov: prov,
-			Hosts: []string{"claude", "copilot"},
-		},
-	}
+	return out
 }
 
 // moduleLayer is the nested per-directory instruction files. They are the

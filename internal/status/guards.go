@@ -82,120 +82,75 @@ func awkNumeric(s string) int64 {
 	return n
 }
 
-type guardRow struct{ hook, guard, enf, runs, verdict string }
+type guardRow struct{ hook, guard, verdict, detail string }
 
 // renderGuardsChart builds one row per declared gate (in manifest order),
-// joins each to its latest ledger verdict, then emits a markdown table (md) or
-// a width-aligned terminal table. now is the age reference.
+// joins each to its latest ledger verdict, then emits a markdown table (md)
+// or a width-aligned terminal table. now is the age reference.
 //
-// The ENFORCES column answers "what does this gate do to me": the gate's
-// purpose: line when declared, else the scheduling mechanics (today's text).
-// When any gate declares a purpose, the mechanics move to their own RUNS
-// column so the two facts never share a cell; with no purposes anywhere the
-// RUNS column is omitted and the table is unchanged from before the key
-// existed (#131 gripe 1).
+// Minimalist rules: no column-header row, and silence is the default — a
+// gate that just runs on every fire says nothing beyond its name and
+// verdict. The dim trailing detail exists only for the exceptions: a
+// declared purpose:, or non-default scheduling (cached / glob scope).
+// Verdicts are ✓ 15d / ✗ 2h / – (never run).
 func renderGuardsChart(w io.Writer, gates []gate.Gate, verds map[string]state.Verdict, now int64, md bool) {
-	anyPurpose := false
-	for _, g := range gates {
-		if g.Purpose != "" {
-			anyPurpose = true
-			break
-		}
-	}
-
-	// Term widths start at the header label lengths.
-	wH, wG, wE, wR := utf8.RuneCountInString("RUN WHEN"), utf8.RuneCountInString("GUARD"), utf8.RuneCountInString("ENFORCES"), utf8.RuneCountInString("RUNS")
+	wH, wG, wV := 0, 0, 0
+	anyDetail := false
 
 	var rows []guardRow
 	for _, g := range gates {
-		enf := enforces(g)
-		if g.Purpose != "" {
-			enf = g.Purpose
+		detail := g.Purpose
+		if detail == "" && (g.Cacheable || len(g.Glob) > 0) {
+			var parts []string
+			if g.Cacheable {
+				parts = append(parts, "cached")
+			}
+			if len(g.Glob) > 0 {
+				parts = append(parts, strings.Join(g.Glob, " "))
+			}
+			detail = strings.Join(parts, " · ")
 		}
-		runs := runsCell(g)
+		if detail != "" {
+			anyDetail = true
+		}
 
-		var vc string
+		vc := glyphEmDash
 		if v, ok := verds[g.Name]; ok { // has a ledger row
 			d := now - v.Epoch
 			if d < 0 { // clamp >= 0
 				d = 0
 			}
-			vc = verdictGlyph(v.Verdict) + " - " + age(d) + " ago"
-		} else { // declared, never run
-			vc = "- not yet run"
+			vc = verdictGlyph(v.Verdict) + " " + age(d)
 		}
 
-		rows = append(rows, guardRow{g.Hook, g.Name, enf, runs, vc})
+		rows = append(rows, guardRow{g.Hook, g.Name, vc, detail})
 		if l := utf8.RuneCountInString(g.Hook); l > wH {
 			wH = l
 		}
 		if l := utf8.RuneCountInString(g.Name); l > wG {
 			wG = l
 		}
-		if l := utf8.RuneCountInString(enf); l > wE {
-			wE = l
-		}
-		if l := utf8.RuneCountInString(runs); l > wR {
-			wR = l
+		if l := utf8.RuneCountInString(vc); l > wV {
+			wV = l
 		}
 	}
 
 	if md {
-		if anyPurpose {
-			fmt.Fprintln(w, "| Run when | Guard | Enforces | Runs | Last verdict |")
-			fmt.Fprintln(w, "| --- | --- | --- | --- | --- |")
-			for _, r := range rows { // escape only Guard + Enforces + Runs
-				fmt.Fprintf(w, "| `%s` | %s | %s | %s | %s |\n", r.hook, mdcell(r.guard), mdcell(r.enf), mdcell(r.runs), r.verdict)
-			}
-			return
-		}
-		fmt.Fprintln(w, "| Run when | Guard | Enforces | Last verdict |")
+		fmt.Fprintln(w, "| Run when | Guard | Verdict | |")
 		fmt.Fprintln(w, "| --- | --- | --- | --- |")
-		for _, r := range rows { // escape only Guard + Enforces
-			fmt.Fprintf(w, "| `%s` | %s | %s | %s |\n", r.hook, mdcell(r.guard), mdcell(r.enf), r.verdict)
+		for _, r := range rows { // escape only Guard + detail
+			fmt.Fprintf(w, "| `%s` | %s | %s | %s |\n", r.hook, mdcell(r.guard), r.verdict, mdcell(r.detail))
 		}
 		return
 	}
-	// Header + rows, verdict last and unpadded.
-	if anyPurpose {
-		fmt.Fprintf(w, "  %-*s   %-*s   %-*s   %-*s   %s\n", wH, "RUN WHEN", wG, "GUARD", wE, "ENFORCES", wR, "RUNS", "LAST VERDICT")
-		for _, r := range rows {
-			fmt.Fprintf(w, "  %-*s   %-*s   %-*s   %-*s   %s\n", wH, r.hook, wG, r.guard, wE, r.enf, wR, r.runs, r.verdict)
-		}
-		return
-	}
-	fmt.Fprintf(w, "  %-*s   %-*s   %-*s   %s\n", wH, "RUN WHEN", wG, "GUARD", wE, "ENFORCES", "LAST VERDICT")
 	for _, r := range rows {
-		fmt.Fprintf(w, "  %-*s   %-*s   %-*s   %s\n", wH, r.hook, wG, r.guard, wE, r.enf, r.verdict)
+		if !anyDetail {
+			fmt.Fprintf(w, "  %-*s   %-*s   %s\n", wH, r.hook, wG, r.guard, r.verdict)
+			continue
+		}
+		line := fmt.Sprintf("  %-*s   %-*s   %-*s    %s", wH, r.hook, wG, r.guard, wV, r.verdict, r.detail)
+		fmt.Fprintln(w, strings.TrimRight(line, " "))
 	}
-}
-
-// runsCell is the compact scheduling-mechanics cell for the RUNS column:
-// the scope ("every fire", or the glob patterns), prefixed "cached · " when
-// a recorded PASS is reused for the same commit.
-func runsCell(g gate.Gate) string {
-	scope := "every fire"
-	if len(g.Glob) > 0 {
-		scope = strings.Join(g.Glob, " ")
-	}
-	if g.Cacheable {
-		return "cached · " + scope
-	}
-	return scope
-}
-
-// enforces describes a gate's scope from its declaration: a glob narrows it to
-// the matching files, cacheable notes the once-per-commit reuse, and neither
-// means it runs on every fire.
-func enforces(g gate.Gate) string {
-	scope := "runs every fire"
-	if len(g.Glob) > 0 {
-		scope = "scope: " + strings.Join(g.Glob, " ")
-	}
-	if g.Cacheable {
-		return "cached; " + scope
-	}
-	return scope
 }
 
 // mdcell escapes a literal `|` (which would break the md table) and folds
@@ -209,9 +164,9 @@ func mdcell(s string) string {
 // verdictGlyph is the pass/fail lead of a verdict cell.
 func verdictGlyph(verdict string) string {
 	if verdict == "fail" {
-		return glyphCross + " fail"
+		return glyphCross
 	}
-	return glyphCheck + " pass"
+	return glyphCheck
 }
 
 // age buckets d (seconds, already clamped >= 0) into <1m / m / h / d.

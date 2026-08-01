@@ -480,37 +480,41 @@ func TestScanOmitsSettingsJSON(t *testing.T) {
 
 // renderFixture is a stable entry set exercising every section: two loaded
 // rows (one a symlink pair), an indexed aggregate, a scoped rule, a trigger
-// aggregate, and an inert file.
+// aggregate, and an inert file — with provenance spread across all three
+// steering bands.
 func renderFixture() []Entry {
 	return []Entry{
-		{Tier: TierAlways, Display: "CLAUDE.md", Bytes: 4000, Count: 1,
+		{Tier: TierAlways, Display: "CLAUDE.md", Bytes: 4000, Count: 1, Prov: "committed",
 			Hosts: []string{"claude", "copilot"}, Excerpt: "Ship no change without tests.",
 			Also: []string{"AGENTS.md"}},
-		{Tier: TierAlways, Display: "~/.claude/CLAUDE.md", Bytes: 2000, Count: 1,
+		{Tier: TierAlways, Display: "~/.claude/CLAUDE.md", Bytes: 2000, Count: 1, Prov: "global",
 			Hosts: []string{"claude"}, Excerpt: "Personal doctrine."},
-		{Tier: TierIndexed, Display: "2 skill descriptions", Bytes: 800, Count: 2,
+		{Tier: TierIndexed, Display: "2 skill descriptions", Bytes: 800, Count: 2, Prov: "injected",
 			Hosts: []string{"claude", "copilot"}},
-		{Tier: TierOnDemand, Display: ".claude/rules/data.md", Bytes: 1200, Count: 1,
+		{Tier: TierOnDemand, Display: ".claude/rules/data.md", Bytes: 1200, Count: 1, Prov: "injected",
 			Hosts: []string{"claude"}, Scope: []string{"pkg/**"}},
-		{Tier: TierOnTrigger, Display: "2 skill bodies", Bytes: 6000, Count: 2,
+		{Tier: TierOnTrigger, Display: "2 skill bodies", Bytes: 6000, Count: 2, Prov: "injected",
 			Hosts: []string{"claude", "copilot"}},
-		{Tier: TierInert, Display: ".github/instructions/a.instructions.md", Bytes: 900, Count: 1,
+		{Tier: TierInert, Display: ".github/instructions/a.instructions.md", Bytes: 900, Count: 1, Prov: "injected",
 			Hosts: []string{"copilot"}},
-		{Tier: TierInert, Display: ".github/instructions/b.instructions.md", Bytes: 900, Count: 1,
+		{Tier: TierInert, Display: ".github/instructions/b.instructions.md", Bytes: 900, Count: 1, Prov: "injected",
 			Hosts: []string{"copilot"}},
 	}
 }
 
-// The detected-host terminal page: cost-descending bars, aggregated scoped
-// rules under LOADS ON DEMAND, and the inert files collapsed to one closing
-// line. Rows are data only — no annotation prose anywhere.
+// The detected-host terminal table: a bare section name, cost-descending
+// bars, the inert files collapsed to one closing line. Rows are data only —
+// no annotation prose, no totals, no on-demand section (the stack owns it).
 func TestRenderTerminalDetectedHost(t *testing.T) {
 	var b strings.Builder
-	Render(&b, renderFixture(), "fixture", "claude", "omakase status", false)
+	Render(&b, renderFixture(), "claude", false)
 	got := b.String()
 
-	if !strings.Contains(got, "LOADED EVERY TURN — fixture · Claude Code · ~1,700 tok") {
-		t.Errorf("header missing or wrong total:\n%s", got)
+	if !strings.Contains(got, "LOADED EVERY TURN\n") {
+		t.Errorf("bare section header missing:\n%s", got)
+	}
+	if strings.Contains(got, "tok (") || strings.Contains(got, "LOADED EVERY TURN —") {
+		t.Errorf("header carries totals or suffixes:\n%s", got)
 	}
 	// Largest row carries the full-width bar; the symlink pair renders as an
 	// arrow in the path cell.
@@ -520,23 +524,19 @@ func TestRenderTerminalDetectedHost(t *testing.T) {
 	if strings.Index(got, "CLAUDE.md") > strings.Index(got, "~/.claude/CLAUDE.md") {
 		t.Errorf("loaded rows not cost-descending:\n%s", got)
 	}
-	if !strings.Contains(got, "LOADS ON DEMAND — ~1,800 tok") {
-		t.Errorf("on-demand total wrong:\n%s", got)
-	}
-	if !strings.Contains(got, "1 path-scoped rule (.claude/rules/)") {
-		t.Errorf("scoped-rule aggregate missing:\n%s", got)
+	if strings.Contains(got, "LOADS ON DEMAND") || strings.Contains(got, "path-scoped") {
+		t.Errorf("on-demand content leaked into the every-turn table:\n%s", got)
 	}
 	if !strings.Contains(got, "unread by Claude Code: .github/instructions/ (2 files)") {
 		t.Errorf("inert line missing or uncollapsed:\n%s", got)
 	}
 	if strings.Contains(got, "claude only") {
-		t.Errorf("host tag printed under a detected host:\n%s", got)
+		t.Errorf("host tag printed:\n%s", got)
 	}
 }
 
-// The undetected-host page: both hosts' per-turn totals in the header,
-// single-host rows tagged, and no inert line (nothing can be called unread
-// when the reader is unknown).
+// The undetected-host table: same bare header, no host tags, and no inert
+// line (nothing can be called unread when the reader is unknown).
 func TestRenderTerminalUndetectedHost(t *testing.T) {
 	entries := renderFixture()
 	// Undetected scans never demote to inert; re-tier the fixture the way
@@ -547,34 +547,106 @@ func TestRenderTerminalUndetectedHost(t *testing.T) {
 		}
 	}
 	var b strings.Builder
-	Render(&b, entries, "fixture", "", "omakase status", false)
+	Render(&b, entries, "", false)
 	got := b.String()
 
-	if !strings.Contains(got, "~1,700 tok (Claude Code)") || !strings.Contains(got, "~1,650 tok (Copilot CLI)") {
-		t.Errorf("per-host totals missing:\n%s", got)
+	if strings.Contains(got, "only") || strings.Contains(got, "(Claude Code)") {
+		t.Errorf("host tags or per-host totals printed:\n%s", got)
 	}
-	if !strings.Contains(got, "· claude only") || !strings.Contains(got, "· copilot only") {
-		t.Errorf("single-host tags missing:\n%s", got)
+	if !strings.Contains(got, "instructions/a.instructions.md") {
+		t.Errorf("formerly-inert row missing from the union view:\n%s", got)
 	}
 	if strings.Contains(got, "unread by") {
 		t.Errorf("inert line printed with no host detected:\n%s", got)
 	}
 }
 
-// The markdown page mirrors the sections for the skill relay: bar column,
-// idle bullets, italic inert line.
+// The markdown table mirrors the terminal for the skill relay: bar column,
+// italic inert line, nothing else.
 func TestRenderMarkdown(t *testing.T) {
 	var b strings.Builder
-	Render(&b, renderFixture(), "fixture", "claude", "omakase status", true)
+	Render(&b, renderFixture(), "claude", true)
 	got := b.String()
 	for _, want := range []string{
+		"### Loaded every turn",
 		"| | ~tok | layer | says |",
 		"| " + strings.Repeat("█", barWidth) + " | 1,000 | `CLAUDE.md → AGENTS.md` | Ship no change without tests. |",
-		"**Loads on demand — ~1,800 tok:**",
 		"_unread by Claude Code: .github/instructions/ (2 files)_",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("markdown page missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Loads on demand") {
+		t.Errorf("on-demand section leaked into markdown:\n%s", got)
+	}
+}
+
+// ------------------------------------------------------------ steering stack
+
+// StackOf attributes bytes to bands by provenance and load state; inert
+// entries belong to no band.
+func TestStackOf(t *testing.T) {
+	bands := StackOf(renderFixture())
+	if len(bands) != 3 || bands[0].Name != "you" || bands[1].Name != "harness" || bands[2].Name != "project" {
+		t.Fatalf("bands = %+v, want you/harness/project", bands)
+	}
+	if bands[0].Loaded != 2000 || bands[0].Idle != 0 {
+		t.Errorf("you = %+v, want 2000 loaded", bands[0])
+	}
+	// Harness: 800 loaded (descriptions) + 1200+6000 idle; the two inert
+	// files (900 each) must be excluded.
+	if bands[1].Loaded != 800 || bands[1].Idle != 7200 {
+		t.Errorf("harness = %+v, want 800 loaded / 7200 idle", bands[1])
+	}
+	if bands[2].Loaded != 4000 || bands[2].Idle != 0 {
+		t.Errorf("project = %+v, want 4000 loaded", bands[2])
+	}
+}
+
+// The terminal stack: legend on the header, solid+hollow bars scaled to the
+// largest band, ~X.Xk numbers, and "— none" for an empty band.
+func TestRenderStackTerminal(t *testing.T) {
+	var b strings.Builder
+	RenderStack(&b, renderFixture(), false)
+	got := b.String()
+
+	if !strings.Contains(got, "STEERING") || !strings.Contains(got, "█ every turn · ░ on demand") {
+		t.Errorf("header or legend missing:\n%s", got)
+	}
+	// Harness is the largest band: solid cells then hollow cells.
+	if !strings.Contains(got, "harness") || !strings.Contains(got, "█░") {
+		t.Errorf("two-texture harness bar missing:\n%s", got)
+	}
+	for _, want := range []string{"~0.5k", "~2.0k", "~1.0k"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("band number %q missing:\n%s", want, got)
+		}
+	}
+
+	// An empty band says so; here nothing is committed, so project is empty.
+	var b2 strings.Builder
+	RenderStack(&b2, []Entry{
+		{Tier: TierAlways, Display: "~/.claude/CLAUDE.md", Bytes: 2000, Prov: "global", Hosts: []string{"claude"}},
+	}, false)
+	if !strings.Contains(b2.String(), "harness   — none") || !strings.Contains(b2.String(), "project   — none") {
+		t.Errorf("empty bands not marked:\n%s", b2.String())
+	}
+}
+
+// The markdown stack is a table with the legend as the bar column's header.
+func TestRenderStackMarkdown(t *testing.T) {
+	var b strings.Builder
+	RenderStack(&b, renderFixture(), true)
+	got := b.String()
+	for _, want := range []string{
+		"### Steering",
+		"| | █ every turn · ░ on demand | ~tok |",
+		"| harness | █",
+		"| project | ",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("markdown stack missing %q:\n%s", want, got)
 		}
 	}
 }

@@ -74,22 +74,24 @@ same-source re-run stay allowed in any worktree — that is the normal heal flow
 
 ### `status.sh [--markdown | --plain | --global | --all | --show <path> | --disable <name> | --enable <name> | --keep <path> | --restore <path>]`
 
-`status` prints the static page: the guards chart (what runs when you commit /
-push, with the run ledger), then the harness as the layers of instruction text
-an agent host loads here — one line per layer with its reach, an estimated
-token cost drawn as a bar, and the file's first words. Layers that only load
-on demand (path-scoped rules, skill bodies) aggregate under a LOADS ON DEMAND
-section,
-files the detected host never reads collapse to one closing line, and when no
-host is detected the header shows each host's per-turn total instead. Injected
-files appear individually only when something is wrong (missing, drifted, or
+`status` prints the minimalist page: the steering stack (one band per layer
+of steering — yours, the overlaid harness, the project's own — solid cells
+for bytes read every turn, hollow cells for bytes that wait until needed),
+the guards chart (each gate's hook, name, and last verdict, with a dim
+trailing detail only for a declared purpose or non-default scheduling), and
+the LOADED EVERY TURN table — one line per always-loaded layer, its
+estimated token cost drawn as a bar, and the file's first words. Files the
+detected host never reads collapse to one closing line. Injected files
+appear individually only when something is wrong (missing, drifted, or
 toggled off — a NEEDS ATTENTION group); a healthy file earns no line. The
-full per-file inventory lives behind `--all`.
+identity line (source, base version, install path), the footprint sentence,
+and the full per-file inventory live behind `--all`.
 
 - `--plain` — accepted for script compatibility; same as no flags. Read-only.
-- `--markdown` — the static page as formatted Markdown. Read-only.
-- `--all` — the full file inventory: every placed row (healthy or not) grouped
-  by origin (committed, injected, unmanaged, global). Read-only.
+- `--markdown` — the same page as formatted Markdown. Read-only.
+- `--all` — the audit page: identity, footprint, guards, and the full file
+  inventory — every placed row (healthy or not) grouped by origin
+  (committed, injected, unmanaged, global). Read-only.
 - `--show <path>` — print one layer in full; `<path>` is a repo-relative path,
   a `~/` personal path, or any unique fragment of one. Read-only.
 - `--global` — list the personal config that applies to every repo. Read-only;

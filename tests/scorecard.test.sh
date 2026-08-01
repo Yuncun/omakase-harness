@@ -62,10 +62,10 @@ HEAD="$(cd "$REPO" && git rev-parse HEAD)"
 printf '%s\tmarkers\tfail\t%s\n' $((NOW-60)) "$HEAD" >> "$LEDGER"
 OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW bash "$SHOW" 2>&1 )"
 echo "$OUT" | grep -q 'markers' && pass "show lists the wired gate (4-col)" || fail "show missed 4-col gate"
-echo "$OUT" | grep 'markers' | grep -q 'fail' && pass "show shows a fail verdict on the gate row" || fail "show missing fail verdict on the gate row"
+echo "$OUT" | grep 'markers' | grep -q '✗' && pass "show shows a fail verdict on the gate row" || fail "show missing fail verdict on the gate row"
 OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW bash "$SHOW" --markdown 2>&1 )"
 echo "$OUT" | grep -qE '^\| *-+ *\|' && pass "markdown table renders" || fail "no markdown table"
-echo "$OUT" | grep -E 'markers' | grep -q 'fail' && pass "markdown fail row (4-col)" || fail "no fail row in markdown"
+echo "$OUT" | grep -E 'markers' | grep -q '✗' && pass "markdown fail row (4-col)" || fail "no fail row in markdown"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$FIXPAY" bash "$REMOVE" ) >/dev/null 2>&1
 
 # ---------- Scenario U: a real commit records a 4-col row through the wiring ----------
@@ -247,12 +247,14 @@ VER="$(cat "$PAY/.omakase/VERSION")"
 PJV="$(grep -o '"version"[^,]*' "$HERE/../.claude-plugin/plugin.json" | grep -o '[0-9][0-9.]*')"
 [ "$PJV" = "$VER" ] && pass "payload VERSION matches plugin.json ($PJV)" || fail "VERSION drift: plugin.json=$PJV payload=$VER"
 # The banner is built into the binary (#172): the status page opens with the
-# branded box carrying the harness name. The placed base VERSION lives in the
-# identity line as "base omakase X" — never glued to the harness name.
+# branded box carrying the harness name. The placed base VERSION lives on the
+# --all audit page's identity line as "base omakase X" — never glued to the
+# harness name, and not on the minimalist default page at all.
 OUT="$( cd "$REPO" && NO_COLOR=1 bash "$SHOW" 2>&1 )"
 echo "$OUT" | grep -q 'omakase-harness' && pass "status prints a branded header" || fail "status missing header"
-echo "$OUT" | grep -q "base omakase $VER" && pass "identity line states the placed base version" || fail "identity line missing base version ($OUT)"
 echo "$OUT" | grep -q "harness v$VER" && fail "banner still glues the base version to the harness name" || pass "banner carries no mislabeled version"
+OUT="$( cd "$REPO" && NO_COLOR=1 bash "$SHOW" --all 2>&1 )"
+echo "$OUT" | grep -q "base omakase $VER" && pass "--all identity line states the placed base version" || fail "--all identity line missing base version ($OUT)"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
 rm -rf "$TMP"
