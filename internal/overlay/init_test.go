@@ -1931,8 +1931,7 @@ func TestInitDowngradeGuardSkipsUninstalledTrackedVersion(t *testing.T) {
 // An ADOPTED path — tracked, but deliberately served from the injected copy
 // via skip-worktree (#195's third door) — must ride through a bare re-init
 // as an ordinary injected file: no collision warning, no tracked skip, its
-// ledger row kept. A BLOCKED path carries the same skip-worktree tag and
-// must get the opposite treatment: never placed over.
+// ledger row kept.
 func TestInitTreatsAdoptedPathAsInjected(t *testing.T) {
 	dir, repo := initRepo(t)
 	p := t.TempDir()
@@ -1970,7 +1969,6 @@ func TestInitTreatsAdoptedPathAsInjected(t *testing.T) {
 	if !found {
 		t.Error("adopted path dropped from placed.tsv — the heal and verify paths lose it")
 	}
-
 }
 
 // init-then-remove must leave git-lfs exactly as it found it: the stock

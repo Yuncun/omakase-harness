@@ -195,10 +195,10 @@ func DisabledFiles(dir string) map[string]bool {
 // TrackedUnder lists the repo's git-tracked paths matching globs, in git's
 // own order, via `git -C root ls-files -z -- globs...`. -z is load-bearing:
 // newline-terminated output C-quotes `\`, `"`, and control characters even
-// under core.quotePath=false, and a quoted name downstream is a path that
-// never matches the real file when compared downstream. NUL termination
-// emits every name raw. Any error — root isn't a git repo, git
-// isn't on PATH — yields an empty result.
+// under core.quotePath=false, and a quoted name never matches the real file
+// when compared against one read from disk. NUL termination emits every name
+// raw. Any error — root isn't a git repo, git isn't on PATH — yields an
+// empty result.
 func TrackedUnder(root string, globs []string) []string {
 	args := append([]string{"-C", root, "ls-files", "-z", "--"}, globs...)
 	out, err := exec.Command("git", args...).Output()
