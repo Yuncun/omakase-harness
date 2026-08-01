@@ -215,9 +215,10 @@ PAY="$TMP/payloadF"; REPO="$TMP/repoF"; mkpayload "$PAY"; newrepo "$REPO"
 OUT=$( cd "$REPO" && bash "$SHOW" 2>&1 )
 echo "$OUT" | grep -qi 'No omakase harness' && pass "show reports empty state before init" || fail "show did not report empty state"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
-OUT=$( cd "$REPO" && bash "$SHOW" 2>&1 )
-echo "$OUT" | grep -q 'INJECTED (omakase)' && pass "show prints the placed files as the Injected group" || fail "show missing INJECTED group"
-INJ="$(echo "$OUT" | awk '/^INJECTED \(omakase\)/{f=1;next} /^GLOBAL /{f=0} f')"
+# The per-file inventory lives behind --all; the default page shows layers.
+OUT=$( cd "$REPO" && bash "$SHOW" --all 2>&1 )
+echo "$OUT" | grep -q 'INJECTED — placed by omakase init' && pass "show prints the placed files as the Injected group" || fail "show missing INJECTED group"
+INJ="$(echo "$OUT" | awk '/^INJECTED /{f=1;next} /^GLOBAL /{f=0} f')"
 echo "$INJ" | grep -q '.claude/rules/style.md' && pass "show lists an injected harness file in the Injected group" || fail "show did not list the injected file in the Injected group"
 echo "$OUT" | grep -qi 'zero footprint' && pass "show states the zero-committed footprint" || fail "show missing the footprint line"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1

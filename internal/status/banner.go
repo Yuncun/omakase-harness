@@ -65,16 +65,14 @@ func renderBanner(icon, text string, color bool) string {
 }
 
 // statusBanner composes the page's banner from the harness identity: the
-// icon (OMAKASE_ICON, default 🥡), the harness display name, and the base
-// version when known.
-func statusBanner(hname, basever string) string {
+// icon (OMAKASE_ICON, default 🥡) and the harness display name. No version:
+// the only version to hand is the BASE payload's (.omakase/VERSION), and
+// gluing it to the harness name mislabels it as the harness's own — the
+// identity line below states it as "base omakase X" instead.
+func statusBanner(hname string) string {
 	icon := os.Getenv("OMAKASE_ICON")
 	if icon == "" {
 		icon = "🥡"
 	}
-	text := hname
-	if basever != "" && basever != "?" {
-		text += " v" + basever
-	}
-	return renderBanner(icon, text, os.Getenv("NO_COLOR") == "")
+	return renderBanner(icon, hname, os.Getenv("NO_COLOR") == "")
 }

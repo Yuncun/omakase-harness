@@ -5,6 +5,44 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Changed
+- **The status page is minimalist — a program of respite against
+  overinformation**: the default page is now banner → facts line ("N files
+  injected · 0 committed · invisible to git") → the STEERING stack → guards
+  → the LOADED EVERY TURN table → one dim footer hint. The steering stack is
+  new: one band per layer of steering — you / harness / project — sized
+  against each other, solid cells for bytes read every turn and hollow cells
+  for bytes that wait until needed; an empty band prints "— none", and the
+  stack renders on the not-installed page too (the empty harness band is the
+  install prompt). Cut from the default page, all reachable via `--all`: the
+  identity line (source · base version · install path), the labeled
+  zero-footprint sentence, the LOADS ON DEMAND breakdown, per-host totals,
+  host tags, the token-estimate caveat, the unmanaged count line, and the
+  restore/undo footer. The guards chart lost its column-header row and its
+  repeated defaults — a gate row is hook, name, verdict (`✓ 15d` / `✗ 2h` /
+  `—`), with a dim trailing detail only for a declared purpose or
+  non-default scheduling (cached / glob scope).
+- **The status page now shows what an agent reads, not a wall of files**
+  (#179 decision 1; absorbs draft PR #206): below the guards chart, the
+  harness renders as the instruction layers the detected host loads — one
+  line per layer with an estimated token cost drawn as a bar, cost-first,
+  the file's opening words quoted, per-directory CLAUDE.md walk-up included,
+  CLAUDE.md/AGENTS.md symlink pairs counted once (rendered as one
+  `CLAUDE.md → AGENTS.md` row). Rules scoped by frontmatter globs
+  (`paths:`/`applyTo:`) and skill bodies aggregate under a LOADS ON DEMAND
+  section instead of inflating the every-turn total; files the current host
+  never reads collapse to one closing line; with no host detected the
+  header shows each host's per-turn total. Rows are data only — bar,
+  number, path, quoted excerpt — with no annotation prose. Injected files
+  get individual lines only when something is wrong (missing / drifted /
+  toggled off — NEEDS ATTENTION); untracked local config is one count line.
+  The full per-file inventory moved behind `omakase status --all` and is
+  now a width-aligned PATH/KIND/STATE table with the install source stated
+  once in the group header, never per row. The banner no longer glues the
+  base payload version to the harness name (it read as the harness's own
+  version); the identity line still states it as `base omakase X`.
+  `omakase status --show <path-or-fragment>` prints any layer in full.
+
 ### Removed
 - **`omakase block` / `omakase unblock`** (#207): the per-item hiding of the
   repo's own committed agent config is gone — the verb, the `/omakase:block`

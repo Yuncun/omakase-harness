@@ -24,16 +24,15 @@ var fixtureGates = []gate.Gate{
 // (now pinned at 2000000000).
 const fixtureLedger = "1999999700\tmarkers\tpass\tabc123\n1999992800\ttests\tfail\tdef456\n"
 
-const wantGuardsMD = "| Run when | Guard | Enforces | Last verdict |\n" +
+const wantGuardsMD = "| Run when | Guard | Verdict | |\n" +
 	"| --- | --- | --- | --- |\n" +
-	"| `pre-commit` | markers | runs every fire | ✓ pass - 5m ago |\n" +
-	"| `pre-push` | tests | cached; scope: a/*\\|b/* | ✗ fail - 2h ago |\n" +
-	"| `pre-push` | review | cached; scope: src/* | - not yet run |\n"
+	"| `pre-commit` | markers | ✓ 5m |  |\n" +
+	"| `pre-push` | tests | ✗ 2h | cached · a/*\\|b/* |\n" +
+	"| `pre-push` | review | — | cached · src/* |\n"
 
-const wantGuardsTerm = "  RUN WHEN     GUARD     ENFORCES                 LAST VERDICT\n" +
-	"  pre-commit   markers   runs every fire          ✓ pass - 5m ago\n" +
-	"  pre-push     tests     cached; scope: a/*|b/*   ✗ fail - 2h ago\n" +
-	"  pre-push     review    cached; scope: src/*     - not yet run\n"
+const wantGuardsTerm = "  pre-commit   markers   ✓ 5m\n" +
+	"  pre-push     tests     ✗ 2h    cached · a/*|b/*\n" +
+	"  pre-push     review    —       cached · src/*\n"
 
 // verdictsFrom writes ledger bytes to a temp ledger.tsv and reads them back the
 // way production does, through state.LatestVerdicts, so the chart tests join
@@ -82,7 +81,7 @@ func TestGuardsChartAgeBuckets(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			renderGuardsChart(&buf, fixtureGates, verds, tc.now, true)
-			wantRow := "| `pre-commit` | markers | runs every fire | ✓ pass - " + tc.wantAge + " ago |"
+			wantRow := "| `pre-commit` | markers | ✓ " + tc.wantAge + " |  |"
 			if !bytes.Contains(buf.Bytes(), []byte(wantRow)) {
 				t.Errorf("age bucket %q: missing row %q in\n%s", tc.wantAge, wantRow, buf.String())
 			}
@@ -133,10 +132,10 @@ func TestRenderGuardsFromManifest(t *testing.T) {
 	}
 }
 
-// When any gate declares a purpose:, ENFORCES carries it (falling back to the
-// mechanics text for gates without one) and the mechanics get their own RUNS
-// column (#131 gripe 1). fixtureGates carry no purposes, so the goldens above
-// double as the proof that a purpose-less manifest renders unchanged.
+// A declared purpose: is the gate's dim trailing detail — it wins the slot
+// over the scheduling mechanics, which only print for gates without one.
+// fixtureGates carry no purposes, so the goldens above double as the proof
+// that a purpose-less manifest renders mechanics-only details.
 func TestGuardsChartPurposeColumns(t *testing.T) {
 	gates := []gate.Gate{
 		{Name: "markers", Hook: "pre-commit", Run: "x", Purpose: "merge-conflict markers stay out"},
@@ -144,19 +143,18 @@ func TestGuardsChartPurposeColumns(t *testing.T) {
 	}
 	verds := verdictsFrom(t, fixtureLedger)
 
-	wantTerm := "  RUN WHEN     GUARD     ENFORCES                          RUNS               LAST VERDICT\n" +
-		"  pre-commit   markers   merge-conflict markers stay out   every fire         ✓ pass - 5m ago\n" +
-		"  pre-push     tests     cached; scope: a/*|b/*            cached · a/*|b/*   ✗ fail - 2h ago\n"
+	wantTerm := "  pre-commit   markers   ✓ 5m    merge-conflict markers stay out\n" +
+		"  pre-push     tests     ✗ 2h    cached · a/*|b/*\n"
 	var buf bytes.Buffer
 	renderGuardsChart(&buf, gates, verds, 2000000000, false)
 	if got := buf.String(); got != wantTerm {
 		t.Errorf("purpose chart (term) mismatch\n--- got ---\n%q\n--- want ---\n%q", got, wantTerm)
 	}
 
-	wantMD := "| Run when | Guard | Enforces | Runs | Last verdict |\n" +
-		"| --- | --- | --- | --- | --- |\n" +
-		"| `pre-commit` | markers | merge-conflict markers stay out | every fire | ✓ pass - 5m ago |\n" +
-		"| `pre-push` | tests | cached; scope: a/*\\|b/* | cached · a/*\\|b/* | ✗ fail - 2h ago |\n"
+	wantMD := "| Run when | Guard | Verdict | |\n" +
+		"| --- | --- | --- | --- |\n" +
+		"| `pre-commit` | markers | ✓ 5m | merge-conflict markers stay out |\n" +
+		"| `pre-push` | tests | ✗ 2h | cached · a/*\\|b/* |\n"
 	buf.Reset()
 	renderGuardsChart(&buf, gates, verds, 2000000000, true)
 	if got := buf.String(); got != wantMD {

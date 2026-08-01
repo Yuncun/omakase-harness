@@ -62,10 +62,10 @@ HEAD="$(cd "$REPO" && git rev-parse HEAD)"
 printf '%s\tmarkers\tfail\t%s\n' $((NOW-60)) "$HEAD" >> "$LEDGER"
 OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW bash "$SHOW" 2>&1 )"
 echo "$OUT" | grep -q 'markers' && pass "show lists the wired gate (4-col)" || fail "show missed 4-col gate"
-echo "$OUT" | grep 'markers' | grep -q 'fail' && pass "show shows a fail verdict on the gate row" || fail "show missing fail verdict on the gate row"
+echo "$OUT" | grep 'markers' | grep -q '✗' && pass "show shows a fail verdict on the gate row" || fail "show missing fail verdict on the gate row"
 OUT="$( cd "$REPO" && OMAKASE_NOW=$NOW bash "$SHOW" --markdown 2>&1 )"
 echo "$OUT" | grep -qE '^\| *-+ *\|' && pass "markdown table renders" || fail "no markdown table"
-echo "$OUT" | grep -E 'markers' | grep -q 'fail' && pass "markdown fail row (4-col)" || fail "no fail row in markdown"
+echo "$OUT" | grep -E 'markers' | grep -q '✗' && pass "markdown fail row (4-col)" || fail "no fail row in markdown"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$FIXPAY" bash "$REMOVE" ) >/dev/null 2>&1
 
 # ---------- Scenario U: a real commit records a 4-col row through the wiring ----------
@@ -123,29 +123,29 @@ printf '{ "hooks": {} }\n' > "$PAYI/.claude/settings.json"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAYI" bash "$INIT" ) >/dev/null 2>&1
 PLACEDTSV="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)/omakase/placed.tsv"
 awk -F'\t' -v OFS='\t' '$1==".claude/settings.json"{$5=0} 1' "$PLACEDTSV" > "$PLACEDTSV.tmp" && mv "$PLACEDTSV.tmp" "$PLACEDTSV"
-OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" 2>&1 )"
-echo "$OUT" | grep -qiF 'Injected (omakase)' && pass "Injected group prints when installed" || fail "no Injected group ($OUT)"
+OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --all 2>&1 )"
+echo "$OUT" | grep -q 'INJECTED — placed by omakase init from payload' && pass "Injected group prints when installed, source stated once in the header" || fail "no Injected group / source header ($OUT)"
 # The manifest gate wiring (omakase.manifest) is machinery — hidden while healthy —
-# so the visible injected row to check for kind + source is the .claude/settings.json
-# config the fixture added.
-echo "$OUT" | grep '\.claude/settings\.json' | grep 'config' | grep -q 'payload' && pass "injected row carries kind + source value" || fail "injected row missing kind/source ($OUT)"
+# so the visible injected row to check for kind is the .claude/settings.json
+# config the fixture added. Rows never repeat the source (header-only fact).
+echo "$OUT" | grep '\.claude/settings\.json' | grep -q 'config' && pass "injected row carries the kind" || fail "injected row missing kind ($OUT)"
 echo "$OUT" | grep '\.claude/settings\.json' | grep -qi 'disabled' && pass "hand-disabled row carries the disabled marker" || fail "disabled marker missing ($OUT)"
 # omakase's own machinery (.omakase/) is not itemised in Injected; scope the absence check
 # to that section (Guards may legitimately name an .omakase/ gate path in the ENFORCES cell).
-INJ="$(echo "$OUT" | awk '/^INJECTED \(omakase\)/{f=1;next} /^GLOBAL /{f=0} f')"
+INJ="$(echo "$OUT" | awk '/^INJECTED /{f=1;next} /^GLOBAL /{f=0} f')"
 echo "$INJ" | grep -q '\.omakase/' && fail "machinery files under .omakase/ leaked into the Injected list" || pass ".omakase/ machinery files excluded from the Injected list"
 echo "$OUT" | grep '\.claude/rules/team\.md' | grep -qi 'payload' && fail "committed file leaked into the Injected group" || pass "committed file stays out of Injected"
-echo "$OUT" | grep -qi 'token' && fail "output mentions tokens (explicitly cut from the spec)" || pass "no token counts anywhere (terminal)"
+echo "$OUT" | grep -qi 'token' && fail "inventory mentions tokens (explicitly cut from the spec)" || pass "no token counts on the inventory (terminal)"
 
 # markdown mode carries the same three groups
-OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --markdown 2>&1 )"
+OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --markdown --all 2>&1 )"
 echo "$OUT" | grep -qiF "The project's harness" && pass "markdown: Committed group" || fail "markdown missing Committed group"
-echo "$OUT" | grep -qiF 'Injected (omakase)' && pass "markdown: Injected group" || fail "markdown missing Injected group"
+echo "$OUT" | grep -q '^### Injected — placed by' && pass "markdown: Injected group" || fail "markdown missing Injected group"
 echo "$OUT" | grep -q '^### Global — ' && pass "markdown: Global count line" || fail "markdown missing Global count line"
 echo "$OUT" | grep '\.claude/settings\.json' | grep -qi 'disabled' && pass "markdown: disabled marker carried" || fail "markdown lost the disabled marker"
 INJ="$(echo "$OUT" | awk '/^### Injected/{f=1;next} /^### /{f=0} f')"
 echo "$INJ" | grep -q '\.omakase/' && fail "markdown: machinery files under .omakase/ leaked into the Injected list" || pass "markdown: .omakase/ machinery files excluded from the Injected list"
-echo "$OUT" | grep -qi 'token' && fail "markdown mentions tokens" || pass "no token counts anywhere (markdown)"
+echo "$OUT" | grep -qi 'token' && fail "markdown inventory mentions tokens" || pass "no token counts on the inventory (markdown)"
 
 # status-UX: lead with footprint + identity, and promote Guards above the file inventory
 echo "$OUT" | grep -qiF 'Zero footprint' && pass "markdown shows the zero-footprint line" || fail "markdown missing footprint line ($OUT)"
@@ -154,9 +154,9 @@ gln=$(echo "$OUT" | grep -n '^### Guards' | head -1 | cut -d: -f1)
 iln=$(echo "$OUT" | grep -n '^### Injected' | head -1 | cut -d: -f1)
 { [ -n "$gln" ] && [ -n "$iln" ] && [ "$gln" -lt "$iln" ]; } && pass "Guards renders above the file inventory" || fail "Guards not promoted above Injected (g=$gln i=$iln)"
 
-# an empty HOME collapses to the no-config line on the page; --global still prints (none)
+# an empty HOME collapses to the no-config line on the --all page; --global still prints (none)
 HOMEE="$TMP/homeEmpty"; mkdir -p "$HOMEE"
-OUT="$( cd "$REPO" && HOME="$HOMEE" bash "$SHOW" 2>&1 )"
+OUT="$( cd "$REPO" && HOME="$HOMEE" bash "$SHOW" --all 2>&1 )"
 echo "$OUT" | grep -q 'GLOBAL — no personal config found' && pass "empty Global collapses to the no-config line" || fail "empty Global line wrong ($OUT)"
 OUT="$( cd "$REPO" && HOME="$HOMEE" bash "$SHOW" --global 2>&1 )"
 echo "$OUT" | grep -i -A1 'not installed by omakase' | grep -q '(none)' && pass "--global with empty HOME shows (none)" || fail "--global empty HOME not (none) ($OUT)"
@@ -174,12 +174,14 @@ echo "$OUT" | grep -i -A1 'not installed by omakase' | grep -q '(none)' && pass 
 # needed.
 echo "== Scenario I2: healthy machinery hidden; missing machinery surfaces =="
 inj_empty(){ # $1 = captured output, $2 = mode (term|md), $3 = label
+  # md puts a blank line between the header and the (none) bullet, so the
+  # placeholder may sit one or two lines after the header.
   local hdr empty
   if [ "$2" = md ]; then hdr='^### Injected '; empty='- _(none)_'
   else                    hdr='^INJECTED ';     empty='    (none)'; fi
   if echo "$1" | awk -v hdr="$hdr" -v empty="$empty" \
-      '$0 ~ hdr { g = NR } g && NR == g + 1 && $0 == empty { ok = 1 } END { exit ok ? 0 : 1 }'
-  then pass "$3: Injected group renders empty (line after the header is '$empty')"
+      '$0 ~ hdr { g = NR } g && NR > g && NR <= g + 2 && $0 == empty { ok = 1 } END { exit ok ? 0 : 1 }'
+  then pass "$3: Injected group renders empty (placeholder '$empty' right after the header)"
   else fail "$3: Injected group is NOT empty right after its header"; fi
 }
 if [ "$(shastr x)" = nodigest ]; then
@@ -194,10 +196,10 @@ else
   { printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/bin/omakase-banner.sh' guard payload "$(shafile "$REPOI2/.omakase/bin/omakase-banner.sh")" 1
     printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/gates/example.sh'      guard payload "$(shafile "$REPOI2/.omakase/gates/example.sh")" 1
   } > "$COMMONI2/omakase/placed.tsv"
-  OUT="$( cd "$REPOI2" && HOME="$HOMEI2" bash "$SHOW" 2>&1 )"; RC=$?
+  OUT="$( cd "$REPOI2" && HOME="$HOMEI2" bash "$SHOW" --all 2>&1 )"; RC=$?
   [ "$RC" -eq 0 ] && pass "I2: status exits 0 on the all-machinery install" || fail "I2: status exited $RC"
   inj_empty "$OUT" term "I2 [term, all healthy]"
-  OUT="$( cd "$REPOI2" && HOME="$HOMEI2" bash "$SHOW" --markdown 2>&1 )"; RC=$?
+  OUT="$( cd "$REPOI2" && HOME="$HOMEI2" bash "$SHOW" --markdown --all 2>&1 )"; RC=$?
   [ "$RC" -eq 0 ] && pass "I2: --markdown exits 0 on the all-machinery install" || fail "I2: --markdown exited $RC"
   inj_empty "$OUT" md "I2 [md, all healthy]"
   # gut one machinery file -> its row surfaces with the MISSING marker
@@ -232,9 +234,9 @@ else
     && pass "I3 [term]: drifted symlink renders as an arrow row with the DRIFTED marker" \
     || fail "I3 [term]: no 'link.md -> changed-target.md' row carrying DRIFTED ($OUT)"
   OUT="$( cd "$REPOI3" && HOME="$HOMEI2" bash "$SHOW" --markdown 2>&1 )"
-  echo "$OUT" | grep 'link\.md' | grep -F -- '→' | grep -q 'DRIFTED' \
+  echo "$OUT" | grep 'link\.md' | grep -F -- '-> changed-target.md' | grep -q 'DRIFTED' \
     && pass "I3 [md]: drifted symlink renders as an arrow row with the DRIFTED marker" \
-    || fail "I3 [md]: no 'link.md → …' row carrying DRIFTED ($OUT)"
+    || fail "I3 [md]: no 'link.md -> …' row carrying DRIFTED ($OUT)"
 fi
 
 # ---------- Scenario W: branding (banner + version, no drift) ----------
@@ -245,10 +247,14 @@ VER="$(cat "$PAY/.omakase/VERSION")"
 PJV="$(grep -o '"version"[^,]*' "$HERE/../.claude-plugin/plugin.json" | grep -o '[0-9][0-9.]*')"
 [ "$PJV" = "$VER" ] && pass "payload VERSION matches plugin.json ($PJV)" || fail "VERSION drift: plugin.json=$PJV payload=$VER"
 # The banner is built into the binary (#172): the status page opens with the
-# branded box carrying the harness name and the placed base VERSION.
+# branded box carrying the harness name. The placed base VERSION lives on the
+# --all audit page's identity line as "base omakase X" — never glued to the
+# harness name, and not on the minimalist default page at all.
 OUT="$( cd "$REPO" && NO_COLOR=1 bash "$SHOW" 2>&1 )"
 echo "$OUT" | grep -q 'omakase-harness' && pass "status prints a branded header" || fail "status missing header"
-echo "$OUT" | grep -q "v$VER" && pass "banner shows the placed base version" || fail "banner missing version ($OUT)"
+echo "$OUT" | grep -q "harness v$VER" && fail "banner still glues the base version to the harness name" || pass "banner carries no mislabeled version"
+OUT="$( cd "$REPO" && NO_COLOR=1 bash "$SHOW" --all 2>&1 )"
+echo "$OUT" | grep -q "base omakase $VER" && pass "--all identity line states the placed base version" || fail "--all identity line missing base version ($OUT)"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
 rm -rf "$TMP"

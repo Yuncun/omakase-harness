@@ -171,8 +171,8 @@ echo "== toggles: --plain still reaches the normal render =="
 # 8. --plain is an accepted no-op (the plain page is the only page); the
 #    normal identity line still renders as the first line of output.
 OUT="$( cd "$REPO" && "$SHOW" --plain 2>&1 )"
-echo "$OUT" | grep -q "installed in" \
-  && pass "case8: --plain still prints the identity line" \
+echo "$OUT" | grep -q "invisible to git" \
+  && pass "case8: --plain still prints the facts line" \
   || fail "case8: --plain output unexpected: '$OUT'"
 
 rm -rf "$TMP"

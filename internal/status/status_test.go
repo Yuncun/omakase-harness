@@ -84,6 +84,20 @@ func pinStatusEnv(t *testing.T, repo *state.Repo, home string) {
 	t.Setenv("HOME", home)
 	t.Setenv("OMAKASE_NOW", "2000000000")
 	t.Setenv("NO_COLOR", "1")
+	// The layers section tiers by detected host; the suite itself runs inside
+	// a host, so pin detection to "unknown" or the goldens change with the
+	// developer's terminal.
+	pinHostDetection(t)
+}
+
+// pinHostDetection blanks the host-detection env vars so a scan run from a
+// test sees no host — without it, goldens differ between a developer's
+// terminal (inside Claude Code) and CI.
+func pinHostDetection(t *testing.T) {
+	t.Helper()
+	for _, v := range []string{"CLAUDECODE", "CLAUDE_CODE", "COPILOT_CLI", "COPILOT_AGENT_SESSION_ID"} {
+		t.Setenv(v, "")
+	}
 }
 
 func withRoot(golden, root string) string {
@@ -96,11 +110,11 @@ func withRoot(golden, root string) string {
 // buildStatusFixture.
 
 // Markdown output for the installed fixture.
-const wantFullMD = "## 🥡 acme-dev-harness\n\n`acme/harness` · base omakase 0.11.3 · installed in `{{ROOT}}`\n\n**Zero footprint** — 2 file(s) injected, 0 committed; all gitignored via `.git/info/exclude` (invisible to git).\n\n### Guards — what runs when you commit / push\n\n| Run when | Guard | Enforces | Last verdict |\n| --- | --- | --- | --- |\n| `pre-commit` | markers | runs every fire | ✓ pass - 5m ago |\n| `pre-push` | tests | cached; scope: a/*\\|b/* | ✗ fail - 2h ago |\n| `pre-push` | review | cached; scope: src/* | - not yet run |\n\n### The project's harness (committed — managed by git, not omakase)\n- `.claude/rules/team.md` — rule\n- `CLAUDE.md` — doc\n\n### Injected (omakase) — placed by `omakase init`, gitignored\n- `normal.txt` — other, from acme/harness\n\n_Edit any of these directly — status offers keep/restore; to own the harness: `/omakase:author`._\n\n### Global — 11 files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list: omakase status --global)\n\n_Refresh:_ `omakase init`  ·  _Remove:_ `omakase remove`  ·  _read-only; running status changes nothing._\n"
+const wantFullMD = "## 🥡 acme-dev-harness\n\n2 files injected · 0 committed · invisible to git\n\n### Steering\n\n| | █ every turn · ░ on demand | ~tok |\n| --- | --- | ---: |\n| you | ████████████████████████████ | <0.1k |\n| harness | — none | |\n| project | █████████████████ | <0.1k |\n\n### Guards\n\n| Run when | Guard | Verdict | |\n| --- | --- | --- | --- |\n| `pre-commit` | markers | ✓ 5m |  |\n| `pre-push` | tests | ✗ 2h | cached · a/*\\|b/* |\n| `pre-push` | review | — | cached · src/* |\n\n### Loaded every turn\n\n| | ~tok | layer | says |\n| --- | ---: | --- | --- |\n| ████████████ | 4 | `~/.copilot/copilot-instructions.md` | copilot doctrine |\n| ████████████ | 4 | `~/.claude/CLAUDE.md` | global doctrine |\n| ██████ | 2 | `CLAUDE.md` | doctrine |\n| ██████ | 2 | `.claude/rules/team.md` | team rule |\n\n_`omakase status --all` · `--show <path>`_\n"
 
 // Terminal output for the installed fixture; the page opens with the
 // built-in banner box (#172), plain under the goldens' NO_COLOR=1.
-const wantFullTerm = "╭──────────────────────────────────────────────────────╮\n│ 🥡 acme-dev-harness v0.11.3                          │\n╰──────────────────────────────────────────────────────╯\nacme-dev-harness — acme/harness · base omakase 0.11.3 · installed in {{ROOT}}\nzero footprint: 2 injected, 0 committed, all gitignored (.git/info/exclude)\n\nGUARDS — what runs when you commit / push\n  RUN WHEN     GUARD     ENFORCES                 LAST VERDICT\n  pre-commit   markers   runs every fire          ✓ pass - 5m ago\n  pre-push     tests     cached; scope: a/*|b/*   ✗ fail - 2h ago\n  pre-push     review    cached; scope: src/*     - not yet run\n\nTHE PROJECT'S HARNESS (committed — managed by git, not omakase)\n    + .claude/rules/team.md   (rule)\n    + CLAUDE.md   (doc)\nINJECTED (omakase) — placed by omakase init, gitignored\n    + normal.txt   (other, from acme/harness)\n    edit any of these directly — status offers keep/restore; to own the harness: /omakase:author\nGLOBAL — 11 files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list: omakase status --global)\n\nRestore the harness (replaces missing or changed files; removes dropped ones):   omakase init\nUndo everything:                                                                 omakase remove\n"
+const wantFullTerm = "╭──────────────────────────────────────────────────────╮\n│ 🥡 acme-dev-harness                                  │\n╰──────────────────────────────────────────────────────╯\n2 files injected · 0 committed · invisible to git\n\nSTEERING             █ every turn · ░ on demand\n  you       ████████████████████████████  <0.1k\n  harness   — none\n  project   █████████████████             <0.1k\n\nGUARDS\n  pre-commit   markers   ✓ 5m\n  pre-push     tests     ✗ 2h    cached · a/*|b/*\n  pre-push     review    —       cached · src/*\n\nLOADED EVERY TURN\n  ████████████       ~4  ~/.copilot/copilot-instructions.md  \"copilot doctrine\"\n  ████████████       ~4  ~/.claude/CLAUDE.md                 \"global doctrine\"\n  ██████             ~2  CLAUDE.md                           \"doctrine\"\n  ██████             ~2  .claude/rules/team.md               \"team rule\"\n\nomakase status --all · --show <path>\n"
 
 func TestStatusRunMD(t *testing.T) {
 	repo, home := buildStatusFixture(t)
@@ -153,13 +167,13 @@ func TestPipedStatusPlainPage(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Errorf("stderr = %q, want empty", stderr.String())
 	}
-	// The plain banner + identity line — proof the static page rendered into
+	// The plain banner + facts line — proof the static page rendered into
 	// the buffer rather than an alt-screen program taking over the tty.
 	if want := "╭──────────────────────────────────────────────────────╮"; !strings.HasPrefix(stdout.String(), want) {
 		t.Errorf("piped status did not render the plain page; first line = %q, want prefix %q", firstLine(stdout.String()), want)
 	}
-	if want := "acme-dev-harness — acme/harness"; !strings.Contains(stdout.String(), want) {
-		t.Errorf("piped status missing the identity line %q", want)
+	if want := "files injected · 0 committed · invisible to git"; !strings.Contains(stdout.String(), want) {
+		t.Errorf("piped status missing the facts line %q", want)
 	}
 }
 
@@ -181,16 +195,22 @@ func TestStatusFootprintCountsConsentState(t *testing.T) {
 	if code := Run([]string{"--markdown"}, &md, &mdErr); code != 0 {
 		t.Fatalf("md exit = %d (stderr=%q)", code, mdErr.String())
 	}
-	if !strings.Contains(md.String(), "1 file(s) injected (1 toggled off)") {
-		t.Errorf("markdown footprint missing consent count:\n%s", md.String())
+	if !strings.Contains(md.String(), "1 file injected (1 toggled off)") {
+		t.Errorf("markdown facts line missing consent count:\n%s", md.String())
 	}
 
 	var term, termErr bytes.Buffer
 	if code := Run(nil, &term, &termErr); code != 0 {
 		t.Fatalf("term exit = %d (stderr=%q)", code, termErr.String())
 	}
-	if !strings.Contains(term.String(), "1 injected (1 toggled off)") {
-		t.Errorf("terminal footprint missing consent count:\n%s", term.String())
+	if !strings.Contains(term.String(), "1 file injected (1 toggled off)") {
+		t.Errorf("terminal facts line missing consent count:\n%s", term.String())
+	}
+	// The --all audit page keeps the labeled zero-footprint sentence.
+	var all bytes.Buffer
+	Run([]string{"--all"}, &all, &all)
+	if !strings.Contains(all.String(), "1 injected (1 toggled off)") {
+		t.Errorf("--all footprint missing consent count:\n%s", all.String())
 	}
 }
 
@@ -385,5 +405,101 @@ func TestStatusRunGlobal(t *testing.T) {
 		if !strings.Contains(out, row) {
 			t.Errorf("--global missing row %q; got:\n%s", row, out)
 		}
+	}
+}
+
+// ------------------------------------------------------------ default page extras
+
+// --all is the full file inventory — the pre-layers page, kept for auditing
+// what is on disk. The default page must NOT carry the per-file walls.
+func TestStatusAllShowsFullInventory(t *testing.T) {
+	repo, home := buildStatusFixture(t)
+	pinStatusEnv(t, repo, home)
+
+	var all, def bytes.Buffer
+	if code := Run([]string{"--all"}, &all, &all); code != 0 {
+		t.Fatalf("--all exit = %d", code)
+	}
+	if code := Run(nil, &def, &def); code != 0 {
+		t.Fatalf("default exit = %d", code)
+	}
+	for _, want := range []string{"THE PROJECT'S HARNESS", "INJECTED — placed by omakase init from", "normal.txt"} {
+		if !strings.Contains(all.String(), want) {
+			t.Errorf("--all page missing %q:\n%s", want, all.String())
+		}
+	}
+	// The shared "from" fact appears once, in the group header — never per row.
+	if n := strings.Count(all.String(), "acme/harness"); n > 2 {
+		t.Errorf("source repeated %d times on --all, want once in the header (plus the identity line):\n%s", n, all.String())
+	}
+	for _, gone := range []string{"THE PROJECT'S HARNESS", "INJECTED — placed by"} {
+		if strings.Contains(def.String(), gone) {
+			t.Errorf("default page still carries the inventory wall %q", gone)
+		}
+	}
+}
+
+// A placed file missing from the checkout earns a NEEDS ATTENTION row on the
+// default page; a healthy overlay earns none.
+func TestStatusDefaultPageNeedsAttention(t *testing.T) {
+	repo, home := buildStatusFixture(t)
+	pinStatusEnv(t, repo, home)
+
+	var healthy bytes.Buffer
+	Run(nil, &healthy, &healthy)
+	if strings.Contains(healthy.String(), "NEEDS ATTENTION") {
+		t.Errorf("healthy overlay shows NEEDS ATTENTION:\n%s", healthy.String())
+	}
+
+	if err := os.Remove(filepath.Join(repo.Root, "normal.txt")); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	Run(nil, &out, &out)
+	if !strings.Contains(out.String(), "NEEDS ATTENTION") ||
+		!strings.Contains(out.String(), "MISSING — omakase init restores") {
+		t.Errorf("missing placed file not surfaced:\n%s", out.String())
+	}
+}
+
+// Untracked agent config stays off the default page entirely — the file
+// still loads (it appears in the every-turn table and the "you" band), and
+// its enumeration lives behind --all.
+func TestStatusDefaultPageUnmanagedBehindAll(t *testing.T) {
+	repo, home := buildStatusFixture(t)
+	pinStatusEnv(t, repo, home)
+	writeFile(t, repo.Root, ".claude/rules/local-tweak.md", "mine\n")
+
+	var out bytes.Buffer
+	Run(nil, &out, &out)
+	if strings.Contains(out.String(), "YOURS, UNMANAGED") || strings.Contains(out.String(), "yours, unmanaged") {
+		t.Errorf("default page carries the unmanaged group:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "local-tweak.md") {
+		t.Errorf("loading untracked rule missing from the every-turn table:\n%s", out.String())
+	}
+	var all bytes.Buffer
+	Run([]string{"--all"}, &all, &all)
+	if !strings.Contains(all.String(), "YOURS, UNMANAGED") || !strings.Contains(all.String(), ".claude/rules/local-tweak.md") {
+		t.Errorf("--all page missing the unmanaged group:\n%s", all.String())
+	}
+}
+
+// --show prints a layer in full by unique fragment, and refuses ambiguity.
+func TestStatusShowLayer(t *testing.T) {
+	repo, home := buildStatusFixture(t)
+	pinStatusEnv(t, repo, home)
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"--show", "team"}, &out, &errOut); code != 0 {
+		t.Fatalf("--show exit = %d, stderr %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "team rule") || !strings.Contains(out.String(), ".claude/rules/team.md") {
+		t.Errorf("--show output = %q", out.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"--show", "no-such-layer-xyz"}, &out, &errOut); code != 2 {
+		t.Fatalf("--show miss exit = %d, want 2", code)
 	}
 }
