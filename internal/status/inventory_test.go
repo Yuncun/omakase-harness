@@ -251,7 +251,7 @@ const wantNotInstalledTerm = `No omakase harness is installed in this repo.
 STEERING             █ every turn · ░ on demand
   you       ████████████████████████████  <0.1k
   harness   — none
-  project   ██████████                    <0.1k
+  project   ███████                       <0.1k
 
 AGENT CONFIG COMMITTED IN THIS REPO (managed by git, not omakase)
   PATH                    KIND
@@ -269,9 +269,10 @@ Install a harness:  omakase init <owner/repo>
 `
 
 // Markdown-mode output for the not-installed fixture.
-const wantNotInstalledMD = "**No omakase harness is installed in this repo.**\n\n### Steering\n\n| | █ every turn · ░ on demand | ~tok |\n| --- | --- | ---: |\n| you | ████████████████████████████ | <0.1k |\n| harness | — none | |\n| project | ██████████ | <0.1k |\n\n### Agent config committed in this repo (managed by git, not omakase)\n\n| Path | Kind |\n| --- | --- |\n| `.claude/rules/team.md` | rule |\n\n### Yours, unmanaged — untracked agent config, only in this clone (not committed, not placed by omakase)\n\n| Path | Kind |\n| --- | --- |\n| `.claude/rules/local-tweak.md` | rule |\n| `CLAUDE.local.md` | doc |\n\n_To keep or share one beyond this clone, add it to a harness — the author skill (`/omakase:author`)._\n\n### Global — 11 files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list: omakase status --global)\n\n_A presence check of known paths for known tools — not exhaustive; a file can be present and never read._\n\n_Install a harness:_ `omakase init <owner/repo>`\n"
+const wantNotInstalledMD = "**No omakase harness is installed in this repo.**\n\n### Steering\n\n| | █ every turn · ░ on demand | ~tok |\n| --- | --- | ---: |\n| you | ████████████████████████████ | <0.1k |\n| harness | — none | |\n| project | ███████ | <0.1k |\n\n### Agent config committed in this repo (managed by git, not omakase)\n\n| Path | Kind |\n| --- | --- |\n| `.claude/rules/team.md` | rule |\n\n### Yours, unmanaged — untracked agent config, only in this clone (not committed, not placed by omakase)\n\n| Path | Kind |\n| --- | --- |\n| `.claude/rules/local-tweak.md` | rule |\n| `CLAUDE.local.md` | doc |\n\n_To keep or share one beyond this clone, add it to a harness — the author skill (`/omakase:author`)._\n\n### Global — 11 files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list: omakase status --global)\n\n_A presence check of known paths for known tools — not exhaustive; a file can be present and never read._\n\n_Install a harness:_ `omakase init <owner/repo>`\n"
 
 func TestRenderNotInstalledTerm(t *testing.T) {
+	pinHostDetection(t)
 	repo, home := buildNotInstalledFixture(t)
 	var buf bytes.Buffer
 	RenderNotInstalled(&buf, repo, home, false)
@@ -281,6 +282,7 @@ func TestRenderNotInstalledTerm(t *testing.T) {
 }
 
 func TestRenderNotInstalledMD(t *testing.T) {
+	pinHostDetection(t)
 	repo, home := buildNotInstalledFixture(t)
 	var buf bytes.Buffer
 	RenderNotInstalled(&buf, repo, home, true)

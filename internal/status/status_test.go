@@ -87,6 +87,14 @@ func pinStatusEnv(t *testing.T, repo *state.Repo, home string) {
 	// The layers section tiers by detected host; the suite itself runs inside
 	// a host, so pin detection to "unknown" or the goldens change with the
 	// developer's terminal.
+	pinHostDetection(t)
+}
+
+// pinHostDetection blanks the host-detection env vars so a scan run from a
+// test sees no host — without it, goldens differ between a developer's
+// terminal (inside Claude Code) and CI.
+func pinHostDetection(t *testing.T) {
+	t.Helper()
 	for _, v := range []string{"CLAUDECODE", "CLAUDE_CODE", "COPILOT_CLI", "COPILOT_AGENT_SESSION_ID"} {
 		t.Setenv(v, "")
 	}
