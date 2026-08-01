@@ -200,7 +200,6 @@ func buildNotInstalledFixture(t *testing.T) (*state.Repo, string) {
 const wantInventoryTermInstalled = `THE PROJECT'S HARNESS (committed — managed by git, not omakase)
     + .claude/rules/team.md   (rule)
     + CLAUDE.md   (doc)
-    any of these can be hidden from this clone's agents:  omakase block <path>
 INJECTED (omakase) — placed by omakase init, gitignored
     + normal.txt   (other, from some/src)
     - disabled.txt   (other, from some/src; disabled — not restored, not verified)
@@ -221,8 +220,6 @@ GLOBAL — 11 files in ~/.claude + ~/.copilot + ~/.agents steer every repo (list
 const wantInventoryMDInstalled = "### The project's harness (committed — managed by git, not omakase)\n" +
 	"- `.claude/rules/team.md` — rule\n" +
 	"- `CLAUDE.md` — doc\n" +
-	"\n" +
-	"_Any of these can be hidden from this clone's agents:_ `omakase block <path>`\n" +
 	"\n" +
 	"### Injected (omakase) — placed by `omakase init`, gitignored\n" +
 	"- `normal.txt` — other, from some/src\n" +
@@ -269,7 +266,6 @@ const wantNotInstalledTerm = `No omakase harness is installed in this repo.
 
 AGENT CONFIG COMMITTED IN THIS REPO (managed by git, not omakase)
     + .claude/rules/team.md   (rule)
-    any of these can be hidden from this clone's agents:  omakase block <path>
 YOURS, UNMANAGED — untracked agent config, only in this clone (not committed, not placed by omakase)
     + .claude/rules/local-tweak.md   (rule)
     + CLAUDE.local.md   (doc)
@@ -285,8 +281,6 @@ const wantNotInstalledMD = "**No omakase harness is installed in this repo.**\n"
 	"\n" +
 	"### Agent config committed in this repo (managed by git, not omakase)\n" +
 	"- `.claude/rules/team.md` — rule\n" +
-	"\n" +
-	"_Any of these can be hidden from this clone's agents:_ `omakase block <path>`\n" +
 	"\n" +
 	"### Yours, unmanaged — untracked agent config, only in this clone (not committed, not placed by omakase)\n" +
 	"- `.claude/rules/local-tweak.md` — rule\n" +
@@ -449,7 +443,7 @@ func TestRenderPre010MD(t *testing.T) {
 
 func TestCommittedList(t *testing.T) {
 	repo, _ := buildInstalledFixture(t)
-	got := CommittedList(repo.Root, nil)
+	got := CommittedList(repo.Root)
 	want := []string{".claude/rules/team.md", "CLAUDE.md"} // src/app.js excluded: not a harness glob
 	if len(got) != len(want) {
 		t.Fatalf("CommittedList = %v, want %v", got, want)
@@ -479,7 +473,7 @@ func TestCommittedListDeepSurface(t *testing.T) {
 	runGitT(t, repo, "add", ".")
 	runGitT(t, repo, "commit", "-q", "-m", "deep committed surface")
 
-	got := CommittedList(repo, nil)
+	got := CommittedList(repo)
 	want := []string{
 		".agents/skills/foo/SKILL.md", "CLAUDE.md", "app/AGENTS.md",
 		"app/CLAUDE.md", "core/auth/CLAUDE.md",
@@ -514,13 +508,13 @@ func TestCommittedListSkipsMaskedPaths(t *testing.T) {
 	runGitT(t, repo, "add", ".")
 	runGitT(t, repo, "commit", "-q", "-m", "committed surface")
 
-	if got := CommittedList(repo, nil); len(got) != 3 {
+	if got := CommittedList(repo); len(got) != 3 {
 		t.Fatalf("precondition: CommittedList = %v, want all 3 tracked paths", got)
 	}
 
 	runGitT(t, repo, "update-index", "--skip-worktree", ".agents/skills/masked/SKILL.md")
 
-	got := CommittedList(repo, nil)
+	got := CommittedList(repo)
 	want := []string{".agents/skills/live/SKILL.md", "CLAUDE.md"}
 	if len(got) != len(want) {
 		t.Fatalf("CommittedList after mask = %v, want %v", got, want)
@@ -534,8 +528,8 @@ func TestCommittedListSkipsMaskedPaths(t *testing.T) {
 
 func TestCommittedListError(t *testing.T) {
 	dir := t.TempDir() // not a git repo
-	if got := CommittedList(dir, nil); got != nil {
-		t.Errorf("CommittedList(non-repo, nil) = %v, want nil", got)
+	if got := CommittedList(dir); got != nil {
+		t.Errorf("CommittedList(non-repo) = %v, want nil", got)
 	}
 }
 
@@ -724,109 +718,5 @@ func TestRenderInjectedKeptMissingAndDisabled(t *testing.T) {
 	}
 	if !strings.Contains(out, "`off.md`") || !strings.Contains(out, "a kept version of yours is saved") {
 		t.Errorf("disabled kept row hides the saved copy:\n%s", out)
-	}
-}
-
-// ---------------------------------------------------------------- blocked rows
-
-// A committed row covered by a blocked item (itself, or an ancestor dir in
-// the $OMK/blocked sidecar) carries the BLOCKED note; a blocked item no
-// longer matching any committed row still renders as its own trailing row so
-// the block stays discoverable and reversible.
-func TestCommittedRowsBlocked(t *testing.T) {
-	dir := newGitRepo(t)
-	writeFile(t, dir, "CLAUDE.md", "doctrine\n")
-	writeFile(t, dir, ".agents/skills/od/SKILL.md", "skill\n")
-	runGitT(t, dir, "add", "-A")
-	runGitT(t, dir, "commit", "-q", "-m", "files")
-	repo, err := state.Discover(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeOMK(t, repo.OMK, state.BlockedName, ".agents/skills/od\ngone.md\n")
-	// The skill is ledger-blocked but its files were never masked (or a git
-	// operation brought them back) — that leak state must read differently
-	// from a healthy block, and name the re-hide command.
-	rows := committedRows(repo)
-	got := map[string]string{}
-	for _, r := range rows {
-		got[r[0]] = r[1]
-	}
-	if !strings.Contains(got[".agents/skills/od/SKILL.md"], "BLOCKED but PRESENT") ||
-		!strings.Contains(got[".agents/skills/od/SKILL.md"], "omakase block .agents/skills/od --yes") {
-		t.Errorf("visible-blocked skill row = %q", got[".agents/skills/od/SKILL.md"])
-	}
-	// Genuinely hidden (absent from the working tree): the healthy state.
-	if err := os.RemoveAll(filepath.Join(dir, ".agents")); err != nil {
-		t.Fatal(err)
-	}
-	rows = committedRows(repo)
-	got = map[string]string{}
-	for _, r := range rows {
-		got[r[0]] = r[1]
-	}
-	if !strings.Contains(got[".agents/skills/od/SKILL.md"], "BLOCKED by you") ||
-		!strings.Contains(got[".agents/skills/od/SKILL.md"], "omakase unblock .agents/skills/od") {
-		t.Errorf("hidden-blocked skill row = %q", got[".agents/skills/od/SKILL.md"])
-	}
-	if strings.Contains(got["CLAUDE.md"], "BLOCKED") {
-		t.Errorf("unblocked row annotated: %q", got["CLAUDE.md"])
-	}
-	if !strings.Contains(got["gone.md"], "no longer committed") {
-		t.Errorf("stale block row = %q (rows: %v)", got["gone.md"], rows)
-	}
-}
-
-// A BLOCKED item carries the same skip-worktree tag as a deliberately
-// adopted (masked) path, and the masked-path filter must not eat it: with
-// real sparse-checkout state, the blocked row stays on the page with its
-// BLOCKED annotation instead of being relabeled "no longer committed here"
-// (the 0.29.0 regression).
-func TestCommittedListKeepsBlockedRows(t *testing.T) {
-	dir := newGitRepo(t)
-	writeFile(t, dir, "CLAUDE.md", "steering\n")
-	writeFile(t, dir, ".claude/rules/team.md", "rule\n")
-	runGitT(t, dir, "add", "-A")
-	runGitT(t, dir, "commit", "-q", "-m", "files")
-	runGitT(t, dir, "sparse-checkout", "set", "--no-cone", "/*", "!/CLAUDE.md")
-	repo, err := state.Discover(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(repo.OMK, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.WriteBlocked(repo.OMK, map[string]bool{"CLAUDE.md": true}); err != nil {
-		t.Fatal(err)
-	}
-
-	got := CommittedList(dir, state.ReadBlocked(repo.OMK))
-	found := false
-	for _, rel := range got {
-		if rel == "CLAUDE.md" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("blocked CLAUDE.md dropped from CommittedList: %v", got)
-	}
-
-	rows := committedRows(repo)
-	var claude string
-	for _, r := range rows {
-		if r[0] == "CLAUDE.md" {
-			claude = r[1]
-		}
-	}
-	if !strings.Contains(claude, "BLOCKED by you") {
-		t.Errorf("blocked row annotation = %q, want BLOCKED by you", claude)
-	}
-	for _, r := range rows {
-		if strings.Contains(r[1], "no longer committed here") {
-			t.Errorf("blocked item mislabeled stale: %v", r)
-		}
 	}
 }

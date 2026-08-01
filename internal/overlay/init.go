@@ -516,14 +516,11 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 
 	// adopted: rel is tracked but deliberately served from an injected copy
-	// (skip-worktree set by the user's adoption flow, #195) — and NOT
-	// blocked, because a blocked path carries the same tag and treating it
-	// as adopted would place harness content over a file the user said no
-	// to. An adopted path behaves like an ordinary injected file in every
-	// branch below: no collision warning, no tracked skip, ledger row kept.
-	blockedSet := state.ReadBlocked(omk)
+	// (skip-worktree set by the user's adoption flow, #195). An adopted path
+	// behaves like an ordinary injected file in every branch below: no
+	// collision warning, no tracked skip, ledger row kept.
 	adopted := func(rel string) bool {
-		return gitMasked(root, rel) && !blockedCovers(blockedSet, rel)
+		return gitMasked(root, rel)
 	}
 
 	// ---- upstream-collision guard ----

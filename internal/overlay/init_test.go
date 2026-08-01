@@ -1971,24 +1971,6 @@ func TestInitTreatsAdoptedPathAsInjected(t *testing.T) {
 		t.Error("adopted path dropped from placed.tsv — the heal and verify paths lose it")
 	}
 
-	// Now BLOCK the same path (sparse-checkout + ledger): a re-init must
-	// not rematerialize it.
-	runGitT(t, dir, "update-index", "--no-skip-worktree", ".claude/rules/r.md")
-	runGitT(t, dir, "sparse-checkout", "set", "--no-cone", "/*", "!/.claude/rules/r.md")
-	if err := state.WriteBlocked(repo.OMK, map[string]bool{".claude/rules/r.md": true}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Lstat(filepath.Join(dir, ".claude", "rules", "r.md")); !os.IsNotExist(err) {
-		t.Fatal("precondition: block should hide the file")
-	}
-	out.Reset()
-	errb.Reset()
-	if code := RunInit(nil, &out, &errb); code != 0 {
-		t.Fatalf("re-init over block: exit %d\n%s", code, errb.String())
-	}
-	if _, err := os.Lstat(filepath.Join(dir, ".claude", "rules", "r.md")); !os.IsNotExist(err) {
-		t.Error("init placed harness content over a BLOCKED path")
-	}
 }
 
 // init-then-remove must leave git-lfs exactly as it found it: the stock
