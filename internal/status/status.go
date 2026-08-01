@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Yuncun/omakase-harness/internal/ctxlayers"
 	"github.com/Yuncun/omakase-harness/internal/gate"
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
@@ -34,7 +35,7 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		"--markdown": true, "-m": true, "--plain": true,
 		"--disable": true, "--enable": true,
 		"--keep": true, "--restore": true,
-		"--global": true,
+		"--global": true, "--all": true, "--show": true,
 	}
 	for _, a := range argv {
 		if a == "--help" || a == "-h" {
@@ -51,7 +52,7 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 	// silently dropped — status would report on the CWD while looking like it
 	// answered for the argument (#164's host-agnostic finding). Value-taking
 	// flags consume the word after them; `md` is the one bare-word alias.
-	valueFlags := map[string]bool{"--disable": true, "--enable": true, "--keep": true, "--restore": true}
+	valueFlags := map[string]bool{"--disable": true, "--enable": true, "--keep": true, "--restore": true, "--show": true}
 	for i := 0; i < len(argv); i++ {
 		if valueFlags[argv[i]] {
 			i++ // the flag's name/path value, validated by its handler
@@ -63,7 +64,15 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	md := len(argv) > 0 && (argv[0] == "--markdown" || argv[0] == "-m" || argv[0] == "md")
+	md, all := false, false
+	for _, a := range argv {
+		switch a {
+		case "--markdown", "-m", "md":
+			md = true
+		case "--all":
+			all = true
+		}
+	}
 
 	// --plain is kept as an accepted no-op for script compatibility: the plain
 	// page has been the only page since the interactive screen was removed
@@ -91,6 +100,14 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 			// discovery and works uninstalled too.
 			RenderGlobal(stdout, os.Getenv("HOME"), md)
 			return 0
+		case "--show":
+			// The drill-in behind the layers section's one-sentence excerpts:
+			// print any layer in full, by path or unique fragment.
+			if i+1 >= len(argv) {
+				fmt.Fprintln(stderr, "omakase: --show needs a path (or a unique part of one)")
+				return 2
+			}
+			return runShowLayer(argv[i+1], stdout, stderr)
 		}
 	}
 	// OMAKASE_ICON: default 🥡, used only in the md installed header.
@@ -152,11 +169,26 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 	}
 
 	if md {
-		renderMarkdown(stdout, repo, home, icon, hname, srcdisp, basever, nInjected, nToggledOff)
+		renderMarkdown(stdout, repo, home, icon, hname, srcdisp, basever, nInjected, nToggledOff, all)
 		return 0
 	}
-	renderTerminal(stdout, repo, home, hname, srcdisp, basever, nInjected, nToggledOff)
+	renderTerminal(stdout, repo, home, hname, srcdisp, basever, nInjected, nToggledOff, all)
 	return 0
+}
+
+// runShowLayer resolves and prints one layer in full (`omakase status --show`).
+func runShowLayer(arg string, stdout, stderr io.Writer) int {
+	wd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "omakase: not inside a git repo")
+		return 1
+	}
+	repo, err := state.Discover(wd)
+	if err != nil {
+		fmt.Fprintln(stderr, "omakase: not inside a git repo")
+		return 1
+	}
+	return ctxlayers.RunShow(repo, os.Getenv("HOME"), arg, stdout, stderr)
 }
 
 // toggledOffSuffix is " (k toggled off)" when k>0, else "" — appended after
@@ -171,14 +203,18 @@ func toggledOffSuffix(nToggledOff int) string {
 
 // printStatusUsage prints the `omakase status` flag surface.
 func printStatusUsage(w io.Writer) {
-	fmt.Fprint(w, `usage: omakase status [--markdown|--plain|--global] [--disable NAME | --enable NAME]
-                      [--keep PATH | --restore PATH]
+	fmt.Fprint(w, `usage: omakase status [--markdown|--plain|--global|--all] [--show PATH]
+                      [--disable NAME | --enable NAME] [--keep PATH | --restore PATH]
 
-  (no flags)      print the status page
+  (no flags)      print the status page: the guards chart, then what an agent
+                  loads here (each layer's reach, cost, and first words)
   --markdown, -m  print the status page as markdown
   --plain         same as no flags (kept for scripts)
-  --global        list the personal config the page's GLOBAL line counts
-                  (~/.claude + ~/.copilot + ~/.agents, applies to every repo)
+  --all           the full file inventory — every placed row, healthy or not
+  --show PATH     print one layer in full; PATH may be a repo-relative path or
+                  any unique part of one (e.g. --show team)
+  --global        list the personal config that applies to every repo
+                  (~/.claude + ~/.copilot + ~/.agents)
   --disable NAME  turn a gate off, or remove a placed file/dir; NAME is a wired
                   gate name or a placed path. Recorded so commits/pushes skip it
                   until re-enabled.
@@ -192,7 +228,11 @@ func printStatusUsage(w io.Writer) {
 }
 
 // renderMarkdown prints the markdown status page in question-first order.
-func renderMarkdown(w io.Writer, repo *state.Repo, home, icon, hname, srcdisp, basever string, nInjected, nToggledOff int) {
+// all=false is the default page: the Guards chart, then the harness rendered
+// as the layers an agent actually loads (internal/ctxlayers), then only the
+// injected files that need attention. all=true is the full file inventory —
+// every placed row healthy or not — for the reader auditing what is on disk.
+func renderMarkdown(w io.Writer, repo *state.Repo, home, icon, hname, srcdisp, basever string, nInjected, nToggledOff int, all bool) {
 	fmt.Fprintf(w, "## %s %s\n", icon, hname)
 	fmt.Fprintln(w)
 	if srcdisp != "" {
@@ -207,7 +247,11 @@ func renderMarkdown(w io.Writer, repo *state.Repo, home, icon, hname, srcdisp, b
 	fmt.Fprintln(w)
 	RenderGuards(w, repo.OMK, true)
 	fmt.Fprintln(w)
-	RenderInventory(w, repo, home, true)
+	if all {
+		RenderInventory(w, repo, home, true)
+	} else {
+		renderLayersSection(w, repo, home, true)
+	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "_Refresh:_ `omakase init`  ·  _Remove:_ `omakase remove`  ·  _read-only; running status changes nothing._")
 }
@@ -215,7 +259,7 @@ func renderMarkdown(w io.Writer, repo *state.Repo, home, icon, hname, srcdisp, b
 // renderTerminal prints the default status page: the branded banner box
 // (built in since #172; see banner.go), then the same question-first order
 // as markdown.
-func renderTerminal(w io.Writer, repo *state.Repo, home, hname, srcdisp, basever string, nInjected, nToggledOff int) {
+func renderTerminal(w io.Writer, repo *state.Repo, home, hname, srcdisp, basever string, nInjected, nToggledOff int, all bool) {
 	fmt.Fprint(w, statusBanner(hname, basever))
 
 	if srcdisp != "" {
@@ -228,10 +272,28 @@ func renderTerminal(w io.Writer, repo *state.Repo, home, hname, srcdisp, basever
 	fmt.Fprintln(w, "GUARDS — what runs when you commit / push")
 	RenderGuards(w, repo.OMK, false)
 	fmt.Fprintln(w)
-	RenderInventory(w, repo, home, false)
+	if all {
+		RenderInventory(w, repo, home, false)
+	} else {
+		renderLayersSection(w, repo, home, false)
+	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Restore the harness (replaces missing or changed files; removes dropped ones):   omakase init")
 	fmt.Fprintln(w, "Undo everything:                                                                 omakase remove")
+}
+
+// renderLayersSection is the default page's body below Guards: what the
+// detected host loads (the layers view), then only the injected rows that
+// are off their canonical state — a healthy file earns no line — and one
+// closing count of unmanaged local config. The full row-per-file inventory
+// lives behind --all.
+func renderLayersSection(w io.Writer, repo *state.Repo, home string, md bool) {
+	entries := ctxlayers.Scan(repo, home, ctxlayers.DetectHost(os.Getenv))
+	if len(entries) > 0 {
+		ctxlayers.Render(w, entries, filepath.Base(repo.Root), ctxlayers.DetectHost(os.Getenv), "omakase status", md)
+	}
+	RenderProblems(w, repo, md)
+	renderUnmanagedLine(w, repo, md)
 }
 
 // harnessName derives the harness display name from the remembered source:

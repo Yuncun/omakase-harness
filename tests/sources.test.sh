@@ -82,7 +82,7 @@ OUT=$(cd "$REPO" && echo x > f.txt && git add f.txt 2>/dev/null; git commit -m t
 
 # ---------- Scenario S2: show renders the source string ----------
 echo "== Scenario S2: show's Injected group carries the source string =="
-OUT=$( cd "$REPO" && HOME="$FAKEHOME" bash "$SHOW" 2>&1 )
+OUT=$( cd "$REPO" && HOME="$FAKEHOME" bash "$SHOW" --all 2>&1 )
 echo "$OUT" | grep 'rules/style.md' | grep -qF "from $SRC" && pass "show renders 'from <source>' on an injected row" || fail "show row missing the source string"
 # The header prefers the manifest's declared name: (test-harness) over the source's
 # last folder (src-harness) — #131 gripe 5.

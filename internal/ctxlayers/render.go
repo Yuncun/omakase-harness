@@ -245,16 +245,21 @@ func renderMarkdown(w io.Writer, entries []Entry, p page, repoName, host, cmdPre
 
 // headerLine is the page's first line: the per-turn total for the detected
 // host, or both hosts' totals when no host was detected — the union view
-// would otherwise present one host's inert files as everyone's cost.
+// would otherwise present one host's inert files as everyone's cost. The
+// markdown form is sentence-cased for a ### heading; the terminal form is a
+// caps section header like the page's other sections.
 func headerLine(entries []Entry, p page, repoName, host string, md bool) string {
-	sep := " — "
+	title, both := "WHAT YOUR AGENT READS", "WHAT AN AGENT READS HERE"
+	if md {
+		title, both = "What your agent reads", "What an agent reads here"
+	}
 	switch host {
 	case "claude":
-		return "WHAT YOUR AGENT READS" + sep + repoName + " · Claude Code · every turn: ~" + commas(p.loadedTok) + " tok"
+		return title + " — " + repoName + " · Claude Code · every turn: ~" + commas(p.loadedTok) + " tok"
 	case "copilot":
-		return "WHAT YOUR AGENT READS" + sep + repoName + " · Copilot CLI · every turn: ~" + commas(p.loadedTok) + " tok"
+		return title + " — " + repoName + " · Copilot CLI · every turn: ~" + commas(p.loadedTok) + " tok"
 	}
-	return "WHAT AN AGENT READS HERE" + sep + repoName +
+	return both + " — " + repoName +
 		" · every turn: ~" + commas(TotalsFor(entries, "claude")) + " tok (Claude Code) · ~" +
 		commas(TotalsFor(entries, "copilot")) + " tok (Copilot CLI)"
 }

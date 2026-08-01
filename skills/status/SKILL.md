@@ -1,6 +1,6 @@
 ---
 name: status
-description: Show what omakase harness is installed in the current repo and what runs on which git hook — the inventory (committed / injected / global), the hook wiring, the recent-runs scorecard, and the hidden paths. The default page is read-only; per-item toggles are separate explicit flags. Use when asked "omakase status", "what harness is installed", "show the harness", or "what gates run here".
+description: Show what omakase harness is installed in the current repo and what steers the agent here — the guards chart (what runs on which git hook, with the recent-runs scorecard), then the instruction layers an agent loads with each one's reach and estimated token cost. The default page is read-only; per-item toggles are separate explicit flags. Use when asked "omakase status", "what harness is installed", "what has omakase injected", or "what gates run here".
 allowed-tools: Bash(*/run.sh*)
 ---
 
@@ -15,9 +15,9 @@ bash <skill-dir>/run.sh
 ```
 
 Runs the base harness's `status.sh --markdown`, which emits the harness map as finished Markdown:
-the inventory grouped by origin (committed / injected / global), the hook wiring as a YAML
-block, the recent-runs scorecard table, and the paths hidden via `.git/info/exclude`. **Relay it
-verbatim** — output exactly what the script printed; do not reformat, re-order, summarize, or
+the guards chart (what runs when you commit / push, with last verdicts), then the instruction
+layers the agent loads here — reach, estimated token cost, first words — plus anything needing
+attention (missing / drifted / toggled-off files). **Relay it verbatim** — output exactly what the script printed; do not reformat, re-order, summarize, or
 annotate. The script owns the format so the render stays deterministic. Run as above
 (`--markdown`), this changes nothing. If no harness is installed it says so; relay that.
 

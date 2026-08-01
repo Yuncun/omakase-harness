@@ -322,6 +322,77 @@ func RenderInventory(w io.Writer, repo *state.Repo, home string, md bool) {
 	renderGlobalLine(w, len(pers), false)
 }
 
+// RenderProblems prints only the injected rows that are off their canonical
+// state — missing, drifted, or toggled off — under a NEEDS ATTENTION header,
+// and prints nothing at all when every row is healthy. This is the default
+// page's whole per-file surface: a healthy file earns no line (its cost and
+// reach are the layers section's job), while a weakened or stale one must
+// never be invisible at rest. The row renderer is writeInjectedRow, so a
+// problem row here reads identically to its --all twin.
+func RenderProblems(w io.Writer, repo *state.Repo, md bool) {
+	placedPath := filepath.Join(repo.OMK, "placed.tsv")
+	src := srcDisplay(state.FirstLine(filepath.Join(repo.OMK, "source")))
+	if src == "" {
+		src = "payload"
+	}
+	headed := false
+	for _, row := range state.ReadPlaced(placedPath) {
+		if row.Rel == "" || !rowNeedsAttention(repo, row) {
+			continue
+		}
+		if !headed {
+			headed = true
+			fmt.Fprintln(w)
+			if md {
+				fmt.Fprintln(w, "### Needs attention — injected files off their canonical state")
+			} else {
+				fmt.Fprintln(w, "NEEDS ATTENTION — injected files off their canonical state")
+			}
+		}
+		writeInjectedRow(w, repo, row, src, md)
+	}
+}
+
+// rowNeedsAttention reports whether a placed row belongs on the default
+// page: toggled off, drifted (kept or not — a kept row still shows, marked
+// as yours), or enabled but absent from this checkout. A healthy present row
+// does not; a dangling symlink counts as present (it renders as an arrow row
+// in the --all inventory, and pointing at nothing is the payload's business).
+func rowNeedsAttention(repo *state.Repo, row state.PlacedRow) bool {
+	if row.Enabled == "0" {
+		return true
+	}
+	if state.IsDrifted(repo.Root, row.Rel, row.Hash, row.Enabled) {
+		return true
+	}
+	full := filepath.Join(repo.Root, row.Rel)
+	if _, err := os.Stat(full); err == nil {
+		return false
+	}
+	if _, err := os.Lstat(full); err == nil {
+		return false
+	}
+	return true
+}
+
+// renderUnmanagedLine is the default page's one-line version of the "yours,
+// unmanaged" group: the count and where the full list lives. The enumeration
+// belongs to --all — on the default page it was the wall of paths the reader's
+// eyes slid over.
+func renderUnmanagedLine(w io.Writer, repo *state.Repo, md bool) {
+	n := len(UnmanagedList(repo.Root, filepath.Join(repo.OMK, "placed.tsv")))
+	if n == 0 {
+		return
+	}
+	fmt.Fprintln(w)
+	line := fmt.Sprintf("yours, unmanaged: %d untracked agent-config file(s) only in this clone (list: omakase status --all)", n)
+	if md {
+		fmt.Fprintln(w, "_"+strings.ToUpper(line[:1])+line[1:]+"_")
+		return
+	}
+	fmt.Fprintln(w, line)
+}
+
 // renderGlobalLine is the page's whole GLOBAL section: one count line. The
 // FACT that personal config steers every repo belongs on the page; the
 // enumeration repeats identically in every repo and drowned it (#131 gripe 4)

@@ -72,18 +72,26 @@ same-source re-run stay allowed in any worktree — that is the normal heal flow
   tracks, so the installed copy takes over. Guarded: refuses without
   `OMAKASE_CUTOVER_CONFIRM=1`.
 
-### `status.sh [--markdown | --plain | --global | --disable <name> | --enable <name> | --keep <path> | --restore <path>]`
+### `status.sh [--markdown | --plain | --global | --all | --show <path> | --disable <name> | --enable <name> | --keep <path> | --restore <path>]`
 
-`status` prints the static page: the inventory grouped by origin (committed,
-injected, global), the hook
-wiring, the run ledger, and the paths hidden via `.git/info/exclude`. The global
-group prints as one count line — the personal config under `~/.claude` +
-`~/.copilot` steers every repo identically, so the page states the fact and
-keeps the enumeration behind `--global`.
+`status` prints the static page: the guards chart (what runs when you commit /
+push, with the run ledger), then the harness as the layers of instruction text
+an agent host loads here — one line per layer with its reach, an estimated
+token cost drawn as a bar, and the file's first words. Layers that only load
+on demand (path-scoped rules, skill bodies) aggregate under an idle section,
+files the detected host never reads collapse to one closing line, and when no
+host is detected the header shows each host's per-turn total instead. Injected
+files appear individually only when something is wrong (missing, drifted, or
+toggled off — a NEEDS ATTENTION group); a healthy file earns no line. The
+full per-file inventory lives behind `--all`.
 
 - `--plain` — accepted for script compatibility; same as no flags. Read-only.
 - `--markdown` — the static page as formatted Markdown. Read-only.
-- `--global` — list the personal config the page's GLOBAL line counts. Read-only;
+- `--all` — the full file inventory: every placed row (healthy or not) grouped
+  by origin (committed, injected, unmanaged, global). Read-only.
+- `--show <path>` — print one layer in full; `<path>` is a repo-relative path,
+  a `~/` personal path, or any unique fragment of one. Read-only.
+- `--global` — list the personal config that applies to every repo. Read-only;
   reads only `$HOME`, so it prints the same in every repo.
 - `--disable <name>` / `--enable <name>` — per-item consent toggles. `<name>`
   is a wired gate name, a placed path, or a placed top-level

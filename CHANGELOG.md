@@ -5,6 +5,22 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Changed
+- **The status page now shows what an agent reads, not a wall of files**
+  (#179 decision 1; absorbs draft PR #206): below the guards chart, the
+  harness renders as the instruction layers the detected host loads — one
+  line per layer with an estimated token cost drawn as a bar, cost-first,
+  the file's opening words quoted, per-directory CLAUDE.md walk-up included,
+  CLAUDE.md/AGENTS.md symlink pairs counted once. Rules scoped by
+  frontmatter globs (`paths:`/`applyTo:`) and skill bodies aggregate under
+  an idle section instead of inflating the every-turn total; files the
+  current host never reads collapse to one closing line; with no host
+  detected the header shows each host's per-turn total. Injected files get
+  individual lines only when something is wrong (missing / drifted /
+  toggled off — NEEDS ATTENTION); untracked local config is one count line.
+  The full per-file inventory moved behind `omakase status --all`, and
+  `omakase status --show <path-or-fragment>` prints any layer in full.
+
 ### Removed
 - **`omakase block` / `omakase unblock`** (#207): the per-item hiding of the
   repo's own committed agent config is gone — the verb, the `/omakase:block`
