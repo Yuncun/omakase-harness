@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Yuncun/omakase-harness/internal/block"
 	"github.com/Yuncun/omakase-harness/internal/gate"
 	"github.com/Yuncun/omakase-harness/internal/hook"
 	"github.com/Yuncun/omakase-harness/internal/state"
@@ -75,15 +74,8 @@ func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// Not installed: no harness state to run. A dispatcher only exists where
 	// init wrote it, so this is a torn state (state wiped without `omakase
 	// remove`) — gate hooks refuse rather than silently running nothing.
-	// Blocked items are independent of an install (block works in
-	// never-initialized repos), so the non-gate heals still reassert them
-	// before returning: a session opening on a leaked blocked file would
-	// load steering the user said no to.
 	if !fileRegular(filepath.Join(repo.OMK, "placed.tsv")) {
 		if !isGate {
-			if n := block.Reassert(repo, stderr); n > 0 && name == "session-start" {
-				fmt.Fprintf(stdout, "omakase: re-hid %d blocked item(s) a git operation had restored.\n", n)
-			}
 			return 0
 		}
 		fmt.Fprintf(stderr, "omakase: BLOCKING — %s: omakase hooks are installed but no harness state exists in this repo.\n", name)
@@ -103,22 +95,12 @@ func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if n := healWorktree(repo, stderr); n > 0 {
 			fmt.Fprintf(stdout, "omakase: restored %d missing harness file(s) at session start — run `omakase status` to review.\n", n)
 		}
-		// The mirror heal for blocked items: a few git operations (am,
-		// merge --abort, a resolved conflict) silently bring a masked file
-		// back; a session opening on one would load steering the user said
-		// no to. Reassert never runs mid-merge/rebase and never fails the
-		// session.
-		if n := block.Reassert(repo, stderr); n > 0 {
-			fmt.Fprintf(stdout, "omakase: re-hid %d blocked item(s) a git operation had restored.\n", n)
-		}
 		return 0
 	}
 
 	// post-checkout: heal, then forward git-lfs best-effort. Never fails the
-	// checkout. Blocked items are reasserted silently (same rationale as
-	// session-start; a checkout is no place for a lecture).
+	// checkout.
 	healWorktree(repo, stderr)
-	block.Reassert(repo, stderr)
 	runGitLFS(name, hookArgs, repo.Root, stdin, stdout, stderr, false)
 	return 0
 }
@@ -189,18 +171,11 @@ func runGitLFS(name string, args []string, root string, stdin io.Reader, stdout,
 // init/checkout); disabled rows are deliberately absent.
 func verifyPresent(root, omk string, stderr io.Writer) int {
 	missing := 0
-	blocked := state.ReadBlocked(omk)
 	for _, row := range state.ReadPlaced(filepath.Join(omk, "placed.tsv")) {
 		if row.Enabled != "1" {
 			continue
 		}
 		if lexists(filepath.Join(root, row.Rel)) {
-			continue
-		}
-		// A path the user BLOCKED is deliberately absent — never a hole.
-		// (It also carries the same skip-worktree tag as a masked path, so
-		// without this exemption the masked branch below would misread it.)
-		if blockedCovers(blocked, row.Rel) {
 			continue
 		}
 		// A tracked path normally supplies its own content, so a missing
@@ -237,7 +212,6 @@ func healWorktree(repo *state.Repo, stderr io.Writer) int {
 	root := repo.Root
 	snap := filepath.Join(repo.OMK, "payload-snapshot")
 	umask := currentUmask()
-	blocked := state.ReadBlocked(repo.OMK)
 	for _, row := range state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv")) {
 		// enabled=0 is a deliberate off switch: a missing disabled artifact
 		// is not "missing" — never resurrect it.
@@ -245,15 +219,6 @@ func healWorktree(repo *state.Repo, stderr io.Writer) int {
 			continue
 		}
 		rel := row.Rel
-		// A BLOCKED path is the user's explicit no — heal must never
-		// rematerialize it. It also carries the same skip-worktree tag as a
-		// deliberately masked path, so without this exemption the masked
-		// branch below would copy the harness snapshot over a tracked,
-		// blocked file: the block defeated, the index dirtied, and the agent
-		// reading the one file the user hid.
-		if blockedCovers(blocked, rel) {
-			continue
-		}
 		dest := filepath.Join(root, rel)
 		// The accepted (kept) copy outranks the harness version: refilling a
 		// kept file must restore what the user consented to, and the drift
@@ -322,20 +287,4 @@ func first12(s string) string {
 		return s[:12]
 	}
 	return s
-}
-
-// blockedCovers reports whether rel is one of the user's blocked items or
-// sits under a blocked directory item. Blocked paths carry the same
-// skip-worktree tag as deliberately masked (adopted) ones, so every
-// masked-path branch must check this first.
-func blockedCovers(blocked map[string]bool, rel string) bool {
-	if blocked[rel] {
-		return true
-	}
-	for item := range blocked {
-		if strings.HasPrefix(rel, item+"/") {
-			return true
-		}
-	}
-	return false
 }

@@ -5,6 +5,19 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Removed
+- **`omakase block` / `omakase unblock`** (#207): the per-item hiding of the
+  repo's own committed agent config is gone — the verb, the `/omakase:block`
+  skill, the sparse-checkout machinery, the blocked-row annotations on the
+  status page, and the re-hide heals. The mechanism fought git (both criticals
+  in the 0.29.1 hardening round were block's skip-worktree collisions, and
+  substituting a blocked file was structurally impossible on sparse-checkout,
+  #197), and the product sticks to carrying and loading a harness. A repo with
+  an active block from 0.29.x: run `git sparse-checkout disable` and delete
+  `.git/omakase/blocked` to get the hidden files back — and do it BEFORE
+  running `omakase remove` there, which no longer knows the sidecar and may
+  misread it as an old install.
+
 ## [0.29.1] — 2026-07-29
 
 ### Fixed
