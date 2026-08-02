@@ -72,15 +72,20 @@ var verbs = map[string]func(argv []string, stdout, stderr io.Writer) int{
 	},
 	"init": func(argv []string, stdout, stderr io.Writer) int {
 		code := overlay.RunInit(argv[2:], stdout, stderr)
-		// Statusline wired by default (#123 item 5): after an init that
-		// left a real install behind, fill each host's empty statusLine
-		// slot; an existing bar always wins (wireAtInit). Lives here, not
-		// in RunInit, for SelfInstallCurrent's reason: unit tests calling
-		// RunInit directly must never touch a developer's real host
-		// settings. --help and the nothing-remembered first run install
-		// nothing and must wire nothing — the placed.tsv check is the
-		// same installed-here signal RunInit's own wording keys on.
+		// After an init that left a real install behind: refresh the
+		// user-level agent skills (#211) and fill each host's empty
+		// statusLine slot, an existing bar always winning (wireAtInit,
+		// #123 item 5). Lives here, not in RunInit, for
+		// SelfInstallCurrent's reason: unit tests calling RunInit
+		// directly must never touch a developer's real host settings or
+		// home-dir skills. --help, a refused init, and the
+		// nothing-remembered first run install nothing and must write
+		// nothing — the placed.tsv check is the same installed-here
+		// signal RunInit's own wording keys on.
 		if code == 0 && !hasHelpFlag(argv[2:]) && overlayInstalled() {
+			bi, _ := debug.ReadBuildInfo()
+			v, _, _ := resolveVersion(version, commit, date, bi)
+			overlay.InstallUserSkills(v, stdout, stderr)
 			wireAtInit(stdout, stderr)
 		}
 		return code
@@ -184,15 +189,14 @@ func run(argv []string, stdout, stderr io.Writer) int {
 
 func main() {
 	// Every real init refreshes the machine-wide binary copy the status-bar
-	// wiring points at, and the user-level agent skills the hosts read
-	// (#211 — the plugin fold). Done here and not inside RunInit so unit
-	// tests that call RunInit directly can never overwrite a developer's
-	// cached binary or real home-dir skills with test copies.
+	// wiring points at. Done here and not inside RunInit so unit tests that
+	// call RunInit directly can never overwrite a developer's cached binary
+	// with a test binary. (The user-level skills install lives in the init
+	// verb instead, gated on a real install — #211.)
 	if len(os.Args) > 1 && os.Args[1] == "init" {
 		bi, _ := debug.ReadBuildInfo()
 		v, _, _ := resolveVersion(version, commit, date, bi)
 		overlay.SelfInstallCurrent(v)
-		overlay.InstallUserSkills(v, os.Stdout, os.Stderr)
 	}
 	os.Exit(run(os.Args, os.Stdout, os.Stderr))
 }

@@ -36,6 +36,10 @@ const skillMarkerName = ".omakase"
 // Nothing here may fail the verb that triggered it; problems print one
 // stderr line and move on.
 func InstallUserSkills(version string, stdout, stderr io.Writer) {
+	// One normalization for BOTH the marker content and the comparisons: a
+	// v-prefixed build stamp written raw into the marker would fail to
+	// parse later and silently disable the downgrade guard.
+	version = strings.TrimPrefix(version, "v")
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return
@@ -70,11 +74,11 @@ func installSkillsInto(root, version string, stderr io.Writer) int {
 		}
 		dest := filepath.Join(root, e.Name())
 		hadMarker := fileRegular(filepath.Join(dest, skillMarkerName))
-		if isDir(dest) && !hadMarker {
+		if !hadMarker && !skillDestClaimable(dest) {
 			fmt.Fprintf(stderr, "omakase: %s exists but is not omakase's — left untouched\n", dest)
 			continue
 		}
-		if v, ok := parseVersion(strings.TrimPrefix(version, "v")); ok {
+		if v, ok := parseVersion(version); ok {
 			if raw, err := os.ReadFile(filepath.Join(dest, skillMarkerName)); err == nil {
 				if iv, ok := parseVersion(strings.TrimSpace(string(raw))); ok && versionLess(v, iv) {
 					continue
@@ -82,22 +86,65 @@ func installSkillsInto(root, version string, stderr io.Writer) int {
 			}
 		}
 		if err := writeSkill(dest, e.Name(), version); err != nil {
+			// One line and stop for this whole folder: a root-level cause
+			// (read-only dir, missing permissions) would otherwise repeat
+			// per skill on every init.
 			fmt.Fprintf(stderr, "omakase: could not install skill %s: %v\n", dest, err)
-		} else if !hadMarker {
+			return fresh
+		}
+		if !hadMarker {
 			fresh++
 		}
 	}
 	return fresh
 }
 
-// writeSkill materializes one embedded skill directory, marker first: a
-// directory without the marker reads as foreign and is never touched
-// again, so a write torn after mkdir but before the marker would wedge
-// that skill forever — marker-first keeps a torn write repairable by the
-// next init.
+// skillDestClaimable reports whether a marker-less dest may be written: it
+// doesn't exist, or it is a real directory holding nothing but our own
+// torn-write residue (the marker's or a file's .tmp.<pid> leftovers — the
+// only states our own writer can abandon, since the marker lands before
+// any content). Anything else — a user's file, symlink, or a directory
+// with real content — is foreign and never touched. Without the residue
+// tolerance, an install killed between mkdir and the marker write would
+// read as foreign forever and permanently wedge that skill.
+func skillDestClaimable(dest string) bool {
+	fi, err := os.Lstat(dest)
+	if err != nil {
+		return os.IsNotExist(err)
+	}
+	if !fi.IsDir() {
+		return false
+	}
+	entries, err := os.ReadDir(dest)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !strings.Contains(e.Name(), ".tmp.") {
+			return false
+		}
+	}
+	return true
+}
+
+// writeSkill materializes one embedded skill directory, marker first.
+// The ordering is load-bearing for skillDestClaimable's reasoning: with
+// the marker landing before any content, the only marker-less states our
+// own writer can abandon are an empty dir or .tmp leftovers — exactly
+// what skillDestClaimable declares repairable. Real content without a
+// marker therefore always means a foreign dir.
 func writeSkill(dest, name, version string) error {
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return err
+	}
+	// Sweep our own .tmp.<pid> leftovers from a killed earlier write —
+	// nothing else re-examines a dir once it carries the marker.
+	if entries, err := os.ReadDir(dest); err == nil {
+		for _, e := range entries {
+			if strings.Contains(e.Name(), ".tmp.") {
+				os.Remove(filepath.Join(dest, e.Name()))
+			}
+		}
 	}
 	if err := writeFileAtomic(filepath.Join(dest, skillMarkerName), []byte(version+"\n"), 0o644); err != nil {
 		return err

@@ -53,10 +53,11 @@ Or grab a binary from [releases](https://github.com/Yuncun/omakase-harness/relea
 go install github.com/Yuncun/omakase-harness/cmd/omakase@latest
 ```
 
-That's the whole install. The first `omakase init` also places the agent-facing
-skills (`/omakase-init`, `/omakase-status`, `/omakase-remove`, …) into the
-user-level skill folders Claude Code and Copilot CLI read, and every later init
-keeps them current — there is no separate plugin to install.
+That's the whole install. The first `omakase init` that installs a harness also
+places the agent-facing skills (`/omakase-init`, `/omakase-status`,
+`/omakase-remove`, …) into the user-level skill folders Claude Code and Copilot
+CLI read, and every later init keeps them current — there is no separate plugin
+to install.
 
 ## Use
 

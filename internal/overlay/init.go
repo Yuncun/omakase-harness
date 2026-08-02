@@ -35,7 +35,7 @@ import (
 )
 
 // usageText is the `omakase init` usage text; tests pin the exact bytes.
-const usageText = "usage: init.sh [<owner/repo[/subpath][#ref]> | --source <git-url|path>] [--cut-over] [--help]\n" +
+const usageText = "usage: omakase init [<owner/repo[/subpath][#ref]> | --source <git-url|path>] [--cut-over] [--help]\n" +
 	"\n" +
 	"Overlay payload/ into the current repo additively (zero committed footprint) and\n" +
 	"install its git hooks. A payload path the repo already COMMITS is never touched:\n" +
@@ -55,7 +55,7 @@ const usageText = "usage: init.sh [<owner/repo[/subpath][#ref]> | --source <git-
 	"               the base harness's payload with the source's payload layered ON TOP (base\n" +
 	"               machinery underneath, source wins on overlap), so a source ships only its\n" +
 	"               delta and relies on base machinery without keeping its own copy. The source is\n" +
-	"               remembered; a later bare init.sh refreshes and re-injects the same source.\n" +
+	"               remembered; a later bare omakase init refreshes and re-injects the same source.\n" +
 	"               A `//subpath` suffix on the url or path adopts a harness directory inside\n" +
 	"               the repo: --source https://host/x/hub//tools, --source /clones/hub//tools.\n" +
 	"  --cut-over   also untrack (git rm --cached) every payload path the repo currently\n" +
@@ -1004,7 +1004,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 	for _, s := range skipped {
 		if s != "" {
-			fmt.Fprintf(stdout, "  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see init.sh --help): %s\n", s)
+			fmt.Fprintf(stdout, "  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see omakase init --help): %s\n", s)
 		}
 	}
 	// The worktree claim is only made while the heal hook is actually

@@ -88,9 +88,17 @@ func TestWireWiresSessionStartHeal(t *testing.T) {
 		t.Fatalf("SessionStart = %v, want one entry", hooks["SessionStart"])
 	}
 	cmd := ss[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"].(string)
-	bin := filepath.Join(home, ".cache", "omakase", "bin", "current", "omakase")
-	if !strings.Contains(cmd, bin+`" hook session-start`) || !strings.Contains(cmd, "[ -x ") || !strings.HasSuffix(cmd, "|| true") {
-		t.Fatalf("heal command = %q, want the guarded stable-bin invocation", cmd)
+	// The command derives the stable-bin path from the ENVIRONMENT at
+	// session time (never a baked absolute path — that went stale when
+	// HOME/XDG_CACHE_HOME moved, and its interpolation was an sh-quoting
+	// hazard), and self-guards on the binary existing.
+	if !strings.Contains(cmd, `${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase`) ||
+		!strings.Contains(cmd, "hook session-start") ||
+		!strings.Contains(cmd, "[ -x ") || !strings.HasSuffix(cmd, "|| true") {
+		t.Fatalf("heal command = %q, want the env-derived guarded invocation", cmd)
+	}
+	if strings.Contains(cmd, home) {
+		t.Fatalf("heal command bakes in an absolute path: %q", cmd)
 	}
 	// Copilot CLI does not run SessionStart hooks — no hooks key there.
 	if _, has := readJSON(t, filepath.Join(home, ".copilot", "settings.json"))["hooks"]; has {
@@ -115,6 +123,39 @@ func TestWireAppendsToExistingSessionStartHooks(t *testing.T) {
 	}
 	if ss[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"] != "echo hi" {
 		t.Fatalf("user's hook not preserved first: %v", ss[0])
+	}
+}
+
+// A settings file holding literal `null` parses to a nil map — wiring
+// must treat it as empty, not panic (json.Unmarshal leaves the map nil).
+func TestWireToleratesNullSettings(t *testing.T) {
+	home := wireHome(t, map[string]string{".claude": "null"})
+	var out, errB bytes.Buffer
+	if code := runWire(&out, &errB); code != 0 {
+		t.Fatalf("exit = %d (stderr: %s)", code, errB.String())
+	}
+	m := readJSON(t, filepath.Join(home, ".claude", "settings.json"))
+	if _, has := m["statusLine"]; !has {
+		t.Fatalf("statusLine missing after null-settings wire: %v", m)
+	}
+	if _, has := m["hooks"]; !has {
+		t.Fatalf("heal hook missing after null-settings wire: %v", m)
+	}
+}
+
+// `"hooks": null` is absent, not unextendable — it must wire, not
+// complain forever.
+func TestWireTreatsNullHooksAsAbsent(t *testing.T) {
+	home := wireHome(t, map[string]string{".claude": `{"hooks":null}`})
+	var out, errB bytes.Buffer
+	runWire(&out, &errB)
+	if errB.Len() != 0 {
+		t.Fatalf("null hooks refused: %q", errB.String())
+	}
+	m := readJSON(t, filepath.Join(home, ".claude", "settings.json"))
+	hooks, ok := m["hooks"].(map[string]any)
+	if !ok || hooks["SessionStart"] == nil {
+		t.Fatalf("heal not wired over null hooks: %v", m["hooks"])
 	}
 }
 
@@ -357,6 +398,14 @@ func TestRunInitWiresStatuslineByDefault(t *testing.T) {
 	if !strings.Contains(out.String(), "statusLine") || !strings.Contains(out.String(), "written to") {
 		t.Fatalf("wiring not announced in init output:\n%s", out.String())
 	}
+	// The same real init installs the user-level skills (#211) — this is
+	// the wiring-level pin that the feature is actually called.
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "omakase-init", "SKILL.md")); err != nil {
+		t.Fatalf("init did not install the user-level skills: %v\nstdout:\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "agent skills installed") {
+		t.Fatalf("skill install not announced:\n%s", out.String())
+	}
 	first, _ := os.ReadFile(path)
 
 	out.Reset()
@@ -384,6 +433,9 @@ func TestRunInitHelpNeverWires(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
 		t.Fatal("init --help wired the statusline")
 	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills")); !os.IsNotExist(err) {
+		t.Fatal("init --help installed user-level skills")
+	}
 }
 
 // The nothing-remembered bare init (the newcomer first-run) installs
@@ -400,5 +452,8 @@ func TestRunInitNothingRememberedNeverWires(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
 		t.Fatal("a nothing-remembered init wired the statusline")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills")); !os.IsNotExist(err) {
+		t.Fatal("a nothing-remembered init installed user-level skills")
 	}
 }

@@ -138,3 +138,70 @@ func TestInstallUserSkillsAnnouncesOnlyFirstInstall(t *testing.T) {
 		t.Fatalf("refresh must be silent, got %q", again.String())
 	}
 }
+
+// The wedge case (review finding): an install killed between mkdir and the
+// marker write leaves an empty marker-less dir. That dir must read as OUR
+// torn write and get repaired, not refused as foreign forever.
+func TestInstallUserSkillsRepairsTornWrite(t *testing.T) {
+	home := skillHome(t, ".claude")
+	torn := filepath.Join(home, ".claude", "skills", "omakase-init")
+	if err := os.MkdirAll(torn, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(torn, ".omakase.tmp.123"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var errB strings.Builder
+	InstallUserSkills("1.0.0", io.Discard, &errB)
+	if _, err := os.Stat(filepath.Join(torn, "SKILL.md")); err != nil {
+		t.Fatalf("torn write not repaired: %v (stderr: %q)", err, errB.String())
+	}
+	if _, err := os.Stat(filepath.Join(torn, ".omakase.tmp.123")); !os.IsNotExist(err) {
+		t.Fatal("tmp residue not swept")
+	}
+	if strings.Contains(errB.String(), "not omakase's") {
+		t.Fatalf("torn write misread as foreign: %q", errB.String())
+	}
+}
+
+// A dest that is a regular FILE (or any non-directory) is foreign: left
+// untouched with the friendly refusal, not a raw mkdir error.
+func TestInstallUserSkillsRefusesNonDirDest(t *testing.T) {
+	home := skillHome(t, ".claude")
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(home, ".claude", "skills", "omakase-init")
+	if err := os.WriteFile(file, []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var errB strings.Builder
+	InstallUserSkills("1.0.0", io.Discard, &errB)
+	if b, _ := os.ReadFile(file); string(b) != "mine\n" {
+		t.Fatalf("user's file was touched: %q", b)
+	}
+	if !strings.Contains(errB.String(), "not omakase's") {
+		t.Fatalf("no friendly refusal for non-dir dest: %q", errB.String())
+	}
+}
+
+// A v-prefixed build stamp must not disable the downgrade guard (review
+// finding): the marker is written normalized, so a later older binary
+// still refuses to roll it back.
+func TestInstallUserSkillsNormalizesVPrefix(t *testing.T) {
+	home := skillHome(t, ".claude")
+	InstallUserSkills("v9.9.9", io.Discard, io.Discard)
+	marker, _ := os.ReadFile(filepath.Join(home, ".claude", "skills", "omakase-init", ".omakase"))
+	if strings.TrimSpace(string(marker)) != "9.9.9" {
+		t.Fatalf("marker = %q, want the v-stripped version", marker)
+	}
+	path := filepath.Join(home, ".claude", "skills", "omakase-init", "SKILL.md")
+	newer := []byte("from the future\n")
+	if err := os.WriteFile(path, newer, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	InstallUserSkills("1.0.0", io.Discard, io.Discard)
+	if b, _ := os.ReadFile(path); string(b) != string(newer) {
+		t.Fatal("v-prefixed marker let an older binary downgrade the skill")
+	}
+}

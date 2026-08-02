@@ -30,9 +30,11 @@ hook into Claude Code's user-level settings (`~/.claude/settings.json`) that run
 `omakase hook session-start` when an agent session opens — the same best-effort
 repair, covering the one gap git events can't see (overlay wiped, then a new
 session starts). It is silent unless it restored something, exits 0 always, and
-the wired command self-guards on the binary existing so a machine that loses the
-install never sees session-start errors. Copilot CLI does not run SessionStart
-hooks, so there the heal rides git events only.
+the wired command derives the stable binary path from the environment at session
+time and self-guards on it existing — a machine that loses the install never
+sees session-start errors. On Copilot CLI the heal rides git events only
+(Copilot keeps hooks in its own `~/.copilot/hooks/*.json` mechanism, which
+omakase does not write yet).
 
 Hooks, the exclude block, and the remembered source live in the git common dir, shared by
 every checkout of the repository. Switching the repo's harness is therefore repo-wide: a
@@ -170,6 +172,15 @@ omakase block from `.git/info/exclude`. Tracked files are never touched. Takes n
 arguments — any argument is ignored. There is no per-source removal; a repo holds one
 installed harness, and `remove` always tears it down completely.
 
+`remove` is repo-scoped. The machine-level pieces init set up are shared by every
+repo and deliberately survive it: the stable binary copy under
+`~/.cache/omakase/`, the user-level skills (`~/.claude/skills/omakase-*/`,
+`~/.copilot/skills/omakase-*/` — each carries a `.omakase` marker file, safe to
+delete by hand), and the statusLine / SessionStart entries in the hosts'
+settings.json (delete the blocks by hand; a `.omakase-bak` sits next to the file
+from the last wiring write). Removing the binary itself is your package
+manager's job (`brew uninstall omakase`).
+
 ## Environment
 
 | Variable | Effect |
@@ -251,7 +262,7 @@ already commits is skipped and reported, an installed instruction file is exclud
 ## Path classification
 
 `init` decides how to exclude a placed file by its top directory. A shared top directory
-(`HARNESS_SHARED_TOPDIRS` in `bin/lib-harness-paths.sh`, currently `.github`) is excluded
+(`harness.SharedTopdirs` in the Go source, currently `.github`) is excluded
 file-by-file, so the project's own files there stay visible to git. Every other top
 directory is excluded wholesale. See
 [Concepts](concepts.md#owned-and-shared-directories).

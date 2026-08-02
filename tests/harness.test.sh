@@ -88,7 +88,7 @@ OUT=$(cd "$REPO" && printf '%s\n' "$MARK" > skip.txt && git add skip.txt && OMAK
 [ "$rc" -eq 0 ] && pass "OMAKASE_SKIP_GATES=1 lets the marker commit through" || { fail "OMAKASE_SKIP_GATES did not skip (rc=$rc)"; echo "$OUT" | sed 's/^/      /'; }
 ( cd "$REPO" && git rm -q skip.txt && git commit -q -m "drop skip" )
 
-# 7) Go gates, only where a toolchain exists (CI's main matrix has one; tests-no-go doesn't
+# 7) Go gates, only where a toolchain exists (CI's main matrix has one; a no-Go machine doesn't
 #    run this suite).
 if command -v go >/dev/null 2>&1; then
   ( cd "$REPO" && go mod init omakase-starter-fixture >/dev/null 2>&1 )

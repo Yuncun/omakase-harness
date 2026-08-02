@@ -2,23 +2,23 @@
 
 ## Layout
 
-The tool is shell entry points in `bin/` and a `payload/` tree copied into adopters.
-Three verbs — `init`, `remove`, and `status` — are implemented by a Go binary (module
-at the repo root) behind unchanged `bin/{init,remove,status}.sh` entry points: thin
-shims that resolve a runnable `omakase` in order — an `OMAKASE_BIN` override; a dev rebuild
-(`CGO_ENABLED=0 go build -o dist/omakase ./cmd/omakase`, when `go.mod` and `go` are both
-present); `dist/omakase`; `omakase` on `PATH`; then the stable machine copy every real
-`omakase init` self-installs at `~/.cache/omakase/bin/current/omakase`.
-`bin/lib-omakase-bin.sh` implements every tier. Resolution is local-only — the shims
-never download a binary (#182). When none of that resolves, every shim fails closed —
-one line on stderr naming the fix (`brew install yuncun/tap/omakase`) and exit 1. There
-is no bash fallback body: a silent one would mask binary-distribution failures.
+The tool is one Go binary (module at the repo root) plus a `payload/` tree copied into
+adopters. The binary embeds both the base payload and the agent-facing skills, so a
+brew/release install is self-contained. Every real `omakase init` refreshes the stable
+machine copy at `~/.cache/omakase/bin/current/omakase` — the path the `.git/hooks`
+dispatchers exec — and the user-level skills under `~/.claude/skills/` and
+`~/.copilot/skills/` (#211). Nothing ever downloads a binary at run time (#182).
 
-- `bin/` — the installer (`init`), uninstaller (`remove`), and inspector (`status`),
-  plus shared libraries.
+- `cmd/omakase/`, `internal/` — the binary: all verbs, the gate runner, the status
+  pages, the statusline, the host wiring.
 - `payload/` — the harness content copied into every target. Keep it minimal: anything
   added here ships to all adopters.
-- `tests/` — one `*.test.sh` per area.
+- `skills/` — the agent-facing skills, embedded into the binary and installed
+  user-level at init.
+- `tests/` — one `*.test.sh` per area; `tests/bin/` is test-only plumbing (thin verb
+  entry points plus the binary-resolution lib the suites share — an `OMAKASE_BIN`
+  override; a dev rebuild `go build -o dist/omakase ./cmd/omakase`; `dist/omakase`;
+  `omakase` on `PATH`; the stable machine copy).
 
 ## Tests
 
@@ -26,15 +26,10 @@ Run the suite:
 
     for t in tests/*.test.sh; do bash "$t" || break; done
 
-With Go present, the suite exercises the `status`, `init`, and `remove` binary paths
-through the shims. Without Go, the shims resolve a real binary — `omakase` on `PATH`, or
-the stable machine copy an earlier init self-installed — and fail closed (the brew
-instruction + exit 1) when nothing resolves.
-
-A change to the installer or the path model needs a matching test. The path classification
-in `bin/lib-harness-paths.sh` is the single source of truth for what is excluded and how;
-changes there must keep `tests/harness-paths.test.sh` and
-`tests/copilot-exclude-scope.test.sh` passing.
+A change to the installer or the path model needs a matching test. The path
+classification ships in Go (`internal/harness`); `tests/bin/lib-harness-paths.sh` is the
+suites' mirror of it, and the two are pinned against drift by
+`tests/harness-paths.test.sh` and the Go `TestSharedTopdirs`.
 
 ## Scope
 

@@ -3,8 +3,7 @@
 A custom harness is a `payload/` tree whose `payload/omakase.manifest` is the harness's one
 manifest — its identity (`name`, `version`; see [Reference](reference.md#manifest)) and its
 gate wiring — kept in a git repository, at the repo root or in a subfolder of a repo that holds
-other things too. `payload/` is copied onto a target on install; everything else (README, tests,
-`bin/`) stays in the custom harness.
+other things too. `payload/` is copied onto a target on install; everything else (README, tests) stays in the custom harness.
 
 A `--source` install layers the omakase **base harness's payload** under your `payload/` (your
 delta wins on overlap), so you ship only your delta and **rely on base machinery without keeping

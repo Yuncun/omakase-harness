@@ -8,9 +8,11 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 ### Changed
 - **One install story — the plugin is folded into the brew install (#211).**
   `brew install yuncun/tap/omakase` is now the whole onboarding: every
-  `omakase init` installs and refreshes the agent-facing skills into the
-  user-level skill folders both hosts read (`~/.claude/skills/`,
-  `~/.copilot/skills/`, each only if that host's config dir exists). The
+  `omakase init` that leaves a real install behind also installs and
+  refreshes the agent-facing skills into the user-level skill folders
+  both hosts read (`~/.claude/skills/`, `~/.copilot/skills/`, each only
+  if that host's config dir exists — and `init --help` or a refused init
+  writes nothing). The
   refresh is version-guarded — an older binary never rolls newer skill
   files backwards — and a same-named skill directory omakase does not own
   is never touched. There is no plugin to install or update anymore.
@@ -23,11 +25,16 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 - **The session-start heal moved off the plugin**: init wires a
   `SessionStart` hook into Claude Code's user settings
   (`~/.claude/settings.json`) alongside the statusline — same consent
-  (running init), same merge discipline (backup before write, an
-  unreadable file refused loudly, existing hooks appended to, never
-  replaced). The wired command self-guards on the binary existing.
-  Copilot CLI does not run SessionStart hooks; there the heal rides git
-  events, as before.
+  (running init: only a run that left a real install behind writes
+  anything), same merge discipline (backup before write, an unreadable
+  file refused loudly, existing hooks appended to, never replaced; a
+  second wiring write replaces the previous `.omakase-bak`, whose
+  contract is "undo the write just made", not "pre-omakase archive").
+  The wired command derives the stable binary path from the environment
+  at session time and self-guards on it existing. On Copilot CLI the
+  plugin-era session hook is gone with the plugin — the heal rides git
+  events there; Copilot's own hooks mechanism (`~/.copilot/hooks/*.json`)
+  is a candidate once verified (#211).
 - **The status page is minimalist — a program of respite against
   overinformation**: the default page is now banner → facts line ("N files
   injected · 0 committed · invisible to git") → the STEERING stack → guards
