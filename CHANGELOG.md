@@ -5,6 +5,8 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+## [0.30.0] — 2026-08-02
+
 ### Changed
 - **One install story — the plugin is folded into the brew install (#211).**
   `brew install yuncun/tap/omakase` is now the whole onboarding: every
