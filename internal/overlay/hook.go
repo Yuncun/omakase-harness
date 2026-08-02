@@ -41,7 +41,7 @@ var lfsHooks = map[string]bool{
 // non-zero to block the commit/push; post-checkout always returns 0.
 func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(argv) < 1 || !(hook.Known(argv[0]) || argv[0] == "session-start") {
-		fmt.Fprintln(stderr, "usage: omakase hook <pre-commit|pre-push|post-checkout|session-start> [hook args...]")
+		fmt.Fprintln(stderr, msgHookUsage)
 		return 2
 	}
 	name := argv[0]
@@ -67,7 +67,7 @@ func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if !isGate {
 			return 0
 		}
-		fmt.Fprintf(stderr, "omakase: BLOCKING — %s: not inside a git repository; the harness cannot be verified.\n", name)
+		fmt.Fprintf(stderr, msgHookNoRepoBlock, name)
 		return 1
 	}
 
@@ -78,8 +78,8 @@ func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if !isGate {
 			return 0
 		}
-		fmt.Fprintf(stderr, "omakase: BLOCKING — %s: omakase hooks are installed but no harness state exists in this repo.\n", name)
-		fmt.Fprintln(stderr, "omakase: restore it with  omakase init  — or take the hooks out with  omakase remove.")
+		fmt.Fprintf(stderr, msgHookTornStateBlock, name)
+		fmt.Fprintln(stderr, msgHookTornStateFix)
 		return 1
 	}
 
@@ -93,7 +93,7 @@ func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// silent failure the git hooks never see (#164 C5). Always exits 0.
 	if name == "session-start" {
 		if n := healWorktree(repo, stderr); n > 0 {
-			fmt.Fprintf(stdout, "omakase: restored %d missing harness file(s) at session start — run `omakase status` to review.\n", n)
+			fmt.Fprintf(stdout, msgSessionStartRestored, n)
 		}
 		return 0
 	}
@@ -186,15 +186,15 @@ func verifyPresent(root, omk string, stderr io.Writer) int {
 			continue
 		}
 		if missing == 0 {
-			fmt.Fprintln(stderr, "omakase: BLOCKING — the injected harness is incomplete; its gates would silently not run:")
+			fmt.Fprintln(stderr, msgVerifyIncompleteBlock)
 		}
-		fmt.Fprintf(stderr, "  missing: %s\n", row.Rel)
+		fmt.Fprintf(stderr, msgVerifyMissingRow, row.Rel)
 		missing++
 	}
 	if missing == 0 {
 		return 0
 	}
-	fmt.Fprintln(stderr, "omakase: restore it with  omakase init  and retry.")
+	fmt.Fprintln(stderr, msgVerifyIncompleteFix)
 	return 1
 }
 
@@ -234,7 +234,7 @@ func healWorktree(repo *state.Repo, stderr io.Writer) int {
 		// set, which is someone deliberately running this harness over the
 		// repo's own copy. Fall through and treat it like any injected file.
 		if gitTracked(root, rel) && !gitMasked(root, rel) {
-			fmt.Fprintf(stderr, "omakase: WARNING — injected path '%s' is now TRACKED by the repo; your personal copy was likely clobbered by an upstream commit (git overwrites ignored files on checkout). Last-injected copy: %s — diff it against the tracked file, then drop the path from your payload or cut over (init --cut-over).\n", rel, snapEntry)
+			fmt.Fprintf(stderr, msgHealTrackedCollision, rel, snapEntry)
 			continue
 		}
 		// Present (including a dangling symlink): NEVER overwrite — but
@@ -248,13 +248,13 @@ func healWorktree(repo *state.Repo, stderr io.Writer) int {
 						// cp fix below would silently discard this newest
 						// edit, so the kept path points at the lifecycle
 						// verbs instead.
-						fmt.Fprintf(stderr, "omakase: WARNING — '%s' differs from your accepted (kept) version. Your copy is left as-is. See the change:  omakase diff %s  — then keep it (omakase status --keep %s) or go back (omakase status --restore %s).\n", rel, rel, rel, rel)
+						fmt.Fprintf(stderr, msgHealKeptDrift, rel, rel, rel, rel)
 					} else {
-						fix := "omakase init"
+						fix := msgHealDriftFixInit
 						if lexists(snapEntry) {
-							fix = fmt.Sprintf("cp -P '%s' '%s'  (or omakase init to re-sync every file)", snapEntry, dest)
+							fix = fmt.Sprintf(msgHealDriftFixCp, snapEntry, dest)
 						}
-						fmt.Fprintf(stderr, "omakase: WARNING — injected '%s' has DRIFTED from canonical (ledger %s…, on-disk %s…); a gate may be weakened or stale. Drift only surfaces — your copy is left as-is. Adopt canonical with: %s\n", rel, first12(row.Hash), first12(actual), fix)
+						fmt.Fprintf(stderr, msgHealDrift, rel, first12(row.Hash), first12(actual), fix)
 					}
 				}
 			}
@@ -264,7 +264,7 @@ func healWorktree(repo *state.Repo, stderr io.Writer) int {
 			continue
 		}
 		if err := safeMkdirAll(root, filepath.Dir(dest)); err != nil {
-			fmt.Fprintf(stderr, "omakase: %v\n", err)
+			fmt.Fprintf(stderr, msgPrefixedErr, err)
 			continue
 		}
 		if err := CopyEntry(snapEntry, dest); err != nil {

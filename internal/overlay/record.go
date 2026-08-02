@@ -21,7 +21,7 @@ import (
 // not-a-repo or a write failure, 0 on success.
 func RunRecord(argv []string, stdout, stderr io.Writer) int {
 	if len(argv) != 1 || argv[0] == "" {
-		fmt.Fprintln(stderr, "usage: omakase record <gate-name>")
+		fmt.Fprintln(stderr, msgRecordUsage)
 		return 2
 	}
 	name := argv[0]
@@ -39,14 +39,14 @@ func RunRecord(argv []string, stdout, stderr io.Writer) int {
 		repo, err = state.Discover(wd)
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, "omakase: not inside a git repo")
+		fmt.Fprintln(stderr, msgNotAGitRepo)
 		return 1
 	}
 
 	if err := gate.Record(repo.Root, repo.OMK, name); err != nil {
-		fmt.Fprintf(stderr, "omakase: FAILED to record a PASS for '%s' (%v)\n", name, err)
+		fmt.Fprintf(stderr, msgRecordFailed, name, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "omakase: recorded PASS for '%s' at HEAD\n", name)
+	fmt.Fprintf(stdout, msgRecordedPass, name)
 	return 0
 }

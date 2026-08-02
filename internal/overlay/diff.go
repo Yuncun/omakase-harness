@@ -34,7 +34,7 @@ func RunDiff(argv []string, stdout, stderr io.Writer) int {
 			return 0
 		}
 		if strings.HasPrefix(a, "-") {
-			fmt.Fprintf(stderr, "omakase: unknown flag %s (omakase diff is read-only and takes only paths; see omakase diff --help)\n", a)
+			fmt.Fprintf(stderr, msgDiffUnknownFlag, a)
 			return 2
 		}
 		names = append(names, a)
@@ -42,17 +42,17 @@ func RunDiff(argv []string, stdout, stderr io.Writer) int {
 
 	wd, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintln(stderr, "omakase: not inside a git repo")
+		fmt.Fprintln(stderr, msgNotAGitRepo)
 		return 1
 	}
 	repo, err := state.Discover(wd)
 	if err != nil {
-		fmt.Fprintln(stderr, "omakase: not inside a git repo")
+		fmt.Fprintln(stderr, msgNotAGitRepo)
 		return 1
 	}
 	ledger := filepath.Join(repo.OMK, "placed.tsv")
 	if _, err := os.Stat(ledger); err != nil {
-		fmt.Fprintln(stderr, "omakase: no harness installed here — nothing to diff (install one:  omakase init)")
+		fmt.Fprintln(stderr, msgDiffNothingInstalled)
 		return 1
 	}
 	rows := state.ReadPlaced(ledger)
@@ -77,7 +77,7 @@ func RunDiff(argv []string, stdout, stderr io.Writer) int {
 				}
 			}
 			if !matched {
-				fmt.Fprintf(stderr, "omakase: unknown placed path: %s\n", name)
+				fmt.Fprintf(stderr, msgDiffUnknownPath, name)
 				return 2
 			}
 		}
@@ -90,16 +90,16 @@ func RunDiff(argv []string, stdout, stderr io.Writer) int {
 		}
 		full := filepath.Join(repo.Root, row.Rel)
 		if !lexists(full) {
-			fmt.Fprintf(stdout, "%s — missing from this worktree (restored on the next checkout, or:  omakase init)\n", row.Rel)
+			fmt.Fprintf(stdout, msgDiffRowMissing, row.Rel)
 			changed++
 			continue
 		}
 		// The baseline is what the user last consented to: the accepted copy
 		// for a kept file, the harness version otherwise.
 		base := filepath.Join(repo.OMK, "payload-snapshot", row.Rel)
-		vs := "the harness version"
+		vs := vsHarnessVersion
 		if k := keptEntry(repo.OMK, row.Rel); lexists(k) {
-			base, vs = k, "your accepted (kept) version"
+			base, vs = k, vsKeptVersion
 		}
 		if !lexists(base) {
 			continue // nothing recorded to compare against (no snapshot)
@@ -107,7 +107,7 @@ func RunDiff(argv []string, stdout, stderr io.Writer) int {
 		if h := state.HashOf(full); h != "" && h == state.HashOf(base) {
 			continue
 		}
-		fmt.Fprintf(stdout, "%s — your changes vs %s:\n", row.Rel, vs)
+		fmt.Fprintf(stdout, msgDiffRowHeader, row.Rel, vs)
 		var raw bytes.Buffer
 		cmd := exec.Command("git", "diff", "--no-index", "--", base, full)
 		cmd.Stdout = &raw
@@ -116,14 +116,14 @@ func RunDiff(argv []string, stdout, stderr io.Writer) int {
 			// exit 1 = differences found (expected); anything else is git
 			// failing to render — say so, keep going, still exit 0.
 			if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 1 {
-				fmt.Fprintf(stderr, "omakase: could not diff %s: %v\n", row.Rel, err)
+				fmt.Fprintf(stderr, msgDiffRenderFailed, row.Rel, err)
 			}
 		}
 		writeScrubbedDiff(stdout, raw.String(), row.Rel, vs)
 		changed++
 	}
 	if changed == 0 {
-		fmt.Fprintln(stdout, "omakase: no changes — every placed file matches what you've consented to.")
+		fmt.Fprintln(stdout, msgDiffNoChanges)
 	}
 	return 0
 }
@@ -146,9 +146,9 @@ func writeScrubbedDiff(w io.Writer, raw, rel, vs string) {
 		case strings.HasPrefix(line, "--- "):
 			fmt.Fprintf(w, "--- %s  (%s)\n", rel, vs)
 		case strings.HasPrefix(line, "+++ "):
-			fmt.Fprintf(w, "+++ %s  (yours, on disk)\n", rel)
+			fmt.Fprintf(w, msgDiffYoursLabel, rel)
 		case strings.HasPrefix(line, "Binary files "):
-			fmt.Fprintln(w, "Binary files differ")
+			fmt.Fprintln(w, msgDiffBinary)
 		default:
 			fmt.Fprintln(w, line)
 		}
@@ -156,15 +156,5 @@ func writeScrubbedDiff(w io.Writer, raw, rel, vs string) {
 }
 
 func printDiffUsage(w io.Writer) {
-	fmt.Fprint(w, `usage: omakase diff [path…]
-
-Shows what you changed in the files omakase placed, vs the harness version
-(or vs the version you accepted with  omakase status --keep). Read-only.
-
-  (no paths)   every changed placed file
-  path…        a placed file, or a directory of placed files
-
-After reviewing:  omakase status --keep <path>     make your version the accepted one
-                  omakase status --restore <path>  put the harness's version back
-`)
+	fmt.Fprint(w, msgDiffUsage)
 }
