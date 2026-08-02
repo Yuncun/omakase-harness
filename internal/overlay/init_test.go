@@ -886,8 +886,10 @@ func TestLedgerRotation(t *testing.T) {
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	if !strings.HasPrefix(stdout.String(), "omakase: rotated a pre-v2 (6-column) run ledger aside to ledger.tsv.pre-v2.bak (the new store starts clean).\n") {
-		t.Errorf("stdout missing rotation notice as its first line:\n%s", stdout.String())
+	// The rotation is silent (#49 case 2): an internal store-format migration
+	// is not surfaced to the user.
+	if strings.Contains(stdout.String(), "rotated a pre-v2") {
+		t.Errorf("rotation notice leaked to stdout:\n%s", stdout.String())
 	}
 	if _, err := os.Stat(filepath.Join(repo.OMK, "ledger.tsv.pre-v2.bak")); err != nil {
 		t.Errorf("ledger not rotated aside: %v", err)

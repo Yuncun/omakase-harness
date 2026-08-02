@@ -419,15 +419,15 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 
 	// ---- one-time ledger schema upgrade ----
-	// A pre-v2 (6-column) run ledger is rotated aside. On rename failure the
-	// notice is suppressed and the run continues with the old ledger in
-	// place. Deliberately after every refusal guard above: each of those
-	// claims nothing was changed, and rotating first made that a lie.
+	// A pre-v2 (6-column) run ledger is rotated aside, silently: an internal
+	// store-format migration is nothing the user can act on, and the notice
+	// read as if something went wrong (#49 case 2). On rename failure the run
+	// continues with the old ledger in place. Deliberately after every
+	// refusal guard above: each of those claims nothing was changed, and
+	// rotating first made that a lie.
 	ledger := filepath.Join(omk, "ledger.tsv")
 	if fileRegular(ledger) && ledgerNeedsRotate(ledger) {
-		if err := os.Rename(ledger, ledger+".pre-v2.bak"); err == nil {
-			fmt.Fprintln(stdout, msgLedgerRotated)
-		}
+		os.Rename(ledger, ledger+".pre-v2.bak")
 	}
 
 	// ---- guarded cut-over ----

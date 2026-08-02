@@ -113,7 +113,16 @@ omakase: nothing was changed.
 	msgLefthookYmlRefused    = "omakase: this harness declares gates in lefthook-local.yml, which omakase no longer reads. Declare them as gate: blocks in omakase.manifest (see the README) and delete the yml. Nothing was changed."
 	msgManifestReadFailed    = "omakase: could not read %s: %v. Nothing was changed.\n"
 	msgGateDeclInvalid       = "omakase: invalid gate declaration in omakase.manifest: %v. Nothing was changed.\n"
-	msgGateWiringInvalid     = "omakase: %v. It would fail at commit time (exit 127). Nothing was changed.\n"
+	// The %v names the gate and the script it references. Two causes share
+	// this refusal, and the likelier one for an adopter is NOT the wiring:
+	// an omakase older than the harness expects merges a base payload that
+	// lacks the script (#49's mis-blame incident — the message must not send
+	// the user off to edit wiring that is correct).
+	msgGateWiringInvalid = `omakase: %v. It would fail at commit time (exit 127). Nothing was changed.
+         If you didn't edit this harness yourself, your omakase install is likely older
+         than the harness expects — update it (brew upgrade omakase, or update the
+         plugin), then re-run. Otherwise fix the run: reference or ship the script.
+`
 
 	// Refused over an incumbent hook manager (husky and kin) — the header,
 	// then one "  - path" row per finding, then the consequences.
@@ -124,8 +133,6 @@ omakase: nothing was changed.
   If these are stale leftovers, remove them and re-run. If the project really uses
   them, do not install omakase here. Nothing was changed.
 `
-
-	msgLedgerRotated = "omakase: rotated a pre-v2 (6-column) run ledger aside to ledger.tsv.pre-v2.bak (the new store starts clean)."
 
 	// Guarded cut-over: the plan, the consequences, the refusal, the receipt.
 	msgCutOverNothingTracked = "omakase: --cut-over: no payload path is tracked by this repo — nothing to cut over."
