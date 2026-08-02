@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Yuncun/omakase-harness/internal/hook"
 )
@@ -47,15 +48,21 @@ func wireAtInit(stdout, stderr io.Writer) {
 	wireHosts(stdout, stderr, home, false)
 }
 
-// wireHosts fills each present host's empty statusLine slot and reports how
-// many it wrote. verbose adds the occupied-slot teaching lines.
+// wireHosts fills each present host's empty statusLine slot — and, on
+// Claude Code, the SessionStart heal hook (#211: the plugin fold moved it
+// off the plugin's hooks.json; #164 C5 is why it exists — git hooks only
+// heal on git events, so "overlay wiped, new session opens" stayed
+// silently broken). Copilot CLI does not run SessionStart hooks, so only
+// the statusline is wired there. Reports how many files it wrote. verbose
+// adds the occupied-slot teaching lines.
 func wireHosts(stdout, stderr io.Writer, home string, verbose bool) int {
-	cmd := stableWireBin(home) + " statusline"
+	bin := stableWireBin(home)
+	cmd := bin + " statusline"
 	wired := 0
 	if dirExists(filepath.Join(home, ".claude")) {
 		wired += wireHost(stdout, stderr, "Claude Code",
 			filepath.Join(home, ".claude", "settings.json"),
-			map[string]any{"type": "command", "command": cmd, "padding": 0, "refreshInterval": 10}, verbose)
+			map[string]any{"type": "command", "command": cmd, "padding": 0, "refreshInterval": 10}, bin, verbose)
 	}
 	if dirExists(filepath.Join(home, ".copilot")) {
 		// Copilot's status line is GA (the old STATUS_LINE feature flag is
@@ -63,7 +70,7 @@ func wireHosts(stdout, stderr io.Writer, home string, verbose bool) int {
 		// Refresh is per-response there (no timer), so no refreshInterval.
 		wired += wireHost(stdout, stderr, "Copilot CLI",
 			filepath.Join(home, ".copilot", "settings.json"),
-			map[string]any{"type": "command", "command": cmd}, verbose)
+			map[string]any{"type": "command", "command": cmd}, "", verbose)
 	}
 	return wired
 }
@@ -79,11 +86,13 @@ func stableWireBin(home string) string {
 	return filepath.Join(home, ".cache", "omakase", "bin", "current", "omakase")
 }
 
-// wireHost wires one host's settings file and reports 1 if it wrote. A
-// configured statusLine is left untouched (with manual instructions when
-// verbose); an unparseable settings file is refused loudly — never
+// wireHost wires one host's settings file in a single read-modify-write
+// and reports 1 if it wrote: the statusLine block when the slot is empty
+// (a configured bar is left untouched, with manual instructions when
+// verbose), and — when healBin is set — the SessionStart heal hook when
+// absent. An unparseable settings file is refused loudly — never
 // overwrite what we cannot read.
-func wireHost(stdout, stderr io.Writer, host, path string, block map[string]any, verbose bool) int {
+func wireHost(stdout, stderr io.Writer, host, path string, block map[string]any, healBin string, verbose bool) int {
 	m := map[string]any{}
 	raw, err := os.ReadFile(path)
 	switch {
@@ -97,11 +106,25 @@ func wireHost(stdout, stderr io.Writer, host, path string, block map[string]any,
 		return 0
 	}
 
+	var wrote []string
 	if _, has := m["statusLine"]; has {
 		if verbose {
 			fmt.Fprintf(stdout, "%s already has a status line — left untouched.\n", host)
 			fmt.Fprintf(stdout, "  To add the omakase segment to it, run `%s` from your bar and print its output.\n", block["command"])
 		}
+	} else {
+		m["statusLine"] = block
+		wrote = append(wrote, "statusLine")
+	}
+	if healBin != "" {
+		switch added, err := addSessionStartHook(m, raw, healBin); {
+		case err != nil:
+			fmt.Fprintf(stderr, "omakase: %s: %v — heal hook not wired\n", path, err)
+		case added:
+			wrote = append(wrote, "session-start heal hook")
+		}
+	}
+	if len(wrote) == 0 {
 		return 0
 	}
 
@@ -111,7 +134,6 @@ func wireHost(stdout, stderr io.Writer, host, path string, block map[string]any,
 			return 0
 		}
 	}
-	m["statusLine"] = block
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		fmt.Fprintf(stderr, "omakase: could not encode %s: %v\n", path, err)
@@ -121,12 +143,41 @@ func wireHost(stdout, stderr io.Writer, host, path string, block map[string]any,
 		fmt.Fprintf(stderr, "omakase: could not write %s: %v\n", path, err)
 		return 0
 	}
+	what := strings.Join(wrote, " + ")
 	if raw != nil {
-		fmt.Fprintf(stdout, "%s wired: statusLine written to %s (backup: %s.omakase-bak)\n", host, path, path)
+		fmt.Fprintf(stdout, "%s wired: %s written to %s (backup: %s.omakase-bak)\n", host, what, path, path)
 	} else {
-		fmt.Fprintf(stdout, "%s wired: statusLine written to %s\n", host, path)
+		fmt.Fprintf(stdout, "%s wired: %s written to %s\n", host, what, path)
 	}
 	return 1
+}
+
+// addSessionStartHook merges the heal hook into m's hooks.SessionStart
+// list unless the raw settings already mention it. The command self-guards
+// on the stable binary existing, so a machine that later loses the install
+// never surfaces host hook errors on every session. Reports whether it
+// added anything; errs on a hooks shape it cannot safely extend.
+func addSessionStartHook(m map[string]any, raw []byte, bin string) (bool, error) {
+	if strings.Contains(string(raw), "hook session-start") {
+		return false, nil
+	}
+	hooks, ok := m["hooks"].(map[string]any)
+	if !ok {
+		if _, has := m["hooks"]; has {
+			return false, fmt.Errorf("hooks is not an object")
+		}
+		hooks = map[string]any{}
+	}
+	list, ok := hooks["SessionStart"].([]any)
+	if !ok && hooks["SessionStart"] != nil {
+		return false, fmt.Errorf("hooks.SessionStart is not a list")
+	}
+	cmd := fmt.Sprintf("[ -x %q ] && %q hook session-start || true", bin, bin)
+	hooks["SessionStart"] = append(list, map[string]any{
+		"hooks": []any{map[string]any{"type": "command", "command": cmd}},
+	})
+	m["hooks"] = hooks
+	return true, nil
 }
 
 func dirExists(path string) bool {

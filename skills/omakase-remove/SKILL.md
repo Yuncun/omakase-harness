@@ -1,17 +1,16 @@
 ---
-name: remove
+name: omakase-remove
 description: Remove the omakase harness from the current repo — uninstall the git hooks, delete exactly the untracked files init placed (never a tracked file), and strip the omakase block from .git/info/exclude, restoring the repo to its pre-init state. Use when asked to "remove / uninstall omakase", "take the harness off", or "undo init".
-allowed-tools: Bash(*/run.sh*) Bash(*/bin/remove.sh*)
+allowed-tools: Bash(omakase:*)
 ---
 
-# /omakase:remove — reverse init
+# /omakase-remove — reverse init
 
-Run this skill's self-locating `run.sh`. `<skill-dir>` is THIS skill's own directory — the path
-this SKILL.md was loaded from, which the host shows you. (Do not use `${CLAUDE_PLUGIN_ROOT}`:
-Claude Code sets it but Copilot CLI does not, and an unset variable resolves to a broken path.)
+Run the `omakase` binary directly — it is on PATH (installing it is what placed this skill). If
+it is somehow missing, stop and tell the user to install it: `brew install yuncun/tap/omakase`.
 
 ```bash
-bash <skill-dir>/run.sh
+omakase remove
 ```
 
 Uninstalls the git hooks, deletes exactly the untracked files init placed (never a tracked file),

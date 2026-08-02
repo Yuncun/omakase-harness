@@ -50,10 +50,11 @@ omakase reaches users two ways, and they update differently:
   to its default branch, so these users get the latest `main` on their next `init` —
   unless they pinned a branch or tag with `owner/repo#ref`, which keeps them on that ref.
   No version bump is needed for unpinned installs.
-- **Claude Code plugin installs.** The plugin is cached and refreshed by the plugin
-  manager, which keys off the version in `.claude-plugin/plugin.json`. If you do not bump
-  it, plugin users keep running the old code. **A shipped change is not live for plugin
-  users until the version is bumped and published.**
+- **brew / binary installs.** `brew upgrade` delivers the new binary, and the next
+  `omakase init` refreshes the machine-wide copy the git hooks run **and** the
+  user-level agent skills (both are version-guarded, so an older binary never rolls
+  either backwards). **A shipped change is not live for these users until a release
+  is tagged and published.**
 
 So any change adopters should pick up needs a version bump. The step-by-step
 runbook — version bumps, changelog, tagging, and the publish line — is

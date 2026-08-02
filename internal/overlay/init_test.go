@@ -1854,7 +1854,7 @@ func TestInitNeverTouchesHostSettings(t *testing.T) {
 // --- base-machinery downgrade guard (#189) --------------------------------
 
 // An init whose payload carries an older .omakase/VERSION than the repo
-// (a stale plugin/binary running a bare refresh) refuses before placing
+// (a stale binary running a bare refresh) refuses before placing
 // anything; a newer or equal payload proceeds, and unparseable versions
 // (dev builds) never refuse.
 func TestInitRefusesBaseDowngrade(t *testing.T) {

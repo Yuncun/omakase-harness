@@ -133,11 +133,10 @@ repo is overwritten the next time `init` runs, because `init` makes the target m
 `payload/`. Durable changes go in the harness repo's `payload/`, followed by a
 re-install.
 
-**A plugin's files are read-only.** A harness distributed as a Claude Code plugin lives in
-a cache that is replaced on every update, so it cannot be edited there. Clone the harness
-repo, edit `payload/`, and install from the clone. The remembered source is recorded per
-repo and shown by `omakase status`, so the active source is always inspectable. Do not install
-from both the plugin and a clone into one repo.
+**An installed source's cache is read-only.** A harness installed by `owner/repo` lives in
+a local cache that is replaced on every refresh, so it cannot be edited there. Clone the
+harness repo, edit `payload/`, and install from the clone. The remembered source is recorded
+per repo and shown by `omakase status`, so the active source is always inspectable.
 
 **Owned directories are gitignored wholesale.** A file a gate (or the command it runs) writes
 under `.omakase/` or `.claude/` is invisible to git and never reaches a teammate. That is
@@ -147,7 +146,7 @@ config pointing at it. A test that lives only in an ignored directory runs only 
 machine that wrote it.
 
 **`init` skips tracked files.** It never overwrites a file the project commits. To replace
-a committed file with the harness copy, use `init.sh --cut-over`, which is guarded and
+a committed file with the harness copy, use `omakase init --cut-over`, which is guarded and
 requires explicit confirmation. Do not run `git rm --cached` by hand: it stages a deletion
 that the next commit applies for everyone.
 
@@ -159,16 +158,16 @@ everything else omakase places is owned.
 
 A harness installs from any git URL:
 
-    init.sh --source https://github.com/you/your-harness
+    omakase init --source https://github.com/you/your-harness
 
 It does not need a repository of its own — a subfolder of a repo you already have works:
 
-    init.sh you/your-repo/path/to/harness
-    init.sh --source https://github.com/you/your-repo//path/to/harness
+    omakase init you/your-repo/path/to/harness
+    omakase init --source https://github.com/you/your-repo//path/to/harness
 
 The `//` marks where the repo ends and the subfolder begins; `payload/omakase.manifest` sits
 inside that subfolder's `payload/`.
 
-The manifest needs a `name`; `version` is optional. Distributing as a Claude Code plugin
-adds the `omakase` skills over the same scripts; the install commands are in the
+The manifest needs a `name`; `version` is optional. Adopters need nothing beyond the
+omakase binary itself — the install commands are in the
 [README's Install section](../README.md#install).

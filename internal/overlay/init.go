@@ -304,8 +304,8 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 
 	// ---- base-machinery downgrade guard (#189) ----
-	// The entry points update independently (brew binary, Claude plugin,
-	// Copilot plugin, dev build), so a stale one can run a bare init against
+	// The entry points update independently (brew binary, stale machine
+	// copies, dev build), so a stale one can run a bare init against
 	// a repo a newer omakase set up and silently roll .omakase/ backwards —
 	// the only symptom was status rendering differently. Refuse before
 	// anything is placed; a deliberate downgrade is remove-then-init.
@@ -1272,7 +1272,7 @@ func checkBaseDowngrade(root, omk, payload string, stderr io.Writer) int {
 	if src := state.FirstLine(filepath.Join(omk, "source")); src != "" {
 		again = "omakase init " + src
 	}
-	fmt.Fprintf(stderr, "omakase: refusing to roll this repo's omakase files BACK from %s to %s — a newer omakase set this repo up, and this init came from an older install (usually a stale plugin or binary). Update it (brew upgrade omakase, or update the plugin), then re-run. To go back to %s on purpose:  omakase remove  then  %s. Nothing was changed.\n", installed, incoming, incoming, again)
+	fmt.Fprintf(stderr, "omakase: refusing to roll this repo's omakase files BACK from %s to %s — a newer omakase set this repo up, and this init came from an older binary. Update it (brew upgrade omakase), then re-run. To go back to %s on purpose:  omakase remove  then  %s. Nothing was changed.\n", installed, incoming, incoming, again)
 	return 2
 }
 

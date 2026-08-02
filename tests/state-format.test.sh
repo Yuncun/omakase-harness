@@ -6,7 +6,7 @@
 #     from the disabled-files sidecar).
 #   ledger.tsv — exactly 4 tab-separated columns: epoch name verdict sha.
 # Scenarios (each in a fresh fixture repo):
-#   S1 plain init (plugin-style: payload from the repo checkout)
+#   S1 plain init (payload from the repo checkout)
 #   S2 --source install whose payload ships a relative symlink; the symlink's
 #      recorded sha256 is the digest of its readlink TARGET STRING, not content
 #   S3 re-init — format still holds, no duplicate path rows
@@ -17,7 +17,7 @@
 # (TestLedgerConcurrentAppendsDoNotTear) — NOT re-asserted here.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INIT="$HERE/../bin/init.sh"
+INIT="$HERE/bin/init.sh"
 TMP="${TMPDIR:-/tmp}/omakase-state-format-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
@@ -62,7 +62,7 @@ check_placed_format(){
   [ -z "$bad" ] && pass "$label: sha256 is 64 lowercase hex chars on every row" || { fail "$label: row(s) with a malformed sha256"; indent "$bad"; }
 }
 
-# ---------- S1: plain init (plugin-style payload from the repo checkout) ----------
+# ---------- S1: plain init (payload from the repo checkout) ----------
 echo "== S1: plain init writes a well-formed placed.tsv =="
 REPO="$TMP/repoS1"; newrepo "$REPO"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$HERE/../payload" bash "$INIT" ) >/dev/null 2>&1 || fail "S1: plain init exited non-zero"

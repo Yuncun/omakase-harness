@@ -14,8 +14,8 @@
 # freshly self-installed binary and nothing touches the real machine.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INIT="$HERE/../bin/init.sh"
-REMOVE="$HERE/../bin/remove.sh"
+INIT="$HERE/bin/init.sh"
+REMOVE="$HERE/bin/remove.sh"
 STARTER="$(cd "$HERE/../omakase-harness-harness" && pwd)"
 TMP="${TMPDIR:-/tmp}/omakase-starter-test.$$"
 FAILED=0

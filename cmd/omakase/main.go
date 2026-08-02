@@ -184,13 +184,15 @@ func run(argv []string, stdout, stderr io.Writer) int {
 
 func main() {
 	// Every real init refreshes the machine-wide binary copy the status-bar
-	// wiring points at. Done here and not inside RunInit so unit tests that
-	// call RunInit directly can never overwrite a developer's cached binary
-	// with a test binary.
+	// wiring points at, and the user-level agent skills the hosts read
+	// (#211 — the plugin fold). Done here and not inside RunInit so unit
+	// tests that call RunInit directly can never overwrite a developer's
+	// cached binary or real home-dir skills with test copies.
 	if len(os.Args) > 1 && os.Args[1] == "init" {
 		bi, _ := debug.ReadBuildInfo()
 		v, _, _ := resolveVersion(version, commit, date, bi)
 		overlay.SelfInstallCurrent(v)
+		overlay.InstallUserSkills(v, os.Stdout, os.Stderr)
 	}
 	os.Exit(run(os.Args, os.Stdout, os.Stderr))
 }

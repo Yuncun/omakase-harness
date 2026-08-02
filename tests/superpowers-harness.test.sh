@@ -12,8 +12,8 @@
 # HOME and XDG_CACHE_HOME point at fixture dirs so nothing touches the real machine.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INIT="$HERE/../bin/init.sh"
-REMOVE="$HERE/../bin/remove.sh"
+INIT="$HERE/bin/init.sh"
+REMOVE="$HERE/bin/remove.sh"
 EXAMPLE="$(cd "$HERE/../examples/superpowers-harness" && pwd)"
 TMP="${TMPDIR:-/tmp}/omakase-superpowers-test.$$"
 FAILED=0
