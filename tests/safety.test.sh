@@ -7,9 +7,9 @@
 #   L. worktree support — init works where $ROOT/.git is a file (linked worktree)
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INIT="$HERE/../bin/init.sh"
-REMOVE="$HERE/../bin/remove.sh"
-OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
+INIT="$HERE/bin/init.sh"
+REMOVE="$HERE/bin/remove.sh"
+OMAKASE="$( cd "$HERE" && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
 [ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
 heal(){ ( cd "$1" && "$OMAKASE" hook post-checkout ); }
 TMP="${TMPDIR:-/tmp}/omakase-safety-test.$$"

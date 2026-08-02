@@ -5,7 +5,7 @@
 # set -u (not -e): we deliberately capture status.sh's exit status to assert it.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SHOW="$HERE/../bin/status.sh"
+SHOW="$HERE/bin/status.sh"
 TMP="${TMPDIR:-/tmp}/omakase-personal.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }

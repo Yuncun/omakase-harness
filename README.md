@@ -53,13 +53,11 @@ Or grab a binary from [releases](https://github.com/Yuncun/omakase-harness/relea
 go install github.com/Yuncun/omakase-harness/cmd/omakase@latest
 ```
 
-Inside Claude Code or GitHub Copilot CLI, the plugin wraps the same commands:
-
-```
-/plugin marketplace add yuncun/omakase-harness
-/plugin install omakase@omakase
-/omakase:init
-```
+That's the whole install. The first `omakase init` that installs a harness also
+places the agent-facing skills (`/omakase-init`, `/omakase-status`,
+`/omakase-remove`, …) into the user-level skill folders Claude Code and Copilot
+CLI read, and every later init keeps them current — there is no separate plugin
+to install.
 
 ## Use
 
@@ -153,7 +151,7 @@ A harness is a git repo (or a subfolder of one) with a `payload/` directory
 whose `payload/omakase.manifest` is its one manifest — a name plus its gate
 declarations. Publish it and anyone can install it with
 `omakase init you/your-harness` (or `omakase init you/hub/path` — one repo can
-hold several harnesses). The `/omakase:author` skill walks an agent through
+hold several harnesses). The `/omakase-author` skill walks an agent through
 building one, including converting the agent files a repo already has.
 See [authoring](docs/authoring.md).
 

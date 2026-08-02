@@ -5,7 +5,7 @@
 # No lefthook, no git, no temp repo — pure classification, so it runs anywhere.
 set -euo pipefail   # exercise the lib under the same strictness its callers use
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-. "$HERE/../bin/lib-harness-paths.sh"
+. "$HERE/bin/lib-harness-paths.sh"
 
 FAILED=0
 pass(){ echo "  PASS: $1"; }

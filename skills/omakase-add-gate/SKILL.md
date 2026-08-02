@@ -1,9 +1,9 @@
 ---
-name: add-gate
+name: omakase-add-gate
 description: Wire a tool, skill, or check to run on a git hook as an omakase gate. Use when asked to "add a gate", "attach/wire a tool or skill to a hook", "run X on pre-commit/pre-push", "gate on a linter/test/reviewer", or "make sure X runs before commit/push". Covers picking the keys, the pre-flight checks that decide whether a third-party tool can even be gated, and the wiring. Run from a harness clone (it edits payload/), not an adopter repo.
 ---
 
-# /add-gate — attach a tool to a git hook
+# /omakase-add-gate — attach a tool to a git hook
 
 You are editing a **custom harness** (a clone of omakase-harness or your own harness
 repo), adding a gate to its `payload/`. You are NOT editing an installed
@@ -107,11 +107,11 @@ should trip the gate and one that shouldn't:
 
 ```bash
 cd "$(mktemp -d)" && git init -q && git commit -q --allow-empty -m init
-OMAKASE_PAYLOAD=<your>/payload bash <base-harness>/bin/init.sh
+OMAKASE_PAYLOAD=<your>/payload omakase init
 # inline gate: stage a violating file, attempt commit, see it block, fix, see it pass.
 # out-of-band gate: touch a matching file, attempt push -> blocked (run: exits non-zero);
 #   run the check and `omakase record <name>`; attempt push -> allowed (cached PASS).
-OMAKASE_PAYLOAD=<your>/payload bash <base-harness>/bin/remove.sh    # reset
+OMAKASE_PAYLOAD=<your>/payload omakase remove    # reset
 ```
 
 Then, if the harness lists its gates in a guard table (README / docs), add the new one there.
@@ -120,5 +120,5 @@ header — touch them only if the gate needs a new `recommends:`.
 
 ## See also
 
-- [authoring.md](../../docs/authoring.md) — "Adding a gate", "Wrapping a third-party check".
-- [concepts.md](../../docs/concepts.md) — gates, owned vs shared dirs.
+- [authoring.md](https://github.com/Yuncun/omakase-harness/blob/main/docs/authoring.md) — "Adding a gate", "Wrapping a third-party check".
+- [concepts.md](https://github.com/Yuncun/omakase-harness/blob/main/docs/concepts.md) — gates, owned vs shared dirs.

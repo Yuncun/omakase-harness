@@ -395,7 +395,7 @@ func TestTrackedSkip(t *testing.T) {
 	// (the sole + line) and AGENTS.md is skipped (the sole ~ line).
 	wantOut := "omakase: placed 1 file(s), updated 0 to match the payload, skipped 1 committed path(s).\n" +
 		"  + .omakase/gates/example.sh\n" +
-		"  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see init.sh --help): AGENTS.md\n" +
+		"  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see omakase init --help): AGENTS.md\n" +
 		summaryTail + uxStanzas() + verifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "omakase: SKIP (already tracked) AGENTS.md\n")
@@ -1854,7 +1854,7 @@ func TestInitNeverTouchesHostSettings(t *testing.T) {
 // --- base-machinery downgrade guard (#189) --------------------------------
 
 // An init whose payload carries an older .omakase/VERSION than the repo
-// (a stale plugin/binary running a bare refresh) refuses before placing
+// (a stale binary running a bare refresh) refuses before placing
 // anything; a newer or equal payload proceeds, and unparseable versions
 // (dev builds) never refuse.
 func TestInitRefusesBaseDowngrade(t *testing.T) {

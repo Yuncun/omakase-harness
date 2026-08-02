@@ -1,9 +1,9 @@
 ---
-name: author
+name: omakase-author
 description: Build a custom harness — or turn existing agent files (CLAUDE.md, rules, skills; yours or another repo's) into one others can install. Use when asked to "make/author a harness", "turn my setup into a harness", "package/publish my agent rules", "share my setup without committing it to the project", "make my own version of this harness", "take <repo>'s instructions into a harness" — or when the intent is phrased without omakase words, "make this permanent", "I want this in all my projects", "keep this beyond this clone", "turn my setup into something installable". Covers where the harness lives, laying out payload/ and its one manifest, judging what is portable, testing the install, and publishing. Gate wiring hands off to the add-gate skill.
 ---
 
-# /omakase:author — build a custom harness
+# /omakase-author — build a custom harness
 
 A **custom harness** is a git-hosted `payload/` tree whose `payload/omakase.manifest` is its
 one manifest — identity (`name`, optional `version` / `recommends`) plus any `gate:` blocks.
@@ -112,6 +112,6 @@ the payload changes so installs report what they got.
 
 ## See also
 
-- [authoring.md](../../docs/authoring.md) — the conceptual reference behind this skill.
-- [reference.md](../../docs/reference.md) — manifest schema, placement and exclusion rules.
+- [authoring.md](https://github.com/Yuncun/omakase-harness/blob/main/docs/authoring.md) — the conceptual reference behind this skill.
+- [reference.md](https://github.com/Yuncun/omakase-harness/blob/main/docs/reference.md) — manifest schema, placement and exclusion rules.
 - add-gate skill — everything about wiring checks to hooks.

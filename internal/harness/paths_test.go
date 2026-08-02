@@ -96,12 +96,12 @@ func TestKindOfAntiDrift(t *testing.T) {
 	}
 }
 
-// TestSharedTopdirs pins SharedTopdirs to bin/lib-harness-paths.sh's
+// TestSharedTopdirs pins SharedTopdirs to tests/bin/lib-harness-paths.sh's
 // HARNESS_SHARED_TOPDIRS array, parsed from the bash source so the two
 // cannot drift. A drift would change whether .github is excluded wholesale
 // or file-by-file (overlay.DerivePrefixes consumes this list).
 func TestSharedTopdirs(t *testing.T) {
-	data, err := os.ReadFile("../../bin/lib-harness-paths.sh")
+	data, err := os.ReadFile("../../tests/bin/lib-harness-paths.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestSharedTopdirs(t *testing.T) {
 	re := regexp.MustCompile(`(?m)^HARNESS_SHARED_TOPDIRS=\(([^)]*)\)$`)
 	m := re.FindStringSubmatch(src)
 	if m == nil {
-		t.Fatal(`HARNESS_SHARED_TOPDIRS=(...) not found in bin/lib-harness-paths.sh`)
+		t.Fatal(`HARNESS_SHARED_TOPDIRS=(...) not found in tests/bin/lib-harness-paths.sh`)
 	}
 	want := strings.Fields(m[1])
 	if len(want) == 0 {

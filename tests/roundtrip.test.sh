@@ -10,7 +10,7 @@
 #   untouched byte-for-byte), and $OMK ($(git rev-parse --git-common-dir)/omakase)
 #   deleted.
 # Scenarios:
-#   R1 plain init -> remove (plugin-style: payload from the repo checkout)
+#   R1 plain init -> remove (payload from the repo checkout)
 #   R2 --source install -> remove (payload ships the CLAUDE.md -> AGENTS.md
 #      symlink; after remove the symlink is GONE, everything else restored)
 #   R3 a second remove on the already-clean repo exits 0 and changes nothing
@@ -21,8 +21,8 @@
 #   placed.tsv / ledger.tsv column FORMAT               — tests/state-format.test.sh
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INIT="$HERE/../bin/init.sh"
-REMOVE="$HERE/../bin/remove.sh"
+INIT="$HERE/bin/init.sh"
+REMOVE="$HERE/bin/remove.sh"
 TMP="${TMPDIR:-/tmp}/omakase-roundtrip-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }

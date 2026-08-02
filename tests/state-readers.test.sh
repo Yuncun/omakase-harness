@@ -26,9 +26,9 @@
 #   exclude-block bytes + $OMK layout         — tests/golden-state.test.sh
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INIT="$HERE/../bin/init.sh"
+INIT="$HERE/bin/init.sh"
 # The binary that carries the hook-time readers (heal + verify).
-OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
+OMAKASE="$( cd "$HERE" && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
 [ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
 verify(){ ( cd "$1" && OMAKASE_SKIP_GATES=1 "$OMAKASE" hook pre-commit ); }   # verify-only gate run
 heal(){ ( cd "$1" && "$OMAKASE" hook post-checkout ); }

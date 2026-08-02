@@ -2,17 +2,13 @@
 
 ## Commands
 
-`init.sh`, `status.sh`, and `remove.sh` are thin shims onto the omakase Go
-binary. Each resolves, in order: an `OMAKASE_BIN` override (must be executable, or
-resolution fails immediately) → a dev rebuild (`go.mod` + `go` on PATH) → a prebuilt
-`dist/omakase` → `omakase` on PATH → the stable machine copy at
-`~/.cache/omakase/bin/current/omakase` (`XDG_CACHE_HOME` respected — the path every
-real `omakase init` self-installs and the `.git/hooks` dispatchers exec). Resolution
-is local-only; the shims never download anything (#182). When nothing resolves, every
-shim fails closed: one line on stderr — install the binary with
-`brew install yuncun/tap/omakase` — and exit 1. There is no bash fallback.
+All verbs live on the one `omakase` Go binary (`brew install yuncun/tap/omakase`).
+The agent-facing skills call it on PATH; the `.git/hooks` dispatchers exec the
+stable machine copy at `~/.cache/omakase/bin/current/omakase` (`XDG_CACHE_HOME`
+respected — the path every real `omakase init` self-installs). Nothing ever
+downloads a binary at run time (#182).
 
-### `init.sh [<owner/repo[/subpath][#ref]> | --source <git-url|path>] [--cut-over] [--help]`
+### `omakase init [<owner/repo[/subpath][#ref]> | --source <git-url|path>] [--cut-over] [--help]`
 
 Overlays `payload/` onto the current repo, records placed paths in `.git/info/exclude`,
 and installs one dispatcher per hook (no third-party runner). Skips paths the repo tracks. Overwrites a divergent
@@ -29,11 +25,16 @@ after a checkout). A re-init after a harness drops its last gate deletes omakase
 enforcement dispatchers; a later gate added to the manifest brings the full wiring — and
 the incumbent refusal — back.
 
-Healing has a second trigger besides `post-checkout`: the plugin ships a `SessionStart`
-hook (`hooks/hooks.json`, both hosts) that runs `omakase hook session-start` when an
-agent session opens — the same best-effort repair, covering the one gap git events
-can't see (overlay wiped, then a new session starts). It is silent unless it restored
-something, exits 0 always, and never fetches the binary at session start.
+Healing has a second trigger besides `post-checkout`: init wires a `SessionStart`
+hook into Claude Code's user-level settings (`~/.claude/settings.json`) that runs
+`omakase hook session-start` when an agent session opens — the same best-effort
+repair, covering the one gap git events can't see (overlay wiped, then a new
+session starts). It is silent unless it restored something, exits 0 always, and
+the wired command derives the stable binary path from the environment at session
+time and self-guards on it existing — a machine that loses the install never
+sees session-start errors. On Copilot CLI the heal rides git events only
+(Copilot keeps hooks in its own `~/.copilot/hooks/*.json` mechanism, which
+omakase does not write yet).
 
 Hooks, the exclude block, and the remembered source live in the git common dir, shared by
 every checkout of the repository. Switching the repo's harness is therefore repo-wide: a
@@ -72,7 +73,7 @@ same-source re-run stay allowed in any worktree — that is the normal heal flow
   tracks, so the installed copy takes over. Guarded: refuses without
   `OMAKASE_CUTOVER_CONFIRM=1`.
 
-### `status.sh [--markdown | --plain | --global | --all | --show <path> | --disable <name> | --enable <name> | --keep <path> | --restore <path>]`
+### `omakase status [--markdown | --plain | --global | --all | --show <path> | --disable <name> | --enable <name> | --keep <path> | --restore <path>]`
 
 `status` prints the minimalist page: the steering stack (one band per layer
 of steering — yours, the overlaid harness, the project's own — solid cells
@@ -164,12 +165,21 @@ case: instructions for adding the segment to an existing bar by hand. Note
 Copilot refreshes its bar per response (no timer), so the live gate counter
 updates more coarsely there than on Claude Code.
 
-### `remove.sh`
+### `omakase remove`
 
 Uninstalls hooks, deletes exactly the untracked files `init` placed, and strips the
 omakase block from `.git/info/exclude`. Tracked files are never touched. Takes no
 arguments — any argument is ignored. There is no per-source removal; a repo holds one
 installed harness, and `remove` always tears it down completely.
+
+`remove` is repo-scoped. The machine-level pieces init set up are shared by every
+repo and deliberately survive it: the stable binary copy under
+`~/.cache/omakase/`, the user-level skills (`~/.claude/skills/omakase-*/`,
+`~/.copilot/skills/omakase-*/` — each carries a `.omakase` marker file, safe to
+delete by hand), and the statusLine / SessionStart entries in the hosts'
+settings.json (delete the blocks by hand; a `.omakase-bak` sits next to the file
+from the last wiring write). Removing the binary itself is your package
+manager's job (`brew uninstall omakase`).
 
 ## Environment
 
@@ -177,8 +187,8 @@ installed harness, and `remove` always tears it down completely.
 |---|---|
 | `OMAKASE_SKIP_<NAME>=1` | skip one gate for one git command — name upper-cased, `.`/`-`→`_`. Audited and printed on every hook run; a bypassed gate is never silent |
 | `OMAKASE_SKIP_GATES=1` | skip every gate for one git command — the explicit skip-all escape. Audited and printed. The overlay integrity check still runs; bypass it with git's own `--no-verify` |
-| `OMAKASE_CUTOVER_CONFIRM=1` | required to apply `init.sh --cut-over` |
-| `OMAKASE_PAYLOAD` | path to a payload tree to install, overriding the plugin payload. Lower precedence than `--source` |
+| `OMAKASE_CUTOVER_CONFIRM=1` | required to apply `omakase init --cut-over` |
+| `OMAKASE_PAYLOAD` | path to a payload tree to install, overriding the remembered source and the embedded base payload. Lower precedence than `--source` |
 | `OMAKASE_BASE_PAYLOAD` | dev/test override: path to a base payload tree to merge under a `--source` install. A location hint only — unlike `OMAKASE_PAYLOAD` it never suppresses a remembered source. Normally unset: the binary resolves a `payload/` sibling (dev loop) or extracts its own embedded copy into the machine cache |
 | `OMAKASE_BIN` | path to an omakase binary to use instead of dev rebuild, `dist/omakase`, PATH, or the stable machine copy — must be executable, or resolution fails immediately |
 | `OMAKASE_NOW` | test hook: pins the ledger epoch (the timestamp on each recorded gate row) to a fixed value for reproducible runs |
@@ -252,7 +262,7 @@ already commits is skipped and reported, an installed instruction file is exclud
 ## Path classification
 
 `init` decides how to exclude a placed file by its top directory. A shared top directory
-(`HARNESS_SHARED_TOPDIRS` in `bin/lib-harness-paths.sh`, currently `.github`) is excluded
+(`harness.SharedTopdirs` in the Go source, currently `.github`) is excluded
 file-by-file, so the project's own files there stay visible to git. Every other top
 directory is excluded wholesale. See
 [Concepts](concepts.md#owned-and-shared-directories).

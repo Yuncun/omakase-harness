@@ -10,8 +10,8 @@
 # file untouched; and --plain still reaches the normal render.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INIT="$HERE/../bin/init.sh"
-SHOW="$HERE/../bin/status.sh"
+INIT="$HERE/bin/init.sh"
+SHOW="$HERE/bin/status.sh"
 TMP="${TMPDIR:-/tmp}/omakase-toggles-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }

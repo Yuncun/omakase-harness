@@ -101,7 +101,7 @@ func TestHookPostCheckoutExitsZeroWhenNotInstalled(t *testing.T) {
 	eq(t, "stderr", errb.String(), "")
 }
 
-// session-start (the plugin's SessionStart hook) shares post-checkout's
+// session-start (the SessionStart heal init wires into the host) shares post-checkout's
 // best-effort contract: exit 0 and stay silent wherever there is nothing
 // to do — a session start must never be blocked or narrated.
 func TestHookSessionStartSilentZeroWhenNotInstalled(t *testing.T) {

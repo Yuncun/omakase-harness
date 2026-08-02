@@ -19,16 +19,14 @@ points at it, ship in the same unattended run. Review comes before the tag.
 
 ## Cutting a release
 
-Any change adopters should pick up needs a version bump — the plugin manager
-keys off `.claude-plugin/plugin.json`, and `omakase status` (its banner line)
-reads `payload/.omakase/VERSION` (see CONTRIBUTING.md for how the two update
-channels differ).
+Any change adopters should pick up needs a version bump — `omakase status`
+(its banner line) reads `payload/.omakase/VERSION`, and the downgrade guards
+and the user-skill refresh compare against it.
 
-1. Bump the version in all **three** stamps — `.claude-plugin/plugin.json`,
-   `payload/.omakase/VERSION`, and the `version:` line in
-   `payload/omakase.manifest` — they must match the tag. Pre-1.0, a breaking
-   change bumps the minor (`0.17.0` → `0.18.0`), a backward-compatible one
-   bumps the patch.
+1. Bump the version in **both** stamps — `payload/.omakase/VERSION` and the
+   `version:` line in `payload/omakase.manifest` — they must match the tag.
+   Pre-1.0, a breaking change bumps the minor (`0.17.0` → `0.18.0`), a
+   backward-compatible one bumps the patch.
 2. In `CHANGELOG.md`, rename the `## [Unreleased]` block to
    `## [x.y.z] — YYYY-MM-DD` and leave a fresh empty `## [Unreleased]` above it.
 3. Merge to `main` and make sure it is green, then tag the merge commit and

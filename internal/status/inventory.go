@@ -83,7 +83,7 @@ func PersonalList(home string) [][2]string {
 		for _, b := range globMDFiles(filepath.Join(ch, "agents")) {
 			rows = append(rows, [2]string{"~/.claude/agents/" + b, harness.KindOf(".claude/agents/" + b)})
 		}
-		for _, b := range globDirs(filepath.Join(ch, "skills")) {
+		for _, b := range globSkillDirs(filepath.Join(ch, "skills")) {
 			rows = append(rows, [2]string{"~/.claude/skills/" + b + "/", harness.KindOf(".claude/skills/" + b + "/")})
 		}
 	}
@@ -96,14 +96,14 @@ func PersonalList(home string) [][2]string {
 		if exists(filepath.Join(co, "settings.json")) {
 			rows = append(rows, [2]string{"~/.copilot/settings.json", harness.KindOf(".claude/settings.json")})
 		}
-		for _, b := range globDirs(filepath.Join(co, "skills")) {
+		for _, b := range globSkillDirs(filepath.Join(co, "skills")) {
 			rows = append(rows, [2]string{"~/.copilot/skills/" + b + "/", harness.KindOf(".github/skills/" + b + "/")})
 		}
 	}
 
 	ag := home + "/.agents" // concat, not Join — see PersonalList
 	if isDir(ag) {
-		for _, b := range globDirs(filepath.Join(ag, "skills")) {
+		for _, b := range globSkillDirs(filepath.Join(ag, "skills")) {
 			rows = append(rows, [2]string{"~/.agents/skills/" + b + "/", harness.KindOf(".agents/skills/" + b + "/")})
 		}
 	}
@@ -160,6 +160,27 @@ func globDirs(dir string) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// globSkillDirs is globDirs minus omakase's own installed skills — the
+// dirs carrying the `.omakase` marker overlay.InstallUserSkills writes
+// (#211). They are omakase's front doors, not the user's personal
+// steering, so the personal inventory skips them the way it skips the
+// binary itself.
+func globSkillDirs(dir string) []string {
+	var names []string
+	for _, b := range globDirs(dir) {
+		if fileRegularAt(filepath.Join(dir, b, ".omakase")) {
+			continue
+		}
+		names = append(names, b)
+	}
+	return names
+}
+
+func fileRegularAt(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && info.Mode().IsRegular()
 }
 
 func isDir(path string) bool {
@@ -229,7 +250,7 @@ func renderUnmanaged(w io.Writer, rows [][2]string, md bool) {
 			fmt.Fprintf(w, "- … and %d more\n", elided)
 		}
 		fmt.Fprintln(w)
-		fmt.Fprintln(w, "_To keep or share one beyond this clone, add it to a harness — the author skill (`/omakase:author`)._")
+		fmt.Fprintln(w, "_To keep or share one beyond this clone, add it to a harness — the author skill (`/omakase-author`)._")
 		fmt.Fprintln(w)
 		return
 	}
@@ -238,7 +259,7 @@ func renderUnmanaged(w io.Writer, rows [][2]string, md bool) {
 	if elided > 0 {
 		fmt.Fprintf(w, "  … and %d more\n", elided)
 	}
-	fmt.Fprintln(w, "  To keep or share one beyond this clone, add it to a harness — the author skill: /omakase:author")
+	fmt.Fprintln(w, "  To keep or share one beyond this clone, add it to a harness — the author skill: /omakase-author")
 	fmt.Fprintln(w)
 }
 
