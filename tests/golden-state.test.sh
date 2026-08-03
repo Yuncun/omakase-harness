@@ -208,6 +208,7 @@ printf 'a rule\n' > "$SRC/payload/.claude/rules/style.md"
 printf 'name: golden-state-fixture\n' > "$SRC/payload/omakase.manifest"
 ( cd "$SRC" && git add -A && git commit -q -m harness )
 SRC="$(cd "$SRC" && pwd)"   # init absolutizes local dir sources (macOS TMPDIR carries a trailing slash)
+command -v cygpath >/dev/null 2>&1 && SRC="$(cygpath -w "$SRC")" # Windows form — what the binary remembers
 REPO4="$TMP/repoG4"; newrepo "$REPO4"
 COMMON4="$(common_of "$REPO4")"
 mkdir -p "$COMMON4/info"

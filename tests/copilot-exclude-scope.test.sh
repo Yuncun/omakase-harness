@@ -14,6 +14,8 @@ fail(){ echo "  FAIL: $1"; FAILED=1; }
 
 # Sandbox HOME + cache so init's binary self-install never touches the real machine.
 export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+# Windows: the binary reads USERPROFILE for the home dir; point it at the same sandbox (Windows form).
+command -v cygpath >/dev/null 2>&1 && export USERPROFILE="$(cygpath -w "$HOME")"
 mkdir -p "$HOME" "$XDG_CACHE_HOME"
 
 mkdir -p "$PAY/.omakase/gates" "$PAY/.github/skills/demo"

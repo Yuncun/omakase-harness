@@ -39,6 +39,11 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      # ln -s under MSYS silently COPIES by default; nativestrict makes it
+      # create real Windows symlinks (the runner has the privilege), so the
+      # suites' symlink fixtures test the product's symlink handling for real.
+      MSYS: winsymlinks:nativestrict
     steps:
       - name: Keep checkout bytes exact (no CRLF conversion)
         run: git config --global core.autocrlf false

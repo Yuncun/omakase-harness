@@ -53,6 +53,8 @@ printf 'name: fixture-harness\nversion: 0.1.0\n\ngate: markers\n  hook: pre-comm
 # $XDG_CACHE_HOME, so the real commits below fire that copy through the
 # permanent .git/hooks dispatchers.
 export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+# Windows: the binary reads USERPROFILE for the home dir; point it at the same sandbox (Windows form).
+command -v cygpath >/dev/null 2>&1 && export USERPROFILE="$(cygpath -w "$HOME")"
 mkdir -p "$HOME" "$XDG_CACHE_HOME"
 if command -v go >/dev/null 2>&1; then
   export GOMODCACHE="$(go env GOMODCACHE)"

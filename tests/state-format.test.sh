@@ -35,6 +35,8 @@ common_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)";
 # execs (${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase), and nothing
 # touches the real machine. S2 re-sets HOME/XDG inline to these same dirs.
 export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+# Windows: the binary reads USERPROFILE for the home dir; point it at the same sandbox (Windows form).
+command -v cygpath >/dev/null 2>&1 && export USERPROFILE="$(cygpath -w "$HOME")"
 mkdir -p "$HOME" "$XDG_CACHE_HOME"
 # Local fixture payload: the base payload ships no gates since #172, so suites
 # that need a wired gate carry their own (one markers gate + its script).

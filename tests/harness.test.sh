@@ -25,6 +25,8 @@ fail(){ echo "  FAIL: $1"; FAILED=1; }
 # Self-contained HOME + cache: init self-installs the resolved binary into
 # $XDG_CACHE_HOME, and every commit/push below fires that same copy.
 export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+# Windows: the binary reads USERPROFILE for the home dir; point it at the same sandbox (Windows form).
+command -v cygpath >/dev/null 2>&1 && export USERPROFILE="$(cygpath -w "$HOME")"
 mkdir -p "$HOME" "$XDG_CACHE_HOME"
 
 # Pin Go's caches to their real locations so a shim-triggered build under the fake HOME

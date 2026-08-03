@@ -30,6 +30,8 @@ else shastr(){ echo nodigest; }; shafile(){ echo nodigest; }; fi
 # permanent .git/hooks dispatchers. Scenarios pin their own $HOME below to
 # control the personal inventory; $XDG_CACHE_HOME stays this fixture cache.
 export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+# Windows: the binary reads USERPROFILE for the home dir; point it at the same sandbox (Windows form).
+command -v cygpath >/dev/null 2>&1 && export USERPROFILE="$(cygpath -w "$HOME")"
 mkdir -p "$HOME" "$XDG_CACHE_HOME"
 # Local fixture payload: the base payload ships no gates since #172, so suites
 # that need a wired gate carry their own (one markers gate + its script).

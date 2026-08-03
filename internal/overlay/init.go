@@ -324,7 +324,11 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	hookspath := gitOutTrim(root, "config", "--get", "core.hooksPath")
 	if hookspath != "" {
 		var hpAbs string
-		if strings.HasPrefix(hookspath, "/") {
+		// Both absolute spellings: "/" (Unix, and MSYS-form on Windows)
+		// and filepath.IsAbs (drive-letter form C:/… on Windows) — git on
+		// Windows reports the latter, and mistaking it for relative made
+		// omakase's own hooks dir read as an incumbent hook manager.
+		if strings.HasPrefix(hookspath, "/") || filepath.IsAbs(hookspath) {
 			hpAbs = hookspath
 		} else {
 			hpAbs = filepath.Join(root, hookspath)
