@@ -341,6 +341,9 @@ printf 'name: decoy\n' > "$HUB/omakase.manifest"   # root-level decoys: a subpat
 mkdir -p "$HUB/payload"; printf 'never\n' > "$HUB/payload/decoy.txt"
 ( cd "$HUB" && git add -A && git commit -q -m hub )
 HUB="$(cd "$HUB" && pwd)"
+# Windows form BEFORE appending //subpath: MSYS argument conversion collapses
+# the // marker inside a POSIX-form path; a C:/-form argument passes untouched.
+command -v cygpath >/dev/null 2>&1 && HUB="$(cygpath -w "$HUB")"
 newrepo "$REPOSUB"
 ( cd "$REPOSUB" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" --source "$HUB//tools/harness" ) >/dev/null 2>&1
 COMMONSUB="$(cd "$REPOSUB" && cd "$(git rev-parse --git-common-dir)" && pwd)"
