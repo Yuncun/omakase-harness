@@ -21,6 +21,12 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 - **The pre-v2 ledger rotation is silent** (#49): an internal store-format
   migration the user cannot act on no longer prints a notice that read as
   if something went wrong. The rotation itself is unchanged.
+- **Solution-first wording pass over init/heal messages**: the long
+  warnings (drift, kept-file, tracked-collision, downgrade, incumbent,
+  linked-worktree) now state the fact in one clause and go straight to the
+  command that fixes it; mechanism explanations ("git overwrites ignored
+  files on checkout") are cut. The stale-edited-file notice drops its
+  WARNING shout — it has a calm action, so it reads as one.
 - **The status page is minimalist — a program of respite against
   overinformation**: the default page is now banner → facts line ("N files
   injected · 0 committed · invisible to git") → the STEERING stack → guards

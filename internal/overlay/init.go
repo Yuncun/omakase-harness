@@ -1219,7 +1219,7 @@ func checkBaseDowngrade(root, omk, payload string, stderr io.Writer) int {
 	if src := state.FirstLine(filepath.Join(omk, "source")); src != "" {
 		again = "omakase init " + src
 	}
-	fmt.Fprintf(stderr, msgDowngradeRefused, installed, incoming, incoming, again)
+	fmt.Fprintf(stderr, msgDowngradeRefused, installed, incoming, again)
 	return 2
 }
 

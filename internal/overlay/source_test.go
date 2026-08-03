@@ -1,6 +1,7 @@
 package overlay
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -229,7 +230,7 @@ func TestSourceRootManifestRefused(t *testing.T) {
 	writeFile(t, filepath.Join(src, "payload", "rule.md"), "a rule\n")
 	commitAll(t, src, "root-manifest")
 	assertSourceRefusal(t, src,
-		"omakase: source '"+src+"' has a root omakase.manifest, which omakase no longer reads — omakase reads one manifest: payload/omakase.manifest. Move name:/version:/recommends: there and delete the root file. Nothing was changed.\n")
+		fmt.Sprintf(msgRootManifestRefused, src))
 }
 
 // ---------------------------------------------------------------- embedded base (#168)

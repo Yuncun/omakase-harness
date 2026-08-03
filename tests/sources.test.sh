@@ -122,7 +122,7 @@ echo 'LOCAL EDIT' >> "$REPO/.claude/rules/extra.md"
 ( cd "$SRC" && git rm -q payload/.claude/rules/extra.md && git commit -q -m v5 )
 OUT=$( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" 2>&1 )
 { [ -f "$REPO/.claude/rules/extra.md" ] && grep -q 'LOCAL EDIT' "$REPO/.claude/rules/extra.md"; } && pass "locally edited dropped file kept" || fail "edited dropped file destroyed"
-echo "$OUT" | grep -i 'WARNING' | grep -q 'extra.md' && pass "kept file warned about, named" || fail "no warning for the kept file ($OUT)"
+echo "$OUT" | grep -i 'local edit' | grep -q 'extra.md' && pass "kept file noticed, named" || fail "no notice for the kept file ($OUT)"
 rm -rf "$REPO/.claude"   # the user disposes of the kept file; keep later scenarios tidy
 
 # ---------- Scenario S3c: OMAKASE_PAYLOAD env beats the remembered source ----------
