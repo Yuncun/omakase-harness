@@ -5,6 +5,18 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added
+- **Advisory checks at session start** (#218): a harness can declare
+  `advisory:` blocks in `omakase.manifest` — named checks (`run:`, optional
+  `purpose:`) that run when a session starts, print a line when something
+  needs attention, and never block. The exit code is ignored, output passes
+  through raw, and a missing or corrupt manifest means silence (fail-open,
+  the opposite of gates, on purpose). Validation at init matches gates —
+  a malformed block or a `run:` naming an unshipped payload script refuses
+  the whole harness — and init names the declared advisories at consent
+  time. Fires on Claude Code's SessionStart wiring; Copilot CLI has no
+  session-start wiring yet (same limitation as the session-start heal).
+
 ### Changed
 - **One readable home for init's voice** (#179 D4): every user-facing
   sentence `internal/overlay` can print (init / remove / diff / source /

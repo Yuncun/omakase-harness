@@ -11,5 +11,9 @@ version: 0.30.0
 # OMAKASE_SKIP_<NAME>=1; skip every gate once with OMAKASE_SKIP_GATES=1
 # (both audited and printed).
 #
-# See docs/authoring.md in Yuncun/omakase-harness for the gate: schema and
-# a worked example gate.
+# A harness may also declare `advisory:` blocks — session-start checks that
+# print a line when something needs attention and never block (run:, and an
+# optional purpose:, are their only keys).
+#
+# See docs/authoring.md in Yuncun/omakase-harness for the gate: and advisory:
+# schemas and a worked example gate.

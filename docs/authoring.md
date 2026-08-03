@@ -27,7 +27,8 @@ exactly that, end to end; this document is the conceptual reference behind it.
 ## Public surface (the stability contract)
 
 The stable surface a custom harness authors against is the **`omakase.manifest` schema** —
-the `gate:` block and its keys (`hook:`, `run:`, `glob:`, `cacheable:`, `purpose:`; see
+the `gate:` block and its keys (`hook:`, `run:`, `glob:`, `cacheable:`, `purpose:`), and
+the `advisory:` block and its keys (`run:`, `purpose:`; see
 [Reference](reference.md#manifest)). Those key names and their meanings will not be renamed
 or repurposed out from under your manifest; anything else is an internal refactor you never
 see.
@@ -105,6 +106,37 @@ gate: markers
   run: .omakase/gates/markers.sh
   purpose: merge-conflict markers stay out
 ```
+
+## Adding an advisory check
+
+An advisory is a gate's opposite number: it runs when a session starts (not at a git
+hook) and can never block anything. Use it for "you should know this before you start"
+conditions — a branch that is behind its upstream, a detached HEAD — where the cost of
+not knowing lands later as rebase conflicts or work on the wrong base.
+
+One `advisory:` block per check in `payload/omakase.manifest`:
+
+```
+advisory: branch-freshness
+  run: .omakase/advisories/branch-freshness.sh
+  purpose: warn when the branch is behind
+```
+
+- `run:` (required) — a command line run via `sh` from the repo root at every session
+  start. The exit code is ignored; stdout and stderr pass straight through to the
+  session.
+- `purpose:` (optional) — what the check watches, in your words.
+
+There is no `hook:`, `glob:`, or `cacheable:` — the stage is fixed and nothing is scoped
+or cached because nothing is enforced. The contract for the script: **silent when there
+is nothing to say**, one or two lines when there is, and fast — it runs at every session
+start, and the hosts' own hook timeout is the only backstop. `init` names every declared
+advisory at consent time, and a `run:` pointing at a payload script the harness does not
+ship refuses the whole harness, same as a gate.
+
+One honesty rule worth copying into any freshness-style check: comparing against an
+unfetched remote ref under-reports staleness. Either fetch first or say which ref you
+compared against — never print a confident wrong number.
 
 ## Wrapping a third-party check
 

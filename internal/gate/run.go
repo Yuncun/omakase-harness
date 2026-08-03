@@ -139,6 +139,23 @@ func runOne(g Gate, hook, root, omk, sha string, disabled map[string]bool, pushR
 	return rc
 }
 
+// RunAdvisories runs every advisory declared in the snapshot manifest under
+// omk (#218), in manifest order, via `sh -c` from the repo root. The whole
+// call is advisory: output passes through raw, exit codes are ignored, and a
+// missing or corrupt manifest means silence (LoadAdvisories) — a session
+// start is never blocked, delayed by retries, or narrated by omakase itself.
+// No ledger row, no heartbeat, no skip env: those exist to audit enforcement,
+// and nothing here enforces.
+func RunAdvisories(root, omk string, stdout, stderr io.Writer) {
+	for _, a := range LoadAdvisories(omk) {
+		cmd := exec.Command("sh", "-c", a.Run)
+		cmd.Dir = root
+		cmd.Stdout = stdout
+		cmd.Stderr = stderr
+		_ = cmd.Run()
+	}
+}
+
 // Record appends a PASS row for HEAD for one gate name, with no check run — the
 // out-of-band signal that a deferred gate's real check passed (the port of
 // omakase-gate.sh --record). It is the only signal an out-of-band check
