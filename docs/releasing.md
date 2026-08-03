@@ -40,9 +40,10 @@ and the user-skill refresh compare against it.
    `Yuncun/homebrew-tap`. Pushing the tag is the publish line — review the
    changelog and diff BEFORE tagging; there is no draft step to catch a
    mistake after.
-5. Verify: the release page shows the four tarballs plus `checksums.txt`, the
-   tap repo has a fresh cask commit, and `brew install yuncun/tap/omakase`
-   (or `brew upgrade omakase`) serves the new version.
+5. Verify: the release page shows the four tarballs, the two Windows zips,
+   and `checksums.txt`; the tap and bucket repos each have a fresh commit;
+   and `brew install yuncun/tap/omakase` (or `brew upgrade omakase`) serves
+   the new version.
 
 To test the build locally without touching GitHub:
 
@@ -52,12 +53,17 @@ That is the whole release: one PR, one tag. (The shims carry no pinned
 version or fetch tier since #182 — there is nothing to re-pin after
 publishing.)
 
-## The Homebrew tap
+## The Homebrew tap and the Scoop bucket
 
-`Yuncun/homebrew-tap` holds the cask; GoReleaser rewrites it on every release,
+`Yuncun/homebrew-tap` holds the cask and `Yuncun/scoop-bucket` holds the
+Windows Scoop manifest (#212); GoReleaser rewrites both on every release,
 authenticated by the `TAP_GITHUB_TOKEN` repo secret — a fine-grained PAT
-scoped to that one repo with Contents read/write. When the PAT expires, the
-release run fails at the cask-push step: mint a replacement scoped the same
-way and update the secret. Users install with:
+that needs Contents read/write on BOTH repos. When the PAT expires (or is
+missing the bucket repo), the release run fails at the corresponding push
+step: mint a replacement scoped the same way and update the secret. Users
+install with:
 
     brew install yuncun/tap/omakase
+
+    scoop bucket add yuncun https://github.com/Yuncun/scoop-bucket
+    scoop install omakase

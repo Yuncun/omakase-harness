@@ -42,8 +42,18 @@ nothing to commit, working tree clean
 
 ## Install
 
+macOS / Linux:
+
 ```
 brew install yuncun/tap/omakase
+```
+
+Windows (needs [Git for Windows](https://gitforwindows.org) — omakase's git
+hooks run through its bundled bash):
+
+```
+scoop bucket add yuncun https://github.com/Yuncun/scoop-bucket
+scoop install omakase
 ```
 
 Or grab a binary from [releases](https://github.com/Yuncun/omakase-harness/releases)
