@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 )
 
@@ -220,7 +221,10 @@ func runnable(kind, name, run, payloadDir string) error {
 	if err != nil || !info.Mode().IsRegular() {
 		return fmt.Errorf("%s %q: run references %q, which the payload does not ship", kind, name, tok)
 	}
-	if info.Mode()&0o111 == 0 {
+	// No exec bits on Windows: NTFS has none to check, and at fire time the
+	// check runs under Git for Windows' sh, which derives executability from
+	// the file's content. Enforcing the bit there would refuse every harness.
+	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 		return fmt.Errorf("%s %q: run references %q, which is not executable in the payload", kind, name, tok)
 	}
 	return nil

@@ -15,15 +15,19 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/Yuncun/omakase-harness/internal/hook"
 )
 
 func runWire(stdout, stderr io.Writer) int {
-	home := os.Getenv("HOME")
-	if home == "" {
-		fmt.Fprintln(stderr, "omakase: HOME is not set — cannot find the hosts' settings")
+	// os.UserHomeDir, not $HOME: native Windows leaves HOME unset and keys
+	// the home dir on USERPROFILE instead; on Unix it reads $HOME, so test
+	// sandboxing via HOME still works.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintln(stderr, "omakase: no home directory — cannot find the hosts' settings")
 		return 1
 	}
 	if bin := stableWireBin(home); fileMissing(bin) {
@@ -41,8 +45,8 @@ func runWire(stdout, stderr io.Writer) int {
 // Real problems (unreadable JSON, failed writes) still print to stderr;
 // they never fail the init.
 func wireAtInit(stdout, stderr io.Writer) {
-	home := os.Getenv("HOME")
-	if home == "" {
+	home, err := os.UserHomeDir()
+	if err != nil {
 		return
 	}
 	wireHosts(stdout, stderr, home, false)
@@ -57,7 +61,7 @@ func wireAtInit(stdout, stderr io.Writer) {
 // settings.json, so only the statusline is wired there. Reports how many
 // files it wrote. verbose adds the occupied-slot teaching lines.
 func wireHosts(stdout, stderr io.Writer, home string, verbose bool) int {
-	cmd := stableWireBin(home) + " statusline"
+	cmd := wireCmd(stableWireBin(home))
 	wired := 0
 	if dirExists(filepath.Join(home, ".claude")) {
 		wired += wireHost(stdout, stderr, "Claude Code",
@@ -84,6 +88,19 @@ func stableWireBin(home string) string {
 		return p
 	}
 	return filepath.Join(home, ".cache", "omakase", "bin", "current", "omakase")
+}
+
+// wireCmd renders the settings "command" string for the binary path.
+// Forward slashes throughout (identity on Unix; on Windows the hosts hand
+// the string to a shell where backslashes are escape characters, and
+// C:/-style paths work in every Windows shell), quoted when the path
+// carries a space.
+func wireCmd(bin string) string {
+	bin = filepath.ToSlash(bin)
+	if strings.Contains(bin, " ") {
+		bin = `"` + bin + `"`
+	}
+	return bin + " statusline"
 }
 
 // wireHost wires one host's settings file in a single read-modify-write
@@ -166,6 +183,29 @@ func wireHost(stdout, stderr io.Writer, host, path string, block map[string]any,
 // machine that later loses the install never surfaces host hook errors.
 const healCmd = `b="${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase"; [ -x "$b" ] && "$b" hook session-start || true`
 
+// healCmdWindows is the same contract in PowerShell. On Windows, Claude
+// Code runs shell-form hooks through Git Bash when installed and
+// PowerShell otherwise — but a default Git for Windows install leaves
+// bash off PATH and Claude Code then fails the hook loudly every session
+// (upstream #22700, closed not-planned). Declaring "shell": "powershell"
+// spawns PowerShell directly, which every Windows machine has, and names
+// the .exe explicitly.
+// -PathType Leaf: Test-Path alone is true for a directory, and invoking
+// one throws where the sh form's || true would swallow it. The trailing
+// exit 0 restores that guarantee — a SessionStart hook that exits non-zero
+// is surfaced by the host every session, the exact noise this hook's
+// self-guard exists to prevent.
+const healCmdWindows = `$c = if ($env:XDG_CACHE_HOME) { $env:XDG_CACHE_HOME } else { Join-Path $env:USERPROFILE '.cache' }; $b = Join-Path $c 'omakase/bin/current/omakase.exe'; if (Test-Path $b -PathType Leaf) { & $b hook session-start }; exit 0`
+
+// healHookEntry is the hook object addSessionStartHook appends: the
+// portable sh command everywhere except Windows, where it pins PowerShell.
+func healHookEntry() map[string]any {
+	if runtime.GOOS == "windows" {
+		return map[string]any{"type": "command", "command": healCmdWindows, "shell": "powershell"}
+	}
+	return map[string]any{"type": "command", "command": healCmd}
+}
+
 // addSessionStartHook merges the heal hook into m's hooks.SessionStart
 // list unless the raw settings already mention it. A hooks/SessionStart
 // value of JSON null is treated as absent, not refused — null must never
@@ -187,7 +227,7 @@ func addSessionStartHook(m map[string]any, raw []byte) (bool, error) {
 		return false, fmt.Errorf("hooks.SessionStart is not a list")
 	}
 	hooks["SessionStart"] = append(list, map[string]any{
-		"hooks": []any{map[string]any{"type": "command", "command": healCmd}},
+		"hooks": []any{healHookEntry()},
 	})
 	m["hooks"] = hooks
 	return true, nil

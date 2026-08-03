@@ -3,6 +3,7 @@ package overlay
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -160,7 +161,7 @@ func TestRemoveLegacySchemeStripsGuards(t *testing.T) {
 	eq(t, "post-checkout stripped", readFileT(t, postCheckout), "#!/bin/sh\ncall_lefthook run \"post-checkout\" \"$@\"\n")
 	for _, hf := range []string{preCommit, postCheckout} {
 		info, err := os.Stat(hf)
-		if err != nil || info.Mode().Perm()&0o100 == 0 {
+		if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0) {
 			t.Errorf("%s not executable after remove: %v", hf, err)
 		}
 	}
@@ -196,7 +197,7 @@ func TestHookStubSubstringGateQuirk(t *testing.T) {
 	}
 	eq(t, "content unchanged (no line equals the marker)", readFileT(t, hf), content)
 	info, err := os.Stat(hf)
-	if err != nil || info.Mode().Perm()&0o100 == 0 {
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0) {
 		t.Errorf("hook not made executable despite the gate firing: %v", err)
 	}
 }
@@ -440,7 +441,7 @@ func TestHookStubModeMatchesBashFreshInode(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := os.FileMode(0o777) &^ currentUmask()
-	if info.Mode().Perm() != want {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != want {
 		t.Errorf("hook stub mode after remove = %o, want %o (0777 &^ umask -- the original seeded 0640 must NOT survive)", info.Mode().Perm(), want)
 	}
 }

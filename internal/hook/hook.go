@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 )
 
@@ -21,7 +22,10 @@ import (
 // ${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase. "" when no
 // home directory can be resolved. It must mirror the sh interpolation baked
 // into Dispatcher — the dispatcher evaluates its env at fire time, this
-// function at probe/init time.
+// function at probe/init time. On Windows the file is omakase.exe (Go's
+// exec.Command cannot run an extensionless binary there); the dispatchers
+// keep the extensionless spelling because Git for Windows' bash resolves
+// "omakase" to omakase.exe via the MSYS .exe fallback in stat and exec.
 func StableBinPath() string {
 	cache := os.Getenv("XDG_CACHE_HOME")
 	if cache == "" {
@@ -31,7 +35,11 @@ func StableBinPath() string {
 		}
 		cache = filepath.Join(home, ".cache")
 	}
-	return filepath.Join(cache, "omakase", "bin", "current", "omakase")
+	bin := "omakase"
+	if runtime.GOOS == "windows" {
+		bin = "omakase.exe"
+	}
+	return filepath.Join(cache, "omakase", "bin", "current", bin)
 }
 
 // Names lists the hooks omakase dispatches — the fixed set init writes,

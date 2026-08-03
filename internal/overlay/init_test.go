@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -93,6 +94,7 @@ func initRepo(t *testing.T) (string, *state.Repo) {
 	// A bare HOME (no host config dirs) keeps every init hermetic — nothing
 	// under the developer's real home is ever read or written from tests.
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir()) // Windows os.UserHomeDir
 	repo, err := state.Discover(dir)
 	if err != nil {
 		t.Fatalf("discover: %v", err)
@@ -186,7 +188,8 @@ func TestFreshInit(t *testing.T) {
 	// snapshot is a byte-equal, executable copy of the placed file.
 	snap := filepath.Join(repo.OMK, "payload-snapshot", ".omakase", "gates", "example.sh")
 	eq(t, "snapshot content", readFileT(t, snap), gateContent)
-	if info, err := os.Stat(filepath.Join(dir, ".omakase", "gates", "example.sh")); err != nil || info.Mode().Perm()&0o100 == 0 {
+	if info, err := os.Stat(filepath.Join(dir, ".omakase", "gates", "example.sh")); err != nil ||
+		(runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0) {
 		t.Errorf("placed .sh not executable: %v", err)
 	}
 
@@ -196,7 +199,8 @@ func TestFreshInit(t *testing.T) {
 		if !hook.Matches(hf, name) {
 			t.Errorf("%s hook is not the omakase dispatcher", name)
 		}
-		if info, err := os.Stat(hf); err != nil || info.Mode().Perm()&0o100 == 0 {
+		if info, err := os.Stat(hf); err != nil ||
+			(runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0) {
 			t.Errorf("%s hook not executable: %v", name, err)
 		}
 	}
@@ -1890,6 +1894,7 @@ func TestInitNeverTouchesHostSettings(t *testing.T) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // Windows os.UserHomeDir
 	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}

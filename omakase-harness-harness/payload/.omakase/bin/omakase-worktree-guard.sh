@@ -4,7 +4,7 @@
 # omakase-harness-harness payload — a harness that wants the discipline carries its
 # own copy. The omakase binary knows nothing about it.
 # Opt-in Claude Code PreToolUse hook (matcher "Edit|Write"); wire it in
-# .claude/settings.json as:  bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh
+# .claude/settings.json as:  bash "$CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh"
 # While other worktrees are active, an Edit/Write to a product file in the MAIN checkout
 # is denied with a teaching message: branches cut in the main checkout inherit concurrent
 # sessions' uncommitted work, which then leaks into a PR. Implementation goes in a
@@ -35,12 +35,27 @@ unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
 
 input="$(cat)"
 field() { printf '%s' "$input" | sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1; }
-cwd="$(field cwd)"; [ -n "$cwd" ] || cwd="$PWD"
+# One canonical path form (Windows/git-bash): the host sends C:/-style paths
+# while $PWD and git may use /c/-style — mixed forms break every prefix test
+# below, and the failure direction would be a wrong DENY on allowlisted
+# files. cygpath exists wherever this runs under Git for Windows; elsewhere
+# norm is the identity.
+if command -v cygpath >/dev/null 2>&1; then
+  norm() { cygpath -u -- "$1" 2>/dev/null || printf '%s' "$1"; }
+else
+  norm() { printf '%s' "$1"; }
+fi
+cwd="$(norm "$(field cwd)")"; [ -n "$cwd" ] || cwd="$(norm "$PWD")"
 fp="$(field file_path)"; [ -n "$fp" ] || exit 0
-case "$fp" in /*) : ;; *) fp="$cwd/$fp" ;; esac
+fp="$(norm "$fp")"
+# Drive-letter paths count as absolute even when cygpath is unavailable
+# (a bash without cygpath can still receive C:/-form host paths) — treating
+# one as relative would mangle it into a wrong DENY on allowlisted files.
+case "$fp" in /*|[A-Za-z]:/*|[A-Za-z]:\\*) : ;; *) fp="$cwd/$fp" ;; esac
 
 root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 [ -n "$root" ] || exit 0
+root="$(norm "$root")"
 
 # Fire only in the MAIN checkout while other worktrees exist. The main checkout is the
 # first `worktree` record; rev-parse and worktree-list both report physical paths, so
@@ -49,7 +64,7 @@ wt="$(git -C "$cwd" worktree list --porcelain 2>/dev/null)" || exit 0
 n="$(printf '%s\n' "$wt" | grep -c '^worktree ' 2>/dev/null || true)"
 case "${n:-0}" in ''|*[!0-9]*) exit 0;; esac
 [ "$n" -le 1 ] && exit 0
-main="$(printf '%s\n' "$wt" | awk '/^worktree /{sub(/^worktree /,""); print; exit}')"
+main="$(norm "$(printf '%s\n' "$wt" | awk '/^worktree /{sub(/^worktree /,""); print; exit}')")"
 [ "$root" != "$main" ] && exit 0
 
 # A persistent disable (status --disable) stands the guard down with the gate.

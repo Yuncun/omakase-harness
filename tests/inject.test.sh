@@ -12,6 +12,8 @@ TMP="${TMPDIR:-/tmp}/omakase-inject-test.$$"
 # $XDG_CACHE_HOME, and every real commit/checkout below fires that same copy
 # through the permanent hook dispatchers (nothing touches the real machine).
 export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+# Windows: the binary reads USERPROFILE for the home dir; point it at the same sandbox (Windows form).
+command -v cygpath >/dev/null 2>&1 && export USERPROFILE="$(cygpath -w "$HOME")"
 mkdir -p "$HOME" "$XDG_CACHE_HOME"
 FAILED=0
 pass(){ echo "  PASS: $1"; }

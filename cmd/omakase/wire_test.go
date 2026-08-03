@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -18,6 +19,7 @@ func wireHome(t *testing.T, hosts map[string]string) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // Windows os.UserHomeDir
 	t.Setenv("XDG_CACHE_HOME", "")
 	for host, settings := range hosts {
 		dir := filepath.Join(home, host)
@@ -60,7 +62,9 @@ func TestWireFreshClaude(t *testing.T) {
 	if !ok {
 		t.Fatalf("statusLine missing: %v", m)
 	}
-	wantCmd := filepath.Join(home, ".cache", "omakase", "bin", "current", "omakase") + " statusline"
+	// Derived via the product helpers: on Windows the path is slash-form
+	// and ends .exe, on Unix it is the plain joined path.
+	wantCmd := wireCmd(stableWireBin(home))
 	if sl["command"] != wantCmd || sl["type"] != "command" {
 		t.Fatalf("statusLine block = %v, want command %q", sl, wantCmd)
 	}
@@ -92,7 +96,12 @@ func TestWireWiresSessionStartHeal(t *testing.T) {
 	// session time (never a baked absolute path — that went stale when
 	// HOME/XDG_CACHE_HOME moved, and its interpolation was an sh-quoting
 	// hazard), and self-guards on the binary existing.
-	if !strings.Contains(cmd, `${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase`) ||
+	if runtime.GOOS == "windows" {
+		shell := ss[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["shell"]
+		if cmd != healCmdWindows || shell != "powershell" {
+			t.Fatalf("heal entry = %q shell=%v, want the pinned PowerShell form", cmd, shell)
+		}
+	} else if !strings.Contains(cmd, `${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase`) ||
 		!strings.Contains(cmd, "hook session-start") ||
 		!strings.Contains(cmd, "[ -x ") || !strings.HasSuffix(cmd, "|| true") {
 		t.Fatalf("heal command = %q, want the env-derived guarded invocation", cmd)
@@ -277,7 +286,7 @@ func TestWireHonorsXDGCacheHome(t *testing.T) {
 	if !ok {
 		t.Fatal("statusLine missing")
 	}
-	want := filepath.Join(xdg, "omakase", "bin", "current", "omakase") + " statusline"
+	want := wireCmd(stableWireBin(home)) // honors the XDG override just set
 	if sl["command"] != want {
 		t.Fatalf("command = %v, want %q", sl["command"], want)
 	}
@@ -455,5 +464,24 @@ func TestRunInitNothingRememberedNeverWires(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "skills")); !os.IsNotExist(err) {
 		t.Fatal("a nothing-remembered init installed user-level skills")
+	}
+}
+
+// wireCmd must survive the hosts' shells on every platform: forward
+// slashes always (on Windows the settings command string reaches a shell,
+// where backslashes are escapes), quotes only when the path has a space.
+func TestWireCmdShellSafety(t *testing.T) {
+	if got := wireCmd("/x/omakase"); got != "/x/omakase statusline" {
+		t.Fatalf("plain path: %q", got)
+	}
+	if got := wireCmd("/Users/Eric Shen/.cache/omakase"); got != `"/Users/Eric Shen/.cache/omakase" statusline` {
+		t.Fatalf("spaced path not quoted: %q", got)
+	}
+	// filepath.ToSlash converts only on Windows — on Unix a backslash is
+	// a legal filename byte, so converting there would corrupt real paths.
+	if runtime.GOOS == "windows" {
+		if got := wireCmd(`C:\Users\e\.cache\omakase.exe`); got != "C:/Users/e/.cache/omakase.exe statusline" {
+			t.Fatalf("backslashes not normalized: %q", got)
+		}
 	}
 }

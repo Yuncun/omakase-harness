@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -441,4 +442,15 @@ func WriteDisabledFiles(dir string, set map[string]bool) error {
 	}
 	sort.Strings(names)
 	return os.WriteFile(path, []byte(strings.Join(names, "\n")+"\n"), 0o644)
+}
+
+// UserRel normalizes a user-typed placed path for ledger lookup. The
+// ledger records slash-form paths on every platform, but a Windows shell
+// tab-completes backslashes — accept both there. On Unix the arg passes
+// through untouched: a backslash is a legal filename byte.
+func UserRel(p string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ReplaceAll(p, `\`, "/")
+	}
+	return p
 }

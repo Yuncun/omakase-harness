@@ -35,7 +35,9 @@ func RunShow(repo *state.Repo, home, arg string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "omakase: cannot read %s: %v\n", path, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "--- %s (%s tokens, estimated) ---\n\n", path, commas(len(data)/4))
+	// Slash form in the header on every platform — display paths are
+	// git-style throughout the status surfaces.
+	fmt.Fprintf(stdout, "--- %s (%s tokens, estimated) ---\n\n", filepath.ToSlash(path), commas(len(data)/4))
 	stdout.Write(data)
 	if len(data) > 0 && data[len(data)-1] != '\n' {
 		fmt.Fprintln(stdout)

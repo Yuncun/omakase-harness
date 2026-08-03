@@ -13,6 +13,7 @@ func skillHome(t *testing.T, hosts ...string) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // Windows os.UserHomeDir
 	for _, h := range hosts {
 		if err := os.MkdirAll(filepath.Join(home, h), 0o755); err != nil {
 			t.Fatal(err)

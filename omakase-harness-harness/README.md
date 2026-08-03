@@ -39,7 +39,7 @@ cut there would inherit concurrent sessions' uncommitted work). It fails open an
 ever fires with 2+ worktrees. Claude Code only; enable it by adding a PreToolUse hook
 (matcher `"Edit|Write"`) to `.claude/settings.json`:
 
-    bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh
+    bash "$CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh"
 
 Bypass once with `OMAKASE_SKIP_WORKTREE_DISCIPLINE=1`, or persistently with
 `omakase status --disable worktree-discipline`.

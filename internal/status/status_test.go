@@ -82,6 +82,7 @@ func pinStatusEnv(t *testing.T, repo *state.Repo, home string) {
 	t.Helper()
 	t.Chdir(repo.Root)
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // Windows os.UserHomeDir
 	t.Setenv("OMAKASE_NOW", "2000000000")
 	t.Setenv("NO_COLOR", "1")
 	// The layers section tiers by detected host; the suite itself runs inside
@@ -308,6 +309,7 @@ func TestStatusRunNotInstalled(t *testing.T) {
 	home := buildHomeFixture(t)
 	t.Chdir(dir)
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // Windows os.UserHomeDir
 
 	var stdout, stderr bytes.Buffer
 	if code := Run([]string{"--markdown"}, &stdout, &stderr); code != 0 {
@@ -331,6 +333,7 @@ func TestStatusRunPre010(t *testing.T) {
 	writeOMK(t, repo.OMK, "placed.list", "old-file-one.md\nold-file-two.sh\n")
 	t.Chdir(dir)
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir()) // Windows os.UserHomeDir
 
 	var stdout, stderr bytes.Buffer
 	if code := Run(nil, &stdout, &stderr); code != 0 {

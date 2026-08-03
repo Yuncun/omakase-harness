@@ -26,6 +26,7 @@ func srcTestEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir()) // Windows os.UserHomeDir
 	t.Setenv("OMAKASE_PAYLOAD", "")
 	t.Setenv("OMAKASE_BASE_PAYLOAD", "")
 	// The fresh XDG_CACHE_HOME has no stable binary copy; init verifies the

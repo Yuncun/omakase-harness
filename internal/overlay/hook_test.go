@@ -3,6 +3,7 @@ package overlay
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -252,7 +253,8 @@ func TestHookGateIgnoresDisabledRows(t *testing.T) {
 func TestHookKeepsGitIndexFile(t *testing.T) {
 	repo := hookRepo(t)
 	out := filepath.Join(t.TempDir(), "seen")
-	setManifest(t, repo, "gate: idx\n  hook: pre-commit\n  run: printf '%s' \"$GIT_INDEX_FILE\" > "+out+"\n")
+	// Slash form inside the sh command: sh eats backslashes on Windows.
+	setManifest(t, repo, "gate: idx\n  hook: pre-commit\n  run: printf '%s' \"$GIT_INDEX_FILE\" > "+filepath.ToSlash(out)+"\n")
 	t.Setenv("GIT_INDEX_FILE", "/tmp/sentinel-index")
 	var o, errb strings.Builder
 	if code := RunHook([]string{"pre-commit"}, strings.NewReader(""), &o, &errb); code != 0 {
@@ -358,7 +360,8 @@ func TestHookPostCheckoutHealsMissingFile(t *testing.T) {
 	}
 	got := readFileT(t, filepath.Join(repo.Root, rel))
 	eq(t, "healed content", got, gateContent)
-	if info, err := os.Stat(filepath.Join(repo.Root, rel)); err != nil || info.Mode().Perm()&0o100 == 0 {
+	if info, err := os.Stat(filepath.Join(repo.Root, rel)); err != nil ||
+		(runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0) {
 		t.Errorf("healed .sh not executable: %v", err)
 	}
 	eq(t, "stderr (heal is silent)", errb.String(), "")
