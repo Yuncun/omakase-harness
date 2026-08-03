@@ -96,9 +96,11 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 			return runKeepRestore(argv[i] == "--keep", argv[i+1], stdout, stderr)
 		case "--global":
 			// The expansion of the page's collapsed GLOBAL line. Personal
-			// config lives under $HOME, not the repo, so this needs no repo
-			// discovery and works uninstalled too.
-			RenderGlobal(stdout, os.Getenv("HOME"), md)
+			// config lives under the home dir, not the repo, so this needs no
+			// repo discovery and works uninstalled too. os.UserHomeDir (not
+			// $HOME) so native Windows — where HOME is unset — resolves too.
+			home, _ := os.UserHomeDir()
+			RenderGlobal(stdout, home, md)
 			return 0
 		case "--show":
 			// The drill-in behind the layers section's one-sentence excerpts:
@@ -127,7 +129,7 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	home := os.Getenv("HOME")
+	home, _ := os.UserHomeDir()
 	placed := filepath.Join(repo.OMK, "placed.tsv")
 
 	// Step 1: placed.tsv absent -> pre-0.10 if placed.list exists, else
@@ -188,7 +190,8 @@ func runShowLayer(arg string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "omakase: not inside a git repo")
 		return 1
 	}
-	return ctxlayers.RunShow(repo, os.Getenv("HOME"), arg, stdout, stderr)
+	home, _ := os.UserHomeDir()
+	return ctxlayers.RunShow(repo, home, arg, stdout, stderr)
 }
 
 // toggledOffSuffix is " (k toggled off)" when k>0, else "" — appended after

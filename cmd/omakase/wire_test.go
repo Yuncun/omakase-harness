@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -455,5 +456,24 @@ func TestRunInitNothingRememberedNeverWires(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "skills")); !os.IsNotExist(err) {
 		t.Fatal("a nothing-remembered init installed user-level skills")
+	}
+}
+
+// wireCmd must survive the hosts' shells on every platform: forward
+// slashes always (on Windows the settings command string reaches a shell,
+// where backslashes are escapes), quotes only when the path has a space.
+func TestWireCmdShellSafety(t *testing.T) {
+	if got := wireCmd("/x/omakase"); got != "/x/omakase statusline" {
+		t.Fatalf("plain path: %q", got)
+	}
+	if got := wireCmd("/Users/Eric Shen/.cache/omakase"); got != `"/Users/Eric Shen/.cache/omakase" statusline` {
+		t.Fatalf("spaced path not quoted: %q", got)
+	}
+	// filepath.ToSlash converts only on Windows — on Unix a backslash is
+	// a legal filename byte, so converting there would corrupt real paths.
+	if runtime.GOOS == "windows" {
+		if got := wireCmd(`C:\Users\e\.cache\omakase.exe`); got != "C:/Users/e/.cache/omakase.exe statusline" {
+			t.Fatalf("backslashes not normalized: %q", got)
+		}
 	}
 }

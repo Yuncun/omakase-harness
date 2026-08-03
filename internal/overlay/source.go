@@ -377,7 +377,9 @@ func refreshCache(cache string) bool {
 func sourceCacheDir(src string) string {
 	root := os.Getenv("XDG_CACHE_HOME")
 	if root == "" {
-		root = os.Getenv("HOME") + "/.cache"
+		// os.UserHomeDir, not $HOME: native Windows leaves HOME unset.
+		home, _ := os.UserHomeDir()
+		root = home + "/.cache"
 	}
 	return root + "/omakase/sources/" + sourceSlug(src)
 }

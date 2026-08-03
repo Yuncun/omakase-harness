@@ -23,7 +23,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/Yuncun/omakase-harness/internal/gate"
 	"github.com/Yuncun/omakase-harness/internal/harness"
@@ -1398,13 +1397,6 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
-}
-
-// currentUmask reads the process umask without permanently changing it.
-func currentUmask() os.FileMode {
-	u := syscall.Umask(0)
-	syscall.Umask(u)
-	return os.FileMode(u)
 }
 
 // exitCode extracts a child process's exit code from an *exec.ExitError,

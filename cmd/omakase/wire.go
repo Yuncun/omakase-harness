@@ -21,9 +21,12 @@ import (
 )
 
 func runWire(stdout, stderr io.Writer) int {
-	home := os.Getenv("HOME")
-	if home == "" {
-		fmt.Fprintln(stderr, "omakase: HOME is not set — cannot find the hosts' settings")
+	// os.UserHomeDir, not $HOME: native Windows leaves HOME unset and keys
+	// the home dir on USERPROFILE instead; on Unix it reads $HOME, so test
+	// sandboxing via HOME still works.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintln(stderr, "omakase: no home directory — cannot find the hosts' settings")
 		return 1
 	}
 	if bin := stableWireBin(home); fileMissing(bin) {
@@ -41,8 +44,8 @@ func runWire(stdout, stderr io.Writer) int {
 // Real problems (unreadable JSON, failed writes) still print to stderr;
 // they never fail the init.
 func wireAtInit(stdout, stderr io.Writer) {
-	home := os.Getenv("HOME")
-	if home == "" {
+	home, err := os.UserHomeDir()
+	if err != nil {
 		return
 	}
 	wireHosts(stdout, stderr, home, false)
@@ -57,7 +60,7 @@ func wireAtInit(stdout, stderr io.Writer) {
 // settings.json, so only the statusline is wired there. Reports how many
 // files it wrote. verbose adds the occupied-slot teaching lines.
 func wireHosts(stdout, stderr io.Writer, home string, verbose bool) int {
-	cmd := stableWireBin(home) + " statusline"
+	cmd := wireCmd(stableWireBin(home))
 	wired := 0
 	if dirExists(filepath.Join(home, ".claude")) {
 		wired += wireHost(stdout, stderr, "Claude Code",
@@ -84,6 +87,19 @@ func stableWireBin(home string) string {
 		return p
 	}
 	return filepath.Join(home, ".cache", "omakase", "bin", "current", "omakase")
+}
+
+// wireCmd renders the settings "command" string for the binary path.
+// Forward slashes throughout (identity on Unix; on Windows the hosts hand
+// the string to a shell where backslashes are escape characters, and
+// C:/-style paths work in every Windows shell), quoted when the path
+// carries a space.
+func wireCmd(bin string) string {
+	bin = filepath.ToSlash(bin)
+	if strings.Contains(bin, " ") {
+		bin = `"` + bin + `"`
+	}
+	return bin + " statusline"
 }
 
 // wireHost wires one host's settings file in a single read-modify-write

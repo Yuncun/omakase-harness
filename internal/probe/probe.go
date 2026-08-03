@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/Yuncun/omakase-harness/internal/gate"
@@ -200,12 +199,6 @@ func runningGate(omk string) *RunningGate {
 		secs = 0
 	}
 	return &RunningGate{Name: f[0], Seconds: secs}
-}
-
-// pidAlive is the signal-0 liveness check; EPERM means alive but not ours.
-func pidAlive(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil || err == syscall.EPERM
 }
 
 // nowEpoch is the heartbeat's clock: OMAKASE_NOW when set (the test hook
