@@ -31,6 +31,8 @@ if [ "$RC" -eq 0 ] && [ -z "$OUT" ]; then pass "silent 0"; else fail "rc=$RC out
 
 # An installed repo: init a fixture harness with one placed rule file.
 export HOME="$TMP/home" XDG_CACHE_HOME="$TMP/cache"
+# Windows: the binary reads USERPROFILE for the home dir; point it at the same sandbox (Windows form).
+command -v cygpath >/dev/null 2>&1 && export USERPROFILE="$(cygpath -w "$HOME")"
 mkdir -p "$HOME" "$XDG_CACHE_HOME"
 git config --global user.email t@t; git config --global user.name t
 git config --global init.defaultBranch main

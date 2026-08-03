@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -282,7 +283,16 @@ func fetchSource(src, subpath, sourceRef string, stdout, stderr io.Writer) (payl
 	if !isDir(filepath.Join(cache, ".git")) {
 		os.RemoveAll(cache)
 		os.MkdirAll(filepath.Dir(cache), 0o755)
-		clone := exec.Command("git", "clone", "-q", "--", src, cache)
+		// Both -c flags stick in the cache repo's own config, and BOTH are
+		// needed for verbatim payload bytes on Windows: autocrlf=false
+		// stops Git for Windows' system-config conversion for files with
+		// no text attribute, and eol=lf covers files a harness repo marks
+		// `* text=auto` (autocrlf=false does NOT — they fall through to
+		// core.eol, whose Windows default is CRLF). A converted checkout
+		// places CRLF-rewritten bytes and an sh gate script dies at commit
+		// time on a \r shebang.
+		clone := exec.Command("git", "clone", "-q",
+			"-c", "core.autocrlf=false", "-c", "core.eol=lf", "--", src, cache)
 		clone.Stdout = stdout // -q: silent on success
 		clone.Stderr = stderr
 		if err := clone.Run(); err != nil {
@@ -377,7 +387,9 @@ func refreshCache(cache string) bool {
 func sourceCacheDir(src string) string {
 	root := os.Getenv("XDG_CACHE_HOME")
 	if root == "" {
-		root = os.Getenv("HOME") + "/.cache"
+		// os.UserHomeDir, not $HOME: native Windows leaves HOME unset.
+		home, _ := os.UserHomeDir()
+		root = home + "/.cache"
 	}
 	return root + "/omakase/sources/" + sourceSlug(src)
 }
@@ -395,12 +407,18 @@ func sourceSlug(src string) string {
 	return base + "-" + urlhash[:8]
 }
 
-// sanitizeBase reduces src to its basename with trailing "/" runs and a
-// ".git" suffix stripped, every byte outside [A-Za-z0-9._-] replaced with
-// '-', and "" mapped to "source".
+// sanitizeBase reduces src to its basename with trailing separator runs
+// and a ".git" suffix stripped, every byte outside [A-Za-z0-9._-] replaced
+// with '-', and "" mapped to "source". Both separators count on Windows,
+// where a local source path arrives backslashed — otherwise the whole path
+// becomes the "basename" and the slug is unreadable.
 func sanitizeBase(src string) string {
-	s := strings.TrimRight(src, "/")
-	if i := strings.LastIndexByte(s, '/'); i >= 0 {
+	cut := "/"
+	if runtime.GOOS == "windows" {
+		cut = `/\`
+	}
+	s := strings.TrimRight(src, cut)
+	if i := strings.LastIndexAny(s, cut); i >= 0 {
 		s = s[i+1:] // basename
 	}
 	s = strings.TrimSuffix(s, ".git")

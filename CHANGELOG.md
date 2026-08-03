@@ -5,6 +5,25 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Added
+- **Windows support (#212).** The release ships `windows/amd64` and
+  `windows/arm64` zips, installable via Scoop
+  (`scoop bucket add yuncun https://github.com/Yuncun/scoop-bucket`, then
+  `scoop install omakase`). Git for Windows is required — omakase's git
+  hooks run through its bundled bash. Under the hood: the home dir now
+  resolves through `os.UserHomeDir` everywhere (native Windows has no
+  `$HOME`), the machine-wide binary copy is `omakase.exe` there (the sh
+  dispatchers keep the extensionless spelling — Git Bash resolves it),
+  ledger/exclude/message paths are slash-form on every platform,
+  exec-bit checks don't apply on NTFS, harness-source clones pin
+  `core.autocrlf=false` so payload bytes arrive exactly as authored, and
+  the session-start heal hook wires as PowerShell on Windows (always
+  present; sidesteps a Claude Code bash-resolution bug on default Git
+  for Windows installs). CI runs the Go suite and every shell suite on
+  `windows-latest` under Git Bash. Not yet proven on a real Windows
+  machine outside CI: the hosts' own hook/statusline execution — a test
+  checklist lives on #212.
+
 ### Changed
 - **One readable home for init's voice** (#179 D4): every user-facing
   sentence `internal/overlay` can print (init / remove / diff / source /

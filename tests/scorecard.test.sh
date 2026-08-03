@@ -30,6 +30,10 @@ else shastr(){ echo nodigest; }; shafile(){ echo nodigest; }; fi
 # permanent .git/hooks dispatchers. Scenarios pin their own $HOME below to
 # control the personal inventory; $XDG_CACHE_HOME stays this fixture cache.
 export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+# Windows: the binary reads USERPROFILE for the home dir; point it at the same sandbox (Windows form).
+command -v cygpath >/dev/null 2>&1 && export USERPROFILE="$(cygpath -w "$HOME")"
+# Inline HOME overrides below must mirror into USERPROFILE too (the binary's home key on Windows).
+wprofile(){ if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
 mkdir -p "$HOME" "$XDG_CACHE_HOME"
 # Local fixture payload: the base payload ships no gates since #172, so suites
 # that need a wired gate carry their own (one markers gate + its script).
@@ -94,7 +98,7 @@ printf 'app\n'       > "$REPO/src/app.js"
 ( cd "$REPO" && git add .claude/rules/team.md src/app.js && git commit -qm files )
 
 # not installed yet — the audit view still works
-OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" 2>&1 )"
+OUT="$( cd "$REPO" && HOME="$HOMEI" USERPROFILE="$(wprofile "$HOMEI")" bash "$SHOW" 2>&1 )"
 echo "$OUT" | grep -qi 'No omakase harness' && pass "not-installed message kept" || fail "not-installed message gone ($OUT)"
 echo "$OUT" | grep -qiF "Agent config committed" && pass "Committed group prints on an uninstalled repo" || fail "no Committed group when not installed"
 echo "$OUT" | grep -q 'known paths for known tools' && pass "audit states its scan boundary (presence-only, not exhaustive)" || fail "scan-boundary line missing ($OUT)"
@@ -104,13 +108,13 @@ echo "$OUT" | grep -q 'src/app.js' && fail "non-harness tracked file leaked into
 # behind --global.
 echo "$OUT" | grep -q 'steer every repo (list: omakase status --global)' && pass "Global collapses to a count line on an uninstalled repo" || fail "no Global count line when not installed ($OUT)"
 echo "$OUT" | grep -q 'skills/myskill' && fail "page still enumerates global rows" || pass "page no longer enumerates global rows"
-OUTG="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --global 2>&1 )"
+OUTG="$( cd "$REPO" && HOME="$HOMEI" USERPROFILE="$(wprofile "$HOMEI")" bash "$SHOW" --global 2>&1 )"
 echo "$OUTG" | grep -qiF 'not installed by omakase' && pass "--global prints the Global group header" || fail "--global missing header ($OUTG)"
 echo "$OUTG" | grep 'rules/personal\.md' | grep -q 'rule' && pass "personal rule listed from \$HOME" || fail "personal rule missing ($OUTG)"
 echo "$OUTG" | grep 'CLAUDE\.md' | grep -q 'doc' && pass "personal CLAUDE.md listed as doc" || fail "personal CLAUDE.md missing"
 [ "$(echo "$OUTG" | grep -c 'skills/myskill')" -eq 1 ] && pass "personal skill dir is ONE row (not its files)" || fail "skill dir rows != 1"
 echo "$OUTG" | grep 'skills/myskill' | grep -q 'skill' && pass "personal skill dir carries kind skill" || fail "skill dir unkinded"
-OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --markdown 2>&1 )"
+OUT="$( cd "$REPO" && HOME="$HOMEI" USERPROFILE="$(wprofile "$HOMEI")" bash "$SHOW" --markdown 2>&1 )"
 { echo "$OUT" | grep -qi 'No omakase harness' && echo "$OUT" | grep -qiF "Agent config committed"; } \
   && pass "markdown not-installed keeps the message and the Committed group" || fail "markdown not-installed inventory wrong ($OUT)"
 
@@ -123,7 +127,7 @@ printf '{ "hooks": {} }\n' > "$PAYI/.claude/settings.json"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAYI" bash "$INIT" ) >/dev/null 2>&1
 PLACEDTSV="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd)/omakase/placed.tsv"
 awk -F'\t' -v OFS='\t' '$1==".claude/settings.json"{$5=0} 1' "$PLACEDTSV" > "$PLACEDTSV.tmp" && mv "$PLACEDTSV.tmp" "$PLACEDTSV"
-OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --all 2>&1 )"
+OUT="$( cd "$REPO" && HOME="$HOMEI" USERPROFILE="$(wprofile "$HOMEI")" bash "$SHOW" --all 2>&1 )"
 echo "$OUT" | grep -q 'INJECTED — placed by omakase init from payload' && pass "Injected group prints when installed, source stated once in the header" || fail "no Injected group / source header ($OUT)"
 # The manifest gate wiring (omakase.manifest) is machinery — hidden while healthy —
 # so the visible injected row to check for kind is the .claude/settings.json
@@ -138,7 +142,7 @@ echo "$OUT" | grep '\.claude/rules/team\.md' | grep -qi 'payload' && fail "commi
 echo "$OUT" | grep -qi 'token' && fail "inventory mentions tokens (explicitly cut from the spec)" || pass "no token counts on the inventory (terminal)"
 
 # markdown mode carries the same three groups
-OUT="$( cd "$REPO" && HOME="$HOMEI" bash "$SHOW" --markdown --all 2>&1 )"
+OUT="$( cd "$REPO" && HOME="$HOMEI" USERPROFILE="$(wprofile "$HOMEI")" bash "$SHOW" --markdown --all 2>&1 )"
 echo "$OUT" | grep -qiF "The project's harness" && pass "markdown: Committed group" || fail "markdown missing Committed group"
 echo "$OUT" | grep -q '^### Injected — placed by' && pass "markdown: Injected group" || fail "markdown missing Injected group"
 echo "$OUT" | grep -q '^### Global — ' && pass "markdown: Global count line" || fail "markdown missing Global count line"
@@ -156,9 +160,9 @@ iln=$(echo "$OUT" | grep -n '^### Injected' | head -1 | cut -d: -f1)
 
 # an empty HOME collapses to the no-config line on the --all page; --global still prints (none)
 HOMEE="$TMP/homeEmpty"; mkdir -p "$HOMEE"
-OUT="$( cd "$REPO" && HOME="$HOMEE" bash "$SHOW" --all 2>&1 )"
+OUT="$( cd "$REPO" && HOME="$HOMEE" USERPROFILE="$(wprofile "$HOMEE")" bash "$SHOW" --all 2>&1 )"
 echo "$OUT" | grep -q 'GLOBAL — no personal config found' && pass "empty Global collapses to the no-config line" || fail "empty Global line wrong ($OUT)"
-OUT="$( cd "$REPO" && HOME="$HOMEE" bash "$SHOW" --global 2>&1 )"
+OUT="$( cd "$REPO" && HOME="$HOMEE" USERPROFILE="$(wprofile "$HOMEE")" bash "$SHOW" --global 2>&1 )"
 echo "$OUT" | grep -i -A1 'not installed by omakase' | grep -q '(none)' && pass "--global with empty HOME shows (none)" || fail "--global empty HOME not (none) ($OUT)"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$REMOVE" ) >/dev/null 2>&1
 
@@ -196,15 +200,15 @@ else
   { printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/bin/omakase-banner.sh' guard payload "$(shafile "$REPOI2/.omakase/bin/omakase-banner.sh")" 1
     printf '%s\t%s\t%s\t%s\t%s\n' '.omakase/gates/example.sh'      guard payload "$(shafile "$REPOI2/.omakase/gates/example.sh")" 1
   } > "$COMMONI2/omakase/placed.tsv"
-  OUT="$( cd "$REPOI2" && HOME="$HOMEI2" bash "$SHOW" --all 2>&1 )"; RC=$?
+  OUT="$( cd "$REPOI2" && HOME="$HOMEI2" USERPROFILE="$(wprofile "$HOMEI2")" bash "$SHOW" --all 2>&1 )"; RC=$?
   [ "$RC" -eq 0 ] && pass "I2: status exits 0 on the all-machinery install" || fail "I2: status exited $RC"
   inj_empty "$OUT" term "I2 [term, all healthy]"
-  OUT="$( cd "$REPOI2" && HOME="$HOMEI2" bash "$SHOW" --markdown --all 2>&1 )"; RC=$?
+  OUT="$( cd "$REPOI2" && HOME="$HOMEI2" USERPROFILE="$(wprofile "$HOMEI2")" bash "$SHOW" --markdown --all 2>&1 )"; RC=$?
   [ "$RC" -eq 0 ] && pass "I2: --markdown exits 0 on the all-machinery install" || fail "I2: --markdown exited $RC"
   inj_empty "$OUT" md "I2 [md, all healthy]"
   # gut one machinery file -> its row surfaces with the MISSING marker
   rm "$REPOI2/.omakase/gates/example.sh"
-  OUT="$( cd "$REPOI2" && HOME="$HOMEI2" bash "$SHOW" 2>&1 )"
+  OUT="$( cd "$REPOI2" && HOME="$HOMEI2" USERPROFILE="$(wprofile "$HOMEI2")" bash "$SHOW" 2>&1 )"
   echo "$OUT" | grep '\.omakase/gates/example\.sh' | grep -q 'MISSING' \
     && pass "I2 [term]: a missing machinery row surfaces with the MISSING marker" \
     || fail "I2 [term]: gutted machinery is still invisible ($OUT)"
@@ -229,11 +233,11 @@ else
   printf '%s\t%s\t%s\t%s\t%s\n' '.claude/rules/link.md' rule payload "$(shastr 'orig-target.md')" 1 > "$COMMONI3/omakase/placed.tsv"
   mkdir -p "$REPOI3/.claude/rules"
   ( cd "$REPOI3/.claude/rules" && ln -s changed-target.md link.md )   # readlink 'changed-target.md' != ledger's 'orig-target.md' => DRIFTED
-  OUT="$( cd "$REPOI3" && HOME="$HOMEI2" bash "$SHOW" 2>&1 )"
+  OUT="$( cd "$REPOI3" && HOME="$HOMEI2" USERPROFILE="$(wprofile "$HOMEI2")" bash "$SHOW" 2>&1 )"
   echo "$OUT" | grep 'link\.md' | grep -F -- '-> changed-target.md' | grep -q 'DRIFTED' \
     && pass "I3 [term]: drifted symlink renders as an arrow row with the DRIFTED marker" \
     || fail "I3 [term]: no 'link.md -> changed-target.md' row carrying DRIFTED ($OUT)"
-  OUT="$( cd "$REPOI3" && HOME="$HOMEI2" bash "$SHOW" --markdown 2>&1 )"
+  OUT="$( cd "$REPOI3" && HOME="$HOMEI2" USERPROFILE="$(wprofile "$HOMEI2")" bash "$SHOW" --markdown 2>&1 )"
   echo "$OUT" | grep 'link\.md' | grep -F -- '-> changed-target.md' | grep -q 'DRIFTED' \
     && pass "I3 [md]: drifted symlink renders as an arrow row with the DRIFTED marker" \
     || fail "I3 [md]: no 'link.md -> …' row carrying DRIFTED ($OUT)"

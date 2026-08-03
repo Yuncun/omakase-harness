@@ -25,6 +25,8 @@ omk_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)/omak
 # touches the real machine. Gates are run by the omakase binary from
 # omakase.manifest, so this suite always runs — it needs no external hook runner.
 export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+# Windows: the binary reads USERPROFILE for the home dir; point it at the same sandbox (Windows form).
+command -v cygpath >/dev/null 2>&1 && export USERPROFILE="$(cygpath -w "$HOME")"
 mkdir -p "$HOME" "$XDG_CACHE_HOME"
 if command -v go >/dev/null 2>&1; then
   export GOMODCACHE="$(go env GOMODCACHE)"

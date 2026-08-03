@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -566,6 +567,9 @@ func TestWorktreeRootsNotARepoFallsBackToRoot(t *testing.T) {
 // may name an unrelated existing directory (wrongly swept). NUL-terminated
 // output keeps every byte of the path in one record.
 func TestWorktreeRootsPathWithNewlineAndSpace(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("NTFS forbids newline in file names — the hostile path cannot exist")
+	}
 	dir := newTestRepo(t)
 	runGitT(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
 	wtNL := filepath.Join(t.TempDir(), "wt\nevil")

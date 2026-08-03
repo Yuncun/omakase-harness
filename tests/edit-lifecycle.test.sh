@@ -31,10 +31,13 @@ fail(){ echo "  FAIL: $1"; FAILED=1; }
 # self-installs the binary into $XDG_CACHE_HOME — neither may ever touch the
 # developer's real ones from a test run.
 export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+# Windows: the binary reads USERPROFILE for the home dir; point it at the same sandbox (Windows form).
+command -v cygpath >/dev/null 2>&1 && export USERPROFILE="$(cygpath -w "$HOME")"
 mkdir -p "$HOME" "$XDG_CACHE_HOME"
 newrepo(){ rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git commit -q --allow-empty -m init ); }
 common_of(){ echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)"; }
-bar(){ ( cd "$1" && printf '{"workspace":{"current_dir":"%s"}}' "$1" | NO_COLOR=1 "$OMAKASE" statusline ); }
+# JSON content is not path-converted by MSYS — hand the binary a Windows-form dir on Windows.
+bar(){ ( d="$1"; command -v cygpath >/dev/null 2>&1 && d="$(cygpath -m "$1")"; cd "$1" && printf '{"workspace":{"current_dir":"%s"}}' "$d" | NO_COLOR=1 "$OMAKASE" statusline ); }
 
 mkdir -p "$TMP"
 

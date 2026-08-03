@@ -22,6 +22,8 @@ mkdir -p "$TMP"
 # Isolated HOME (the git config --global calls below never touch the real
 # one) + a private XDG cache, so init needs no network.
 export HOME="$TMP/home"; mkdir -p "$HOME"
+# Windows: the binary reads USERPROFILE for the home dir; point it at the same sandbox (Windows form).
+command -v cygpath >/dev/null 2>&1 && export USERPROFILE="$(cygpath -w "$HOME")"
 export XDG_CACHE_HOME="$TMP/cache"; mkdir -p "$XDG_CACHE_HOME"
 git config --global user.email t@t
 git config --global user.name t

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -97,7 +98,8 @@ func TestWriteInstallsExecutableDispatcher(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dest not written: %v", err)
 	}
-	if info.Mode().Perm() != 0o755 {
+	// Exec bits exist only on Unix; Windows Stat reports 0666 always.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o755 {
 		t.Errorf("mode = %v, want 0755", info.Mode().Perm())
 	}
 	if !Matches(dest, "pre-commit") {

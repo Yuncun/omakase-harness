@@ -73,6 +73,7 @@ func refuseMachinery(targets []string, name string, stderr io.Writer) bool {
 }
 
 func runToggle(off bool, name string, stdout, stderr io.Writer) int {
+	name = state.UserRel(name)
 	repo := discoverRepo(stderr)
 	if repo == nil {
 		return 1
@@ -143,6 +144,7 @@ func runToggle(off bool, name string, stdout, stderr io.Writer) int {
 // with exit 2. Gates are files-only territory: a name matching no placed
 // path is unknown here, never a gate.
 func runKeepRestore(keep bool, name string, stdout, stderr io.Writer) int {
+	name = state.UserRel(name)
 	repo := discoverRepo(stderr)
 	if repo == nil {
 		return 1

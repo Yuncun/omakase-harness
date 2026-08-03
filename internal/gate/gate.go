@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 )
 
@@ -163,7 +164,11 @@ func ValidateRunnable(gates []Gate, payloadDir string) error {
 		if err != nil || !info.Mode().IsRegular() {
 			return fmt.Errorf("gate %q: run references %q, which the payload does not ship", g.Name, tok)
 		}
-		if info.Mode()&0o111 == 0 {
+		// No exec bits on Windows: NTFS has none to check, and at commit
+		// time the gate runs under Git for Windows' sh, which derives
+		// executability from the file's content. Enforcing the bit there
+		// would refuse every gated harness.
+		if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 			return fmt.Errorf("gate %q: run references %q, which is not executable in the payload", g.Name, tok)
 		}
 	}

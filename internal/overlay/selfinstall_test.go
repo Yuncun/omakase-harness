@@ -3,6 +3,7 @@ package overlay
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/Yuncun/omakase-harness/internal/hook"
@@ -11,7 +12,11 @@ import (
 
 func TestStableBinPathHonorsXDG(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", "/xdg-test")
-	if got, want := hook.StableBinPath(), filepath.Join("/xdg-test", "omakase", "bin", "current", "omakase"); got != want {
+	want := filepath.Join("/xdg-test", "omakase", "bin", "current", "omakase")
+	if runtime.GOOS == "windows" {
+		want += ".exe" // exec.Command cannot run an extensionless binary there
+	}
+	if got := hook.StableBinPath(); got != want {
 		t.Fatalf("StableBinPath = %q, want %q", got, want)
 	}
 }
@@ -26,7 +31,7 @@ func TestSelfInstallCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no binary installed at %s: %v", dest, err)
 	}
-	if info.Mode().Perm()&0o111 == 0 {
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
 		t.Fatalf("installed binary is not executable: %o", info.Mode().Perm())
 	}
 	exe, err := os.Executable()
@@ -64,6 +69,13 @@ func TestSelfInstallCurrent(t *testing.T) {
 // repo's hooks at once (#189 at machine scope). A dev build or an unaskable
 // copy keeps the old always-install behavior.
 func TestSelfInstallRefusesToDowngradeStableCopy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// The fake stable copy is an sh script answering --version;
+		// Windows cannot exec it, so the version ask degrades to
+		// "unaskable" and the guard (platform-independent code,
+		// exercised on Unix) never engages here.
+		t.Skip("fixture needs an exec'able version-printing stable copy")
+	}
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
 	dest := hook.StableBinPath()

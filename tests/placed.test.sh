@@ -28,6 +28,8 @@ TMP="${TMPDIR:-/tmp}/omakase-ledger-test.$$"
 # Self-contained HOME + cache: init self-installs the resolved binary into
 # $XDG_CACHE_HOME, and real commits below fire that same copy via the dispatchers.
 export HOME="$TMP/home"; export XDG_CACHE_HOME="$TMP/cache"
+# Windows: the binary reads USERPROFILE for the home dir; point it at the same sandbox (Windows form).
+command -v cygpath >/dev/null 2>&1 && export USERPROFILE="$(cygpath -w "$HOME")"
 mkdir -p "$HOME" "$XDG_CACHE_HOME"
 FAILED=0
 pass(){ echo "  PASS: $1"; }
