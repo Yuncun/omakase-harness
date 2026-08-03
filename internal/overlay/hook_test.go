@@ -200,7 +200,8 @@ func TestHookGateIgnoresDisabledRows(t *testing.T) {
 func TestHookKeepsGitIndexFile(t *testing.T) {
 	repo := hookRepo(t)
 	out := filepath.Join(t.TempDir(), "seen")
-	setManifest(t, repo, "gate: idx\n  hook: pre-commit\n  run: printf '%s' \"$GIT_INDEX_FILE\" > "+out+"\n")
+	// Slash form inside the sh command: sh eats backslashes on Windows.
+	setManifest(t, repo, "gate: idx\n  hook: pre-commit\n  run: printf '%s' \"$GIT_INDEX_FILE\" > "+filepath.ToSlash(out)+"\n")
 	t.Setenv("GIT_INDEX_FILE", "/tmp/sentinel-index")
 	var o, errb strings.Builder
 	if code := RunHook([]string{"pre-commit"}, strings.NewReader(""), &o, &errb); code != 0 {

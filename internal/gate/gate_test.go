@@ -190,6 +190,9 @@ func TestValidateRunnable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.wantErr == "not executable" && runtime.GOOS == "windows" {
+				t.Skip("the exec-bit refusal is Unix-only — NTFS has no exec bits")
+			}
 			err := ValidateRunnable([]Gate{{Name: "g", Hook: "pre-commit", Run: tc.run}}, payload)
 			if tc.wantErr == "" {
 				if err != nil {

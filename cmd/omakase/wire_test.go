@@ -62,7 +62,9 @@ func TestWireFreshClaude(t *testing.T) {
 	if !ok {
 		t.Fatalf("statusLine missing: %v", m)
 	}
-	wantCmd := filepath.Join(home, ".cache", "omakase", "bin", "current", "omakase") + " statusline"
+	// Derived via the product helpers: on Windows the path is slash-form
+	// and ends .exe, on Unix it is the plain joined path.
+	wantCmd := wireCmd(stableWireBin(home))
 	if sl["command"] != wantCmd || sl["type"] != "command" {
 		t.Fatalf("statusLine block = %v, want command %q", sl, wantCmd)
 	}
@@ -94,7 +96,12 @@ func TestWireWiresSessionStartHeal(t *testing.T) {
 	// session time (never a baked absolute path — that went stale when
 	// HOME/XDG_CACHE_HOME moved, and its interpolation was an sh-quoting
 	// hazard), and self-guards on the binary existing.
-	if !strings.Contains(cmd, `${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase`) ||
+	if runtime.GOOS == "windows" {
+		shell := ss[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["shell"]
+		if cmd != healCmdWindows || shell != "powershell" {
+			t.Fatalf("heal entry = %q shell=%v, want the pinned PowerShell form", cmd, shell)
+		}
+	} else if !strings.Contains(cmd, `${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase`) ||
 		!strings.Contains(cmd, "hook session-start") ||
 		!strings.Contains(cmd, "[ -x ") || !strings.HasSuffix(cmd, "|| true") {
 		t.Fatalf("heal command = %q, want the env-derived guarded invocation", cmd)
@@ -279,7 +286,7 @@ func TestWireHonorsXDGCacheHome(t *testing.T) {
 	if !ok {
 		t.Fatal("statusLine missing")
 	}
-	want := filepath.Join(xdg, "omakase", "bin", "current", "omakase") + " statusline"
+	want := wireCmd(stableWireBin(home)) // honors the XDG override just set
 	if sl["command"] != want {
 		t.Fatalf("command = %v, want %q", sl["command"], want)
 	}
