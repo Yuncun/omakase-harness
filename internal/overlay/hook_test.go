@@ -144,6 +144,59 @@ func TestHookSessionStartHealsAndReports(t *testing.T) {
 	}
 }
 
+// session-start runs the manifest's advisory checks (#218): output passes
+// through raw, a failing advisory changes nothing, and the heal runs first so
+// an advisory can rely on the placed files being present.
+func TestHookSessionStartRunsAdvisories(t *testing.T) {
+	repo := hookRepo(t)
+	setManifest(t, repo, defaultManifest+
+		"\nadvisory: sees-heal\n  run: test -f .omakase/gates/example.sh && echo heal-ran-first\nadvisory: noisy-fail\n  run: echo watch out >&2; exit 7\n")
+	// Wipe the placed script: only a heal that ran BEFORE the advisories can
+	// make sees-heal speak.
+	if err := os.Remove(filepath.Join(repo.Root, ".omakase", "gates", "example.sh")); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb strings.Builder
+	if code := RunHook([]string{"session-start"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "omakase[sees-heal]: heal-ran-first") {
+		t.Errorf("stdout = %q, want the prefixed advisory line proving heal ordering", out.String())
+	}
+	if strings.Contains(errb.String(), "watch out") {
+		t.Errorf("stderr = %q, advisory stderr must be discarded", errb.String())
+	}
+}
+
+// A corrupt snapshot manifest at session start means silence — fail-open,
+// through the real RunHook path, not just the gate package's unit.
+func TestHookSessionStartCorruptManifestSilent(t *testing.T) {
+	repo := hookRepo(t)
+	setManifest(t, repo, "advisory: broken\n  bogus: key\n")
+	var out, errb strings.Builder
+	if code := RunHook([]string{"session-start"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	eq(t, "stdout", out.String(), "")
+	eq(t, "stderr", errb.String(), "")
+}
+
+// Advisories belong to session-start only — a gate stage or post-checkout
+// with advisories in the manifest neither runs them nor trips over them.
+func TestHookOtherStagesIgnoreAdvisories(t *testing.T) {
+	repo := hookRepo(t)
+	setManifest(t, repo, defaultManifest+"\nadvisory: quiet-here\n  run: echo should-not-appear\n")
+	for _, stage := range []string{"pre-commit", "post-checkout"} {
+		var out, errb strings.Builder
+		if code := RunHook([]string{stage}, strings.NewReader(""), &out, &errb); code != 0 {
+			t.Fatalf("%s exit = %d, want 0; stderr=%q", stage, code, errb.String())
+		}
+		if strings.Contains(out.String(), "should-not-appear") {
+			t.Errorf("%s stdout = %q, advisory ran outside session-start", stage, out.String())
+		}
+	}
+}
+
 // A clean pre-commit runs the declared gate and records a pass row.
 func TestHookGateRunsAndRecords(t *testing.T) {
 	repo := hookRepo(t)

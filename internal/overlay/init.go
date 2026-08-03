@@ -292,22 +292,26 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// manifest at all (a legacy/dev payload shape; every published harness
 	// ships one) and keeps the full wiring.
 	gateCount := -1
+	var advisoryNames []string
 	if manifest := filepath.Join(payload, "omakase.manifest"); fileRegular(manifest) {
 		content, rerr := os.ReadFile(manifest)
 		if rerr != nil {
 			fmt.Fprintf(stderr, msgManifestReadFailed, manifest, rerr)
 			return 1
 		}
-		gates, perr := gate.Parse(content)
+		gates, advisories, perr := gate.Parse(content)
 		if perr != nil {
 			fmt.Fprintf(stderr, msgGateDeclInvalid, perr)
 			return 1
 		}
-		if verr := gate.ValidateRunnable(gates, payload); verr != nil {
+		if verr := gate.ValidateRunnable(gates, advisories, payload); verr != nil {
 			fmt.Fprintf(stderr, msgGateWiringInvalid, verr)
 			return 1
 		}
 		gateCount = len(gates)
+		for _, a := range advisories {
+			advisoryNames = append(advisoryNames, a.Name)
+		}
 	}
 
 	const begin = "# >>> omakase-harness >>>"
@@ -975,6 +979,11 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		if !wantHook["post-checkout"] {
 			fmt.Fprint(stdout, msgHooksLeftUntouched)
 		}
+	}
+	// Advisory checks run code at every session start, so consent time names
+	// them (#218).
+	if len(advisoryNames) > 0 {
+		fmt.Fprintf(stdout, msgAdvisoriesWired, strings.Join(advisoryNames, ", "))
 	}
 	fmt.Fprintln(stdout, msgSeeStatus)
 	// A source's manifest recommends: line; only a source install sets it.

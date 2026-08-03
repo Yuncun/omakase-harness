@@ -88,13 +88,16 @@ func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	// session-start: the SessionStart hook init wires into the host — a host session event,
-	// not a git one. Heal only (no LFS forward), and say so on stdout when
-	// something was restored: a session opening on a wiped overlay is the one
-	// silent failure the git hooks never see (#164 C5). Always exits 0.
+	// not a git one. Heal (no LFS forward), say so on stdout when something
+	// was restored — a session opening on a wiped overlay is the one silent
+	// failure the git hooks never see (#164 C5) — then run the manifest's
+	// advisory checks (#218), after the heal so they see the placed files.
+	// Always exits 0.
 	if name == "session-start" {
 		if n := healWorktree(repo, stderr); n > 0 {
 			fmt.Fprintf(stdout, msgSessionStartRestored, n)
 		}
+		gate.RunAdvisories(repo.Root, repo.OMK, stdout)
 		return 0
 	}
 

@@ -151,15 +151,15 @@ omakase: nothing was changed.
 	msgLefthookYmlRefused = "omakase: this harness declares gates in lefthook-local.yml, which omakase no longer reads — declare them as gate: blocks in omakase.manifest and delete the yml. Nothing was changed."
 	// omakase.manifest exists but could not be read.
 	msgManifestReadFailed = "omakase: could not read %s: %v. Nothing was changed.\n"
-	// A malformed gate: block in the manifest.
-	msgGateDeclInvalid = "omakase: invalid gate declaration in omakase.manifest: %v. Nothing was changed.\n"
+	// A malformed gate: or advisory: block in the manifest.
+	msgGateDeclInvalid = "omakase: invalid declaration in omakase.manifest: %v. Nothing was changed.\n"
 	// A gate references a payload script that is missing or not executable.
 	// The %v names the gate and the script. Two causes share this refusal,
 	// and the likelier one for an adopter is NOT the wiring: an omakase older
 	// than the harness expects merges a base payload that lacks the script
 	// (#49's mis-blame incident — the message must not send the user off to
 	// edit wiring that is correct).
-	msgGateWiringInvalid = `omakase: %v. It would fail at commit time (exit 127). Nothing was changed.
+	msgGateWiringInvalid = `omakase: %v. It would fail when it runs (exit 127). Nothing was changed.
          If you didn't edit this harness yourself, your omakase install is likely older
          than the harness expects — update it (brew upgrade omakase), then re-run.
          Otherwise fix the run: reference or ship the script.
@@ -267,7 +267,11 @@ omakase: nothing was changed.
 	// Closing note when it was not.
 	msgIgnoresWired = "omakase: ignores -> .git/info/exclude. Nothing to commit."
 	// A steering-only harness: nothing wired into .git/hooks (#149).
-	msgNoGatesDeclared = "omakase: no gates declared — no enforcement hooks installed."
+	msgNoGatesDeclared = "omakase: no gates declared — nothing blocks commits or pushes here."
+	// The manifest declares advisory: checks — name the code that will run at
+	// every session start (#218 consent line). "Claude Code sessions" is a
+	// fact, not a plan: only Claude Code gets SessionStart wiring today.
+	msgAdvisoriesWired = "omakase: advisory checks (speak at the start of Claude Code sessions, never block): %s\n"
 	// No gates AND no heal hook: how to refresh placed files by hand.
 	msgHooksLeftUntouched = `omakase: existing git hooks left untouched; without the heal hook, run a bare
          'omakase init' after a checkout or in a new worktree to refresh the files.

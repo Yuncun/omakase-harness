@@ -202,6 +202,8 @@ A harness carries **one** `omakase.manifest` — flat, hand-parsed text, no YAML
 - **Identity** — header keys (`name`, `version`, `recommends`) name the harness; `name` is
   required, read when a `--source` install fetches the source.
 - **Gate wiring** — `gate:` blocks declare the harness's gates.
+- **Advisory checks** — `advisory:` blocks declare session-start checks that report and
+  never block.
 
 `init` places this file with the rest of `payload/` (it lands at the target root as
 `omakase.manifest`) and snapshots it into the target's git dir; each git hook reads its gates
@@ -244,6 +246,30 @@ refuses the whole harness (places nothing). If a `run:`'s first token is a paylo
 (`.omakase/…` or `gates/…`), that file must exist in the payload and be executable — the
 "nothing runs undeclared" check; any other first token (`go`, `make`, `bash …`) is the
 author's own command, resolved from `PATH`.
+
+### Advisory blocks
+
+An `advisory: <name>` block declares a check that runs at **session start** (the same
+`SessionStart` wiring the heal uses) and can never block anything: the command runs via
+`sh` from the repo root and its exit code is ignored. Its stdout is relayed line by
+line behind an `omakase[<name>]:` prefix (capped at 4 KiB, the cut announced); stderr
+is discarded. Each check is killed after 10 seconds, and anything it left running in
+the background is cut loose 2 seconds after it exits. The name shares the gate
+namespace and charset; the only other keys are `run:` (required) and `purpose:`
+(optional). No `hook:`, `glob:`, or `cacheable:` — the stage is fixed and nothing is
+enforced, so there is nothing to scope or cache.
+
+    advisory: branch-freshness
+      run: .omakase/advisories/branch-freshness.sh
+      purpose: warn when the branch is behind
+
+Validation at init is the same as for gates — a malformed block or a `run:` naming an
+unshipped payload script refuses the whole harness — and `init` prints the declared
+advisory names, since they are code that will run at every session start. Where gates
+fail closed, advisories fail open: a missing or unreadable snapshot manifest at session
+start means silence. Today the `SessionStart` wiring exists on Claude Code only; on
+Copilot CLI advisories do not fire yet (same limitation as the session-start heal
+above).
 
 ## Instruction files
 

@@ -6,6 +6,19 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 ## [Unreleased]
 
 ### Added
+- **Advisory checks at session start** (#218): a harness can declare
+  `advisory:` blocks in `omakase.manifest` — named checks (`run:`, optional
+  `purpose:`) that run when a session starts, speak when something needs
+  attention, and never block. The exit code is ignored; stdout is relayed
+  behind an `omakase[<name>]:` prefix (capped, the cut announced) and
+  stderr is discarded; each check is killed after 10 seconds so a hung
+  check costs its own budget, not the session. A missing or corrupt
+  manifest means silence (fail-open, the opposite of gates, on purpose).
+  Validation at init matches gates — a malformed block or a `run:` naming
+  an unshipped payload script refuses the whole harness — and init names
+  the declared advisories at consent time. Fires on Claude Code's
+  SessionStart wiring; Copilot CLI has no session-start wiring yet (same
+  limitation as the session-start heal).
 - **Windows support (#212).** The release ships `windows/amd64` and
   `windows/arm64` zips, installable via Scoop
   (`scoop bucket add yuncun https://github.com/Yuncun/scoop-bucket`, then

@@ -258,7 +258,7 @@ func TestSteeringOnlyInitHooks(t *testing.T) {
 	if !hook.Matches(filepath.Join(repo.CommonDir, "hooks", "post-checkout"), "post-checkout") {
 		t.Error("post-checkout heal hook missing (clean repo keeps it)")
 	}
-	if !strings.Contains(out.String(), "omakase: no gates declared — no enforcement hooks installed.\n") {
+	if !strings.Contains(out.String(), "omakase: no gates declared — nothing blocks commits or pushes here.\n") {
 		t.Errorf("missing opt-in-wiring notice:\n%s", out.String())
 	}
 	if !strings.Contains(out.String(), steeringOnlyVerifiedLine) {
@@ -864,11 +864,67 @@ func TestManifestBadGateRefusal(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
-	if !strings.Contains(stderr.String(), "invalid gate declaration") {
+	if !strings.Contains(stderr.String(), "invalid declaration") {
 		t.Errorf("stderr = %q, want the invalid-declaration refusal", stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".omakase")); err == nil {
 		t.Error("placed files despite the refusal")
+	}
+}
+
+// A manifest advisory block (#218) is validated like a gate block: a malformed
+// one refuses the whole harness, and a run: naming an unshipped payload script
+// refuses too.
+func TestManifestBadAdvisoryRefusal(t *testing.T) {
+	dir, _ := initRepo(t)
+	p := singleGatePayload(t)
+	writeFile(t, filepath.Join(p, "omakase.manifest"),
+		"name: h\nversion: 1\n\nadvisory: a\n  purpose: no run key\n")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "missing required key run") {
+		t.Errorf("stderr = %q, want the missing-run refusal", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".omakase")); err == nil {
+		t.Error("placed files despite the refusal")
+	}
+}
+
+func TestManifestAdvisoryMissingScriptRefusal(t *testing.T) {
+	dir, _ := initRepo(t)
+	p := singleGatePayload(t)
+	writeFile(t, filepath.Join(p, "omakase.manifest"),
+		"name: h\nversion: 1\n\nadvisory: a\n  run: .omakase/advisories/missing.sh\n")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "does not ship") {
+		t.Errorf("stderr = %q, want the missing-script refusal", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".omakase")); err == nil {
+		t.Error("placed files despite the refusal")
+	}
+}
+
+// Init names the advisories it wired — code that will run at every session
+// start must be visible at consent time (#218).
+func TestInitAdvisoryConsentLine(t *testing.T) {
+	initRepo(t)
+	p := singleGatePayload(t)
+	writeFile(t, filepath.Join(p, "omakase.manifest"),
+		"name: h\nversion: 1\n\nadvisory: branch-freshness\n  run: echo behind\nadvisory: detached-head\n  run: echo detached\n")
+
+	var stdout, stderr strings.Builder
+	if code := RunInit(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "branch-freshness, detached-head") {
+		t.Errorf("stdout = %q, want the advisory consent line naming both checks", stdout.String())
 	}
 }
 

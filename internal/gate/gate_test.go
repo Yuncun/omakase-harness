@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
@@ -119,6 +120,7 @@ func TestParse(t *testing.T) {
 		name     string
 		manifest string
 		want     []Gate
+		wantAdv  []Advisory
 		wantErr  string
 	}{
 		{
@@ -144,10 +146,28 @@ func TestParse(t *testing.T) {
 			manifest: "gate: go-test\n  hook: pre-push\n  run: go test ./...\n  purpose: tests green before push\n",
 			want:     []Gate{{Name: "go-test", Hook: "pre-push", Run: "go test ./...", Purpose: "tests green before push"}},
 		},
+		{
+			name: "advisory blocks alongside gates",
+			manifest: "name: h\nversion: 1\n\n" +
+				"gate: g\n  hook: pre-commit\n  run: true\n\n" +
+				"advisory: branch-freshness\n  run: .omakase/advisories/branch-freshness.sh\n  purpose: warn when the branch is behind\n" +
+				"advisory: detached-head\n  run: .omakase/advisories/detached-head.sh\n",
+			want: []Gate{{Name: "g", Hook: "pre-commit", Run: "true"}},
+			wantAdv: []Advisory{
+				{Name: "branch-freshness", Run: ".omakase/advisories/branch-freshness.sh", Purpose: "warn when the branch is behind"},
+				{Name: "detached-head", Run: ".omakase/advisories/detached-head.sh"},
+			},
+		},
+		{name: "advisory missing run", manifest: "advisory: a\n  purpose: x\n", wantErr: "missing required key run"},
+		{name: "advisory rejects hook key", manifest: "advisory: a\n  hook: session-start\n  run: true\n", wantErr: "unknown key"},
+		{name: "advisory rejects glob key", manifest: "advisory: a\n  run: true\n  glob: *.go\n", wantErr: "unknown key"},
+		{name: "advisory bad name", manifest: "advisory: bad name!\n  run: true\n", wantErr: "not [A-Za-z0-9._-]+"},
+		{name: "advisory duplicate name", manifest: "advisory: a\n  run: true\nadvisory: a\n  run: false\n", wantErr: "duplicate"},
+		{name: "gate and advisory share the namespace", manifest: "gate: a\n  hook: pre-commit\n  run: true\nadvisory: a\n  run: true\n", wantErr: "duplicate"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := Parse([]byte(tc.manifest))
+			got, adv, err := Parse([]byte(tc.manifest))
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
@@ -159,6 +179,9 @@ func TestParse(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("gates mismatch\n got: %+v\nwant: %+v", got, tc.want)
+			}
+			if !reflect.DeepEqual(adv, tc.wantAdv) {
+				t.Fatalf("advisories mismatch\n got: %+v\nwant: %+v", adv, tc.wantAdv)
 			}
 		})
 	}
@@ -193,7 +216,7 @@ func TestValidateRunnable(t *testing.T) {
 			if tc.wantErr == "not executable" && runtime.GOOS == "windows" {
 				t.Skip("the exec-bit refusal is Unix-only — NTFS has no exec bits")
 			}
-			err := ValidateRunnable([]Gate{{Name: "g", Hook: "pre-commit", Run: tc.run}}, payload)
+			err := ValidateRunnable([]Gate{{Name: "g", Hook: "pre-commit", Run: tc.run}}, nil, payload)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("want nil, got %v", err)
@@ -204,6 +227,112 @@ func TestValidateRunnable(t *testing.T) {
 				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
 			}
 		})
+	}
+
+	// An advisory's run: is held to the same "nothing runs undeclared" check.
+	err := ValidateRunnable(nil, []Advisory{{Name: "a", Run: ".omakase/advisories/missing.sh"}}, payload)
+	if err == nil || !strings.Contains(err.Error(), "does not ship") || !strings.Contains(err.Error(), `advisory "a"`) {
+		t.Fatalf("advisory missing script: want does-not-ship error naming the advisory, got %v", err)
+	}
+	if err := ValidateRunnable(nil, []Advisory{{Name: "a", Run: "git fetch --dry-run"}}, payload); err != nil {
+		t.Fatalf("advisory non-payload command: want nil, got %v", err)
+	}
+}
+
+// --- RunAdvisories ---------------------------------------------------------
+
+// Advisories run in manifest order from the repo root; stdout lines are
+// relayed behind an omakase[<name>]: prefix (session-start text is always
+// attributed), stderr is discarded (a broken check must not splash a raw
+// shell error into every session), and a non-zero exit changes nothing.
+func TestRunAdvisoriesRelayAndOrder(t *testing.T) {
+	root, omk := newRepo(t)
+	writeSnapshotManifest(t, omk,
+		"name: t\n\nadvisory: first\n  run: echo behind by 3\nadvisory: fails\n  run: echo trouble >&2; exit 7\nadvisory: last\n  run: echo still-ran\n")
+	var out bytes.Buffer
+	RunAdvisories(root, omk, &out)
+	if !strings.Contains(out.String(), "omakase[first]: behind by 3") ||
+		!strings.Contains(out.String(), "omakase[last]: still-ran") {
+		t.Fatalf("stdout = %q, want both advisory lines with name prefixes", out.String())
+	}
+	if strings.Index(out.String(), "behind by 3") > strings.Index(out.String(), "still-ran") {
+		t.Errorf("stdout = %q, want manifest order", out.String())
+	}
+	if strings.Contains(out.String(), "trouble") {
+		t.Errorf("stdout = %q, a failing advisory's stderr must be discarded", out.String())
+	}
+}
+
+// The child shell starts from the repo root, whatever directory the hook fired
+// from.
+func TestRunAdvisoriesRunFromRoot(t *testing.T) {
+	root, omk := newRepo(t)
+	writeSnapshotManifest(t, omk, "advisory: mark\n  run: touch ran-here\n")
+	var out bytes.Buffer
+	RunAdvisories(root, omk, &out)
+	if _, err := os.Stat(filepath.Join(root, "ran-here")); err != nil {
+		t.Fatalf("advisory did not run from the repo root: %v", err)
+	}
+}
+
+// Advisories are fail-open where gates are fail-closed: a missing or corrupt
+// snapshot manifest means silence, never noise or a block at session start.
+func TestRunAdvisoriesFailOpen(t *testing.T) {
+	root, omk := newRepo(t)
+	var out bytes.Buffer
+	RunAdvisories(root, omk, &out) // no manifest at all
+	writeSnapshotManifest(t, omk, "advisory: broken\n")
+	RunAdvisories(root, omk, &out) // corrupt manifest
+	if out.String() != "" {
+		t.Fatalf("want silence, got stdout=%q", out.String())
+	}
+}
+
+// A hung advisory is killed at advisoryTimeout, and a backgrounded grandchild
+// holding the output pipe is cut loose after advisoryGrace — a session start
+// pays one check's budget at most, never "until the network comes back".
+func TestRunAdvisoriesTimeoutAndGrace(t *testing.T) {
+	root, omk := newRepo(t)
+	oldT, oldG := advisoryTimeout, advisoryGrace
+	advisoryTimeout, advisoryGrace = 300*time.Millisecond, 300*time.Millisecond
+	defer func() { advisoryTimeout, advisoryGrace = oldT, oldG }()
+
+	writeSnapshotManifest(t, omk,
+		"advisory: hangs\n  run: echo before-hang; sleep 30\nadvisory: bg\n  run: sleep 30 & echo spoke\nadvisory: after\n  run: echo still-reached\n")
+	start := time.Now()
+	var out bytes.Buffer
+	RunAdvisories(root, omk, &out)
+	if el := time.Since(start); el > 5*time.Second {
+		t.Fatalf("RunAdvisories took %v — a hung advisory blocked the session start", el)
+	}
+	if !strings.Contains(out.String(), "omakase[hangs]: before-hang") {
+		t.Errorf("stdout = %q, want the hung advisory's output before the kill", out.String())
+	}
+	if !strings.Contains(out.String(), "omakase[bg]: spoke") ||
+		!strings.Contains(out.String(), "omakase[after]: still-reached") {
+		t.Errorf("stdout = %q, want later advisories to still run", out.String())
+	}
+}
+
+// One advisory's output is capped: the head is kept, the excess dropped, and
+// the drop is announced rather than silent.
+func TestRunAdvisoriesOutputCap(t *testing.T) {
+	root, omk := newRepo(t)
+	oldC := advisoryOutputCap
+	advisoryOutputCap = 64
+	defer func() { advisoryOutputCap = oldC }()
+
+	writeSnapshotManifest(t, omk, "advisory: chatty\n  run: yes flood | head -c 100000\nadvisory: next\n  run: echo unaffected\n")
+	var out bytes.Buffer
+	RunAdvisories(root, omk, &out)
+	if !strings.Contains(out.String(), "omakase[chatty]: (output capped)") {
+		t.Errorf("stdout = %q, want the cap announced", out.String())
+	}
+	if len(out.String()) > 4096 {
+		t.Errorf("relayed %d bytes — the cap did not hold", len(out.String()))
+	}
+	if !strings.Contains(out.String(), "omakase[next]: unaffected") {
+		t.Errorf("stdout = %q, want the next advisory unaffected", out.String())
 	}
 }
 
