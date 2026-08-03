@@ -3,7 +3,7 @@
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
-## [Unreleased]
+## [0.31.0] — 2026-08-03
 
 ### Added
 - **Advisory checks at session start** (#218): a harness can declare
