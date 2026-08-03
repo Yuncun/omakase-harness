@@ -19,6 +19,7 @@ func wireHome(t *testing.T, hosts map[string]string) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // Windows os.UserHomeDir
 	t.Setenv("XDG_CACHE_HOME", "")
 	for host, settings := range hosts {
 		dir := filepath.Join(home, host)

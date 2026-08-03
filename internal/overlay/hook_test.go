@@ -3,6 +3,7 @@ package overlay
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -305,7 +306,8 @@ func TestHookPostCheckoutHealsMissingFile(t *testing.T) {
 	}
 	got := readFileT(t, filepath.Join(repo.Root, rel))
 	eq(t, "healed content", got, gateContent)
-	if info, err := os.Stat(filepath.Join(repo.Root, rel)); err != nil || info.Mode().Perm()&0o100 == 0 {
+	if info, err := os.Stat(filepath.Join(repo.Root, rel)); err != nil ||
+		(runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0) {
 		t.Errorf("healed .sh not executable: %v", err)
 	}
 	eq(t, "stderr (heal is silent)", errb.String(), "")

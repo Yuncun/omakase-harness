@@ -21,6 +21,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -1074,7 +1075,11 @@ func walkPayload(payload string) ([]string, error) {
 			if rerr != nil {
 				return rerr
 			}
-			rels = append(rels, rel)
+			// Slash form ALWAYS: these rels become git exclude patterns
+			// (git matches slashes only), ledger rows, and message paths —
+			// on Windows filepath.Rel yields backslashes, which break all
+			// three. filepath.Join converts back for disk access.
+			rels = append(rels, filepath.ToSlash(rel))
 		}
 		return nil
 	})
@@ -1342,10 +1347,14 @@ func fileRegular(p string) bool {
 }
 
 // fileExecutable reports whether p is a regular file with at least one
-// execute bit set.
+// execute bit set. On Windows presence is the whole provable fact — NTFS
+// has no exec bits and Stat reports 0666 for every regular file.
 func fileExecutable(p string) bool {
 	info, err := os.Stat(p)
-	return err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	return runtime.GOOS == "windows" || info.Mode()&0o111 != 0
 }
 
 // lexists reports whether the path is present as any type, including a

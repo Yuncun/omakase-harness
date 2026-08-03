@@ -37,7 +37,7 @@ func RunDiff(argv []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, msgDiffUnknownFlag, a)
 			return 2
 		}
-		names = append(names, a)
+		names = append(names, state.UserRel(a))
 	}
 
 	wd, err := os.Getwd()

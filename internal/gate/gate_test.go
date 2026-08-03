@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -245,8 +246,11 @@ func TestRunHook_RunsEveryGateReturnsFirstFailure(t *testing.T) {
 	// The first gate fails; every gate still runs (the second writes a marker),
 	// and the stage returns the first failure's code.
 	marker := filepath.Join(t.TempDir(), "ran")
+	// Slash form inside the sh command: sh treats backslashes as escapes,
+	// so a Windows-form path never reaches the gate intact.
+	shMarker := filepath.ToSlash(marker)
 	man := "gate: a\n  hook: pre-commit\n  run: exit 3\n" +
-		"gate: b\n  hook: pre-commit\n  run: touch " + marker + "\n"
+		"gate: b\n  hook: pre-commit\n  run: touch " + shMarker + "\n"
 	code, _, _ := run(t, root, omk, "pre-commit", man, nil)
 	if code != 3 {
 		t.Fatalf("want the first failure's code 3, got %d", code)
@@ -547,7 +551,10 @@ func TestRunHook_PrePushStdinSharedAcrossGates(t *testing.T) {
 func TestRunHook_CacheHitSkips(t *testing.T) {
 	root, omk := newRepo(t)
 	marker := filepath.Join(t.TempDir(), "ran")
-	man := "gate: c\n  hook: pre-commit\n  run: printf x >> " + marker + "\n  cacheable: true\n"
+	// Slash form inside the sh command: sh treats backslashes as escapes,
+	// so a Windows-form path never reaches the gate intact.
+	shMarker := filepath.ToSlash(marker)
+	man := "gate: c\n  hook: pre-commit\n  run: printf x >> " + shMarker + "\n  cacheable: true\n"
 	// First run executes.
 	run(t, root, omk, "pre-commit", man, nil)
 	b, _ := os.ReadFile(marker)
@@ -575,7 +582,10 @@ func TestRunHook_CacheHitSkips(t *testing.T) {
 func TestRunHook_FailRowDoesNotCache(t *testing.T) {
 	root, omk := newRepo(t)
 	marker := filepath.Join(t.TempDir(), "ran")
-	man := "gate: cf\n  hook: pre-commit\n  run: printf x >> " + marker + "; exit 1\n  cacheable: true\n"
+	// Slash form inside the sh command: sh treats backslashes as escapes,
+	// so a Windows-form path never reaches the gate intact.
+	shMarker := filepath.ToSlash(marker)
+	man := "gate: cf\n  hook: pre-commit\n  run: printf x >> " + shMarker + "; exit 1\n  cacheable: true\n"
 	run(t, root, omk, "pre-commit", man, nil)
 	run(t, root, omk, "pre-commit", man, nil)
 	b, _ := os.ReadFile(marker)
@@ -598,7 +608,10 @@ func TestRecord(t *testing.T) {
 	}
 	// A subsequent cacheable run at the same HEAD skips (deferment).
 	marker := filepath.Join(t.TempDir(), "ran")
-	man := "gate: review\n  hook: pre-push\n  run: printf x >> " + marker + "; exit 1\n  cacheable: true\n"
+	// Slash form inside the sh command: sh treats backslashes as escapes,
+	// so a Windows-form path never reaches the gate intact.
+	shMarker := filepath.ToSlash(marker)
+	man := "gate: review\n  hook: pre-push\n  run: printf x >> " + shMarker + "; exit 1\n  cacheable: true\n"
 	code, _, _ := run(t, root, omk, "pre-push", man, nil)
 	if code != 0 {
 		t.Fatalf("after Record the same HEAD must be allowed, got %d", code)
@@ -724,6 +737,9 @@ func TestRunHook_GlobMatchesNonASCII(t *testing.T) {
 // A step killed by a signal surfaces 128+signal (the sh convention), not a
 // flattened 1: SIGTERM -> 143.
 func TestRunHook_SignalKilledStepIs128Plus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("128+signal is a POSIX convention; Windows has no process signals")
+	}
 	root, omk := newRepo(t)
 	code, _, _ := run(t, root, omk, "pre-commit", "gate: sig\n  hook: pre-commit\n  run: kill -TERM $$\n", nil)
 	if code != 143 {

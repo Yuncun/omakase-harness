@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -268,7 +269,11 @@ func hooksInstalled(root string) (Tri, HookIssue) {
 	if stable == "" {
 		return Unknown, HookIssueNone
 	}
-	if info, err := os.Stat(stable); err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+	// The exec-bit half of the proof is Unix-only: Windows has no exec
+	// bits (Stat reports 0666 for every regular file), so demanding one
+	// there would pin the proof at Problem forever.
+	if info, err := os.Stat(stable); err != nil || !info.Mode().IsRegular() ||
+		(runtime.GOOS != "windows" && info.Mode()&0o111 == 0) {
 		return Problem, HookIssueBinary
 	}
 	return OK, HookIssueNone
