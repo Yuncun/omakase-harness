@@ -1,6 +1,6 @@
 // Self-install of the machine-wide binary copy. The statusline
 // wiring printed by init — and, since issue #98, the permanent .git/hooks
-// dispatchers — must survive plugin updates and cache eviction, so they
+// dispatchers — must survive binary upgrades and cache eviction, so they
 // point at ONE stable path (hook.StableBinPath) instead of a
 // version-numbered cache dir or a per-repo script; every real
 // `omakase init` refreshes the copy there.

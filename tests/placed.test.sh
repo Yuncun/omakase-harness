@@ -15,10 +15,10 @@
 #   U. pre-0.10 remove - no placed.tsv: payload-enumeration fallback tears down
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INIT="$HERE/../bin/init.sh"
-REMOVE="$HERE/../bin/remove.sh"
-SHOW="$HERE/../bin/status.sh"
-OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
+INIT="$HERE/bin/init.sh"
+REMOVE="$HERE/bin/remove.sh"
+SHOW="$HERE/bin/status.sh"
+OMAKASE="$( cd "$HERE" && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
 [ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
 # OMAKASE_SKIP_GATES=1 skips the gate commands but NOT the fail-closed
 # placed-files check — so this stays a verify-only run of the pre-commit hook.

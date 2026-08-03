@@ -5,7 +5,7 @@
 # The harness wiring is declared in omakase.manifest; no hardcoded paths.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INIT="$HERE/../bin/init.sh"
+INIT="$HERE/bin/init.sh"
 TMP="${TMPDIR:-/tmp}/omakase-copilot-exclude.$$"
 PAY="$TMP/payload"; REPO="$TMP/repo"
 FAILED=0

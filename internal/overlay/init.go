@@ -265,8 +265,8 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 
 	// ---- base-machinery downgrade guard (#189) ----
-	// The entry points update independently (brew binary, Claude plugin,
-	// Copilot plugin, dev build), so a stale one can run a bare init against
+	// The entry points update independently (brew binary, stale machine
+	// copies, dev build), so a stale one can run a bare init against
 	// a repo a newer omakase set up and silently roll .omakase/ backwards —
 	// the only symptom was status rendering differently. Refuse before
 	// anything is placed; a deliberate downgrade is remove-then-init.

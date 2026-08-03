@@ -79,7 +79,7 @@ const (
 
 // usageText is the `omakase init` usage text; the safety suite greps its
 // key flags (the Go tests compare output against this same constant).
-const usageText = "usage: init.sh [<owner/repo[/subpath][#ref]> | --source <git-url|path>] [--cut-over] [--help]\n" +
+const usageText = "usage: omakase init [<owner/repo[/subpath][#ref]> | --source <git-url|path>] [--cut-over] [--help]\n" +
 	"\n" +
 	"Overlay payload/ into the current repo additively (zero committed footprint) and\n" +
 	"install its git hooks. A payload path the repo already COMMITS is never touched:\n" +
@@ -99,7 +99,7 @@ const usageText = "usage: init.sh [<owner/repo[/subpath][#ref]> | --source <git-
 	"               the base harness's payload with the source's payload layered ON TOP (base\n" +
 	"               machinery underneath, source wins on overlap), so a source ships only its\n" +
 	"               delta and relies on base machinery without keeping its own copy. The source is\n" +
-	"               remembered; a later bare init.sh refreshes and re-injects the same source.\n" +
+	"               remembered; a later bare omakase init refreshes and re-injects the same source.\n" +
 	"               A `//subpath` suffix on the url or path adopts a harness directory inside\n" +
 	"               the repo: --source https://host/x/hub//tools, --source /clones/hub//tools.\n" +
 	"  --cut-over   also untrack (git rm --cached) every payload path the repo currently\n" +
@@ -161,8 +161,8 @@ omakase: nothing was changed.
 	// edit wiring that is correct).
 	msgGateWiringInvalid = `omakase: %v. It would fail at commit time (exit 127). Nothing was changed.
          If you didn't edit this harness yourself, your omakase install is likely older
-         than the harness expects — update it (brew upgrade omakase, or update the
-         plugin), then re-run. Otherwise fix the run: reference or ship the script.
+         than the harness expects — update it (brew upgrade omakase), then re-run.
+         Otherwise fix the run: reference or ship the script.
 `
 
 	// An incumbent hook manager (husky and kin) owns .git/hooks — refused;
@@ -247,7 +247,7 @@ omakase: nothing was changed.
 	// The binary the dispatchers exec is missing or not executable — commits would block.
 	msgStableBinaryMissing = "omakase: WARNING — commits will block: the hooks run %s, which is missing or not executable. Re-run  omakase init  with any installed omakase binary to restore it.\n"
 	// An older omakase tried to re-init a repo a newer one set up — refused.
-	msgDowngradeRefused = "omakase: update omakase, then re-run — a newer omakase (%s) set this repo up and this init is older (%s); refusing to roll its files back. Update:  brew upgrade omakase  or update the plugin. Nothing was changed. (Downgrade on purpose:  omakase remove  then  %s.)\n"
+	msgDowngradeRefused = "omakase: update omakase, then re-run — a newer omakase (%s) set this repo up and this init is older (%s); refusing to roll its files back. Update:  brew upgrade omakase. Nothing was changed. (Downgrade on purpose:  omakase remove  then  %s.)\n"
 
 	// The counts line every successful init ends with; rows follow.
 	msgPlacedSummary = "omakase: placed %d file(s), updated %d to match the payload, skipped %d committed path(s).\n"
@@ -280,6 +280,16 @@ omakase: nothing was changed.
 	msgCustomizeHint = `omakase: to customize, edit an injected file in place (omakase diff shows the change;
          keep or undo it via omakase status) — or fork the harness source and init from your copy.
 `
+)
+
+// skill install — the user-level agent skills refreshed by a real init (#211).
+const (
+	// At least one host got the skills for the first time.
+	msgSkillsInstalled = "omakase: agent skills installed for %s — /omakase-init, /omakase-status, /omakase-remove … (new sessions pick them up; every init keeps them current)\n"
+	// A same-named skill directory omakase does not own — never touched.
+	msgSkillDirForeign = "omakase: %s exists but is not omakase's — left untouched\n"
+	// Writing a skill failed; said once for the folder, not per skill.
+	msgSkillWriteFailed = "omakase: could not install skill %s: %v\n"
 )
 
 // source — resolving, caching, and merging the harness source payload.

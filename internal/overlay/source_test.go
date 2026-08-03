@@ -1162,7 +1162,7 @@ func TestManifestField(t *testing.T) {
 
 // ------------------------------------------- base payload env handoff
 
-// Since v0.18.0 the binary may run apart from the plugin (a fetched release cache
+// Since v0.18.0 the binary may run apart from a repo checkout (a fetched release cache
 // or a PATH install), so the shims hand the merge base's location over in
 // OMAKASE_BASE_PAYLOAD; the binary-relative $SCRIPT_DIR/../payload and the
 // embedded copy (#168) are fallbacks only. These tests run with

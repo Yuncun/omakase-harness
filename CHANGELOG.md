@@ -27,6 +27,39 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   command that fixes it; mechanism explanations ("git overwrites ignored
   files on checkout") are cut. The stale-edited-file notice drops its
   WARNING shout — it has a calm action, so it reads as one.
+
+## [0.30.0] — 2026-08-02
+
+### Changed
+- **One install story — the plugin is folded into the brew install (#211).**
+  `brew install yuncun/tap/omakase` is now the whole onboarding: every
+  `omakase init` that leaves a real install behind also installs and
+  refreshes the agent-facing skills into the user-level skill folders
+  both hosts read (`~/.claude/skills/`, `~/.copilot/skills/`, each only
+  if that host's config dir exists — and `init --help` or a refused init
+  writes nothing). The
+  refresh is version-guarded — an older binary never rolls newer skill
+  files backwards — and a same-named skill directory omakase does not own
+  is never touched. There is no plugin to install or update anymore.
+- **Skills renamed with the `omakase-` prefix**: `/omakase-init`,
+  `/omakase-status`, `/omakase-remove`, `/omakase-author`,
+  `/omakase-add-gate` (formerly `/omakase:init` etc. on Claude Code and
+  flat `/init` etc. on Copilot). User-level skills live in one flat
+  machine-wide namespace, and bare `init` / `status` collide with Claude
+  Code built-ins. The skills now run `omakase` from PATH directly.
+- **The session-start heal moved off the plugin**: init wires a
+  `SessionStart` hook into Claude Code's user settings
+  (`~/.claude/settings.json`) alongside the statusline — same consent
+  (running init: only a run that left a real install behind writes
+  anything), same merge discipline (backup before write, an unreadable
+  file refused loudly, existing hooks appended to, never replaced; a
+  second wiring write replaces the previous `.omakase-bak`, whose
+  contract is "undo the write just made", not "pre-omakase archive").
+  The wired command derives the stable binary path from the environment
+  at session time and self-guards on it existing. On Copilot CLI the
+  plugin-era session hook is gone with the plugin — the heal rides git
+  events there; Copilot's own hooks mechanism (`~/.copilot/hooks/*.json`)
+  is a candidate once verified (#211).
 - **The status page is minimalist — a program of respite against
   overinformation**: the default page is now banner → facts line ("N files
   injected · 0 committed · invisible to git") → the STEERING stack → guards
@@ -65,6 +98,13 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
   `omakase status --show <path-or-fragment>` prints any layer in full.
 
 ### Removed
+- **The plugin machinery** (#211): `.claude-plugin/` (manifest +
+  marketplace), the plugin `hooks/hooks.json` + `hooks/session-start.sh`,
+  and the `bin/` call-through shims (a copy survives as test plumbing under
+  `tests/bin/`). An installed omakase plugin becomes inert after updating —
+  uninstall it with `/plugin`; the skills arrive user-level at the next
+  `omakase init`. The enterprise plugin-push channel goes with it (it could
+  no longer deliver a binary since #183 anyway); re-opened on demand.
 - **`omakase block` / `omakase unblock`** (#207): the per-item hiding of the
   repo's own committed agent config is gone — the verb, the `/omakase:block`
   skill, the sparse-checkout machinery, the blocked-row annotations on the

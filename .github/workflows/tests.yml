@@ -29,32 +29,3 @@ jobs:
             bash "$t" || rc=1
           done
           exit $rc
-
-  tests-no-go:
-    # Covers the plugin-only machine shape (issue #182): no Go toolchain, no
-    # binary — the shims must refuse with the one-line brew instruction, and
-    # a seeded stable machine copy must resolve offline. GitHub's runners
-    # preinstall Go, so this runs in a slim Debian container that genuinely
-    # lacks one.
-    runs-on: ubuntu-latest
-    container: debian:stable-slim
-    steps:
-      # git is absent from the slim image; ca-certificates lets the checkout
-      # step's git-over-HTTPS verify GitHub's TLS. Debian's base already
-      # carries bash, coreutils, tar, findutils, and mawk. The suite itself
-      # needs no network: resolution is local-only since #182.
-      - name: Install suite dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates
-      - uses: actions/checkout@v4
-      - name: Assert no Go toolchain
-        run: |
-          if command -v go >/dev/null 2>&1; then
-            echo "expected no Go toolchain, but found $(command -v go)" >&2
-            exit 1
-          fi
-      - name: Trust the checkout despite the container's differing owner
-        run: git config --global safe.directory '*'
-      - name: Run the resolution suite without a Go toolchain
-        run: bash tests/omakase-resolve.test.sh

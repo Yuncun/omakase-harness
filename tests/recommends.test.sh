@@ -9,7 +9,7 @@
 # HOME and XDG_CACHE_HOME point at fixture dirs so nothing touches the real machine.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INIT="$HERE/../bin/init.sh"
+INIT="$HERE/bin/init.sh"
 TMP="${TMPDIR:-/tmp}/omakase-recommends-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }

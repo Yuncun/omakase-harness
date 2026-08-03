@@ -11,7 +11,7 @@
 #   H2. init <owner/repo#tag> pins the checkout to the tag's content
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INIT="$HERE/../bin/init.sh"
+INIT="$HERE/bin/init.sh"
 TMP="${TMPDIR:-/tmp}/omakase-init-shorthand-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }

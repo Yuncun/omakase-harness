@@ -7,9 +7,9 @@
 # awk, not grep -P (BSD).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SHOW="$HERE/../bin/status.sh"
-INIT="$HERE/../bin/init.sh"
-REMOVE="$HERE/../bin/remove.sh"
+SHOW="$HERE/bin/status.sh"
+INIT="$HERE/bin/init.sh"
+REMOVE="$HERE/bin/remove.sh"
 PAY="$HERE/../payload"
 TMP="${TMPDIR:-/tmp}/omakase-status-test.$$"
 NOW=1700000000
@@ -244,8 +244,8 @@ echo "== Scenario W: branding =="
 REPO="$TMP/repoW"; newrepo "$REPO"
 ( cd "$REPO" && OMAKASE_PAYLOAD="$PAY" bash "$INIT" ) >/dev/null 2>&1
 VER="$(cat "$PAY/.omakase/VERSION")"
-PJV="$(grep -o '"version"[^,]*' "$HERE/../.claude-plugin/plugin.json" | grep -o '[0-9][0-9.]*')"
-[ "$PJV" = "$VER" ] && pass "payload VERSION matches plugin.json ($PJV)" || fail "VERSION drift: plugin.json=$PJV payload=$VER"
+MFV="$(grep -o '^version: [0-9][0-9.]*' "$PAY/omakase.manifest" | grep -o '[0-9][0-9.]*')"
+[ "$MFV" = "$VER" ] && pass "payload VERSION matches the manifest version ($MFV)" || fail "VERSION drift: manifest=$MFV payload=$VER"
 # The banner is built into the binary (#172): the status page opens with the
 # branded box carrying the harness name. The placed base VERSION lives on the
 # --all audit page's identity line as "base omakase X" — never glued to the

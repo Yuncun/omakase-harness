@@ -2,11 +2,11 @@
 # Proof that init.sh is a zero-footprint additive overlay and remove.sh reverses it.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INIT="$HERE/../bin/init.sh"
-OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
+INIT="$HERE/bin/init.sh"
+OMAKASE="$( cd "$HERE" && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
 [ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
 heal(){ ( cd "$1" && "$OMAKASE" hook post-checkout ); }
-REMOVE="$HERE/../bin/remove.sh"
+REMOVE="$HERE/bin/remove.sh"
 TMP="${TMPDIR:-/tmp}/omakase-inject-test.$$"
 # Self-contained HOME + cache: init self-installs the resolved binary into
 # $XDG_CACHE_HOME, and every real commit/checkout below fires that same copy
@@ -210,7 +210,7 @@ grep -q 'omakase-example-gate-ran' "$REPO/.omakase/gates/example.sh" 2>/dev/null
 
 # ---------- Scenario F: omakase status renders the installed harness ----------
 echo "== Scenario F: show renders the installed-but-invisible harness =="
-SHOW="$HERE/../bin/status.sh"
+SHOW="$HERE/bin/status.sh"
 PAY="$TMP/payloadF"; REPO="$TMP/repoF"; mkpayload "$PAY"; newrepo "$REPO"
 OUT=$( cd "$REPO" && bash "$SHOW" 2>&1 )
 echo "$OUT" | grep -qi 'No omakase harness' && pass "show reports empty state before init" || fail "show did not report empty state"

@@ -72,6 +72,112 @@ func TestWireFreshClaude(t *testing.T) {
 	}
 }
 
+// The same fresh wire also lands the SessionStart heal hook (#211): one
+// guarded command entry pointing at the stable binary. Claude Code only.
+func TestWireWiresSessionStartHeal(t *testing.T) {
+	home := wireHome(t, map[string]string{".claude": "", ".copilot": ""})
+	var out, errB bytes.Buffer
+	runWire(&out, &errB)
+	m := readJSON(t, filepath.Join(home, ".claude", "settings.json"))
+	hooks, ok := m["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("hooks missing: %v", m)
+	}
+	ss, ok := hooks["SessionStart"].([]any)
+	if !ok || len(ss) != 1 {
+		t.Fatalf("SessionStart = %v, want one entry", hooks["SessionStart"])
+	}
+	cmd := ss[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"].(string)
+	// The command derives the stable-bin path from the ENVIRONMENT at
+	// session time (never a baked absolute path — that went stale when
+	// HOME/XDG_CACHE_HOME moved, and its interpolation was an sh-quoting
+	// hazard), and self-guards on the binary existing.
+	if !strings.Contains(cmd, `${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase`) ||
+		!strings.Contains(cmd, "hook session-start") ||
+		!strings.Contains(cmd, "[ -x ") || !strings.HasSuffix(cmd, "|| true") {
+		t.Fatalf("heal command = %q, want the env-derived guarded invocation", cmd)
+	}
+	if strings.Contains(cmd, home) {
+		t.Fatalf("heal command bakes in an absolute path: %q", cmd)
+	}
+	// Copilot CLI does not run SessionStart hooks — no hooks key there.
+	if _, has := readJSON(t, filepath.Join(home, ".copilot", "settings.json"))["hooks"]; has {
+		t.Fatal("Copilot settings must not get a hooks key")
+	}
+}
+
+// A user's existing SessionStart hooks are appended to, never replaced —
+// and an occupied statusline slot doesn't block the heal hook.
+func TestWireAppendsToExistingSessionStartHooks(t *testing.T) {
+	prior := `{"statusLine":{"type":"command","command":"mybar"},"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo hi"}]}]}}`
+	home := wireHome(t, map[string]string{".claude": prior})
+	var out, errB bytes.Buffer
+	runWire(&out, &errB)
+	m := readJSON(t, filepath.Join(home, ".claude", "settings.json"))
+	if m["statusLine"].(map[string]any)["command"] != "mybar" {
+		t.Fatalf("existing bar was touched: %v", m["statusLine"])
+	}
+	ss := m["hooks"].(map[string]any)["SessionStart"].([]any)
+	if len(ss) != 2 {
+		t.Fatalf("SessionStart = %v, want the user's entry plus ours", ss)
+	}
+	if ss[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"] != "echo hi" {
+		t.Fatalf("user's hook not preserved first: %v", ss[0])
+	}
+}
+
+// A settings file holding literal `null` parses to a nil map — wiring
+// must treat it as empty, not panic (json.Unmarshal leaves the map nil).
+func TestWireToleratesNullSettings(t *testing.T) {
+	home := wireHome(t, map[string]string{".claude": "null"})
+	var out, errB bytes.Buffer
+	if code := runWire(&out, &errB); code != 0 {
+		t.Fatalf("exit = %d (stderr: %s)", code, errB.String())
+	}
+	m := readJSON(t, filepath.Join(home, ".claude", "settings.json"))
+	if _, has := m["statusLine"]; !has {
+		t.Fatalf("statusLine missing after null-settings wire: %v", m)
+	}
+	if _, has := m["hooks"]; !has {
+		t.Fatalf("heal hook missing after null-settings wire: %v", m)
+	}
+}
+
+// `"hooks": null` is absent, not unextendable — it must wire, not
+// complain forever.
+func TestWireTreatsNullHooksAsAbsent(t *testing.T) {
+	home := wireHome(t, map[string]string{".claude": `{"hooks":null}`})
+	var out, errB bytes.Buffer
+	runWire(&out, &errB)
+	if errB.Len() != 0 {
+		t.Fatalf("null hooks refused: %q", errB.String())
+	}
+	m := readJSON(t, filepath.Join(home, ".claude", "settings.json"))
+	hooks, ok := m["hooks"].(map[string]any)
+	if !ok || hooks["SessionStart"] == nil {
+		t.Fatalf("heal not wired over null hooks: %v", m["hooks"])
+	}
+}
+
+// A hooks key we cannot safely extend is refused loudly and the heal is
+// skipped — but the statusline half still wires.
+func TestWireRefusesUnextendableHooksShape(t *testing.T) {
+	prior := `{"hooks":"what"}`
+	home := wireHome(t, map[string]string{".claude": prior})
+	var out, errB bytes.Buffer
+	runWire(&out, &errB)
+	if !strings.Contains(errB.String(), "hooks is not an object") {
+		t.Fatalf("no loud refusal: %q", errB.String())
+	}
+	m := readJSON(t, filepath.Join(home, ".claude", "settings.json"))
+	if m["hooks"] != "what" {
+		t.Fatalf("unextendable hooks value was touched: %v", m["hooks"])
+	}
+	if _, has := m["statusLine"]; !has {
+		t.Fatal("statusline half should still have wired")
+	}
+}
+
 // Existing settings without a statusLine: wired, other keys preserved,
 // backup written.
 func TestWirePreservesExistingKeysAndBacksUp(t *testing.T) {
@@ -93,9 +199,10 @@ func TestWirePreservesExistingKeysAndBacksUp(t *testing.T) {
 	}
 }
 
-// A configured statusLine is never replaced — instructions instead.
+// A configured statusLine is never replaced — instructions instead. (The
+// heal hook is already wired here so the bar is the only candidate write.)
 func TestWireNeverClobbersAnExistingBar(t *testing.T) {
-	prior := `{"statusLine":{"type":"command","command":"npx -y ccstatusline@latest"}}`
+	prior := `{"statusLine":{"type":"command","command":"npx -y ccstatusline@latest"},"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x hook session-start"}]}]}}`
 	home := wireHome(t, map[string]string{".claude": prior})
 	var out, errB bytes.Buffer
 	runWire(&out, &errB)
@@ -187,7 +294,7 @@ func TestInitWireFillsEmptySlot(t *testing.T) {
 	if _, ok := readJSON(t, filepath.Join(home, ".claude", "settings.json"))["statusLine"]; !ok {
 		t.Fatal("statusLine missing after wireAtInit")
 	}
-	if !strings.Contains(out.String(), "statusLine written to") {
+	if !strings.Contains(out.String(), "statusLine") || !strings.Contains(out.String(), "written to") {
 		t.Fatalf("wiring not announced: %q", out.String())
 	}
 	if errB.Len() != 0 {
@@ -195,10 +302,11 @@ func TestInitWireFillsEmptySlot(t *testing.T) {
 	}
 }
 
-// An occupied slot is the machine steady state: byte-identical file and
-// total silence — the add-it-by-hand teaching stays on the --wire verb.
+// An occupied slot plus a wired heal hook is the machine steady state:
+// byte-identical file and total silence — the add-it-by-hand teaching
+// stays on the --wire verb.
 func TestInitWireSilentWhenBarExists(t *testing.T) {
-	prior := `{"statusLine":{"type":"command","command":"npx -y ccstatusline@latest"}}`
+	prior := `{"statusLine":{"type":"command","command":"npx -y ccstatusline@latest"},"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x hook session-start"}]}]}}`
 	home := wireHome(t, map[string]string{".claude": prior})
 	var out, errB bytes.Buffer
 	wireAtInit(&out, &errB)
@@ -287,8 +395,16 @@ func TestRunInitWiresStatuslineByDefault(t *testing.T) {
 	if _, ok := readJSON(t, path)["statusLine"]; !ok {
 		t.Fatalf("init did not wire the statusline; stdout:\n%s", out.String())
 	}
-	if !strings.Contains(out.String(), "statusLine written to") {
+	if !strings.Contains(out.String(), "statusLine") || !strings.Contains(out.String(), "written to") {
 		t.Fatalf("wiring not announced in init output:\n%s", out.String())
+	}
+	// The same real init installs the user-level skills (#211) — this is
+	// the wiring-level pin that the feature is actually called.
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "omakase-init", "SKILL.md")); err != nil {
+		t.Fatalf("init did not install the user-level skills: %v\nstdout:\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "agent skills installed") {
+		t.Fatalf("skill install not announced:\n%s", out.String())
 	}
 	first, _ := os.ReadFile(path)
 
@@ -301,7 +417,7 @@ func TestRunInitWiresStatuslineByDefault(t *testing.T) {
 	if !bytes.Equal(first, second) {
 		t.Fatalf("re-init churned the settings:\n%s", second)
 	}
-	if strings.Contains(out.String(), "statusLine written to") {
+	if strings.Contains(out.String(), "written to") {
 		t.Fatalf("re-init announced wiring again:\n%s", out.String())
 	}
 }
@@ -316,6 +432,9 @@ func TestRunInitHelpNeverWires(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
 		t.Fatal("init --help wired the statusline")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills")); !os.IsNotExist(err) {
+		t.Fatal("init --help installed user-level skills")
 	}
 }
 
@@ -333,5 +452,8 @@ func TestRunInitNothingRememberedNeverWires(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
 		t.Fatal("a nothing-remembered init wired the statusline")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills")); !os.IsNotExist(err) {
+		t.Fatal("a nothing-remembered init installed user-level skills")
 	}
 }

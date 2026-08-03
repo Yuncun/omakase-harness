@@ -14,12 +14,12 @@
 # HOME and XDG_CACHE_HOME point at fixture dirs so nothing touches the real machine.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INIT="$HERE/../bin/init.sh"
-OMAKASE="$( cd "$HERE/.." && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
+INIT="$HERE/bin/init.sh"
+OMAKASE="$( cd "$HERE" && HERE="$PWD/bin" && . bin/lib-omakase-bin.sh && resolve_omakase 2>/dev/null && echo "$OMAKASE_BIN_RESOLVED" )"
 [ -n "$OMAKASE" ] || { echo "FATAL: no omakase binary resolvable"; exit 1; }
 verify(){ ( cd "$1" && "$OMAKASE" hook pre-commit ); }   # verify-only gate run
-REMOVE="$HERE/../bin/remove.sh"
-SHOW="$HERE/../bin/status.sh"
+REMOVE="$HERE/bin/remove.sh"
+SHOW="$HERE/bin/status.sh"
 TMP="${TMPDIR:-/tmp}/omakase-sources-test.$$"
 FAILED=0
 pass(){ echo "  PASS: $1"; }

@@ -6,7 +6,7 @@
 // are wired through init.go.
 //
 // The merge base payload's location is handed over by the shims in
-// OMAKASE_BASE_PAYLOAD, resolves binary-relative when running from a plugin
+// OMAKASE_BASE_PAYLOAD, resolves binary-relative when running from a repo checkout
 // checkout, and otherwise comes from the copy embedded in the binary itself
 // (see ensureBasePayload — issue #168). OMAKASE_PAYLOAD is never honored
 // here: that is the plain-install override, not the merge base.
@@ -518,7 +518,7 @@ func gitCacheOut(cache string, args ...string) string {
 //     is missing — a bad handoff must fail loudly downstream (runSource's
 //     stat guard), never be papered over with the embedded copy.
 //   - The binary-relative ../payload sibling is DERIVED, not configured: if
-//     it exists it wins (the plugin dev loop — edit payload/, re-init —
+//     it exists it wins (the dev loop — edit payload/, re-init —
 //     keeps working); if not, this is a binary installed alone (brew,
 //     release tarball, go install — issue #168) and the embedded copy is
 //     extracted to the machine cache and used.

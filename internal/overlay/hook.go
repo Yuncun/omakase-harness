@@ -87,7 +87,7 @@ func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runGateHook(name, hookArgs, repo, stdin, stdout, stderr)
 	}
 
-	// session-start: the plugin's SessionStart hook — a host session event,
+	// session-start: the SessionStart hook init wires into the host — a host session event,
 	// not a git one. Heal only (no LFS forward), and say so on stdout when
 	// something was restored: a session opening on a wiped overlay is the one
 	// silent failure the git hooks never see (#164 C5). Always exits 0.
