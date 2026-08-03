@@ -94,7 +94,7 @@ func stubStableBin(t *testing.T) {
 	t.Helper()
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
-	bin := filepath.Join(cache, "omakase", "bin", "current", "omakase")
+	bin := hook.StableBinPath() // .exe on Windows — must mirror what the probe checks
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,7 @@ func TestCollectHooksForeign(t *testing.T) {
 func TestCollectHooksBinaryMissing(t *testing.T) {
 	root := newTestRepo(t)
 	installHarness(t, root)
-	if err := os.Remove(filepath.Join(os.Getenv("XDG_CACHE_HOME"), "omakase", "bin", "current", "omakase")); err != nil {
+	if err := os.Remove(hook.StableBinPath()); err != nil {
 		t.Fatal(err)
 	}
 	st := collect(t, root)

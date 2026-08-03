@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -98,7 +99,7 @@ func TestFileOnRestoresFromSnapshot(t *testing.T) {
 	full := filepath.Join(dir, rel)
 	eq(t, "restored content", readFileT(t, full), gateContent)
 	info, err := os.Stat(full)
-	if err != nil || info.Mode().Perm()&0o100 == 0 {
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0) {
 		t.Errorf("restored file not executable: %v", err)
 	}
 	rows := state.ReadPlaced(filepath.Join(repo.OMK, "placed.tsv"))
