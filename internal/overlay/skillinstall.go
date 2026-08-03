@@ -55,7 +55,7 @@ func InstallUserSkills(version string, stdout, stderr io.Writer) {
 	}
 	if len(freshHosts) > 0 {
 		sort.Strings(freshHosts)
-		fmt.Fprintf(stdout, "omakase: agent skills installed for %s — /omakase-init, /omakase-status, /omakase-remove … (new sessions pick them up; every init keeps them current)\n",
+		fmt.Fprintf(stdout, msgSkillsInstalled,
 			strings.Join(freshHosts, " and "))
 	}
 }
@@ -75,7 +75,7 @@ func installSkillsInto(root, version string, stderr io.Writer) int {
 		dest := filepath.Join(root, e.Name())
 		hadMarker := fileRegular(filepath.Join(dest, skillMarkerName))
 		if !hadMarker && !skillDestClaimable(dest) {
-			fmt.Fprintf(stderr, "omakase: %s exists but is not omakase's — left untouched\n", dest)
+			fmt.Fprintf(stderr, msgSkillDirForeign, dest)
 			continue
 		}
 		if v, ok := parseVersion(version); ok {
@@ -89,7 +89,7 @@ func installSkillsInto(root, version string, stderr io.Writer) int {
 			// One line and stop for this whole folder: a root-level cause
 			// (read-only dir, missing permissions) would otherwise repeat
 			// per skill on every init.
-			fmt.Fprintf(stderr, "omakase: could not install skill %s: %v\n", dest, err)
+			fmt.Fprintf(stderr, msgSkillWriteFailed, dest, err)
 			return fresh
 		}
 		if !hadMarker {

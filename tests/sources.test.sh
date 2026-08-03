@@ -122,7 +122,7 @@ echo 'LOCAL EDIT' >> "$REPO/.claude/rules/extra.md"
 ( cd "$SRC" && git rm -q payload/.claude/rules/extra.md && git commit -q -m v5 )
 OUT=$( cd "$REPO" && HOME="$FAKEHOME" XDG_CACHE_HOME="$CACHEHOME" bash "$INIT" 2>&1 )
 { [ -f "$REPO/.claude/rules/extra.md" ] && grep -q 'LOCAL EDIT' "$REPO/.claude/rules/extra.md"; } && pass "locally edited dropped file kept" || fail "edited dropped file destroyed"
-echo "$OUT" | grep -i 'WARNING' | grep -q 'extra.md' && pass "kept file warned about, named" || fail "no warning for the kept file ($OUT)"
+echo "$OUT" | grep -i 'local edit' | grep -q 'extra.md' && pass "kept file noticed, named" || fail "no notice for the kept file ($OUT)"
 rm -rf "$REPO/.claude"   # the user disposes of the kept file; keep later scenarios tidy
 
 # ---------- Scenario S3c: OMAKASE_PAYLOAD env beats the remembered source ----------
@@ -323,6 +323,8 @@ MAN
 newrepo "$REPOWG"
 OUT="$( cd "$REPOWG" && OMAKASE_PAYLOAD="$PAYWG" bash "$INIT" 2>&1 )"; RC=$?
 { [ "$RC" -ne 0 ] && echo "$OUT" | grep -q 'does-not-ship.sh'; } && pass "manifest refuses a gate naming an unshipped payload script (plain install)" || fail "guard missed the non-shipping script ($RC: $OUT)"
+# The refusal names the stale-install hypothesis before the fix-the-wiring one (#49).
+echo "$OUT" | grep -q 'likely older' && pass "refusal names the stale-install hypothesis" || fail "refusal missing the stale-install hypothesis ($OUT)"
 [ ! -d "$REPOWG/.omakase" ] && pass "guard refused before placing anything" || fail "guard placed files despite refusing"
 
 # ---------- Scenario S10: a harness adopted from a SUBFOLDER of a hub repo ----------

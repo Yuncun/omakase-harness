@@ -143,7 +143,7 @@ func runSource(source, sourceRef, sourceSub, basePayload string, stdout, stderr 
 	// never happened. The message names the path so a bad handoff is
 	// diagnosable.
 	if info, err := os.Stat(basePayload); err != nil || !info.IsDir() {
-		fmt.Fprintf(stderr, "omakase: base payload not found at %s — point OMAKASE_BASE_PAYLOAD at a real payload tree, or unset it to use the binary's embedded copy\n", basePayload)
+		fmt.Fprintf(stderr, msgBasePayloadMissing, basePayload)
 		return sourceResult{}, 1
 	}
 
@@ -167,7 +167,7 @@ func runSource(source, sourceRef, sourceSub, basePayload string, stdout, stderr 
 	// surfaces — placement derives its rel paths against this dir.
 	merged, err := os.MkdirTemp(os.TempDir(), "omakase-merge.")
 	if err != nil {
-		fmt.Fprintln(stderr, "omakase: could not create a temp dir to merge the base + source payload")
+		fmt.Fprintln(stderr, msgMergeTmpFailed)
 		return sourceResult{}, 1
 	}
 
@@ -176,7 +176,7 @@ func runSource(source, sourceRef, sourceSub, basePayload string, stdout, stderr 
 	// that disappeared mid-run).
 	if err := copyTree(basePayload, merged); err != nil {
 		os.RemoveAll(merged)
-		fmt.Fprintf(stderr, "omakase: failed to copy the base payload (%s) into the merge staging dir\n", basePayload)
+		fmt.Fprintf(stderr, msgMergeCopyBaseFailed, basePayload)
 		return sourceResult{}, 1
 	}
 
@@ -210,12 +210,12 @@ func runSource(source, sourceRef, sourceSub, basePayload string, stdout, stderr 
 		if isSymlink(filepath.Join(payloadDir, rel)) &&
 			isDir(filepath.Join(merged, rel)) && !isSymlink(filepath.Join(merged, rel)) {
 			os.RemoveAll(merged)
-			fmt.Fprintf(stderr, "omakase: source ships '%s' as a symlink where the base payload has a directory — refusing to shadow the base files under it. Nothing was changed.\n", rel)
+			fmt.Fprintf(stderr, msgMergeSymlinkShadowRefused, rel)
 			return sourceResult{}, 1
 		}
 		if err := overlayOne(rel); err != nil {
 			os.RemoveAll(merged)
-			fmt.Fprintf(stderr, "omakase: failed to overlay source payload file '%s' onto the base payload\n", rel)
+			fmt.Fprintf(stderr, msgMergeOverlayFailed, rel)
 			return sourceResult{}, 1
 		}
 	}
@@ -272,9 +272,9 @@ func fetchSource(src, subpath, sourceRef string, stdout, stderr io.Writer) (payl
 			// carries a manifest + payload/.
 			if cacheGitHealthy(cache) &&
 				fileRegular(filepath.Join(srcRoot, "payload", "omakase.manifest")) {
-				fmt.Fprintf(stderr, "omakase: could not refresh source cache at %s — reusing the cached copy (offline?)\n", cache)
+				fmt.Fprintf(stderr, msgCacheRefreshFailed, cache)
 			} else {
-				fmt.Fprintf(stderr, "omakase: source cache at %s is stale or corrupt — discarding and re-cloning (a cache is disposable)\n", cache)
+				fmt.Fprintf(stderr, msgCacheCorruptRecloning, cache)
 				os.RemoveAll(cache)
 			}
 		}
@@ -286,7 +286,7 @@ func fetchSource(src, subpath, sourceRef string, stdout, stderr io.Writer) (payl
 		clone.Stdout = stdout // -q: silent on success
 		clone.Stderr = stderr
 		if err := clone.Run(); err != nil {
-			fmt.Fprintf(stderr, "omakase: could not clone source '%s' into the cache (%s)\n", src, cache)
+			fmt.Fprintf(stderr, msgCloneFailed, src, cache)
 			return "", "", 1
 		}
 	}
@@ -297,7 +297,7 @@ func fetchSource(src, subpath, sourceRef string, stdout, stderr io.Writer) (payl
 		gitCacheQuiet(cache, "fetch", "-q", "--tags", "origin") // failure ignored
 		co := exec.Command("git", "-C", cache, "-c", "advice.detachedHead=false", "checkout", "-q", sourceRef)
 		if err := co.Run(); err != nil {
-			fmt.Fprintf(stderr, "omakase: source '%s' has no ref '%s' (no such branch or tag)\n", src, sourceRef)
+			fmt.Fprintf(stderr, msgNoSuchRef, src, sourceRef)
 			return "", "", 1
 		}
 	}
@@ -305,7 +305,7 @@ func fetchSource(src, subpath, sourceRef string, stdout, stderr io.Writer) (payl
 	// A subpath must name a real directory inside the clone, fail closed
 	// before any of the manifest checks name it as "the source".
 	if subpath != "" && !isDir(srcRoot) {
-		fmt.Fprintf(stderr, "omakase: source '%s' has no directory '%s' — nothing to adopt\n", src, subpath)
+		fmt.Fprintf(stderr, msgNoSuchSubdir, src, subpath)
 		return "", "", 1
 	}
 
@@ -315,25 +315,25 @@ func fetchSource(src, subpath, sourceRef string, stdout, stderr io.Writer) (payl
 	// ignore its name:/version:/recommends: (or gate: blocks) where omakase never
 	// reads them.
 	if fileRegular(filepath.Join(srcRoot, "omakase.manifest")) {
-		fmt.Fprintf(stderr, "omakase: source '%s' has a root omakase.manifest, which omakase no longer reads — omakase reads one manifest: payload/omakase.manifest. Move name:/version:/recommends: there and delete the root file. Nothing was changed.\n", canonical)
+		fmt.Fprintf(stderr, msgRootManifestRefused, canonical)
 		return "", "", 1
 	}
 
 	// Fail-closed manifest validation, before anything is placed.
 	payloadDir = filepath.Join(srcRoot, "payload")
 	if !isDir(payloadDir) || !dirNonEmpty(payloadDir) {
-		fmt.Fprintf(stderr, "omakase: source '%s' has no non-empty payload/ tree — nothing to inject\n", canonical)
+		fmt.Fprintf(stderr, msgNoPayloadTree, canonical)
 		return "", "", 1
 	}
 	manifestPath := filepath.Join(payloadDir, "omakase.manifest")
 	if !fileRegular(manifestPath) {
-		fmt.Fprintf(stderr, "omakase: source '%s' has no payload/omakase.manifest — not an omakase source\n", canonical)
+		fmt.Fprintf(stderr, msgNoManifest, canonical)
 		return "", "", 1
 	}
 	manifest, _ := os.ReadFile(manifestPath)
 	name := manifestField(manifest, "name")
 	if name == "" {
-		fmt.Fprintf(stderr, "omakase: source '%s' manifest is missing the required 'name:' line\n", canonical)
+		fmt.Fprintf(stderr, msgManifestNoName, canonical)
 		return "", "", 1
 	}
 	ver := manifestField(manifest, "version")
@@ -351,7 +351,7 @@ func fetchSource(src, subpath, sourceRef string, stdout, stderr io.Writer) (payl
 	if c := gitCacheOut(cache, "rev-parse", "--short", "HEAD"); c != "" {
 		commitPart = ", commit " + c
 	}
-	fmt.Fprintf(stdout, "omakase: source '%s' (name: %s%s%s) cached at %s\n", canonical, name, verPart, commitPart, cache)
+	fmt.Fprintf(stdout, msgSourceCached, canonical, name, verPart, commitPart, cache)
 	return payloadDir, recommends, 0
 }
 

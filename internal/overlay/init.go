@@ -34,40 +34,6 @@ import (
 	"github.com/Yuncun/omakase-harness/internal/textblock"
 )
 
-// usageText is the `omakase init` usage text; tests pin the exact bytes.
-const usageText = "usage: omakase init [<owner/repo[/subpath][#ref]> | --source <git-url|path>] [--cut-over] [--help]\n" +
-	"\n" +
-	"Overlay payload/ into the current repo additively (zero committed footprint) and\n" +
-	"install its git hooks. A payload path the repo already COMMITS is never touched:\n" +
-	"it is skipped and reported.\n" +
-	"\n" +
-	"  <owner/repo[/subpath][#ref]>\n" +
-	"               shorthand for --source https://github.com/owner/repo (optionally pinned to a\n" +
-	"               branch or tag with #ref). This is the shareable install line: a harness\n" +
-	"               published at github.com/you/harness installs with `init you/harness`.\n" +
-	"               Extra segments name a harness directory INSIDE the repo — `init you/hub/tools`\n" +
-	"               adopts the harness at hub's tools/ — so one hub repo can publish many harnesses.\n" +
-	"  --source <git-url|path>\n" +
-	"               pull a harness SOURCE — a git repo carrying a payload/ tree whose\n" +
-	"               payload/omakase.manifest (flat key: value; name required, version + recommends\n" +
-	"               optional, plus any gate: blocks) is the harness's one manifest —\n" +
-	"               into a local cache (${XDG_CACHE_HOME:-~/.cache}/omakase/sources) and inject\n" +
-	"               the base harness's payload with the source's payload layered ON TOP (base\n" +
-	"               machinery underneath, source wins on overlap), so a source ships only its\n" +
-	"               delta and relies on base machinery without keeping its own copy. The source is\n" +
-	"               remembered; a later bare omakase init refreshes and re-injects the same source.\n" +
-	"               A `//subpath` suffix on the url or path adopts a harness directory inside\n" +
-	"               the repo: --source https://host/x/hub//tools, --source /clones/hub//tools.\n" +
-	"  --cut-over   also untrack (git rm --cached) every payload path the repo currently\n" +
-	"               commits, so the injected copies take over. With --source this is the MERGED\n" +
-	"               base+source set, not only the source delta (a --source install equals a\n" +
-	"               built bundle). This STAGES DELETIONS of\n" +
-	"               shared files; the next commit applies them for everyone. It prints\n" +
-	"               exactly what it will untrack and the consequences, then REFUSES\n" +
-	"               unless OMAKASE_CUTOVER_CONFIRM=1 is set. You review and commit the\n" +
-	"               staged deletions yourself.\n" +
-	"  -h, --help   show this help.\n"
-
 // Scan regexes, compiled once.
 var (
 	// A package.json "prepare" script wiring a hook manager.
@@ -96,7 +62,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		case a == "--source":
 			i++
 			if i >= len(argv) {
-				fmt.Fprintln(stderr, "omakase: --source needs a git URL or local path")
+				fmt.Fprintln(stderr, msgSourceNeedsValue)
 				return 2
 			}
 			source = argv[i]
@@ -104,12 +70,12 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			fmt.Fprint(stdout, usageText)
 			return 0
 		case strings.HasPrefix(a, "-"):
-			fmt.Fprintf(stderr, "omakase: unknown option '%s'\n", a)
+			fmt.Fprintf(stderr, msgUnknownOption, a)
 			fmt.Fprint(stderr, usageText)
 			return 2
 		default: // positional: a harness source
 			if source != "" {
-				fmt.Fprintf(stderr, "omakase: unexpected extra argument '%s' (source already set)\n", a)
+				fmt.Fprintf(stderr, msgExtraArgument, a)
 				fmt.Fprint(stderr, usageText)
 				return 2
 			}
@@ -118,19 +84,19 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 	// The source string is recorded verbatim in the tab-separated ledger.
 	if strings.ContainsAny(source, "\t\n") {
-		fmt.Fprintln(stderr, "omakase: --source must not contain a tab or newline")
+		fmt.Fprintln(stderr, msgSourceBadChars)
 		return 2
 	}
 
 	// ---- repo discovery ----
 	wd, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintln(stderr, "omakase: not inside a git repo")
+		fmt.Fprintln(stderr, msgNotAGitRepo)
 		return 1
 	}
 	repo, err := state.Discover(wd)
 	if err != nil {
-		fmt.Fprintln(stderr, "omakase: not inside a git repo")
+		fmt.Fprintln(stderr, msgNotAGitRepo)
 		return 1
 	}
 	root := repo.Root
@@ -170,12 +136,12 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// parsed subpath is explicit intent and must never be dropped silently.
 	if sourceSub != "" {
 		if source == "" {
-			fmt.Fprintf(stderr, "omakase: source '//%s' is missing the repo part before the '//' subpath marker\n", sourceSub)
+			fmt.Fprintf(stderr, msgSourceMissingRepoPart, sourceSub)
 			return 2
 		}
 		clean := path.Clean(sourceSub)
 		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/") {
-			fmt.Fprintf(stderr, "omakase: source subpath '%s' must stay inside the source repo (relative, no '..')\n", sourceSub)
+			fmt.Fprintf(stderr, msgSourceSubpathEscapes, sourceSub)
 			return 2
 		}
 		sourceSub = clean
@@ -215,12 +181,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 				if payloadOverride && label == "" {
 					given = "(a local payload via OMAKASE_PAYLOAD)"
 				}
-				fmt.Fprintf(stderr, "omakase: this checkout is a linked worktree of %s.\n", mainRoot)
-				fmt.Fprintln(stderr, "         Hooks, ignores, and the remembered source are shared by every checkout of the")
-				fmt.Fprintln(stderr, "         repository, so switching its harness from here would silently re-point all of")
-				fmt.Fprintf(stderr, "         them. To change the repository's harness, run from the main checkout:\n")
-				fmt.Fprintf(stderr, "           cd %s && omakase init %s\n", mainRoot, given)
-				fmt.Fprintln(stderr, "omakase: nothing was changed.")
+				fmt.Fprintf(stderr, msgLinkedWorktreeRefusal, mainRoot, mainRoot, given)
 				return 1
 			}
 		}
@@ -238,9 +199,9 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// never be told "no harness is installed" while its gates are live.
 	if source == "" && os.Getenv("OMAKASE_PAYLOAD") == "" {
 		if fileRegular(filepath.Join(omk, "placed.tsv")) {
-			fmt.Fprintln(stdout, "omakase: nothing to refresh — a harness is installed here, but no source is remembered to refresh it from. See what's installed:  omakase status")
+			fmt.Fprintln(stdout, msgRefreshNoRememberedSource)
 		} else {
-			fmt.Fprintln(stdout, "omakase: nothing to refresh — no harness is installed in this repo. See the agent config present here:  omakase status")
+			fmt.Fprintln(stdout, msgRefreshNothingInstalled)
 		}
 		return 0
 	}
@@ -259,7 +220,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		if baseErr != nil {
 			// Unreachable with a healthy binary: an on-disk base was absent
 			// AND the embedded copy could not be extracted to the cache.
-			fmt.Fprintf(stderr, "omakase: cannot materialize the base harness payload: %v\n", baseErr)
+			fmt.Fprintf(stderr, msgBaseMaterializeFailed, baseErr)
 			return 1
 		}
 		res, code := runSource(source, sourceRef, sourceSub, base, stdout, stderr)
@@ -279,7 +240,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// OMAKASE_PAYLOAD=/ collapses to "" and is rejected below.
 	payload = strings.TrimSuffix(payload, "/")
 	if info, statErr := os.Stat(payload); statErr != nil || !info.IsDir() {
-		fmt.Fprintf(stderr, "omakase: payload dir not found at %s\n", payload)
+		fmt.Fprintf(stderr, msgPayloadDirMissing, payload)
 		return 1
 	}
 
@@ -318,7 +279,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// module; omakase no longer reads it. Refuse with migration instructions,
 	// place nothing (the unchanged refuse-invariant).
 	if fileRegular(filepath.Join(payload, "lefthook-local.yml")) {
-		fmt.Fprintln(stderr, "omakase: this harness declares gates in lefthook-local.yml, which omakase no longer reads. Declare them as gate: blocks in omakase.manifest (see the README) and delete the yml. Nothing was changed.")
+		fmt.Fprintln(stderr, msgLefthookYmlRefused)
 		return 1
 	}
 	// Validate the manifest's gate blocks before placing anything: an unknown
@@ -334,16 +295,16 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	if manifest := filepath.Join(payload, "omakase.manifest"); fileRegular(manifest) {
 		content, rerr := os.ReadFile(manifest)
 		if rerr != nil {
-			fmt.Fprintf(stderr, "omakase: could not read %s: %v. Nothing was changed.\n", manifest, rerr)
+			fmt.Fprintf(stderr, msgManifestReadFailed, manifest, rerr)
 			return 1
 		}
 		gates, perr := gate.Parse(content)
 		if perr != nil {
-			fmt.Fprintf(stderr, "omakase: invalid gate declaration in omakase.manifest: %v. Nothing was changed.\n", perr)
+			fmt.Fprintf(stderr, msgGateDeclInvalid, perr)
 			return 1
 		}
 		if verr := gate.ValidateRunnable(gates, payload); verr != nil {
-			fmt.Fprintf(stderr, "omakase: %v. It would fail at commit time (exit 127). Nothing was changed.\n", verr)
+			fmt.Fprintf(stderr, msgGateWiringInvalid, verr)
 			return 1
 		}
 		gateCount = len(gates)
@@ -371,7 +332,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		hpAbs = physicalResolve(hpAbs)
 		stdAbs := physicalResolve(hooksDir)
 		if hpAbs != stdAbs {
-			incumbent = append(incumbent, "core.hooksPath = '"+hookspath+"' (a foreign hook manager owns the hooks dir; husky v9 sets .husky/_)")
+			incumbent = append(incumbent, fmt.Sprintf(incHooksPath, hookspath))
 		} else {
 			// Redundant config: names the default location. Cleared just before
 			// the dispatcher writes so git uses the default hooks dir, and so a
@@ -380,12 +341,12 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if strings.TrimRight(gitStdout(root, "ls-files", "--", ".husky"), "\n") != "" {
-		incumbent = append(incumbent, ".husky/ content is git-tracked (the project's own husky setup)")
+		incumbent = append(incumbent, incHuskyTracked)
 	} else if isDir(filepath.Join(root, ".husky")) && !isDir(filepath.Join(payload, ".husky")) {
-		incumbent = append(incumbent, ".husky/ directory (husky)")
+		incumbent = append(incumbent, incHuskyDir)
 	}
 	if fileRegular(filepath.Join(root, "package.json")) && fileMatchesLine(filepath.Join(root, "package.json"), rePrepare) {
-		incumbent = append(incumbent, "package.json \"prepare\" script wires a hook manager (husky / simple-git-hooks) — npm install would overwrite omakase's hooks")
+		incumbent = append(incumbent, incPrepareScript)
 	}
 	// A project's own committed lefthook config: omakase no longer runs
 	// lefthook, so installing its dispatchers would displace lefthook's hooks
@@ -404,10 +365,10 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		if cfg == "" {
 			continue
 		}
-		incumbent = append(incumbent, cfg+" is git-tracked (the project's own lefthook config)")
+		incumbent = append(incumbent, fmt.Sprintf(incLefthookCfg, cfg))
 	}
 	if strings.TrimRight(gitStdout(root, "ls-files", "--", ".lefthook"), "\n") != "" {
-		incumbent = append(incumbent, ".lefthook/ content is git-tracked (the project's own lefthook config)")
+		incumbent = append(incumbent, incLefthookDir)
 	}
 	preCommitConfig := fileRegular(filepath.Join(root, ".pre-commit-config.yaml"))
 	for _, hf := range sortedHookFiles(hooksDir) {
@@ -437,11 +398,11 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		base := filepath.Base(hf)
 		switch {
 		case bytes.Contains(bytes.ToLower(content), []byte("lefthook")):
-			incumbent = append(incumbent, base+": lefthook-installed hook in "+hooksDir+" (the project uses lefthook natively)")
+			incumbent = append(incumbent, fmt.Sprintf(incLefthookHook, base, hooksDir))
 		case preCommitConfig && (bytes.Contains(content, []byte("pre-commit.com")) || bytes.Contains(content, []byte("generated by pre-commit"))):
-			incumbent = append(incumbent, base+": installed pre-commit-framework stub (plus .pre-commit-config.yaml)")
+			incumbent = append(incumbent, fmt.Sprintf(incPreCommitStub, base))
 		default:
-			incumbent = append(incumbent, base+": existing hook in "+hooksDir)
+			incumbent = append(incumbent, fmt.Sprintf(incExistingHook, base, hooksDir))
 		}
 	}
 	// A steering-only harness (zero declared gates) wants nothing in
@@ -449,28 +410,24 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// skipped and the incumbent list only decides whether the heal hook can
 	// be written (#149).
 	if len(incumbent) > 0 && gateCount != 0 {
-		fmt.Fprintln(stderr, "omakase: REFUSING to install — an incumbent hook manager is present:")
+		fmt.Fprintln(stderr, msgIncumbentRefusalHeader)
 		for _, i := range incumbent {
 			fmt.Fprintf(stderr, "  - %s\n", i)
 		}
-		fmt.Fprintln(stderr, "  Installing omakase's hooks would displace the project's own, silently disabling")
-		fmt.Fprintln(stderr, "  its gates — and a husky prepare script would overwrite them back on the next")
-		fmt.Fprintln(stderr, "  npm install. omakase does not chain hook managers (v1).")
-		fmt.Fprintln(stderr, "  If these are stale leftovers, remove them and re-run. If the project really uses")
-		fmt.Fprintln(stderr, "  them, do not install omakase here. Nothing was changed.")
+		fmt.Fprint(stderr, msgIncumbentRefusalBody)
 		return 1
 	}
 
 	// ---- one-time ledger schema upgrade ----
-	// A pre-v2 (6-column) run ledger is rotated aside. On rename failure the
-	// notice is suppressed and the run continues with the old ledger in
-	// place. Deliberately after every refusal guard above: each of those
-	// claims nothing was changed, and rotating first made that a lie.
+	// A pre-v2 (6-column) run ledger is rotated aside, silently: an internal
+	// store-format migration is nothing the user can act on, and the notice
+	// read as if something went wrong (#49 case 2). On rename failure the run
+	// continues with the old ledger in place. Deliberately after every
+	// refusal guard above: each of those claims nothing was changed, and
+	// rotating first made that a lie.
 	ledger := filepath.Join(omk, "ledger.tsv")
 	if fileRegular(ledger) && ledgerNeedsRotate(ledger) {
-		if err := os.Rename(ledger, ledger+".pre-v2.bak"); err == nil {
-			fmt.Fprintln(stdout, "omakase: rotated a pre-v2 (6-column) run ledger aside to ledger.tsv.pre-v2.bak (the new store starts clean).")
-		}
+		os.Rename(ledger, ledger+".pre-v2.bak")
 	}
 
 	// ---- guarded cut-over ----
@@ -486,19 +443,15 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			}
 		}
 		if len(cut) == 0 {
-			fmt.Fprintln(stdout, "omakase: --cut-over: no payload path is tracked by this repo — nothing to cut over.")
+			fmt.Fprintln(stdout, msgCutOverNothingTracked)
 		} else {
-			fmt.Fprintf(stdout, "omakase: cut-over will run  git rm --cached  on %d tracked file(s):\n", len(cut))
+			fmt.Fprintf(stdout, msgCutOverPlan, len(cut))
 			for _, c := range cut {
 				fmt.Fprintf(stdout, "    %s\n", c)
 			}
-			fmt.Fprintln(stdout, "  This STAGES A DELETION of each shared file. The next commit — including an agent")
-			fmt.Fprintln(stdout, "  auto-commit — applies that deletion FOR EVERYONE who pulls it, and upstream changes")
-			fmt.Fprintln(stdout, "  to these files will then produce modify/delete conflicts. The files stay on disk;")
-			fmt.Fprintln(stdout, "  the injected (gitignored) copies take over locally. Undo before committing with")
-			fmt.Fprintln(stdout, "  'git restore --staged <file>'; 'git add <file>' re-tracks later.")
+			fmt.Fprint(stdout, msgCutOverConsequences)
 			if os.Getenv("OMAKASE_CUTOVER_CONFIRM") != "1" {
-				fmt.Fprintln(stderr, "omakase: REFUSING cut-over without confirmation. Re-run with OMAKASE_CUTOVER_CONFIRM=1 to proceed. Nothing was changed.")
+				fmt.Fprintln(stderr, msgCutOverUnconfirmed)
 				return 1
 			}
 			args := append([]string{"-C", root, "rm", "--cached", "-q", "--"}, cut...)
@@ -511,7 +464,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			for _, c := range cut {
 				cutSet[c] = true
 			}
-			fmt.Fprintf(stdout, "omakase: cut-over staged %d deletion(s) — review with 'git status' and commit them yourself.\n", len(cut))
+			fmt.Fprintf(stdout, msgCutOverStaged, len(cut))
 		}
 	}
 
@@ -539,11 +492,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		if !gitTracked(root, rel) || adopted(rel) {
 			continue
 		}
-		fmt.Fprintf(stderr, "omakase: WARNING — '%s' was injected (personal, gitignored) but is NOW TRACKED by the repo.\n", rel)
-		fmt.Fprintln(stderr, "  An upstream commit likely landed a file at this path; git silently overwrites ignored")
-		fmt.Fprintln(stderr, "  files on checkout/pull, so your personal copy was likely clobbered. The harness's own")
-		fmt.Fprintf(stderr, "  version still lives in your harness source. Reconcile: drop '%s' from your payload,\n", rel)
-		fmt.Fprintln(stderr, "  or run init --cut-over (guarded) to untrack the file and let the injected copy take over.")
+		fmt.Fprintf(stderr, msgInitTrackedCollision, rel, rel)
 	}
 
 	// ---- consent merge ----
@@ -611,13 +560,13 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			if h := state.HashOf(dest); ph != "" && h != "" && h == ph {
 				continue // unedited prior placement: a plain update
 			}
-			conflicts = append(conflicts, fmt.Sprintf("  %s — differs from what init placed (local edits?). See the change:  omakase diff %s  — then make it yours (omakase status --keep %s) or put the harness version back (omakase status --restore %s)", rel, rel, rel, rel))
+			conflicts = append(conflicts, fmt.Sprintf(msgConflictEditedRow, rel, rel, rel, rel))
 			continue
 		}
-		conflicts = append(conflicts, fmt.Sprintf("  %s — already exists and was not placed by omakase. Move it aside, or add it to your harness source, and re-run omakase init", rel))
+		conflicts = append(conflicts, fmt.Sprintf(msgConflictForeignRow, rel))
 	}
 	if len(conflicts) > 0 {
-		fmt.Fprintln(stderr, "omakase: REFUSING init — files in the way (nothing was changed):")
+		fmt.Fprintln(stderr, msgFilesInTheWayHeader)
 		for _, c := range conflicts {
 			fmt.Fprintln(stderr, c)
 		}
@@ -634,12 +583,12 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		// an ADOPTED one, whose working copy is deliberately the harness's.
 		if gitTracked(root, rel) && !adopted(rel) {
 			skipped = append(skipped, rel)
-			fmt.Fprintf(stderr, "omakase: SKIP (already tracked) %s\n", rel)
+			fmt.Fprintf(stderr, msgSkipTracked, rel)
 			continue
 		}
 		if declined[rel] {
 			declinedKept = append(declinedKept, rel)
-			fmt.Fprintf(stderr, "omakase: SKIP (toggled off) %s — re-enable: omakase status --enable %s\n", rel, rel)
+			fmt.Fprintf(stderr, msgSkipToggledOff, rel, rel)
 			continue
 		}
 		if _, ok := keptPrior[rel]; ok {
@@ -650,9 +599,9 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 					return code
 				}
 				keptRefilled[rel] = true
-				fmt.Fprintf(stderr, "omakase: restored your kept version of %s (it was missing)\n", rel)
+				fmt.Fprintf(stderr, msgKeptRestored, rel)
 			} else {
-				fmt.Fprintf(stderr, "omakase: SKIP (kept — yours) %s — see the difference: omakase diff %s; harness version back: omakase status --restore %s\n", rel, rel, rel)
+				fmt.Fprintf(stderr, msgSkipKept, rel, rel, rel)
 			}
 			continue
 		}
@@ -677,7 +626,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		}
 		placed = append(placed, rel)
 		overwrote = append(overwrote, rel)
-		fmt.Fprintf(stderr, "omakase: updated %s to match the payload\n", rel)
+		fmt.Fprintf(stderr, msgUpdatedToPayload, rel)
 	}
 
 	// A kept path the payload no longer ships never enters the place loop;
@@ -690,7 +639,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			return code
 		}
 		keptRefilled[rel] = true
-		fmt.Fprintf(stderr, "omakase: restored your kept version of %s (it was missing)\n", rel)
+		fmt.Fprintf(stderr, msgKeptRestored, rel)
 	}
 
 	// ---- orphan sweep ----
@@ -723,7 +672,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 				}
 				swept = append(swept, rel)
 			} else {
-				fmt.Fprintf(stderr, "omakase: WARNING — '%s' was placed by a prior init, is no longer in the payload, and differs from what init placed (a local edit?). Leaving it; delete it yourself if unwanted.\n", rel)
+				fmt.Fprintf(stderr, msgStaleEditedLeft, rel)
 			}
 		}
 	}
@@ -731,7 +680,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// ---- exclude block ----
 	wtincTracked := gitTracked(root, ".worktreeinclude")
 	if wtincTracked {
-		fmt.Fprintln(stderr, "omakase: .worktreeinclude is tracked — leaving it untouched (re-run omakase init inside a new manual worktree to install it there).")
+		fmt.Fprintln(stderr, msgWtincTracked)
 	}
 	// A symlink never gets the trailing slash even when it targets a
 	// directory: git matches a "dir/" pattern against directories only, and
@@ -806,7 +755,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 			continue
 		}
 		if err := safeMkdirAll(carry, filepath.Join(carry, filepath.Dir(rel))); err != nil {
-			fmt.Fprintf(stderr, "omakase: %v\n", err)
+			fmt.Fprintf(stderr, msgPrefixedErr, err)
 			return 1
 		}
 		if err := CopyEntry(old, filepath.Join(carry, rel)); err != nil {
@@ -836,7 +785,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		// symlink out of the snapshot root.
 		snapRoot := filepath.Join(omk, "payload-snapshot")
 		if err := safeMkdirAll(snapRoot, filepath.Join(snapRoot, filepath.Dir(rel))); err != nil {
-			fmt.Fprintf(stderr, "omakase: %v\n", err)
+			fmt.Fprintf(stderr, msgPrefixedErr, err)
 			return 1
 		}
 		if err := CopyEntry(filepath.Join(root, rel), filepath.Join(omk, "payload-snapshot", rel)); err != nil {
@@ -853,7 +802,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		src := filepath.Join(payload, rel)
 		snapRoot := filepath.Join(omk, "payload-snapshot")
 		if err := safeMkdirAll(snapRoot, filepath.Join(snapRoot, filepath.Dir(rel))); err != nil {
-			fmt.Fprintf(stderr, "omakase: %v\n", err)
+			fmt.Fprintf(stderr, msgPrefixedErr, err)
 			return 1
 		}
 		if err := CopyEntry(src, filepath.Join(snapRoot, rel)); err != nil {
@@ -876,7 +825,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 		if lexists(src) {
 			snapRoot := filepath.Join(omk, "payload-snapshot")
 			if err := safeMkdirAll(snapRoot, filepath.Join(snapRoot, filepath.Dir(rel))); err != nil {
-				fmt.Fprintf(stderr, "omakase: %v\n", err)
+				fmt.Fprintf(stderr, msgPrefixedErr, err)
 				return 1
 			}
 			if err := CopyEntry(src, filepath.Join(snapRoot, rel)); err != nil {
@@ -909,7 +858,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// ---- redundant hooksPath reset ----
 	if resetHooksPath {
 		exec.Command("git", "-C", root, "config", "--unset", "core.hooksPath").Run() // 2>/dev/null || true
-		fmt.Fprintln(stdout, "omakase: cleared redundant core.hooksPath (it named the repo's own hooks dir; the effective hooks dir is unchanged).")
+		fmt.Fprintln(stdout, msgClearedHooksPath)
 	}
 
 	// ---- hook dispatchers ----
@@ -945,7 +894,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 				}
 			}
 			if err := hook.Write(hooksDir, name); err != nil {
-				fmt.Fprintf(stderr, "omakase: could not write the %s hook: %v\n", name, err)
+				fmt.Fprintf(stderr, msgHookWriteFailed, name, err)
 				return 1
 			}
 			continue
@@ -963,7 +912,7 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// silence read as "my LFS hook got clobbered".
 	for _, name := range lfsDisplaced {
 		if wantHook[name] {
-			fmt.Fprintf(stdout, "omakase: displaced the stock git-lfs %s hook — the omakase hook runs 'git lfs %s' itself, so LFS keeps working.\n", name, name)
+			fmt.Fprintf(stdout, msgDisplacedLFSHook, name, name)
 		}
 	}
 	// The dispatchers exec the machine-wide copy at StableBinPath, which is
@@ -975,11 +924,11 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	// (The probe's hook proof checks the same fact, so the verdict below
 	// and later status runs agree with what happens at commit time.)
 	if stable := hook.StableBinPath(); gateHooks && (stable == "" || !fileExecutable(stable)) {
-		fmt.Fprintf(stderr, "omakase: WARNING — the hooks run %s, which is missing or not executable; commits will be blocked until it exists. Re-run 'omakase init' with any installed omakase binary to restore it.\n", stable)
+		fmt.Fprintf(stderr, msgStableBinaryMissing, stable)
 	}
 
 	// ---- summary ----
-	fmt.Fprintf(stdout, "omakase: placed %d file(s), updated %d to match the payload, skipped %d committed path(s).\n", len(placed), len(overwrote), len(skipped))
+	fmt.Fprintf(stdout, msgPlacedSummary, len(placed), len(overwrote), len(skipped))
 	for _, p := range placed {
 		if p != "" {
 			fmt.Fprintf(stdout, "  + %s\n", p)
@@ -987,50 +936,48 @@ func RunInit(argv []string, stdout, stderr io.Writer) int {
 	}
 	for _, o := range overwrote {
 		if o != "" {
-			fmt.Fprintf(stdout, "  ^ updated to match the payload: %s\n", o)
+			fmt.Fprintf(stdout, msgRowUpdated, o)
 		}
 	}
 	for _, k := range keptOrder {
 		if keptRefilled[k] {
-			fmt.Fprintf(stdout, "  = kept (yours — was missing, your accepted version restored): %s\n", k)
+			fmt.Fprintf(stdout, msgRowKeptRestored, k)
 		} else {
-			fmt.Fprintf(stdout, "  = kept (yours — left untouched): %s\n", k)
+			fmt.Fprintf(stdout, msgRowKeptUntouched, k)
 		}
 	}
 	for _, w := range swept {
 		if w != "" {
-			fmt.Fprintf(stdout, "  - removed (placed by a prior init, no longer in the payload): %s\n", w)
+			fmt.Fprintf(stdout, msgRowRemovedStale, w)
 		}
 	}
 	for _, s := range skipped {
 		if s != "" {
-			fmt.Fprintf(stdout, "  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see omakase init --help): %s\n", s)
+			fmt.Fprintf(stdout, msgRowSkippedCommitted, s)
 		}
 	}
 	// The worktree claim is only made while the heal hook is actually
 	// installed (a steering-only harness in a repo with incumbent hooks has
 	// no post-checkout to auto-install anything).
 	if wantHook["post-checkout"] {
-		fmt.Fprintln(stdout, "omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.")
+		fmt.Fprintln(stdout, msgIgnoresWiredWorktrees)
 	} else {
-		fmt.Fprintln(stdout, "omakase: ignores -> .git/info/exclude. Nothing to commit.")
+		fmt.Fprintln(stdout, msgIgnoresWired)
 	}
 	// Make the opt-in wiring legible (#149): say what was deliberately not
 	// installed, and — where the heal hook was skipped too — what replaces it.
 	if gateCount == 0 {
-		fmt.Fprintln(stdout, "omakase: no gates declared — no enforcement hooks installed.")
+		fmt.Fprintln(stdout, msgNoGatesDeclared)
 		if !wantHook["post-checkout"] {
-			fmt.Fprintln(stdout, "omakase: existing git hooks left untouched; without the heal hook, run a bare")
-			fmt.Fprintln(stdout, "         'omakase init' after a checkout or in a new worktree to refresh the files.")
+			fmt.Fprint(stdout, msgHooksLeftUntouched)
 		}
 	}
-	fmt.Fprintln(stdout, "omakase: see the whole harness any time with  omakase status")
+	fmt.Fprintln(stdout, msgSeeStatus)
 	// A source's manifest recommends: line; only a source install sets it.
 	if recommends != "" {
-		fmt.Fprintf(stdout, "omakase: this harness recommends — %s\n", recommends)
+		fmt.Fprintf(stdout, msgRecommends, recommends)
 	}
-	fmt.Fprintln(stdout, "omakase: to customize, edit an injected file in place (omakase diff shows the change;")
-	fmt.Fprintln(stdout, "         keep or undo it via omakase status) — or fork the harness source and init from your copy.")
+	fmt.Fprint(stdout, msgCustomizeHint)
 	// No UX stanzas here: the status-bar wiring is machine config the init
 	// verb (cmd/omakase) applies after this returns — wired by default into
 	// empty host slots, #123 item 5 — and worktree discipline and its guard
@@ -1058,11 +1005,11 @@ func placeFile(src, rel, root string, umask os.FileMode, stderr io.Writer) int {
 	// safeMkdirAll: a prior placement may have put a directory symlink at a
 	// parent, and writing the child through it would land outside the repo.
 	if err := safeMkdirAll(root, filepath.Dir(dest)); err != nil {
-		fmt.Fprintf(stderr, "omakase: %v\n", err)
+		fmt.Fprintf(stderr, msgPrefixedErr, err)
 		return 1
 	}
 	if isDir(dest) && !isSymlink(dest) {
-		fmt.Fprintf(stderr, "omakase: refusing to overlay file '%s' — an untracked directory exists there; remove it and re-run\n", rel)
+		fmt.Fprintf(stderr, msgOverlayDirInWay, rel)
 		return 1
 	}
 	if err := CopyEntry(src, dest); err != nil {
@@ -1092,12 +1039,12 @@ func checkPayloadSymlinks(payload string, rels []string, stderr io.Writer) int {
 		}
 		target, err := os.Readlink(filepath.Join(payload, rel))
 		if err != nil {
-			fmt.Fprintf(stderr, "omakase: could not read payload symlink '%s'. Nothing was changed.\n", rel)
+			fmt.Fprintf(stderr, msgSymlinkUnreadable, rel)
 			return 1
 		}
 		resolved := filepath.Clean(filepath.Join(filepath.Dir(rel), target))
 		if filepath.IsAbs(target) || resolved == ".." || strings.HasPrefix(resolved, ".."+string(filepath.Separator)) {
-			fmt.Fprintf(stderr, "omakase: refusing to install — payload symlink '%s' (-> %s) points outside the repo; a placed symlink must stay inside the repo it lands in. Nothing was changed.\n", rel, target)
+			fmt.Fprintf(stderr, msgSymlinkEscapesRepo, rel, target)
 			return 1
 		}
 	}
@@ -1272,7 +1219,7 @@ func checkBaseDowngrade(root, omk, payload string, stderr io.Writer) int {
 	if src := state.FirstLine(filepath.Join(omk, "source")); src != "" {
 		again = "omakase init " + src
 	}
-	fmt.Fprintf(stderr, "omakase: refusing to roll this repo's omakase files BACK from %s to %s — a newer omakase set this repo up, and this init came from an older binary. Update it (brew upgrade omakase), then re-run. To go back to %s on purpose:  omakase remove  then  %s. Nothing was changed.\n", installed, incoming, incoming, again)
+	fmt.Fprintf(stderr, msgDowngradeRefused, installed, incoming, again)
 	return 2
 }
 

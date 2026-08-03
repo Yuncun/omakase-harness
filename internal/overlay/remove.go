@@ -43,12 +43,12 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	// ---- repo discovery ----
 	wd, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintln(stderr, "omakase: not inside a git repo")
+		fmt.Fprintln(stderr, msgNotAGitRepo)
 		return 1
 	}
 	repo, err := state.Discover(wd)
 	if err != nil {
-		fmt.Fprintln(stderr, "omakase: not inside a git repo")
+		fmt.Fprintln(stderr, msgNotAGitRepo)
 		return 1
 	}
 	root := repo.Root
@@ -125,12 +125,12 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 			// git-lfs half-installed.
 			if saved, rerr := os.ReadFile(filepath.Join(omk, "displaced-hooks", name)); rerr == nil {
 				if os.WriteFile(hf, saved, 0o755) == nil {
-					fmt.Fprintf(stdout, "omakase: restored the git-lfs %s hook the install had displaced.\n", name)
+					fmt.Fprintf(stdout, msgRemoveRestoredLFSHook, name)
 				}
 			}
 			continue
 		}
-		fmt.Fprintf(stderr, "omakase: NOTE — %s is not omakase's dispatcher (another tool wrote it); left in place.\n", hf)
+		fmt.Fprintf(stderr, msgRemoveForeignHook, hf)
 	}
 
 	// ---- placed-path list ----
@@ -155,7 +155,7 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 		// OMAKASE_BASE_PAYLOAD and has no bundled payload/ sibling.
 		rels, _ = walkPayload(payload)
 	} else {
-		fmt.Fprintln(stderr, "omakase: nothing installed here; nothing to remove.")
+		fmt.Fprintln(stderr, msgRemoveNothingInstalled)
 		return 0
 	}
 
@@ -181,7 +181,7 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 	// the shared-state teardown below still covers it.
 	for _, wtRoot := range state.WorktreeRoots(root) {
 		if !isDir(wtRoot) {
-			fmt.Fprintf(stderr, "omakase: worktree %s is unreachable; its placed files were not removed.\n", wtRoot)
+			fmt.Fprintf(stderr, msgRemoveWorktreeSkipped, wtRoot)
 			continue
 		}
 		wtTracked := func(rel string) bool { return gitTracked(wtRoot, rel) }
@@ -233,10 +233,10 @@ func RunRemove(argv []string, stdout, stderr io.Writer) int {
 
 	for _, rel := range rels {
 		if kept[rel] {
-			fmt.Fprintf(stdout, "omakase: %s is yours (kept) — left on disk; with the ignore rules gone, git now sees it as an untracked file.\n", rel)
+			fmt.Fprintf(stdout, msgRemoveKeptSurvives, rel)
 		}
 	}
-	fmt.Fprintln(stdout, "omakase: removed. Hooks uninstalled, placed files deleted, worktree snapshot + exclude block stripped.")
+	fmt.Fprintln(stdout, msgRemoveDone)
 	return 0
 }
 

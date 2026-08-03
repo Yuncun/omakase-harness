@@ -5,6 +5,29 @@ project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
 ## [Unreleased]
 
+### Changed
+- **One readable home for init's voice** (#179 D4): every user-facing
+  sentence `internal/overlay` can print (init / remove / diff / source /
+  record / hook) now lives in `messages.go` as a named constant, and an
+  AST-walking test fails the build on any stray string literal in a print
+  call — the one-file rule is a deterministic check, not a convention.
+  Output is unchanged.
+- **The gate-wiring refusal no longer mis-blames the wiring** (#49): when a
+  gate references a script the payload does not ship, the message now names
+  the likelier cause for an adopter — an omakase install older than the
+  harness expects — with the update command, before the fix-the-wiring
+  instruction. The original incident sent a user off to edit wiring that
+  was correct.
+- **The pre-v2 ledger rotation is silent** (#49): an internal store-format
+  migration the user cannot act on no longer prints a notice that read as
+  if something went wrong. The rotation itself is unchanged.
+- **Solution-first wording pass over init/heal messages**: the long
+  warnings (drift, kept-file, tracked-collision, downgrade, incumbent,
+  linked-worktree) now state the fact in one clause and go straight to the
+  command that fixes it; mechanism explanations ("git overwrites ignored
+  files on checkout") are cut. The stale-edited-file notice drops its
+  WARNING shout — it has a calm action, so it reads as one.
+
 ## [0.30.0] — 2026-08-02
 
 ### Changed

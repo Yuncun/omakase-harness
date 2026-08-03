@@ -3,6 +3,7 @@ package overlay
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -395,7 +396,7 @@ func TestTrackedSkip(t *testing.T) {
 	// (the sole + line) and AGENTS.md is skipped (the sole ~ line).
 	wantOut := "omakase: placed 1 file(s), updated 0 to match the payload, skipped 1 committed path(s).\n" +
 		"  + .omakase/gates/example.sh\n" +
-		"  ~ skipped (committed — re-run with --cut-over to let the harness copy take over; guarded, see omakase init --help): AGENTS.md\n" +
+		fmt.Sprintf(msgRowSkippedCommitted, "AGENTS.md") +
 		summaryTail + uxStanzas() + verifiedLine
 	eq(t, "stdout", stdout.String(), wantOut)
 	eq(t, "stderr", stderr.String(), "omakase: SKIP (already tracked) AGENTS.md\n")
@@ -500,7 +501,7 @@ func TestSweepWarnsEditedOrphan(t *testing.T) {
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("re-init exit = %d", code)
 	}
-	wantWarn := "omakase: WARNING — '.omakase/gates/extra.sh' was placed by a prior init, is no longer in the payload, and differs from what init placed (a local edit?). Leaving it; delete it yourself if unwanted.\n"
+	wantWarn := fmt.Sprintf(msgStaleEditedLeft, ".omakase/gates/extra.sh")
 	eq(t, "sweep warn stderr", stderr.String(), wantWarn)
 	// The edited orphan survives untouched, and is not reported as swept.
 	eq(t, "orphan kept", readFileT(t, filepath.Join(dir, ".omakase", "gates", "extra.sh")), "LOCAL EDIT\n")
@@ -602,11 +603,7 @@ func TestCollisionWarning(t *testing.T) {
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("re-init exit = %d; stderr=%q", code, stderr.String())
 	}
-	wantWarn := "omakase: WARNING — '.omakase/gates/example.sh' was injected (personal, gitignored) but is NOW TRACKED by the repo.\n" +
-		"  An upstream commit likely landed a file at this path; git silently overwrites ignored\n" +
-		"  files on checkout/pull, so your personal copy was likely clobbered. The harness's own\n" +
-		"  version still lives in your harness source. Reconcile: drop '.omakase/gates/example.sh' from your payload,\n" +
-		"  or run init --cut-over (guarded) to untrack the file and let the injected copy take over.\n"
+	wantWarn := fmt.Sprintf(msgInitTrackedCollision, ".omakase/gates/example.sh", ".omakase/gates/example.sh")
 	if !strings.Contains(stderr.String(), wantWarn) {
 		t.Errorf("collision warning bytes mismatch:\n got: %q\nwant substr: %q", stderr.String(), wantWarn)
 	}
@@ -886,8 +883,10 @@ func TestLedgerRotation(t *testing.T) {
 	if code := RunInit(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	if !strings.HasPrefix(stdout.String(), "omakase: rotated a pre-v2 (6-column) run ledger aside to ledger.tsv.pre-v2.bak (the new store starts clean).\n") {
-		t.Errorf("stdout missing rotation notice as its first line:\n%s", stdout.String())
+	// The rotation is silent (#49 case 2): an internal store-format migration
+	// is not surfaced to the user.
+	if strings.Contains(stdout.String(), "rotated a pre-v2") {
+		t.Errorf("rotation notice leaked to stdout:\n%s", stdout.String())
 	}
 	if _, err := os.Stat(filepath.Join(repo.OMK, "ledger.tsv.pre-v2.bak")); err != nil {
 		t.Errorf("ledger not rotated aside: %v", err)
@@ -1879,6 +1878,10 @@ func TestInitRefusesBaseDowngrade(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "0.28.0") || !strings.Contains(errOut.String(), "0.22.0") {
 		t.Errorf("refusal must name both versions: %q", errOut.String())
+	}
+	// Solution-first (#49): the fix leads the sentence.
+	if !strings.HasPrefix(errOut.String(), "omakase: update omakase") {
+		t.Errorf("refusal must lead with the fix: %q", errOut.String())
 	}
 	if got := state.FirstLine(filepath.Join(repo.Root, ".omakase", "VERSION")); got != "0.28.0" {
 		t.Errorf(".omakase/VERSION rolled back to %q", got)
