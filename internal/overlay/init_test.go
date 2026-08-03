@@ -254,7 +254,7 @@ func TestSteeringOnlyInitHooks(t *testing.T) {
 	if !hook.Matches(filepath.Join(repo.CommonDir, "hooks", "post-checkout"), "post-checkout") {
 		t.Error("post-checkout heal hook missing (clean repo keeps it)")
 	}
-	if !strings.Contains(out.String(), "omakase: no gates declared — no enforcement hooks installed.\n") {
+	if !strings.Contains(out.String(), "omakase: no gates declared — nothing blocks commits or pushes here.\n") {
 		t.Errorf("missing opt-in-wiring notice:\n%s", out.String())
 	}
 	if !strings.Contains(out.String(), steeringOnlyVerifiedLine) {

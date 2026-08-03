@@ -97,7 +97,7 @@ func RunHook(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if n := healWorktree(repo, stderr); n > 0 {
 			fmt.Fprintf(stdout, msgSessionStartRestored, n)
 		}
-		gate.RunAdvisories(repo.Root, repo.OMK, stdout, stderr)
+		gate.RunAdvisories(repo.Root, repo.OMK, stdout)
 		return 0
 	}
 

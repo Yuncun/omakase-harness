@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Yuncun/omakase-harness/internal/state"
 )
@@ -236,23 +237,25 @@ func TestValidateRunnable(t *testing.T) {
 
 // --- RunAdvisories ---------------------------------------------------------
 
-// Advisories run in manifest order from the repo root; stdout and stderr pass
-// through raw, and a non-zero exit changes nothing — the whole call has no
-// return value to fail with.
-func TestRunAdvisoriesPassthroughAndOrder(t *testing.T) {
+// Advisories run in manifest order from the repo root; stdout lines are
+// relayed behind an omakase[<name>]: prefix (session-start text is always
+// attributed), stderr is discarded (a broken check must not splash a raw
+// shell error into every session), and a non-zero exit changes nothing.
+func TestRunAdvisoriesRelayAndOrder(t *testing.T) {
 	root, omk := newRepo(t)
 	writeSnapshotManifest(t, omk,
 		"name: t\n\nadvisory: first\n  run: echo behind by 3\nadvisory: fails\n  run: echo trouble >&2; exit 7\nadvisory: last\n  run: echo still-ran\n")
-	var out, errb bytes.Buffer
-	RunAdvisories(root, omk, &out, &errb)
-	if !strings.Contains(out.String(), "behind by 3") || !strings.Contains(out.String(), "still-ran") {
-		t.Fatalf("stdout = %q, want both advisory lines", out.String())
+	var out bytes.Buffer
+	RunAdvisories(root, omk, &out)
+	if !strings.Contains(out.String(), "omakase[first]: behind by 3") ||
+		!strings.Contains(out.String(), "omakase[last]: still-ran") {
+		t.Fatalf("stdout = %q, want both advisory lines with name prefixes", out.String())
 	}
 	if strings.Index(out.String(), "behind by 3") > strings.Index(out.String(), "still-ran") {
 		t.Errorf("stdout = %q, want manifest order", out.String())
 	}
-	if !strings.Contains(errb.String(), "trouble") {
-		t.Errorf("stderr = %q, want the failing advisory's own stderr", errb.String())
+	if strings.Contains(out.String(), "trouble") {
+		t.Errorf("stdout = %q, a failing advisory's stderr must be discarded", out.String())
 	}
 }
 
@@ -261,8 +264,8 @@ func TestRunAdvisoriesPassthroughAndOrder(t *testing.T) {
 func TestRunAdvisoriesRunFromRoot(t *testing.T) {
 	root, omk := newRepo(t)
 	writeSnapshotManifest(t, omk, "advisory: mark\n  run: touch ran-here\n")
-	var out, errb bytes.Buffer
-	RunAdvisories(root, omk, &out, &errb)
+	var out bytes.Buffer
+	RunAdvisories(root, omk, &out)
 	if _, err := os.Stat(filepath.Join(root, "ran-here")); err != nil {
 		t.Fatalf("advisory did not run from the repo root: %v", err)
 	}
@@ -272,12 +275,60 @@ func TestRunAdvisoriesRunFromRoot(t *testing.T) {
 // snapshot manifest means silence, never noise or a block at session start.
 func TestRunAdvisoriesFailOpen(t *testing.T) {
 	root, omk := newRepo(t)
-	var out, errb bytes.Buffer
-	RunAdvisories(root, omk, &out, &errb) // no manifest at all
+	var out bytes.Buffer
+	RunAdvisories(root, omk, &out) // no manifest at all
 	writeSnapshotManifest(t, omk, "advisory: broken\n")
-	RunAdvisories(root, omk, &out, &errb) // corrupt manifest
-	if out.String() != "" || errb.String() != "" {
-		t.Fatalf("want silence, got stdout=%q stderr=%q", out.String(), errb.String())
+	RunAdvisories(root, omk, &out) // corrupt manifest
+	if out.String() != "" {
+		t.Fatalf("want silence, got stdout=%q", out.String())
+	}
+}
+
+// A hung advisory is killed at advisoryTimeout, and a backgrounded grandchild
+// holding the output pipe is cut loose after advisoryGrace — a session start
+// pays one check's budget at most, never "until the network comes back".
+func TestRunAdvisoriesTimeoutAndGrace(t *testing.T) {
+	root, omk := newRepo(t)
+	oldT, oldG := advisoryTimeout, advisoryGrace
+	advisoryTimeout, advisoryGrace = 300*time.Millisecond, 300*time.Millisecond
+	defer func() { advisoryTimeout, advisoryGrace = oldT, oldG }()
+
+	writeSnapshotManifest(t, omk,
+		"advisory: hangs\n  run: echo before-hang; sleep 30\nadvisory: bg\n  run: sleep 30 & echo spoke\nadvisory: after\n  run: echo still-reached\n")
+	start := time.Now()
+	var out bytes.Buffer
+	RunAdvisories(root, omk, &out)
+	if el := time.Since(start); el > 5*time.Second {
+		t.Fatalf("RunAdvisories took %v — a hung advisory blocked the session start", el)
+	}
+	if !strings.Contains(out.String(), "omakase[hangs]: before-hang") {
+		t.Errorf("stdout = %q, want the hung advisory's output before the kill", out.String())
+	}
+	if !strings.Contains(out.String(), "omakase[bg]: spoke") ||
+		!strings.Contains(out.String(), "omakase[after]: still-reached") {
+		t.Errorf("stdout = %q, want later advisories to still run", out.String())
+	}
+}
+
+// One advisory's output is capped: the head is kept, the excess dropped, and
+// the drop is announced rather than silent.
+func TestRunAdvisoriesOutputCap(t *testing.T) {
+	root, omk := newRepo(t)
+	oldC := advisoryOutputCap
+	advisoryOutputCap = 64
+	defer func() { advisoryOutputCap = oldC }()
+
+	writeSnapshotManifest(t, omk, "advisory: chatty\n  run: yes flood | head -c 100000\nadvisory: next\n  run: echo unaffected\n")
+	var out bytes.Buffer
+	RunAdvisories(root, omk, &out)
+	if !strings.Contains(out.String(), "omakase[chatty]: (output capped)") {
+		t.Errorf("stdout = %q, want the cap announced", out.String())
+	}
+	if len(out.String()) > 4096 {
+		t.Errorf("relayed %d bytes — the cap did not hold", len(out.String()))
+	}
+	if !strings.Contains(out.String(), "omakase[next]: unaffected") {
+		t.Errorf("stdout = %q, want the next advisory unaffected", out.String())
 	}
 }
 

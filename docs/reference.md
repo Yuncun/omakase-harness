@@ -251,10 +251,13 @@ author's own command, resolved from `PATH`.
 
 An `advisory: <name>` block declares a check that runs at **session start** (the same
 `SessionStart` wiring the heal uses) and can never block anything: the command runs via
-`sh` from the repo root, its output passes straight through, and its exit code is
-ignored. The name shares the gate namespace and charset; the only other keys are `run:`
-(required) and `purpose:` (optional). No `hook:`, `glob:`, or `cacheable:` — the stage is
-fixed and nothing is enforced, so there is nothing to scope or cache.
+`sh` from the repo root and its exit code is ignored. Its stdout is relayed line by
+line behind an `omakase[<name>]:` prefix (capped at 4 KiB, the cut announced); stderr
+is discarded. Each check is killed after 10 seconds, and anything it left running in
+the background is cut loose 2 seconds after it exits. The name shares the gate
+namespace and charset; the only other keys are `run:` (required) and `purpose:`
+(optional). No `hook:`, `glob:`, or `cacheable:` — the stage is fixed and nothing is
+enforced, so there is nothing to scope or cache.
 
     advisory: branch-freshness
       run: .omakase/advisories/branch-freshness.sh

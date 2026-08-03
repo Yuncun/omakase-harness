@@ -118,7 +118,7 @@ func TestSourceFlagBasicMerge(t *testing.T) {
 		"  + .omakase/gates/src.sh\n" +
 		"  + omakase.manifest\n" +
 		"omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.\n" +
-		"omakase: no gates declared — no enforcement hooks installed.\n" +
+		"omakase: no gates declared — nothing blocks commits or pushes here.\n" +
 		"omakase: see the whole harness any time with  omakase status\n" +
 		"omakase: this harness recommends — install the widget plugin\n" +
 		"omakase: to customize, edit an injected file in place (omakase diff shows the change;\n" +
@@ -1320,7 +1320,7 @@ func TestSourceSubpathMerge(t *testing.T) {
 		"  + .omakase/gates/src.sh\n" +
 		"  + omakase.manifest\n" +
 		"omakase: ignores -> .git/info/exclude; new worktrees auto-install the harness. Nothing to commit.\n" +
-		"omakase: no gates declared — no enforcement hooks installed.\n" +
+		"omakase: no gates declared — nothing blocks commits or pushes here.\n" +
 		"omakase: see the whole harness any time with  omakase status\n" +
 		"omakase: to customize, edit an injected file in place (omakase diff shows the change;\n" +
 		"         keep or undo it via omakase status) — or fork the harness source and init from your copy.\n" +

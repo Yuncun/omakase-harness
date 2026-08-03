@@ -41,7 +41,7 @@ type Gate struct {
 type Advisory struct {
 	Name    string // display name; shares the gate namespace
 	Run     string // command line, executed via `sh -c` from the repo root
-	Purpose string // author-written "what this watches" (status display only)
+	Purpose string // author-written "what this watches" (no surface shows it yet — reserved for status, #179)
 }
 
 // reGateName is the gate-name charset: [A-Za-z0-9._-]+.
@@ -97,7 +97,10 @@ func Parse(content []byte) ([]Gate, []Advisory, error) {
 				return nil, nil, fmt.Errorf("%s name %q is not [A-Za-z0-9._-]+", key, name)
 			}
 			if seen[name] {
-				return nil, nil, fmt.Errorf("duplicate %s %q", key, name)
+				// Gates and advisories share one namespace; naming just the
+				// current kind would blame the wrong block on a cross-kind
+				// collision.
+				return nil, nil, fmt.Errorf("duplicate name %q", name)
 			}
 			seen[name] = true
 			if key == "advisory" {
@@ -111,7 +114,7 @@ func Parse(content []byte) ([]Gate, []Advisory, error) {
 		}
 		// Indented line: a key inside the current block.
 		if cur < 0 {
-			return nil, nil, fmt.Errorf("indented line %q outside any gate block", strings.TrimSpace(raw))
+			return nil, nil, fmt.Errorf("indented line %q outside any block", strings.TrimSpace(raw))
 		}
 		if inAdvisory {
 			a := &advisories[cur]

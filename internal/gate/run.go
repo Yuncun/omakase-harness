@@ -2,6 +2,7 @@ package gate
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // RunHook runs every gate declared for the given hook stage, from repo root,
@@ -139,22 +141,80 @@ func runOne(g Gate, hook, root, omk, sha string, disabled map[string]bool, pushR
 	return rc
 }
 
+// advisoryTimeout bounds one advisory's run and advisoryGrace bounds the
+// wait for its output pipe after exit or kill (a backgrounded grandchild
+// inherits the pipe and would otherwise stall the session start omakase
+// already returned from). advisoryOutputCap bounds one advisory's relayed
+// bytes — session-start output lands in the agent's context, and the
+// contract is a line or two. Vars, not consts, so tests can shrink them.
+var (
+	advisoryTimeout   = 10 * time.Second
+	advisoryGrace     = 2 * time.Second
+	advisoryOutputCap = 4096
+)
+
 // RunAdvisories runs every advisory declared in the snapshot manifest under
 // omk (#218), in manifest order, via `sh -c` from the repo root. The whole
-// call is advisory: output passes through raw, exit codes are ignored, and a
-// missing or corrupt manifest means silence (LoadAdvisories) — a session
-// start is never blocked, delayed by retries, or narrated by omakase itself.
+// call is advisory: exit codes are ignored, and a missing or corrupt manifest
+// means silence (LoadAdvisories) — a session start is never blocked or failed.
 // No ledger row, no heartbeat, no skip env: those exist to audit enforcement,
 // and nothing here enforces.
-func RunAdvisories(root, omk string, stdout, stderr io.Writer) {
+//
+// An advisory speaks on stdout only: each line is relayed behind an
+// `omakase[<name>]:` prefix, so session-start text is always attributed to
+// the check that produced it and can never pass as anything else. stderr is
+// discarded — a broken advisory (`sh: gh: command not found`) must not
+// splash a raw shell error into every session. Output is capped and each
+// check is killed at advisoryTimeout: a hung `git fetch` in one advisory
+// costs its own budget, not the session.
+func RunAdvisories(root, omk string, stdout io.Writer) {
 	for _, a := range LoadAdvisories(omk) {
-		cmd := exec.Command("sh", "-c", a.Run)
+		ctx, cancel := context.WithTimeout(context.Background(), advisoryTimeout)
+		cmd := exec.CommandContext(ctx, "sh", "-c", a.Run)
 		cmd.Dir = root
-		cmd.Stdout = stdout
-		cmd.Stderr = stderr
+		buf := &cappedBuffer{cap: advisoryOutputCap}
+		cmd.Stdout = buf
+		cmd.WaitDelay = advisoryGrace
 		_ = cmd.Run()
+		cancel()
+		for _, line := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
+			if line == "" {
+				continue
+			}
+			fmt.Fprintf(stdout, "omakase[%s]: %s\n", a.Name, line)
+		}
+		if buf.dropped {
+			fmt.Fprintf(stdout, "omakase[%s]: (output capped)\n", a.Name)
+		}
 	}
 }
+
+// cappedBuffer accepts writes forever but keeps only the first cap bytes —
+// the child runs on undisturbed (no short-write error, no SIGPIPE), only its
+// excess output is dropped, and dropped says so. The inner buffer is a field,
+// not embedded: embedding would promote bytes.Buffer's ReadFrom, which
+// io.Copy prefers over Write and which would bypass the cap.
+type cappedBuffer struct {
+	buf     bytes.Buffer
+	cap     int
+	dropped bool
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	room := b.cap - b.buf.Len()
+	if room <= 0 {
+		b.dropped = true
+		return len(p), nil
+	}
+	if len(p) > room {
+		b.dropped = true
+		b.buf.Write(p[:room])
+		return len(p), nil
+	}
+	return b.buf.Write(p)
+}
+
+func (b *cappedBuffer) String() string { return b.buf.String() }
 
 // Record appends a PASS row for HEAD for one gate name, with no check run — the
 // out-of-band signal that a deferred gate's real check passed (the port of

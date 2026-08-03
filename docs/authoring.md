@@ -123,16 +123,20 @@ advisory: branch-freshness
 ```
 
 - `run:` (required) — a command line run via `sh` from the repo root at every session
-  start. The exit code is ignored; stdout and stderr pass straight through to the
-  session.
+  start. The exit code is ignored. **stdout is the check's voice**: each line is relayed
+  into the session behind an `omakase[<name>]:` prefix, so session-start text is always
+  attributed to the check that produced it. stderr is discarded — a broken check must
+  not splash raw shell errors into every session.
 - `purpose:` (optional) — what the check watches, in your words.
 
 There is no `hook:`, `glob:`, or `cacheable:` — the stage is fixed and nothing is scoped
 or cached because nothing is enforced. The contract for the script: **silent when there
-is nothing to say**, one or two lines when there is, and fast — it runs at every session
-start, and the hosts' own hook timeout is the only backstop. `init` names every declared
-advisory at consent time, and a `run:` pointing at a payload script the harness does not
-ship refuses the whole harness, same as a gate.
+is nothing to say**, one or two lines when there is. Each check gets a 10-second budget
+and is killed past it, output is capped at 4 KiB (the cut is announced), and a
+backgrounded child is cut loose two seconds after the check exits — so don't leave
+work running in the background; do it within the budget or not at all. `init` names
+every declared advisory at consent time, and a `run:` pointing at a payload script the
+harness does not ship refuses the whole harness, same as a gate.
 
 One honesty rule worth copying into any freshness-style check: comparing against an
 unfetched remote ref under-reports staleness. Either fetch first or say which ref you
