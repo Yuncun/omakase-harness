@@ -190,7 +190,12 @@ const healCmd = `b="${XDG_CACHE_HOME:-$HOME/.cache}/omakase/bin/current/omakase"
 // (upstream #22700, closed not-planned). Declaring "shell": "powershell"
 // spawns PowerShell directly, which every Windows machine has, and names
 // the .exe explicitly.
-const healCmdWindows = `$c = if ($env:XDG_CACHE_HOME) { $env:XDG_CACHE_HOME } else { Join-Path $env:USERPROFILE '.cache' }; $b = Join-Path $c 'omakase/bin/current/omakase.exe'; if (Test-Path $b) { & $b hook session-start }`
+// -PathType Leaf: Test-Path alone is true for a directory, and invoking
+// one throws where the sh form's || true would swallow it. The trailing
+// exit 0 restores that guarantee — a SessionStart hook that exits non-zero
+// is surfaced by the host every session, the exact noise this hook's
+// self-guard exists to prevent.
+const healCmdWindows = `$c = if ($env:XDG_CACHE_HOME) { $env:XDG_CACHE_HOME } else { Join-Path $env:USERPROFILE '.cache' }; $b = Join-Path $c 'omakase/bin/current/omakase.exe'; if (Test-Path $b -PathType Leaf) { & $b hook session-start }; exit 0`
 
 // healHookEntry is the hook object addSessionStartHook appends: the
 // portable sh command everywhere except Windows, where it pins PowerShell.

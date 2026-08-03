@@ -4,7 +4,7 @@
 # omakase-harness-harness payload — a harness that wants the discipline carries its
 # own copy. The omakase binary knows nothing about it.
 # Opt-in Claude Code PreToolUse hook (matcher "Edit|Write"); wire it in
-# .claude/settings.json as:  bash $CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh
+# .claude/settings.json as:  bash "$CLAUDE_PROJECT_DIR/.omakase/bin/omakase-worktree-guard.sh"
 # While other worktrees are active, an Edit/Write to a product file in the MAIN checkout
 # is denied with a teaching message: branches cut in the main checkout inherit concurrent
 # sessions' uncommitted work, which then leaks into a PR. Implementation goes in a
@@ -45,10 +45,13 @@ if command -v cygpath >/dev/null 2>&1; then
 else
   norm() { printf '%s' "$1"; }
 fi
-cwd="$(norm "$(field cwd)")"; [ -n "$cwd" ] || cwd="$PWD"
+cwd="$(norm "$(field cwd)")"; [ -n "$cwd" ] || cwd="$(norm "$PWD")"
 fp="$(field file_path)"; [ -n "$fp" ] || exit 0
 fp="$(norm "$fp")"
-case "$fp" in /*) : ;; *) fp="$cwd/$fp" ;; esac
+# Drive-letter paths count as absolute even when cygpath is unavailable
+# (a bash without cygpath can still receive C:/-form host paths) — treating
+# one as relative would mangle it into a wrong DENY on allowlisted files.
+case "$fp" in /*|[A-Za-z]:/*|[A-Za-z]:\\*) : ;; *) fp="$cwd/$fp" ;; esac
 
 root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 [ -n "$root" ] || exit 0

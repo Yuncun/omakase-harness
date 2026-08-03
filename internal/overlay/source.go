@@ -283,12 +283,16 @@ func fetchSource(src, subpath, sourceRef string, stdout, stderr io.Writer) (payl
 	if !isDir(filepath.Join(cache, ".git")) {
 		os.RemoveAll(cache)
 		os.MkdirAll(filepath.Dir(cache), 0o755)
-		// -c core.autocrlf=false sticks in the cache repo's own config:
-		// Git for Windows' system config turns autocrlf on, and a
-		// converted checkout would place CRLF-rewritten bytes — sh gate
-		// scripts stop running under bash with a \r\n shebang. Payload
-		// bytes must stay exactly the author's.
-		clone := exec.Command("git", "clone", "-q", "-c", "core.autocrlf=false", "--", src, cache)
+		// Both -c flags stick in the cache repo's own config, and BOTH are
+		// needed for verbatim payload bytes on Windows: autocrlf=false
+		// stops Git for Windows' system-config conversion for files with
+		// no text attribute, and eol=lf covers files a harness repo marks
+		// `* text=auto` (autocrlf=false does NOT — they fall through to
+		// core.eol, whose Windows default is CRLF). A converted checkout
+		// places CRLF-rewritten bytes and an sh gate script dies at commit
+		// time on a \r shebang.
+		clone := exec.Command("git", "clone", "-q",
+			"-c", "core.autocrlf=false", "-c", "core.eol=lf", "--", src, cache)
 		clone.Stdout = stdout // -q: silent on success
 		clone.Stderr = stderr
 		if err := clone.Run(); err != nil {

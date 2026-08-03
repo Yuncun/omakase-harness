@@ -60,8 +60,11 @@ Windows Scoop manifest (#212); GoReleaser rewrites both on every release,
 authenticated by the `TAP_GITHUB_TOKEN` repo secret — a fine-grained PAT
 that needs Contents read/write on BOTH repos. When the PAT expires (or is
 missing the bucket repo), the release run fails at the corresponding push
-step: mint a replacement scoped the same way and update the secret. Users
-install with:
+step: mint a replacement scoped the same way and update the secret. Note
+the ordering: the GitHub release publishes (`draft: false`) BEFORE the
+tap/bucket pushes, so a token failure there leaves the release live with a
+stale (or missing) install manifest — fix the token and re-run the
+workflow. Users install with:
 
     brew install yuncun/tap/omakase
 
