@@ -18,17 +18,17 @@ import (
 )
 
 var (
-	ErrTracked = errors.New("tracked by git — omakase never deletes committed files")
-	ErrEdited  = errors.New("differs from what init placed (local edits?) — refusing to delete")
+	ErrTracked = errors.New(errTextTracked)
+	ErrEdited  = errors.New(errTextEdited)
 	// ErrEditedKeep is FileOn's twin of ErrEdited: same local-edit detection,
 	// but the refused operation is an overwrite (snapshot restore), not a
 	// delete — the message must not claim the opposite operation. It points
 	// at the edit lifecycle: an edited placed file is an uncommitted change,
 	// not an error (issue #98 Part 2).
-	ErrEditedKeep    = errors.New("differs from what init placed (local edits?) — refusing to overwrite. See the change:  omakase diff  — then make it yours (omakase status --keep <path>) or put the harness version back (omakase status --restore <path>)")
-	ErrNotPlaced     = errors.New("not in the omakase ledger")
-	ErrNoSnapshot    = errors.New("no snapshot to restore from — run omakase init first")
-	ErrNothingToKeep = errors.New("missing from disk — nothing to keep")
+	ErrEditedKeep    = errors.New(errTextEditedKeep)
+	ErrNotPlaced     = errors.New(errTextNotPlaced)
+	ErrNoSnapshot    = errors.New(errTextNoSnapshot)
+	ErrNothingToKeep = errors.New(errTextNothingToKeep)
 )
 
 // keptEntry is the accepted copy of a kept file. Its existence IS the kept

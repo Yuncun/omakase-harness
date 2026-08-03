@@ -4,15 +4,18 @@ package overlay
 // voice rule (#179 D4): every user-facing sentence this package can print
 // lives in messages.go as a named constant, so one file shows the whole
 // voice and a constant's name states what its call site must have proven.
-// The test parses the package and fails on any fmt.Fprint* call outside
-// messages.go whose arguments contain a string literal with letters in it.
-// Letter-free literals ("%s\n", " · ") are formatting, not voice, and pass.
+// The test parses the package and fails on any fmt.Fprint*/Sprint* call
+// outside messages.go whose arguments contain a string literal with letters
+// in it. Letter-free literals ("%s\n", " · ") are formatting, not voice,
+// and pass. Known blind spot: sentences inside fmt.Errorf error values
+// (#179 D3's remaining raw-error work).
 
 import (
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -25,11 +28,18 @@ func TestVoiceLivesInMessages(t *testing.T) {
 		t.Fatalf("parse package: %v", err)
 	}
 	var violations []string
+	inspected, sawMessages := 0, false
 	for _, pkg := range pkgs {
 		for name, file := range pkg.Files {
-			if strings.HasSuffix(name, "_test.go") || strings.HasSuffix(name, "messages.go") {
+			base := filepath.Base(name)
+			if base == "messages.go" {
+				sawMessages = true
 				continue
 			}
+			if strings.HasSuffix(base, "_test.go") {
+				continue
+			}
+			inspected++
 			ast.Inspect(file, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
 				if !ok {
@@ -40,7 +50,8 @@ func TestVoiceLivesInMessages(t *testing.T) {
 					return true
 				}
 				ident, ok := sel.X.(*ast.Ident)
-				if !ok || ident.Name != "fmt" || !strings.HasPrefix(sel.Sel.Name, "Fprint") {
+				if !ok || ident.Name != "fmt" ||
+					!(strings.HasPrefix(sel.Sel.Name, "Fprint") || strings.HasPrefix(sel.Sel.Name, "Sprint")) {
 					return true
 				}
 				for _, arg := range call.Args {
@@ -53,6 +64,11 @@ func TestVoiceLivesInMessages(t *testing.T) {
 				return true
 			})
 		}
+	}
+	// A wrong cwd (or a renamed messages.go) must fail loudly, not pass with
+	// nothing inspected.
+	if !sawMessages || inspected == 0 {
+		t.Fatalf("voice check inspected nothing (messages.go seen: %v, files: %d) — wrong directory?", sawMessages, inspected)
 	}
 	if len(violations) > 0 {
 		t.Errorf("user-facing string literals outside messages.go (%d) — name them as constants there:\n  %s",

@@ -7,6 +7,10 @@
 // that make a mismatch visible (msgNothingInstalled is a different claim
 // than msgNoRememberedSource).
 //
+// Known exception: error values built with fmt.Errorf (overlay.go, source.go)
+// still carry their own sentences and can reach the user via msgPrefixedErr —
+// the raw-error half of #179 D3, not yet migrated.
+//
 // The voice rules (#49, and Eric's no-slop rule):
 //   - Every message is either the verb's normal output, or an ACTION — 1–2
 //     lines saying exactly what to do next. Internal plumbing that the user
@@ -56,11 +60,25 @@ const (
 	msgHealDriftFixInit = "omakase init"
 	// The %s fix in msgHealDrift when the snapshot copy exists.
 	msgHealDriftFixCp = "cp -P '%s' '%s'  (or omakase init to re-sync every file)"
-	// A crafted internal error (already a sentence) relayed under the omakase: prefix.
+	// Relays an internal error under the omakase: prefix. Some of those
+	// errors carry raw mechanism (function names, quoted internal paths) —
+	// the remaining raw-error leak, tracked as #179 D3.
 	msgPrefixedErr = "omakase: %v\n"
 )
 
-// usageText is the `omakase init` usage text; tests pin the exact bytes.
+// Toggle refusal reasons — returned as error values from this package and
+// printed by the status verb as "omakase: REFUSING: <reason>".
+const (
+	errTextTracked       = "tracked by git — omakase never deletes committed files"
+	errTextEdited        = "differs from what init placed (local edits?) — refusing to delete"
+	errTextEditedKeep    = "differs from what init placed (local edits?) — refusing to overwrite. See the change:  omakase diff  — then make it yours (omakase status --keep <path>) or put the harness version back (omakase status --restore <path>)"
+	errTextNotPlaced     = "not in the omakase ledger"
+	errTextNoSnapshot    = "no snapshot to restore from — run omakase init first"
+	errTextNothingToKeep = "missing from disk — nothing to keep"
+)
+
+// usageText is the `omakase init` usage text; the safety suite greps its
+// key flags (the Go tests compare output against this same constant).
 const usageText = "usage: init.sh [<owner/repo[/subpath][#ref]> | --source <git-url|path>] [--cut-over] [--help]\n" +
 	"\n" +
 	"Overlay payload/ into the current repo additively (zero committed footprint) and\n" +
@@ -181,8 +199,24 @@ omakase: nothing was changed.
 `
 
 	// The placement pre-scan found the user's own untracked files at payload
-	// paths — refused; one path per row follows.
+	// paths — refused; one row per path follows.
 	msgFilesInTheWayHeader = "omakase: REFUSING init — files in the way (nothing was changed):"
+	// Row: a prior placement carrying local edits.
+	msgConflictEditedRow = "  %s — differs from what init placed (local edits?). Review:  omakase diff %s  — then make it yours (omakase status --keep %s) or put the harness version back (omakase status --restore %s)"
+	// Row: the user's own file already at a payload path.
+	msgConflictForeignRow = "  %s — already exists and was not placed by omakase. Move it aside, or add it to your harness source, and re-run omakase init"
+
+	// Incumbent-list items: the "  - <item>" rows between the refusal header
+	// and its body, one per hook-manager finding.
+	incHooksPath     = "core.hooksPath = '%s' (a foreign hook manager owns the hooks dir; husky v9 sets .husky/_)"
+	incHuskyTracked  = ".husky/ content is git-tracked (the project's own husky setup)"
+	incHuskyDir      = ".husky/ directory (husky)"
+	incPrepareScript = "package.json \"prepare\" script wires a hook manager (husky / simple-git-hooks) — npm install would overwrite omakase's hooks"
+	incLefthookCfg   = "%s is git-tracked (the project's own lefthook config)"
+	incLefthookDir   = ".lefthook/ content is git-tracked (the project's own lefthook config)"
+	incLefthookHook  = "%s: lefthook-installed hook in %s (the project uses lefthook natively)"
+	incPreCommitStub = "%s: installed pre-commit-framework stub (plus .pre-commit-config.yaml)"
+	incExistingHook  = "%s: existing hook in %s"
 
 	// The repo commits its own file at this payload path — never touched.
 	msgSkipTracked = "omakase: SKIP (already tracked) %s\n"

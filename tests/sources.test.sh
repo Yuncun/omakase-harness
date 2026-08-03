@@ -323,6 +323,8 @@ MAN
 newrepo "$REPOWG"
 OUT="$( cd "$REPOWG" && OMAKASE_PAYLOAD="$PAYWG" bash "$INIT" 2>&1 )"; RC=$?
 { [ "$RC" -ne 0 ] && echo "$OUT" | grep -q 'does-not-ship.sh'; } && pass "manifest refuses a gate naming an unshipped payload script (plain install)" || fail "guard missed the non-shipping script ($RC: $OUT)"
+# The refusal names the stale-install hypothesis before the fix-the-wiring one (#49).
+echo "$OUT" | grep -q 'likely older' && pass "refusal names the stale-install hypothesis" || fail "refusal missing the stale-install hypothesis ($OUT)"
 [ ! -d "$REPOWG/.omakase" ] && pass "guard refused before placing anything" || fail "guard placed files despite refusing"
 
 # ---------- Scenario S10: a harness adopted from a SUBFOLDER of a hub repo ----------

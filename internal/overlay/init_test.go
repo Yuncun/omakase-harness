@@ -1879,6 +1879,10 @@ func TestInitRefusesBaseDowngrade(t *testing.T) {
 	if !strings.Contains(errOut.String(), "0.28.0") || !strings.Contains(errOut.String(), "0.22.0") {
 		t.Errorf("refusal must name both versions: %q", errOut.String())
 	}
+	// Solution-first (#49): the fix leads the sentence.
+	if !strings.HasPrefix(errOut.String(), "omakase: update omakase") {
+		t.Errorf("refusal must lead with the fix: %q", errOut.String())
+	}
 	if got := state.FirstLine(filepath.Join(repo.Root, ".omakase", "VERSION")); got != "0.28.0" {
 		t.Errorf(".omakase/VERSION rolled back to %q", got)
 	}
