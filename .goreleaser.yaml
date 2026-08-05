@@ -86,3 +86,33 @@ scoops:
     homepage: "https://github.com/Yuncun/omakase-harness"
     description: "Install a repo's local dev harness as a gitignored overlay"
     license: MIT
+
+# winget — the second Windows channel: users run `winget install Yuncun.omakase`.
+# Unlike brew/scoop, publishing is a pull request into microsoft/winget-pkgs
+# that a Microsoft pipeline validates and a moderator merges — the release run
+# pushes generated manifests to the Yuncun/winget-pkgs fork and opens the PR;
+# availability follows moderation, not the tag push. The token must be
+# SSO-authorized for the Microsoft org or the PR step fails (release, cask,
+# scoop, and the fork push all land first — runbook: docs/releasing.md).
+winget:
+  - name: omakase
+    publisher: Yuncun
+    package_identifier: Yuncun.omakase
+    short_description: "Install a repo's local dev harness as a gitignored overlay"
+    license: MIT
+    license_url: "https://github.com/Yuncun/omakase-harness/blob/main/LICENSE"
+    homepage: "https://github.com/Yuncun/omakase-harness"
+    publisher_url: "https://github.com/Yuncun"
+    publisher_support_url: "https://github.com/Yuncun/omakase-harness/issues"
+    release_notes_url: "https://github.com/Yuncun/omakase-harness/releases/tag/v{{ .Version }}"
+    repository:
+      owner: Yuncun
+      name: winget-pkgs
+      branch: "omakase-{{ .Version }}"
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+      pull_request:
+        enabled: true
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
