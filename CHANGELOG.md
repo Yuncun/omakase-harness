@@ -3,16 +3,6 @@
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project uses semantic versioning. Versions before 0.9.0 are in the git history.
 
-## [Unreleased]
-
-### Added
-- **winget publishing** (#212 follow-up): each release now also opens a
-  manifest pull request against `microsoft/winget-pkgs` (package id
-  `Yuncun.omakase`), so Windows users can `winget install Yuncun.omakase`
-  with no bucket setup. Unlike brew/scoop, availability follows Microsoft's
-  moderation of that PR, not the tag push. v0.31.0 was submitted by hand
-  the same way.
-
 ## [0.31.0] — 2026-08-03
 
 ### Added
