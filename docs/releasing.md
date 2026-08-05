@@ -57,16 +57,37 @@ publishing.)
 
 `Yuncun/homebrew-tap` holds the cask and `Yuncun/scoop-bucket` holds the
 Windows Scoop manifest (#212); GoReleaser rewrites both on every release,
-authenticated by the `TAP_GITHUB_TOKEN` repo secret — a fine-grained PAT
-that needs Contents read/write on BOTH repos. When the PAT expires (or is
-missing the bucket repo), the release run fails at the corresponding push
-step: mint a replacement scoped the same way and update the secret. Note
-the ordering: the GitHub release publishes (`draft: false`) BEFORE the
-tap/bucket pushes, so a token failure there leaves the release live with a
-stale (or missing) install manifest — fix the token and re-run the
-workflow. Users install with:
+authenticated by the `TAP_GITHUB_TOKEN` repo secret — a token with
+Contents read/write on BOTH repos (currently the maintainer's `gh` login
+token; a fine-grained PAT scoped to the two repos also works). When the
+token expires (or is missing a repo), the release run fails at the
+corresponding push step: refresh the secret and re-run. Note the ordering:
+the GitHub release publishes (`draft: false`) BEFORE the tap/bucket
+pushes, so a token failure there leaves the release live with a stale (or
+missing) install manifest — fix the token and re-run the workflow. Users
+install with:
 
     brew install yuncun/tap/omakase
 
     scoop bucket add yuncun https://github.com/Yuncun/scoop-bucket
     scoop install omakase
+
+## winget
+
+The release run also generates winget manifests, pushes them to the
+`Yuncun/winget-pkgs` fork, and opens a pull request against
+`microsoft/winget-pkgs` (package id `Yuncun.omakase`). Two differences
+from the tap/bucket channels:
+
+- **Publishing is moderated.** A Microsoft validation pipeline plus a human
+  moderator gate the merge — `winget install Yuncun.omakase` serves the new
+  version only after that PR merges, typically days after the tag push. If
+  the validation bot asks for changes, fix them on the PR branch in the
+  fork.
+- **The token needs Microsoft SSO.** The maintainer's account is a
+  Microsoft org member, so the token in `TAP_GITHUB_TOKEN` must be
+  SSO-authorized for the Microsoft enterprise
+  (github.com/enterprises/microsoftopensource/sso) or the PR step fails.
+  Everything earlier in the run — release, cask, scoop, the fork push —
+  still lands; authorize the token and re-run, or open the PR by hand from
+  the already-pushed fork branch.
