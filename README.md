@@ -14,11 +14,29 @@
 Organize, share, and deploy agent instructions, skills, and git-hook gates.
 They are placed in the working tree and never committed.</p>
 
-omakase installs a harness from one repo into any number of others. Instruction
-files go where your agent reads them. Gates are wired to git hooks. Every placed
-file is registered in `.git/info/exclude`, so nothing enters git history or
-shows up in a pull request. `omakase status` lists each item and lets you turn
-it off. `omakase remove` deletes everything it placed.
+Everything that steers how you and your agents work — a `CLAUDE.md`, rules, skills,
+a "tests green before push" hook — normally has to be committed to the repo it's
+used in: forced on every teammate, reviewed like code, rotting in every repo you
+copied it to, or simply banned by rulesets that refuse committed hook config.
+omakase keeps that whole setup — your **harness** — in one repo of your own, and
+overlays it onto any project:
+
+```
+your harness repo                    any project you work in
+┌──────────────────────┐             ┌──────────────────────────┐
+│ CLAUDE.md, rules,    │  omakase    │ files appear on disk,    │
+│ skills               │  ────────►  │ agents & hooks use them  │
+│ gates: lint, test,   │   init      │                          │
+│ secrets              │             │ git never sees them      │
+└──────────────────────┘             └──────────────────────────┘
+```
+
+Instruction files go where your agent reads them. Gates are wired to git hooks.
+Every placed file is registered in `.git/info/exclude`, so nothing enters git
+history or shows up in a pull request. `omakase status` lists each item and lets
+you turn it off. `omakase remove` deletes everything it placed. Your rules and
+your gates, in one repo, deployed to every repo you touch, invisible to everyone
+else.
 
 <!-- demo.gif slot — VHS tape to live at docs/tapes/demo.tape.
      Storyboard: init → status page, disable one gate → a commit trips a gate
@@ -94,7 +112,9 @@ Everything a team places in a repo to shape how agents (and people) work there,
 without being part of the product itself. It has two halves:
 
 - **steering**, before the agent acts: instructions, rules, skills
-- **checking**, after it produces: lint, test, and secret gates on commit and push
+- **checking**, after it produces: lint, test, and secret gates on commit and push.
+  This is the half instructions can't do — an agent can skip advice; it can't skip
+  a hook
 
 A rule of thumb for what belongs in a harness: two contributors could disagree
 about it and still build the identical product. A 25-minute test gate or a
